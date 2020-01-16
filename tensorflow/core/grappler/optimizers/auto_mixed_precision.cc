@@ -44,7 +44,7 @@ namespace tensorflow {
 namespace grappler {
 namespace {
 
-#ifdef GOOGLE_CUDA
+#if GOOGLE_CUDA
 const std::pair<int, int> kMinGPUArch = {7, 0};
 #else
 const std::pair<int, int> kMinGPUArch = {0, 0};
