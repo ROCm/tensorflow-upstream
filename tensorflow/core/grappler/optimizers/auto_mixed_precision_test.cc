@@ -45,7 +45,11 @@ namespace tensorflow {
 namespace grappler {
 namespace {
 
+#if GOOGLE_CUDA
 const std::pair<int, int> kMinGPUArch = {7, 0};
+#elif TENSORFLOW_USE_ROCM
+const std::pair<int, int> kMinGPUArch = {906,0};
+#endif
 
 class AutoMixedPrecisionTest : public GrapplerTest {
  protected:
@@ -65,6 +69,8 @@ class AutoMixedPrecisionTest : public GrapplerTest {
 #if GOOGLE_CUDA
       device_properties.mutable_environment()->insert({"architecture", "7"});
       device_properties.mutable_environment()->insert({"cuda", "9010"});
+#elif TENSORFLOW_USE_ROCM
+      device_properties.mutable_environment()->insert({"architecture", "906"});
 #endif
       virtual_cluster_.reset(
           new VirtualCluster({{"/GPU:1", device_properties}}));
@@ -873,6 +879,37 @@ int GetCudaVersion(const Cluster& cluster) {
   return 0;
 }
 
+std::pair<int, int> GetMinDeviceGPUArch(const Cluster& cluster){
+    auto devices = cluster.GetDevices();
+    int major, minor;
+    int mmajor;
+    for (const auto& device: devices){
+        const DeviceProperties& device_properties = device.second; 
+        if (device_properties.type() != "GPU") return {0, 0};
+        string arch_str = device_properties.environment().at("architecture");
+        std::vector<string> split_arch_str = str_util::Split(arch_str, '.');
+        if (split_arch_str.empty()) {
+            return {0, 0};
+        }
+        strings::safe_strto32(split_arch_str[0], &mmajor);  
+        if (!strings::safe_strto32(split_arch_str[0], &major)) {
+            return {0, 0};
+        } 
+
+        if (split_arch_str.size() > 1) {
+            if (strings::safe_strto32(split_arch_str[1], &minor)) {
+                mmajor = (mmajor <= major) ?  mmajor: major; 
+            } else { 
+                return {0, 0};
+            } 
+        } else {
+                minor = 0; 
+                mmajor = (mmajor <= major) ?  mmajor: major; 
+        } 
+    }
+    return {mmajor, minor}; 
+}
+
 TEST_F(AutoMixedPrecisionTest, BatchMatMul) {
   tensorflow::Scope s = tensorflow::Scope::NewRootScope();
   Output input = ops::Const(s.WithOpName("input"), 1.f / 33, {64, 32, 32});
@@ -893,6 +930,11 @@ TEST_F(AutoMixedPrecisionTest, BatchMatMul) {
   GraphView output_view(&output);
   EXPECT_EQ(output_view.GetNode("input")->attr().at("dtype").type(), DT_FLOAT);
   if (GetCudaVersion(*virtual_cluster_.get()) >= 9010) {
+#elif TENSORFLOW_USE_ROCM
+  if (HasEnhancedFP16ComputeSupport(GetMinDeviceGPUArch(*virtual_cluster_.get()))){
+#else  // TENSORFLOW_USE_ROCM
+  if (true) {
+#endif
     EXPECT_EQ(output.node_size(), item.graph.node_size() + 2);
     EXPECT_EQ(output_view.GetNode("wht1")->attr().at("T").type(), DT_HALF);
   } else {
