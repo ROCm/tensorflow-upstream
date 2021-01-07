@@ -7423,6 +7423,127 @@ tf_kernel_library(
     ],
 )
 
+blaze_deps = [
+    "@com_google_absl//absl/memory",
+    "@com_google_absl//absl/strings",
+    "//tensorflow/core:core_cpu_lib_no_ops",
+    "//tensorflow/core:direct_session",
+    "//tensorflow/core:framework",
+    "//tensorflow/core:gpu_headers_lib",
+    "//tensorflow/core:proto_text",
+    "//tensorflow/core:lib",
+    "//tensorflow/core:lib_internal",
+    "//tensorflow/core:lib_proto_parsing",
+    "//tensorflow/core:stream_executor",
+    "//tensorflow/core:stream_executor_headers_lib",
+    "//tensorflow/core/grappler/costs:graph_properties",
+    "//tensorflow/core/kernels:gpu_utils",
+    "//tensorflow/stream_executor/lib",
+    "//tensorflow/core/kernels/data:captured_function",
+    "//tensorflow/compiler/jit:flags",
+]
+
+cc_library(
+    name = "blaze_predictor",
+    srcs = [
+        "blaze_predictor.cc",
+        "blaze_xla_predictor.cc",
+        "benchmark_helper.cc",
+    ],
+    hdrs = [
+        "blaze_predictor.h",
+        "blaze_xla_predictor.h",
+        "benchmark_helper.h",
+    ],
+    deps = blaze_deps,
+    alwayslink = 1,
+)
+
+filegroup(
+    name = "blaze_predictor_test_data",
+    srcs = [
+        "blaze_test_data/aplusb.pbtxt",
+        "blaze_test_data/gpu_aplusb.pbtxt",
+        "blaze_test_data/error.pbtxt",
+        "blaze_test_data/options",
+        "blaze_test_data/negative_options",
+        "blaze_test_data/succ_options",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+tf_cuda_cc_test(
+    name = "blaze_predictor_test",
+    size = "small",
+    srcs = [
+        "blaze_predictor_test.cc",
+        "blaze_xla_predictor_test.cc",
+    ],
+    linkstatic = tf_kernel_tests_linkstatic(),
+    data = [":blaze_predictor_test_data"],
+    deps = MATH_DEPS + [
+        "blaze_xla_op",
+        ":blaze_predictor",
+        ":collective_ops",
+        ":control_flow_ops",
+        ":cwise_op",
+        ":dense_update_ops",
+        ":fifo_queue_op",
+        ":function_ops",
+        ":identity_n_op",
+        ":identity_op",
+        ":matmul_op",
+        ":ops_util",
+        ":queue_ops",
+        ":session_ops",
+        ":variable_ops",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:scope",
+        "//tensorflow/core:direct_session",
+        "//tensorflow/core:ops",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:remote_fused_graph_ops_op_lib",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ] + if_cuda(["//tensorflow/core:cuda"]),
+)
+
+tf_cuda_cc_test(
+    name = "blaze_xla_kernel_test",
+    size = "small",
+    srcs = ["blaze_xla_kernel_test.cc"],
+    data = [":blaze_predictor_test_data"],
+    deps = MATH_DEPS + [
+        ":ops_testutil",
+        ":blaze_xla_op",
+        ":blaze_predictor",
+        ":collective_ops",
+        ":control_flow_ops",
+        ":cwise_op",
+        ":dense_update_ops",
+        ":fifo_queue_op",
+        ":function_ops",
+        ":identity_n_op",
+        ":identity_op",
+        ":matmul_op",
+        ":ops_util",
+        ":queue_ops",
+        ":session_ops",
+        ":variable_ops",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:scope",
+        "//tensorflow/core:direct_session",
+        "//tensorflow/core:ops",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:remote_fused_graph_ops_op_lib",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+        "//tensorflow/core:core_cpu_internal",
+    ] + if_cuda(["//tensorflow/core:cuda"]),
+)
+
 cc_library(
     name = "quantization_utils",
     srcs = ["quantization_utils.cc"],
@@ -8134,40 +8255,4 @@ tf_kernel_library(
     deps = [
         "//tensorflow/core/kernels:blaze_predictor",
     ],
-)
-
-blaze_deps = [
-    "@com_google_absl//absl/memory",
-    "@com_google_absl//absl/strings",
-    "//tensorflow/core:core_cpu_lib_no_ops",
-    "//tensorflow/core:direct_session",
-    "//tensorflow/core:framework",
-    "//tensorflow/core:gpu_headers_lib",
-    "//tensorflow/core:proto_text",
-    "//tensorflow/core:lib",
-    "//tensorflow/core:lib_internal",
-    "//tensorflow/core:lib_proto_parsing",
-    "//tensorflow/core:gpu_runtime",
-    "//tensorflow/core:stream_executor",
-    "//tensorflow/core:stream_executor_headers_lib",
-    "//tensorflow/core/grappler/costs:graph_properties",
-    "//tensorflow/core/kernels:gpu_utils",
-    "//tensorflow/stream_executor/lib",
-    "//tensorflow/core/kernels/data:captured_function",
-    "//tensorflow/compiler/jit:flags",
-]
-
-cc_library(
-    name = "blaze_predictor",
-    srcs = [
-        "blaze_predictor.cc",
-        "blaze_xla_predictor.cc",
-    ],
-    hdrs = [
-        "blaze_predictor.h",
-        "blaze_xla_predictor.h",
-    ],
-    copts = tf_copts(),
-    deps = blaze_deps,
-    alwayslink = 1,
 )

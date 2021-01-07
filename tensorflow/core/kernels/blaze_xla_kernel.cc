@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include "tensorflow/core/common_runtime/copy_tensor.h"
+#include "tensorflow/core/kernels/benchmark_helper.h"
 #include "tensorflow/core/lib/core/threadpool.h"
 #include "tensorflow/core/kernels/blaze_predictor.h"
 #include "tensorflow/core/kernels/blaze_xla_predictor.h"
@@ -35,6 +36,7 @@ class BlazeXlaOp : public AsyncOpKernel {
 
   void Schedule(OpKernelContext* ctx, const DoneCallback& done, uint64 begin, bool is_first=true);
   void ComputeNormal(OpKernelContext* context, const DoneCallback& done);
+  void ComputeBenchmark(OpKernelContext* context, const DoneCallback& done);
   void ComputeNull(OpKernelContext* context, const DoneCallback& done);
   int GetBatchSizeUnsafe(OpKernelContext* context);
 
@@ -173,6 +175,29 @@ void BlazeXlaOp::ComputeNormal(OpKernelContext* ctx, const DoneCallback& done) {
   Schedule(ctx, done, begin);
 }
 
+void BlazeXlaOp::ComputeBenchmark(OpKernelContext* ctx, const DoneCallback& done) {
+  if (benchmark_counter_ < 200) {
+    // out from warmup
+    ComputeNormal(ctx, done);
+    ++benchmark_counter_;
+  } else {
+    auto& helper = BenchmarkHelper::GetInstance();
+    helper.Start();
+    mutex_lock l(benchmark_mu_);
+    while(1) {
+      auto start_ns = env_->NowNanos();
+      predictor_->Compute(ctx);
+      auto end_ns = env_->NowNanos();
+      helper.RecordTM((end_ns - start_ns) / 1000000.0f);
+      helper.Add();
+      for (int i = 0; i < ctx->num_outputs(); ++i) {
+        ctx->release_output(i);
+      }
+    }
+  }
+  done();
+}
+
 void BlazeXlaOp::ComputeNull(OpKernelContext* context, const DoneCallback& done) {
   auto batch_size = GetBatchSizeUnsafe(context);
   Tensor *output;
@@ -184,6 +209,10 @@ void BlazeXlaOp::ComputeAsync(OpKernelContext* ctx, DoneCallback done) {
   switch(blaze_run_options_.run_mode()) {
     case BlazeKernelOptions::DEFAULT: {
       ComputeNormal(ctx, std::move(done));
+      break;
+    }
+    case BlazeKernelOptions::BENCHMARK: {
+      ComputeBenchmark(ctx, std::move(done));
       break;
     }
     case BlazeKernelOptions::SKIP: {
