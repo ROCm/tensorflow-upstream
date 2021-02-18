@@ -45,10 +45,56 @@ namespace tensorflow {
 namespace grappler {
 namespace {
 
+template <DataType DTYPE>
+Tensor GenerateIdentityMatrix(int64 height, int64 width) {
+  typedef typename EnumToDataType<DTYPE>::Type T;
+  Tensor tensor(DTYPE, TensorShape{height, width});
+  for (int64 i = 0; i < height; ++i) {
+    for (int64 j = 0; j < width; ++j) {
+      tensor.matrix<T>()(i, j) = i == j;
+    }
+  }
+  return tensor;
+}
+
+template <DataType DTYPE>
+Tensor GenerateRandomTensorInRange(const TensorShape& shape, double minval,
+                                   double maxval) {
+  typedef typename EnumToDataType<DTYPE>::Type T;
+  Tensor tensor(DTYPE, shape);
+  for (auto i = 0; i < tensor.NumElements(); i++)
+    tensor.flat<T>()(i) =
+        (random::New64() % 65536 / 65536.0) * (maxval - minval) + minval;
+  return tensor;
+}
+
+void VerifyGraphsEquivalent(const GraphDef& original_graph,
+                            const GraphDef& optimized_graph,
+                            const string& func) {
+  EXPECT_EQ(original_graph.node_size(), optimized_graph.node_size()) << func;
+  GraphView optimized_view(&optimized_graph);
+  for (int i = 0; i < original_graph.node_size(); ++i) {
+    const NodeDef& original = original_graph.node(i);
+    const NodeDef& optimized = *optimized_view.GetNode(original.name());
+    EXPECT_EQ(original.name(), optimized.name()) << func;
+    EXPECT_EQ(original.op(), optimized.op()) << func;
+    EXPECT_EQ(original.input_size(), optimized.input_size()) << func;
+    if (original.input_size() == optimized.input_size()) {
+      for (int j = 0; j < original.input_size(); ++j) {
+        EXPECT_EQ(original.input(j), optimized.input(j)) << func;
+      }
+    }
+  }
+}
+
+// Currently, this test suite only passes when TensorFlow passes with CUDA or HIP,
+// because otherwise the optimizer will not turn clearlist nodes to float16.
+// When looking at clearlist nodes, this optimizer checks if the nodes have a
+// float16 GPU OpKernel, but without CUDA or HIP there are no GPU OpKernels at all.
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
 #if GOOGLE_CUDA
 const std::pair<int, int> kMinGPUArch = {7, 0};
-#elif TENSORFLOW_USE_ROCM
-const std::pair<int, int> kMinGPUArch = {906,0};
 #endif
 
 class AutoMixedPrecisionTest : public GrapplerTest {
@@ -57,9 +103,11 @@ class AutoMixedPrecisionTest : public GrapplerTest {
     int num_gpus = GetNumAvailableGPUs();
     // If GPUs are available, require that they all satisfy the min arch.
     gpu_available_ = (num_gpus > 0);
-#if GOOGLE_CUDA
-    gpu_available_ = gpu_available_ && 
-      (num_gpus == GetNumAvailableGPUs(kMinGPUArch));
+#if GOOGLE_CUDA 
+    gpu_available_ =
+        gpu_available_ && (num_gpus == GetNumAvailableGPUs(kMinGPUArch));
+#elif TENSORFLOW_USE_ROCM //Here we force Tensorflow to use the virtual GFX906 always
+    gpu_available_ = false; 
 #endif
     if (gpu_available_) {
       virtual_cluster_.reset(new SingleMachine(/* timeout_s = */ 10, 1, 1));
@@ -70,11 +118,11 @@ class AutoMixedPrecisionTest : public GrapplerTest {
       device_properties.mutable_environment()->insert({"architecture", "7"});
       device_properties.mutable_environment()->insert({"cuda", "9010"});
 #elif TENSORFLOW_USE_ROCM
-      device_properties.mutable_environment()->insert({"architecture", "906"});
+      device_properties.mutable_environment()->insert({"architecture", "gfx906"});
 #endif
       virtual_cluster_.reset(
           new VirtualCluster({{"/GPU:1", device_properties}}));
-    }
+     }
     TF_CHECK_OK(virtual_cluster_->Provision());
   }
 
@@ -879,37 +927,6 @@ int GetCudaVersion(const Cluster& cluster) {
   return 0;
 }
 
-std::pair<int, int> GetMinDeviceGPUArch(const Cluster& cluster){
-    auto devices = cluster.GetDevices();
-    int major, minor;
-    int mmajor;
-    for (const auto& device: devices){
-        const DeviceProperties& device_properties = device.second; 
-        if (device_properties.type() != "GPU") return {0, 0};
-        string arch_str = device_properties.environment().at("architecture");
-        std::vector<string> split_arch_str = str_util::Split(arch_str, '.');
-        if (split_arch_str.empty()) {
-            return {0, 0};
-        }
-        strings::safe_strto32(split_arch_str[0], &mmajor);  
-        if (!strings::safe_strto32(split_arch_str[0], &major)) {
-            return {0, 0};
-        } 
-
-        if (split_arch_str.size() > 1) {
-            if (strings::safe_strto32(split_arch_str[1], &minor)) {
-                mmajor = (mmajor <= major) ?  mmajor: major; 
-            } else { 
-                return {0, 0};
-            } 
-        } else {
-                minor = 0; 
-                mmajor = (mmajor <= major) ?  mmajor: major; 
-        } 
-    }
-    return {mmajor, minor}; 
-}
-
 TEST_F(AutoMixedPrecisionTest, BatchMatMul) {
   tensorflow::Scope s = tensorflow::Scope::NewRootScope();
   Output input = ops::Const(s.WithOpName("input"), 1.f / 33, {64, 32, 32});
@@ -930,9 +947,7 @@ TEST_F(AutoMixedPrecisionTest, BatchMatMul) {
   GraphView output_view(&output);
   EXPECT_EQ(output_view.GetNode("input")->attr().at("dtype").type(), DT_FLOAT);
   if (GetCudaVersion(*virtual_cluster_.get()) >= 9010) {
-#elif TENSORFLOW_USE_ROCM
-  if (HasEnhancedFP16ComputeSupport(GetMinDeviceGPUArch(*virtual_cluster_.get()))){
-#else  // TENSORFLOW_USE_ROCM
+#else //TENSORFLOW_USE_ROCM always uses virtual gfx906 
   if (true) {
 #endif
     EXPECT_EQ(output.node_size(), item.graph.node_size() + 2);
