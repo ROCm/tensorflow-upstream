@@ -45,14 +45,6 @@ namespace tensorflow {
 namespace grappler {
 namespace {
 
-bool IsSupportedGPU() {
-#ifdef GOOGLE_CUDA
-    return GetCudaVersion(*virtual_cluster_.get()) >= 9010;
-#else
-    return True;
-#endif
-}
-
 template <DataType DTYPE>
 Tensor GenerateIdentityMatrix(int64 height, int64 width) {
   typedef typename EnumToDataType<DTYPE>::Type T;
@@ -919,6 +911,91 @@ TEST_F(AutoMixedPrecisionTest, TensorListPushBackBatchAndConcatLists) {
   }
 }
 
+TEST_F(AutoMixedPrecisionTest, TensorListThroughFunction) {
+  // This test passes a tensor list handle through a function with its own
+  // Tensor List ops inside to test that the types are not changed to a
+  // conflicting state.
+  // A separate Tensor List cluster is added to test that it is still changed to
+  // DT_HALF.
+  FunctionDefLibrary function_lib;
+  const Tensor kShape = test::AsTensor<int32>({32, 32});
+  FunctionDef func1 = FunctionDefHelper::Define(
+      "Func1", {"ihandle: variant", "x: float"},
+      {"ohandle: variant", "y: float"}, {},
+      {
+          {{"tl1w1_handle"},
+           "TensorListPushBack",
+           {"ihandle", "x"},
+           {{"element_dtype", DT_FLOAT}}},
+          {{"shape"}, "Const", {}, {{"value", kShape}, {"dtype", DT_INT32}}},
+          {{"tl1r1_handle", "tl1r1_data"},
+           "TensorListPopBack",
+           {"tl1w1_handle", "shape"},
+           {{"element_dtype", DT_FLOAT}}},
+          {{"ohandle"}, "Identity", {"tl1r1_handle"}, {{"T", DT_VARIANT}}},
+          {{"y"}, "Identity", {"tl1r1_data"}, {{"T", DT_FLOAT}}},
+      });
+  function_lib.add_function()->Swap(&func1);
+
+  tensorflow::Scope s = tensorflow::Scope::NewRootScope();
+  TF_CHECK_OK(s.graph()->AddFunctionLibrary(function_lib));
+  tensorflow::Input shape = {32, 32};
+  Output input = ops::Const(s.WithOpName("input"), 1.f / 32, {32, 32});
+  Output allow1 = ops::MatMul(s.WithOpName("allow1"), input, input);
+  Output infer1 = ops::Tanh(s.WithOpName("infer1"), allow1);
+  auto tl1 = ops::EmptyTensorList(s.WithOpName("tl1"), {32, 32}, 8, DT_FLOAT);
+  auto tl1w1 =
+      ops::TensorListPushBack(s.WithOpName("tl1w1"), tl1.handle, infer1);
+  auto _infer1 = tensorflow::ops::AsNodeOut(s, infer1);
+  auto _tl1w1_handle = tensorflow::ops::AsNodeOut(s, tl1w1.output_handle);
+  auto builder =
+      tensorflow::NodeBuilder("Func1", "Func1", s.graph()->op_registry());
+  tensorflow::Node* func1_op;
+  TF_CHECK_OK(builder.Input(_tl1w1_handle)
+                  .Input(_infer1)
+                  .Finalize(s.graph(), &func1_op));
+  Output func1_handle(func1_op, 0);
+  Output tl1r1 = ops::TensorListPopBack(s.WithOpName("tl1r1"), func1_handle,
+                                        shape, DT_FLOAT)
+                     .tensor;
+  auto tl2 = ops::EmptyTensorList(s.WithOpName("tl2"), {32, 32}, 8, DT_FLOAT);
+  auto tl2w1 =
+      ops::TensorListPushBack(s.WithOpName("tl2w1"), tl2.handle, infer1);
+  Output tl2r1 = ops::TensorListPopBack(s.WithOpName("tl2r1"),
+                                        tl2w1.output_handle, shape, DT_FLOAT)
+                     .tensor;
+  Output allow2 = ops::MatMul(s.WithOpName("allow2"), tl1r1, tl2r1);
+  Output fetch1 = ops::Identity(s.WithOpName("fetch1"), allow2);
+
+  GrapplerItem item;
+  item.fetch = {"fetch1"};
+  TF_CHECK_OK(s.ToGraphDef(&item.graph));
+  auto tensors_expected = EvaluateNodes(item.graph, item.fetch);
+
+  AutoMixedPrecision optimizer;
+  GraphDef output;
+  TF_ASSERT_OK(optimizer.Optimize(virtual_cluster_.get(), item, &output));
+
+  VLOG(1) << output.DebugString();
+
+  GraphView output_view(&output);
+  const char* type_key = "element_dtype";
+  EXPECT_EQ(output_view.GetNode("allow1")->attr().at("T").type(), DT_HALF);
+  EXPECT_EQ(output_view.GetNode("allow2")->attr().at("T").type(), DT_HALF);
+  EXPECT_EQ(output_view.GetNode("infer1")->attr().at("T").type(), DT_HALF);
+  EXPECT_EQ(output_view.GetNode("tl2")->attr().at(type_key).type(), DT_HALF);
+  EXPECT_EQ(output_view.GetNode("tl2w1")->attr().at(type_key).type(), DT_HALF);
+  EXPECT_EQ(output_view.GetNode("tl2r1")->attr().at(type_key).type(), DT_HALF);
+
+  auto tensors = EvaluateNodes(output, item.fetch);
+  EXPECT_EQ(tensors.size(), tensors_expected.size());
+  EXPECT_EQ(tensors.size(), item.fetch.size());
+  for (int i = 0; i < item.fetch.size(); ++i) {
+    test::ExpectClose(tensors_expected[i], tensors[i], -1, 5e-4);
+  }
+}
+
+
 int GetCudaVersion(const Cluster& cluster) {
   auto devices = cluster.GetDevices();
   for (const auto& device : devices) {
@@ -933,6 +1010,14 @@ int GetCudaVersion(const Cluster& cluster) {
     }
   }
   return 0;
+}
+
+bool IsSupportedGPU(const Cluster& cluster) {
+#ifdef GOOGLE_CUDA
+    return GetCudaVersion(cluster) >= 9010;
+#else
+    return true;
+#endif
 }
 
 TEST_F(AutoMixedPrecisionTest, BatchMatMul) {
@@ -954,7 +1039,7 @@ TEST_F(AutoMixedPrecisionTest, BatchMatMul) {
 
   GraphView output_view(&output);
   EXPECT_EQ(output_view.GetNode("input")->attr().at("dtype").type(), DT_FLOAT);
-  if (IsSupportedGPU()) {
+  if (IsSupportedGPU(*virtual_cluster_.get())) {
     EXPECT_EQ(output.node_size(), item.graph.node_size() + 2);
     EXPECT_EQ(output_view.GetNode("wht1")->attr().at("T").type(), DT_HALF);
   } else {
