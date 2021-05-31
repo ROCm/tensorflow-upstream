@@ -15,18 +15,17 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/stream.h"
 
-#include "tensorflow/stream_executor/platform/port.h"
-
 #include "absl/strings/str_cat.h"
-#include "third_party/eigen3/Eigen/Core"
 #include "tensorflow/stream_executor/blas.h"
 #include "tensorflow/stream_executor/host_or_device_scalar.h"
 #include "tensorflow/stream_executor/lib/stacktrace.h"
 #include "tensorflow/stream_executor/platform.h"
 #include "tensorflow/stream_executor/platform/logging.h"
+#include "tensorflow/stream_executor/platform/port.h"
 #include "tensorflow/stream_executor/rng.h"
 #include "tensorflow/stream_executor/stream_executor_internal.h"
 #include "tensorflow/stream_executor/stream_executor_pimpl.h"
+#include "third_party/eigen3/Eigen/Core"
 
 namespace stream_executor {
 
@@ -358,10 +357,9 @@ Stream &Stream::ThenBatchNormalizationForward(
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
       CheckError(dnn->DoBatchNormalizationForward(
           this, x, scale, offset, estimated_mean, estimated_variance,
-          side_input, x_desc, scale_offset_desc, epsilon, activation_mode, y,
-          batch_mean, batch_var, saved_mean, saved_inv_var, is_training,
-          reserve_space_allocator, workspace_allocator,
-          std::move(var_to_inv_var), std::move(inv_var_to_var)));
+          side_input, x_desc, scale_offset_desc, epsilon, 1.0, activation_mode,
+          y, batch_mean, batch_var, saved_mean, saved_inv_var, is_training,
+          reserve_space_allocator, workspace_allocator));
     } else {
       SetErrorAndLogNoDnnSupport();
     }
@@ -415,10 +413,9 @@ Stream &Stream::ThenBatchNormalizationForward(
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
       CheckError(dnn->DoBatchNormalizationForward(
           this, x, scale, offset, estimated_mean, estimated_variance,
-          side_input, x_desc, scale_offset_desc, epsilon, activation_mode, y,
-          batch_mean, batch_var, saved_mean, saved_inv_var, is_training,
-          reserve_space_allocator, workspace_allocator,
-          std::move(var_to_inv_var), std::move(inv_var_to_var)));
+          side_input, x_desc, scale_offset_desc, epsilon, 1.0, activation_mode,
+          y, batch_mean, batch_var, saved_mean, saved_inv_var, is_training,
+          reserve_space_allocator, workspace_allocator));
     } else {
       SetErrorAndLogNoDnnSupport();
     }
@@ -481,7 +478,7 @@ Stream &Stream::ThenFusedConvolveWithAlgorithm(
           side_input_data, side_input_scale, bias_descriptor, biases,
           activation_mode, output_descriptor, output, scratch_allocator,
           algorithm_config, output_profile_result);
-      if (!status && !output_profile_result) {
+      if (!status.ok() && !output_profile_result) {
         SetError();
       }
     } else {
@@ -519,7 +516,7 @@ Stream &Stream::ThenFusedConvolveWithAlgorithm(
           side_input_data, side_input_scale, bias_descriptor, biases,
           activation_mode, output_descriptor, output, scratch_allocator,
           algorithm_config, output_profile_result);
-      if (!status && !output_profile_result) {
+      if (!status.ok() && !output_profile_result) {
         SetError();
       }
     } else {
@@ -558,7 +555,7 @@ Stream &Stream::ThenFusedConvolveWithAlgorithm(
           side_input_data, side_input_scale, bias_descriptor, biases,
           activation_mode, output_descriptor, output, scratch_allocator,
           algorithm_config, output_profile_result);
-      if (!status && !output_profile_result) {
+      if (!status.ok() && !output_profile_result) {
         SetError();
       }
     } else {
@@ -596,7 +593,7 @@ Stream &Stream::ThenFusedConvolveWithAlgorithm(
           side_input_data, side_input_scale, bias_descriptor, biases,
           activation_mode, output_descriptor, output, scratch_allocator,
           algorithm_config, output_profile_result);
-      if (!status && !output_profile_result) {
+      if (!status.ok() && !output_profile_result) {
         SetError();
       }
     } else {
@@ -634,7 +631,7 @@ Stream &Stream::ThenFusedConvolveWithAlgorithm(
           side_input_data, side_input_scale, bias_descriptor, biases,
           activation_mode, output_descriptor, output, scratch_allocator,
           algorithm_config, output_profile_result);
-      if (!status && !output_profile_result) {
+      if (!status.ok() && !output_profile_result) {
         SetError();
       }
     } else {
@@ -2200,7 +2197,8 @@ Stream &Stream::ThenBlasAsum(uint64 elem_count, const DeviceMemory<double> &x,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<double> &, int,
-               DeviceMemory<double> *> impl;
+               DeviceMemory<double> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasAsum, elem_count, x, incx,
               result);
 }
@@ -2211,7 +2209,8 @@ Stream &Stream::ThenBlasAsum(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<float> *> impl;
+               DeviceMemory<float> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasAsum, elem_count, x, incx,
               result);
 }
@@ -2222,7 +2221,8 @@ Stream &Stream::ThenBlasAsum(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<double> *> impl;
+               DeviceMemory<double> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasAsum, elem_count, x, incx,
               result);
 }
@@ -2234,7 +2234,8 @@ Stream &Stream::ThenBlasAxpy(uint64 elem_count, float alpha,
             PARAM(incy));
 
   ThenBlasImpl<uint64, float, const DeviceMemory<float> &, int,
-               DeviceMemory<float> *, int> impl;
+               DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasAxpy, elem_count, alpha, x, incx,
               y, incy);
 }
@@ -2246,7 +2247,8 @@ Stream &Stream::ThenBlasAxpy(uint64 elem_count, double alpha,
             PARAM(incy));
 
   ThenBlasImpl<uint64, double, const DeviceMemory<double> &, int,
-               DeviceMemory<double> *, int> impl;
+               DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasAxpy, elem_count, alpha, x, incx,
               y, incy);
 }
@@ -2260,7 +2262,8 @@ Stream &Stream::ThenBlasAxpy(uint64 elem_count, std::complex<float> alpha,
 
   ThenBlasImpl<uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasAxpy, elem_count, alpha, x, incx,
               y, incy);
 }
@@ -2274,7 +2277,8 @@ Stream &Stream::ThenBlasAxpy(uint64 elem_count, std::complex<double> alpha,
 
   ThenBlasImpl<uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasAxpy, elem_count, alpha, x, incx,
               y, incy);
 }
@@ -2284,7 +2288,8 @@ Stream &Stream::ThenBlasCopy(uint64 elem_count, const DeviceMemory<float> &x,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(y), PARAM(incy));
 
   ThenBlasImpl<uint64, const DeviceMemory<float> &, int, DeviceMemory<float> *,
-               int> impl;
+               int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasCopy, elem_count, x, incx, y,
               incy);
 }
@@ -2294,7 +2299,8 @@ Stream &Stream::ThenBlasCopy(uint64 elem_count, const DeviceMemory<double> &x,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(y), PARAM(incy));
 
   ThenBlasImpl<uint64, const DeviceMemory<double> &, int,
-               DeviceMemory<double> *, int> impl;
+               DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasCopy, elem_count, x, incx, y,
               incy);
 }
@@ -2306,7 +2312,8 @@ Stream &Stream::ThenBlasCopy(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(y), PARAM(incy));
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasCopy, elem_count, x, incx, y,
               incy);
 }
@@ -2318,7 +2325,8 @@ Stream &Stream::ThenBlasCopy(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(y), PARAM(incy));
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasCopy, elem_count, x, incx, y,
               incy);
 }
@@ -2330,7 +2338,8 @@ Stream &Stream::ThenBlasDot(uint64 elem_count, const DeviceMemory<float> &x,
             PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<float> &, int,
-               const DeviceMemory<float> &, int, DeviceMemory<float> *> impl;
+               const DeviceMemory<float> &, int, DeviceMemory<float> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasDot, elem_count, x, incx, y, incy,
               result);
 }
@@ -2342,7 +2351,8 @@ Stream &Stream::ThenBlasDot(uint64 elem_count, const DeviceMemory<double> &x,
             PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<double> &, int,
-               const DeviceMemory<double> &, int, DeviceMemory<double> *> impl;
+               const DeviceMemory<double> &, int, DeviceMemory<double> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasDot, elem_count, x, incx, y, incy,
               result);
 }
@@ -2358,7 +2368,8 @@ Stream &Stream::ThenBlasDotc(uint64 elem_count,
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<float>> &, int,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *> impl;
+               DeviceMemory<std::complex<float>> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasDotc, elem_count, x, incx, y,
               incy, result);
 }
@@ -2374,7 +2385,8 @@ Stream &Stream::ThenBlasDotc(uint64 elem_count,
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<double>> &, int,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *> impl;
+               DeviceMemory<std::complex<double>> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasDotc, elem_count, x, incx, y,
               incy, result);
 }
@@ -2390,7 +2402,8 @@ Stream &Stream::ThenBlasDotu(uint64 elem_count,
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<float>> &, int,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *> impl;
+               DeviceMemory<std::complex<float>> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasDotu, elem_count, x, incx, y,
               incy, result);
 }
@@ -2406,7 +2419,8 @@ Stream &Stream::ThenBlasDotu(uint64 elem_count,
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<double>> &, int,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *> impl;
+               DeviceMemory<std::complex<double>> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasDotu, elem_count, x, incx, y,
               incy, result);
 }
@@ -2426,7 +2440,8 @@ Stream &Stream::ThenBlasNrm2(uint64 elem_count, const DeviceMemory<double> &x,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<double> &, int,
-               DeviceMemory<double> *> impl;
+               DeviceMemory<double> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasNrm2, elem_count, x, incx,
               result);
 }
@@ -2437,7 +2452,8 @@ Stream &Stream::ThenBlasNrm2(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<float> *> impl;
+               DeviceMemory<float> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasNrm2, elem_count, x, incx,
               result);
 }
@@ -2448,7 +2464,8 @@ Stream &Stream::ThenBlasNrm2(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<double> *> impl;
+               DeviceMemory<double> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasNrm2, elem_count, x, incx,
               result);
 }
@@ -2460,7 +2477,8 @@ Stream &Stream::ThenBlasRot(uint64 elem_count, DeviceMemory<float> *x, int incx,
             PARAM(c), PARAM(s));
 
   ThenBlasImpl<uint64, DeviceMemory<float> *, int, DeviceMemory<float> *, int,
-               float, float> impl;
+               float, float>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRot, elem_count, x, incx, y, incy,
               c, s);
 }
@@ -2472,7 +2490,8 @@ Stream &Stream::ThenBlasRot(uint64 elem_count, DeviceMemory<double> *x,
             PARAM(c), PARAM(s));
 
   ThenBlasImpl<uint64, DeviceMemory<double> *, int, DeviceMemory<double> *, int,
-               double, double> impl;
+               double, double>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRot, elem_count, x, incx, y, incy,
               c, s);
 }
@@ -2485,7 +2504,8 @@ Stream &Stream::ThenBlasRot(uint64 elem_count,
             PARAM(c), PARAM(s));
 
   ThenBlasImpl<uint64, DeviceMemory<std::complex<float>> *, int,
-               DeviceMemory<std::complex<float>> *, int, float, float> impl;
+               DeviceMemory<std::complex<float>> *, int, float, float>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRot, elem_count, x, incx, y, incy,
               c, s);
 }
@@ -2498,7 +2518,8 @@ Stream &Stream::ThenBlasRot(uint64 elem_count,
             PARAM(c), PARAM(s));
 
   ThenBlasImpl<uint64, DeviceMemory<std::complex<double>> *, int,
-               DeviceMemory<std::complex<double>> *, int, double, double> impl;
+               DeviceMemory<std::complex<double>> *, int, double, double>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRot, elem_count, x, incx, y, incy,
               c, s);
 }
@@ -2508,7 +2529,8 @@ Stream &Stream::ThenBlasRotg(DeviceMemory<float> *a, DeviceMemory<float> *b,
   VLOG_CALL(PARAM(a), PARAM(b), PARAM(c), PARAM(s));
 
   ThenBlasImpl<DeviceMemory<float> *, DeviceMemory<float> *,
-               DeviceMemory<float> *, DeviceMemory<float> *> impl;
+               DeviceMemory<float> *, DeviceMemory<float> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRotg, a, b, c, s);
 }
 
@@ -2517,7 +2539,8 @@ Stream &Stream::ThenBlasRotg(DeviceMemory<double> *a, DeviceMemory<double> *b,
   VLOG_CALL(PARAM(a), PARAM(b), PARAM(c), PARAM(s));
 
   ThenBlasImpl<DeviceMemory<double> *, DeviceMemory<double> *,
-               DeviceMemory<double> *, DeviceMemory<double> *> impl;
+               DeviceMemory<double> *, DeviceMemory<double> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRotg, a, b, c, s);
 }
 
@@ -2529,7 +2552,8 @@ Stream &Stream::ThenBlasRotg(DeviceMemory<std::complex<float>> *a,
 
   ThenBlasImpl<DeviceMemory<std::complex<float>> *,
                DeviceMemory<std::complex<float>> *, DeviceMemory<float> *,
-               DeviceMemory<std::complex<float>> *> impl;
+               DeviceMemory<std::complex<float>> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRotg, a, b, c, s);
 }
 
@@ -2541,7 +2565,8 @@ Stream &Stream::ThenBlasRotg(DeviceMemory<std::complex<double>> *a,
 
   ThenBlasImpl<DeviceMemory<std::complex<double>> *,
                DeviceMemory<std::complex<double>> *, DeviceMemory<double> *,
-               DeviceMemory<std::complex<double>> *> impl;
+               DeviceMemory<std::complex<double>> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRotg, a, b, c, s);
 }
 
@@ -2552,7 +2577,8 @@ Stream &Stream::ThenBlasRotm(uint64 elem_count, DeviceMemory<float> *x,
             PARAM(param));
 
   ThenBlasImpl<uint64, DeviceMemory<float> *, int, DeviceMemory<float> *, int,
-               const DeviceMemory<float> &> impl;
+               const DeviceMemory<float> &>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRotm, elem_count, x, incx, y,
               incy, param);
 }
@@ -2564,7 +2590,8 @@ Stream &Stream::ThenBlasRotm(uint64 elem_count, DeviceMemory<double> *x,
             PARAM(param));
 
   ThenBlasImpl<uint64, DeviceMemory<double> *, int, DeviceMemory<double> *, int,
-               const DeviceMemory<double> &> impl;
+               const DeviceMemory<double> &>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRotm, elem_count, x, incx, y,
               incy, param);
 }
@@ -2577,7 +2604,8 @@ Stream &Stream::ThenBlasRotmg(DeviceMemory<float> *d1, DeviceMemory<float> *d2,
 
   ThenBlasImpl<DeviceMemory<float> *, DeviceMemory<float> *,
                DeviceMemory<float> *, const DeviceMemory<float> &,
-               DeviceMemory<float> *> impl;
+               DeviceMemory<float> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRotmg, d1, d2, x1, y1, param);
 }
 
@@ -2590,7 +2618,8 @@ Stream &Stream::ThenBlasRotmg(DeviceMemory<double> *d1,
 
   ThenBlasImpl<DeviceMemory<double> *, DeviceMemory<double> *,
                DeviceMemory<double> *, const DeviceMemory<double> &,
-               DeviceMemory<double> *> impl;
+               DeviceMemory<double> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasRotmg, d1, d2, x1, y1, param);
 }
 
@@ -2631,7 +2660,8 @@ Stream &Stream::ThenBlasScal(uint64 elem_count, std::complex<float> alpha,
   VLOG_CALL(PARAM(elem_count), PARAM(alpha), PARAM(x), PARAM(incx));
 
   ThenBlasImpl<uint64, std::complex<float>, DeviceMemory<std::complex<float>> *,
-               int> impl;
+               int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasScal, elem_count, alpha, x, incx);
 }
 
@@ -2640,7 +2670,8 @@ Stream &Stream::ThenBlasScal(uint64 elem_count, std::complex<double> alpha,
   VLOG_CALL(PARAM(elem_count), PARAM(alpha), PARAM(x), PARAM(incx));
 
   ThenBlasImpl<uint64, std::complex<double>,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasScal, elem_count, alpha, x, incx);
 }
 
@@ -2670,7 +2701,8 @@ Stream &Stream::ThenBlasSwap(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(y), PARAM(incy));
 
   ThenBlasImpl<uint64, DeviceMemory<std::complex<float>> *, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSwap, elem_count, x, incx, y,
               incy);
 }
@@ -2681,7 +2713,8 @@ Stream &Stream::ThenBlasSwap(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(y), PARAM(incy));
 
   ThenBlasImpl<uint64, DeviceMemory<std::complex<double>> *, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSwap, elem_count, x, incx, y,
               incy);
 }
@@ -2712,7 +2745,8 @@ Stream &Stream::ThenBlasIamax(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<int> *> impl;
+               DeviceMemory<int> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasIamax, elem_count, x, incx,
               result);
 }
@@ -2723,7 +2757,8 @@ Stream &Stream::ThenBlasIamax(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<int> *> impl;
+               DeviceMemory<int> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasIamax, elem_count, x, incx,
               result);
 }
@@ -2754,7 +2789,8 @@ Stream &Stream::ThenBlasIamin(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<int> *> impl;
+               DeviceMemory<int> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasIamin, elem_count, x, incx,
               result);
 }
@@ -2765,7 +2801,8 @@ Stream &Stream::ThenBlasIamin(uint64 elem_count,
   VLOG_CALL(PARAM(elem_count), PARAM(x), PARAM(incx), PARAM(result));
 
   ThenBlasImpl<uint64, const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<int> *> impl;
+               DeviceMemory<int> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasIamin, elem_count, x, incx,
               result);
 }
@@ -2781,7 +2818,8 @@ Stream &Stream::ThenBlasGbmv(blas::Transpose trans, uint64 m, uint64 n,
 
   ThenBlasImpl<blas::Transpose, uint64, uint64, uint64, uint64, float,
                const DeviceMemory<float> &, int, const DeviceMemory<float> &,
-               int, float, DeviceMemory<float> *, int> impl;
+               int, float, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGbmv, trans, m, n, kl, ku, alpha,
               a, lda, x, incx, beta, y, incy);
 }
@@ -2797,7 +2835,8 @@ Stream &Stream::ThenBlasGbmv(blas::Transpose trans, uint64 m, uint64 n,
 
   ThenBlasImpl<blas::Transpose, uint64, uint64, uint64, uint64, double,
                const DeviceMemory<double> &, int, const DeviceMemory<double> &,
-               int, double, DeviceMemory<double> *, int> impl;
+               int, double, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGbmv, trans, m, n, kl, ku, alpha,
               a, lda, x, incx, beta, y, incy);
 }
@@ -2816,8 +2855,8 @@ Stream &Stream::ThenBlasGbmv(blas::Transpose trans, uint64 m, uint64 n,
   ThenBlasImpl<blas::Transpose, uint64, uint64, uint64, uint64,
                std::complex<float>, const DeviceMemory<std::complex<float>> &,
                int, const DeviceMemory<std::complex<float>> &, int,
-               std::complex<float>, DeviceMemory<std::complex<float>> *,
-               int> impl;
+               std::complex<float>, DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGbmv, trans, m, n, kl, ku, alpha,
               a, lda, x, incx, beta, y, incy);
 }
@@ -2836,8 +2875,8 @@ Stream &Stream::ThenBlasGbmv(blas::Transpose trans, uint64 m, uint64 n,
   ThenBlasImpl<blas::Transpose, uint64, uint64, uint64, uint64,
                std::complex<double>, const DeviceMemory<std::complex<double>> &,
                int, const DeviceMemory<std::complex<double>> &, int,
-               std::complex<double>, DeviceMemory<std::complex<double>> *,
-               int> impl;
+               std::complex<double>, DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGbmv, trans, m, n, kl, ku, alpha,
               a, lda, x, incx, beta, y, incy);
 }
@@ -2852,7 +2891,8 @@ Stream &Stream::ThenBlasGemv(blas::Transpose trans, uint64 m, uint64 n,
 
   ThenBlasImpl<blas::Transpose, uint64, uint64, float,
                const DeviceMemory<float> &, int, const DeviceMemory<float> &,
-               int, float, DeviceMemory<float> *, int> impl;
+               int, float, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGemv, trans, m, n, alpha, a, lda,
               x, incx, beta, y, incy);
 }
@@ -2867,7 +2907,8 @@ Stream &Stream::ThenBlasGemv(blas::Transpose trans, uint64 m, uint64 n,
 
   ThenBlasImpl<blas::Transpose, uint64, uint64, double,
                const DeviceMemory<double> &, int, const DeviceMemory<double> &,
-               int, double, DeviceMemory<double> *, int> impl;
+               int, double, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGemv, trans, m, n, alpha, a, lda,
               x, incx, beta, y, incy);
 }
@@ -2886,8 +2927,8 @@ Stream &Stream::ThenBlasGemv(blas::Transpose trans, uint64 m, uint64 n,
   ThenBlasImpl<blas::Transpose, uint64, uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &, int,
                const DeviceMemory<std::complex<float>> &, int,
-               std::complex<float>, DeviceMemory<std::complex<float>> *,
-               int> impl;
+               std::complex<float>, DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGemv, trans, m, n, alpha, a, lda,
               x, incx, beta, y, incy);
 }
@@ -2906,8 +2947,8 @@ Stream &Stream::ThenBlasGemv(blas::Transpose trans, uint64 m, uint64 n,
   ThenBlasImpl<blas::Transpose, uint64, uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &, int,
                const DeviceMemory<std::complex<double>> &, int,
-               std::complex<double>, DeviceMemory<std::complex<double>> *,
-               int> impl;
+               std::complex<double>, DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGemv, trans, m, n, alpha, a, lda,
               x, incx, beta, y, incy);
 }
@@ -2920,8 +2961,8 @@ Stream &Stream::ThenBlasGer(uint64 m, uint64 n, float alpha,
             PARAM(incy), PARAM(a), PARAM(lda));
 
   ThenBlasImpl<uint64, uint64, float, const DeviceMemory<float> &, int,
-               const DeviceMemory<float> &, int, DeviceMemory<float> *,
-               int> impl;
+               const DeviceMemory<float> &, int, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGer, m, n, alpha, x, incx, y,
               incy, a, lda);
 }
@@ -2934,8 +2975,8 @@ Stream &Stream::ThenBlasGer(uint64 m, uint64 n, double alpha,
             PARAM(incy), PARAM(a), PARAM(lda));
 
   ThenBlasImpl<uint64, uint64, double, const DeviceMemory<double> &, int,
-               const DeviceMemory<double> &, int, DeviceMemory<double> *,
-               int> impl;
+               const DeviceMemory<double> &, int, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGer, m, n, alpha, x, incx, y,
               incy, a, lda);
 }
@@ -2952,7 +2993,8 @@ Stream &Stream::ThenBlasGerc(uint64 m, uint64 n, std::complex<float> alpha,
   ThenBlasImpl<uint64, uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &, int,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGerc, m, n, alpha, x, incx, y,
               incy, a, lda);
 }
@@ -2969,7 +3011,8 @@ Stream &Stream::ThenBlasGerc(uint64 m, uint64 n, std::complex<double> alpha,
   ThenBlasImpl<uint64, uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &, int,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGerc, m, n, alpha, x, incx, y,
               incy, a, lda);
 }
@@ -2986,7 +3029,8 @@ Stream &Stream::ThenBlasGeru(uint64 m, uint64 n, std::complex<float> alpha,
   ThenBlasImpl<uint64, uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &, int,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGeru, m, n, alpha, x, incx, y,
               incy, a, lda);
 }
@@ -3003,7 +3047,8 @@ Stream &Stream::ThenBlasGeru(uint64 m, uint64 n, std::complex<double> alpha,
   ThenBlasImpl<uint64, uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &, int,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasGeru, m, n, alpha, x, incx, y,
               incy, a, lda);
 }
@@ -3021,8 +3066,8 @@ Stream &Stream::ThenBlasHbmv(blas::UpperLower uplo, uint64 n, uint64 k,
   ThenBlasImpl<blas::UpperLower, uint64, uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &, int,
                const DeviceMemory<std::complex<float>> &, int,
-               std::complex<float>, DeviceMemory<std::complex<float>> *,
-               int> impl;
+               std::complex<float>, DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHbmv, uplo, n, k, alpha, a, lda,
               x, incx, beta, y, incy);
 }
@@ -3040,8 +3085,8 @@ Stream &Stream::ThenBlasHbmv(blas::UpperLower uplo, uint64 n, uint64 k,
   ThenBlasImpl<blas::UpperLower, uint64, uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &, int,
                const DeviceMemory<std::complex<double>> &, int,
-               std::complex<double>, DeviceMemory<std::complex<double>> *,
-               int> impl;
+               std::complex<double>, DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHbmv, uplo, n, k, alpha, a, lda,
               x, incx, beta, y, incy);
 }
@@ -3059,8 +3104,8 @@ Stream &Stream::ThenBlasHemv(blas::UpperLower uplo, uint64 n,
   ThenBlasImpl<blas::UpperLower, uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &, int,
                const DeviceMemory<std::complex<float>> &, int,
-               std::complex<float>, DeviceMemory<std::complex<float>> *,
-               int> impl;
+               std::complex<float>, DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHemv, uplo, n, alpha, a, lda, x,
               incx, beta, y, incy);
 }
@@ -3078,8 +3123,8 @@ Stream &Stream::ThenBlasHemv(blas::UpperLower uplo, uint64 n,
   ThenBlasImpl<blas::UpperLower, uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &, int,
                const DeviceMemory<std::complex<double>> &, int,
-               std::complex<double>, DeviceMemory<std::complex<double>> *,
-               int> impl;
+               std::complex<double>, DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHemv, uplo, n, alpha, a, lda, x,
               incx, beta, y, incy);
 }
@@ -3093,7 +3138,8 @@ Stream &Stream::ThenBlasHer(blas::UpperLower uplo, uint64 n, float alpha,
 
   ThenBlasImpl<blas::UpperLower, uint64, float,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHer, uplo, n, alpha, x, incx, a,
               lda);
 }
@@ -3107,7 +3153,8 @@ Stream &Stream::ThenBlasHer(blas::UpperLower uplo, uint64 n, double alpha,
 
   ThenBlasImpl<blas::UpperLower, uint64, double,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHer, uplo, n, alpha, x, incx, a,
               lda);
 }
@@ -3125,7 +3172,8 @@ Stream &Stream::ThenBlasHer2(blas::UpperLower uplo, uint64 n,
   ThenBlasImpl<blas::UpperLower, uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &, int,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHer2, uplo, n, alpha, x, incx, y,
               incy, a, lda);
 }
@@ -3143,7 +3191,8 @@ Stream &Stream::ThenBlasHer2(blas::UpperLower uplo, uint64 n,
   ThenBlasImpl<blas::UpperLower, uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &, int,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHer2, uplo, n, alpha, x, incx, y,
               incy, a, lda);
 }
@@ -3160,8 +3209,8 @@ Stream &Stream::ThenBlasHpmv(blas::UpperLower uplo, uint64 n,
   ThenBlasImpl<blas::UpperLower, uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &,
                const DeviceMemory<std::complex<float>> &, int,
-               std::complex<float>, DeviceMemory<std::complex<float>> *,
-               int> impl;
+               std::complex<float>, DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHpmv, uplo, n, alpha, ap, x, incx,
               beta, y, incy);
 }
@@ -3178,8 +3227,8 @@ Stream &Stream::ThenBlasHpmv(blas::UpperLower uplo, uint64 n,
   ThenBlasImpl<blas::UpperLower, uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &,
                const DeviceMemory<std::complex<double>> &, int,
-               std::complex<double>, DeviceMemory<std::complex<double>> *,
-               int> impl;
+               std::complex<double>, DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHpmv, uplo, n, alpha, ap, x, incx,
               beta, y, incy);
 }
@@ -3192,7 +3241,8 @@ Stream &Stream::ThenBlasHpr(blas::UpperLower uplo, uint64 n, float alpha,
 
   ThenBlasImpl<blas::UpperLower, uint64, float,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *> impl;
+               DeviceMemory<std::complex<float>> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHpr, uplo, n, alpha, x, incx, ap);
 }
 
@@ -3204,7 +3254,8 @@ Stream &Stream::ThenBlasHpr(blas::UpperLower uplo, uint64 n, double alpha,
 
   ThenBlasImpl<blas::UpperLower, uint64, double,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *> impl;
+               DeviceMemory<std::complex<double>> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHpr, uplo, n, alpha, x, incx, ap);
 }
 
@@ -3220,7 +3271,8 @@ Stream &Stream::ThenBlasHpr2(blas::UpperLower uplo, uint64 n,
   ThenBlasImpl<blas::UpperLower, uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &, int,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *> impl;
+               DeviceMemory<std::complex<float>> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHpr2, uplo, n, alpha, x, incx, y,
               incy, ap);
 }
@@ -3237,7 +3289,8 @@ Stream &Stream::ThenBlasHpr2(blas::UpperLower uplo, uint64 n,
   ThenBlasImpl<blas::UpperLower, uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &, int,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *> impl;
+               DeviceMemory<std::complex<double>> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHpr2, uplo, n, alpha, x, incx, y,
               incy, ap);
 }
@@ -3251,7 +3304,8 @@ Stream &Stream::ThenBlasSbmv(blas::UpperLower uplo, uint64 n, uint64 k,
 
   ThenBlasImpl<blas::UpperLower, uint64, uint64, float,
                const DeviceMemory<float> &, int, const DeviceMemory<float> &,
-               int, float, DeviceMemory<float> *, int> impl;
+               int, float, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSbmv, uplo, n, k, alpha, a, lda,
               x, incx, beta, y, incy);
 }
@@ -3265,7 +3319,8 @@ Stream &Stream::ThenBlasSbmv(blas::UpperLower uplo, uint64 n, uint64 k,
 
   ThenBlasImpl<blas::UpperLower, uint64, uint64, double,
                const DeviceMemory<double> &, int, const DeviceMemory<double> &,
-               int, double, DeviceMemory<double> *, int> impl;
+               int, double, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSbmv, uplo, n, k, alpha, a, lda,
               x, incx, beta, y, incy);
 }
@@ -3279,7 +3334,8 @@ Stream &Stream::ThenBlasSpmv(blas::UpperLower uplo, uint64 n, float alpha,
 
   ThenBlasImpl<blas::UpperLower, uint64, float, const DeviceMemory<float> &,
                const DeviceMemory<float> &, int, float, DeviceMemory<float> *,
-               int> impl;
+               int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSpmv, uplo, n, alpha, ap, x, incx,
               beta, y, incy);
 }
@@ -3293,7 +3349,8 @@ Stream &Stream::ThenBlasSpmv(blas::UpperLower uplo, uint64 n, double alpha,
 
   ThenBlasImpl<blas::UpperLower, uint64, double, const DeviceMemory<double> &,
                const DeviceMemory<double> &, int, double,
-               DeviceMemory<double> *, int> impl;
+               DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSpmv, uplo, n, alpha, ap, x, incx,
               beta, y, incy);
 }
@@ -3305,7 +3362,8 @@ Stream &Stream::ThenBlasSpr(blas::UpperLower uplo, uint64 n, float alpha,
             PARAM(ap));
 
   ThenBlasImpl<blas::UpperLower, uint64, float, const DeviceMemory<float> &,
-               int, DeviceMemory<float> *> impl;
+               int, DeviceMemory<float> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSpr, uplo, n, alpha, x, incx, ap);
 }
 
@@ -3316,7 +3374,8 @@ Stream &Stream::ThenBlasSpr(blas::UpperLower uplo, uint64 n, double alpha,
             PARAM(ap));
 
   ThenBlasImpl<blas::UpperLower, uint64, double, const DeviceMemory<double> &,
-               int, DeviceMemory<double> *> impl;
+               int, DeviceMemory<double> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSpr, uplo, n, alpha, x, incx, ap);
 }
 
@@ -3328,8 +3387,8 @@ Stream &Stream::ThenBlasSpr2(blas::UpperLower uplo, uint64 n, float alpha,
             PARAM(y), PARAM(incy), PARAM(ap));
 
   ThenBlasImpl<blas::UpperLower, uint64, float, const DeviceMemory<float> &,
-               int, const DeviceMemory<float> &, int,
-               DeviceMemory<float> *> impl;
+               int, const DeviceMemory<float> &, int, DeviceMemory<float> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSpr2, uplo, n, alpha, x, incx, y,
               incy, ap);
 }
@@ -3342,8 +3401,8 @@ Stream &Stream::ThenBlasSpr2(blas::UpperLower uplo, uint64 n, double alpha,
             PARAM(y), PARAM(incy), PARAM(ap));
 
   ThenBlasImpl<blas::UpperLower, uint64, double, const DeviceMemory<double> &,
-               int, const DeviceMemory<double> &, int,
-               DeviceMemory<double> *> impl;
+               int, const DeviceMemory<double> &, int, DeviceMemory<double> *>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSpr2, uplo, n, alpha, x, incx, y,
               incy, ap);
 }
@@ -3357,7 +3416,8 @@ Stream &Stream::ThenBlasSymv(blas::UpperLower uplo, uint64 n, float alpha,
 
   ThenBlasImpl<blas::UpperLower, uint64, float, const DeviceMemory<float> &,
                int, const DeviceMemory<float> &, int, float,
-               DeviceMemory<float> *, int> impl;
+               DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSymv, uplo, n, alpha, a, lda, x,
               incx, beta, y, incy);
 }
@@ -3371,7 +3431,8 @@ Stream &Stream::ThenBlasSymv(blas::UpperLower uplo, uint64 n, double alpha,
 
   ThenBlasImpl<blas::UpperLower, uint64, double, const DeviceMemory<double> &,
                int, const DeviceMemory<double> &, int, double,
-               DeviceMemory<double> *, int> impl;
+               DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSymv, uplo, n, alpha, a, lda, x,
               incx, beta, y, incy);
 }
@@ -3383,7 +3444,8 @@ Stream &Stream::ThenBlasSyr(blas::UpperLower uplo, uint64 n, float alpha,
             PARAM(a), PARAM(lda));
 
   ThenBlasImpl<blas::UpperLower, uint64, float, const DeviceMemory<float> &,
-               int, DeviceMemory<float> *, int> impl;
+               int, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyr, uplo, n, alpha, x, incx, a,
               lda);
 }
@@ -3395,7 +3457,8 @@ Stream &Stream::ThenBlasSyr(blas::UpperLower uplo, uint64 n, double alpha,
             PARAM(a), PARAM(lda));
 
   ThenBlasImpl<blas::UpperLower, uint64, double, const DeviceMemory<double> &,
-               int, DeviceMemory<double> *, int> impl;
+               int, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyr, uplo, n, alpha, x, incx, a,
               lda);
 }
@@ -3409,7 +3472,8 @@ Stream &Stream::ThenBlasSyr2(blas::UpperLower uplo, uint64 n, float alpha,
 
   ThenBlasImpl<blas::UpperLower, uint64, float, const DeviceMemory<float> &,
                int, const DeviceMemory<float> &, int, DeviceMemory<float> *,
-               int> impl;
+               int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyr2, uplo, n, alpha, x, incx, y,
               incy, a, lda);
 }
@@ -3423,7 +3487,8 @@ Stream &Stream::ThenBlasSyr2(blas::UpperLower uplo, uint64 n, double alpha,
 
   ThenBlasImpl<blas::UpperLower, uint64, double, const DeviceMemory<double> &,
                int, const DeviceMemory<double> &, int, DeviceMemory<double> *,
-               int> impl;
+               int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyr2, uplo, n, alpha, x, incx, y,
               incy, a, lda);
 }
@@ -3437,7 +3502,8 @@ Stream &Stream::ThenBlasTbmv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                uint64, const DeviceMemory<float> &, int, DeviceMemory<float> *,
-               int> impl;
+               int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTbmv, uplo, trans, diag, n, k, a,
               lda, x, incx);
 }
@@ -3451,7 +3517,8 @@ Stream &Stream::ThenBlasTbmv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                uint64, const DeviceMemory<double> &, int,
-               DeviceMemory<double> *, int> impl;
+               DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTbmv, uplo, trans, diag, n, k, a,
               lda, x, incx);
 }
@@ -3466,7 +3533,8 @@ Stream &Stream::ThenBlasTbmv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                uint64, const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTbmv, uplo, trans, diag, n, k, a,
               lda, x, incx);
 }
@@ -3481,7 +3549,8 @@ Stream &Stream::ThenBlasTbmv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                uint64, const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTbmv, uplo, trans, diag, n, k, a,
               lda, x, incx);
 }
@@ -3495,7 +3564,8 @@ Stream &Stream::ThenBlasTbsv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                uint64, const DeviceMemory<float> &, int, DeviceMemory<float> *,
-               int> impl;
+               int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTbsv, uplo, trans, diag, n, k, a,
               lda, x, incx);
 }
@@ -3509,7 +3579,8 @@ Stream &Stream::ThenBlasTbsv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                uint64, const DeviceMemory<double> &, int,
-               DeviceMemory<double> *, int> impl;
+               DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTbsv, uplo, trans, diag, n, k, a,
               lda, x, incx);
 }
@@ -3524,7 +3595,8 @@ Stream &Stream::ThenBlasTbsv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                uint64, const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTbsv, uplo, trans, diag, n, k, a,
               lda, x, incx);
 }
@@ -3539,7 +3611,8 @@ Stream &Stream::ThenBlasTbsv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                uint64, const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTbsv, uplo, trans, diag, n, k, a,
               lda, x, incx);
 }
@@ -3552,7 +3625,8 @@ Stream &Stream::ThenBlasTpmv(blas::UpperLower uplo, blas::Transpose trans,
             PARAM(x), PARAM(incx));
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
-               const DeviceMemory<float> &, DeviceMemory<float> *, int> impl;
+               const DeviceMemory<float> &, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTpmv, uplo, trans, diag, n, ap, x,
               incx);
 }
@@ -3565,7 +3639,8 @@ Stream &Stream::ThenBlasTpmv(blas::UpperLower uplo, blas::Transpose trans,
             PARAM(x), PARAM(incx));
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
-               const DeviceMemory<double> &, DeviceMemory<double> *, int> impl;
+               const DeviceMemory<double> &, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTpmv, uplo, trans, diag, n, ap, x,
               incx);
 }
@@ -3579,7 +3654,8 @@ Stream &Stream::ThenBlasTpmv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                const DeviceMemory<std::complex<float>> &,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTpmv, uplo, trans, diag, n, ap, x,
               incx);
 }
@@ -3593,7 +3669,8 @@ Stream &Stream::ThenBlasTpmv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                const DeviceMemory<std::complex<double>> &,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTpmv, uplo, trans, diag, n, ap, x,
               incx);
 }
@@ -3606,7 +3683,8 @@ Stream &Stream::ThenBlasTpsv(blas::UpperLower uplo, blas::Transpose trans,
             PARAM(x), PARAM(incx));
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
-               const DeviceMemory<float> &, DeviceMemory<float> *, int> impl;
+               const DeviceMemory<float> &, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTpsv, uplo, trans, diag, n, ap, x,
               incx);
 }
@@ -3619,7 +3697,8 @@ Stream &Stream::ThenBlasTpsv(blas::UpperLower uplo, blas::Transpose trans,
             PARAM(x), PARAM(incx));
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
-               const DeviceMemory<double> &, DeviceMemory<double> *, int> impl;
+               const DeviceMemory<double> &, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTpsv, uplo, trans, diag, n, ap, x,
               incx);
 }
@@ -3633,7 +3712,8 @@ Stream &Stream::ThenBlasTpsv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                const DeviceMemory<std::complex<float>> &,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTpsv, uplo, trans, diag, n, ap, x,
               incx);
 }
@@ -3647,7 +3727,8 @@ Stream &Stream::ThenBlasTpsv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                const DeviceMemory<std::complex<double>> &,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTpsv, uplo, trans, diag, n, ap, x,
               incx);
 }
@@ -3660,8 +3741,8 @@ Stream &Stream::ThenBlasTrmv(blas::UpperLower uplo, blas::Transpose trans,
             PARAM(lda), PARAM(x), PARAM(incx));
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
-               const DeviceMemory<float> &, int, DeviceMemory<float> *,
-               int> impl;
+               const DeviceMemory<float> &, int, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrmv, uplo, trans, diag, n, a,
               lda, x, incx);
 }
@@ -3674,8 +3755,8 @@ Stream &Stream::ThenBlasTrmv(blas::UpperLower uplo, blas::Transpose trans,
             PARAM(lda), PARAM(x), PARAM(incx));
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
-               const DeviceMemory<double> &, int, DeviceMemory<double> *,
-               int> impl;
+               const DeviceMemory<double> &, int, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrmv, uplo, trans, diag, n, a,
               lda, x, incx);
 }
@@ -3690,7 +3771,8 @@ Stream &Stream::ThenBlasTrmv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrmv, uplo, trans, diag, n, a,
               lda, x, incx);
 }
@@ -3705,7 +3787,8 @@ Stream &Stream::ThenBlasTrmv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrmv, uplo, trans, diag, n, a,
               lda, x, incx);
 }
@@ -3718,8 +3801,8 @@ Stream &Stream::ThenBlasTrsv(blas::UpperLower uplo, blas::Transpose trans,
             PARAM(lda), PARAM(x), PARAM(incx));
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
-               const DeviceMemory<float> &, int, DeviceMemory<float> *,
-               int> impl;
+               const DeviceMemory<float> &, int, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrsv, uplo, trans, diag, n, a,
               lda, x, incx);
 }
@@ -3732,8 +3815,8 @@ Stream &Stream::ThenBlasTrsv(blas::UpperLower uplo, blas::Transpose trans,
             PARAM(lda), PARAM(x), PARAM(incx));
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
-               const DeviceMemory<double> &, int, DeviceMemory<double> *,
-               int> impl;
+               const DeviceMemory<double> &, int, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrsv, uplo, trans, diag, n, a,
               lda, x, incx);
 }
@@ -3748,7 +3831,8 @@ Stream &Stream::ThenBlasTrsv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrsv, uplo, trans, diag, n, a,
               lda, x, incx);
 }
@@ -3763,7 +3847,8 @@ Stream &Stream::ThenBlasTrsv(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, blas::Diagonal, uint64,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrsv, uplo, trans, diag, n, a,
               lda, x, incx);
 }
@@ -3952,8 +4037,8 @@ Stream &Stream::ThenBlasHemm(blas::Side side, blas::UpperLower uplo, uint64 m,
   ThenBlasImpl<blas::Side, blas::UpperLower, uint64, uint64,
                std::complex<float>, const DeviceMemory<std::complex<float>> &,
                int, const DeviceMemory<std::complex<float>> &, int,
-               std::complex<float>, DeviceMemory<std::complex<float>> *,
-               int> impl;
+               std::complex<float>, DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHemm, side, uplo, m, n, alpha, a,
               lda, b, ldb, beta, c, ldc);
 }
@@ -3972,8 +4057,8 @@ Stream &Stream::ThenBlasHemm(blas::Side side, blas::UpperLower uplo, uint64 m,
   ThenBlasImpl<blas::Side, blas::UpperLower, uint64, uint64,
                std::complex<double>, const DeviceMemory<std::complex<double>> &,
                int, const DeviceMemory<std::complex<double>> &, int,
-               std::complex<double>, DeviceMemory<std::complex<double>> *,
-               int> impl;
+               std::complex<double>, DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHemm, side, uplo, m, n, alpha, a,
               lda, b, ldb, beta, c, ldc);
 }
@@ -3988,7 +4073,8 @@ Stream &Stream::ThenBlasHerk(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64, float,
                const DeviceMemory<std::complex<float>> &, int, float,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHerk, uplo, trans, n, k, alpha, a,
               lda, beta, c, ldc);
 }
@@ -4003,7 +4089,8 @@ Stream &Stream::ThenBlasHerk(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64, double,
                const DeviceMemory<std::complex<double>> &, int, double,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHerk, uplo, trans, n, k, alpha, a,
               lda, beta, c, ldc);
 }
@@ -4022,7 +4109,8 @@ Stream &Stream::ThenBlasHer2k(blas::UpperLower uplo, blas::Transpose trans,
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64,
                std::complex<float>, const DeviceMemory<std::complex<float>> &,
                int, const DeviceMemory<std::complex<float>> &, int, float,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHer2k, uplo, trans, n, k, alpha,
               a, lda, b, ldb, beta, c, ldc);
 }
@@ -4041,7 +4129,8 @@ Stream &Stream::ThenBlasHer2k(blas::UpperLower uplo, blas::Transpose trans,
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64,
                std::complex<double>, const DeviceMemory<std::complex<double>> &,
                int, const DeviceMemory<std::complex<double>> &, int, double,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasHer2k, uplo, trans, n, k, alpha,
               a, lda, b, ldb, beta, c, ldc);
 }
@@ -4057,7 +4146,8 @@ Stream &Stream::ThenBlasSymm(blas::Side side, blas::UpperLower uplo, uint64 m,
 
   ThenBlasImpl<blas::Side, blas::UpperLower, uint64, uint64, float,
                const DeviceMemory<float> &, int, const DeviceMemory<float> &,
-               int, float, DeviceMemory<float> *, int> impl;
+               int, float, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSymm, side, uplo, m, n, alpha, a,
               lda, b, ldb, beta, c, ldc);
 }
@@ -4073,7 +4163,8 @@ Stream &Stream::ThenBlasSymm(blas::Side side, blas::UpperLower uplo, uint64 m,
 
   ThenBlasImpl<blas::Side, blas::UpperLower, uint64, uint64, double,
                const DeviceMemory<double> &, int, const DeviceMemory<double> &,
-               int, double, DeviceMemory<double> *, int> impl;
+               int, double, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSymm, side, uplo, m, n, alpha, a,
               lda, b, ldb, beta, c, ldc);
 }
@@ -4092,8 +4183,8 @@ Stream &Stream::ThenBlasSymm(blas::Side side, blas::UpperLower uplo, uint64 m,
   ThenBlasImpl<blas::Side, blas::UpperLower, uint64, uint64,
                std::complex<float>, const DeviceMemory<std::complex<float>> &,
                int, const DeviceMemory<std::complex<float>> &, int,
-               std::complex<float>, DeviceMemory<std::complex<float>> *,
-               int> impl;
+               std::complex<float>, DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSymm, side, uplo, m, n, alpha, a,
               lda, b, ldb, beta, c, ldc);
 }
@@ -4112,8 +4203,8 @@ Stream &Stream::ThenBlasSymm(blas::Side side, blas::UpperLower uplo, uint64 m,
   ThenBlasImpl<blas::Side, blas::UpperLower, uint64, uint64,
                std::complex<double>, const DeviceMemory<std::complex<double>> &,
                int, const DeviceMemory<std::complex<double>> &, int,
-               std::complex<double>, DeviceMemory<std::complex<double>> *,
-               int> impl;
+               std::complex<double>, DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSymm, side, uplo, m, n, alpha, a,
               lda, b, ldb, beta, c, ldc);
 }
@@ -4127,7 +4218,8 @@ Stream &Stream::ThenBlasSyrk(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64, float,
                const DeviceMemory<float> &, int, float, DeviceMemory<float> *,
-               int> impl;
+               int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyrk, uplo, trans, n, k, alpha, a,
               lda, beta, c, ldc);
 }
@@ -4141,7 +4233,8 @@ Stream &Stream::ThenBlasSyrk(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64, double,
                const DeviceMemory<double> &, int, double,
-               DeviceMemory<double> *, int> impl;
+               DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyrk, uplo, trans, n, k, alpha, a,
               lda, beta, c, ldc);
 }
@@ -4157,7 +4250,8 @@ Stream &Stream::ThenBlasSyrk(blas::UpperLower uplo, blas::Transpose trans,
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64,
                std::complex<float>, const DeviceMemory<std::complex<float>> &,
                int, std::complex<float>, DeviceMemory<std::complex<float>> *,
-               int> impl;
+               int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyrk, uplo, trans, n, k, alpha, a,
               lda, beta, c, ldc);
 }
@@ -4173,7 +4267,8 @@ Stream &Stream::ThenBlasSyrk(blas::UpperLower uplo, blas::Transpose trans,
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64,
                std::complex<double>, const DeviceMemory<std::complex<double>> &,
                int, std::complex<double>, DeviceMemory<std::complex<double>> *,
-               int> impl;
+               int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyrk, uplo, trans, n, k, alpha, a,
               lda, beta, c, ldc);
 }
@@ -4189,7 +4284,8 @@ Stream &Stream::ThenBlasSyr2k(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64, float,
                const DeviceMemory<float> &, int, const DeviceMemory<float> &,
-               int, float, DeviceMemory<float> *, int> impl;
+               int, float, DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyr2k, uplo, trans, n, k, alpha,
               a, lda, b, ldb, beta, c, ldc);
 }
@@ -4205,7 +4301,8 @@ Stream &Stream::ThenBlasSyr2k(blas::UpperLower uplo, blas::Transpose trans,
 
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64, double,
                const DeviceMemory<double> &, int, const DeviceMemory<double> &,
-               int, double, DeviceMemory<double> *, int> impl;
+               int, double, DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyr2k, uplo, trans, n, k, alpha,
               a, lda, b, ldb, beta, c, ldc);
 }
@@ -4224,8 +4321,8 @@ Stream &Stream::ThenBlasSyr2k(blas::UpperLower uplo, blas::Transpose trans,
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64,
                std::complex<float>, const DeviceMemory<std::complex<float>> &,
                int, const DeviceMemory<std::complex<float>> &, int,
-               std::complex<float>, DeviceMemory<std::complex<float>> *,
-               int> impl;
+               std::complex<float>, DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyr2k, uplo, trans, n, k, alpha,
               a, lda, b, ldb, beta, c, ldc);
 }
@@ -4244,8 +4341,8 @@ Stream &Stream::ThenBlasSyr2k(blas::UpperLower uplo, blas::Transpose trans,
   ThenBlasImpl<blas::UpperLower, blas::Transpose, uint64, uint64,
                std::complex<double>, const DeviceMemory<std::complex<double>> &,
                int, const DeviceMemory<std::complex<double>> &, int,
-               std::complex<double>, DeviceMemory<std::complex<double>> *,
-               int> impl;
+               std::complex<double>, DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasSyr2k, uplo, trans, n, k, alpha,
               a, lda, b, ldb, beta, c, ldc);
 }
@@ -4260,7 +4357,8 @@ Stream &Stream::ThenBlasTrmm(blas::Side side, blas::UpperLower uplo,
 
   ThenBlasImpl<blas::Side, blas::UpperLower, blas::Transpose, blas::Diagonal,
                uint64, uint64, float, const DeviceMemory<float> &, int,
-               DeviceMemory<float> *, int> impl;
+               DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrmm, side, uplo, transa, diag, m,
               n, alpha, a, lda, b, ldb);
 }
@@ -4275,7 +4373,8 @@ Stream &Stream::ThenBlasTrmm(blas::Side side, blas::UpperLower uplo,
 
   ThenBlasImpl<blas::Side, blas::UpperLower, blas::Transpose, blas::Diagonal,
                uint64, uint64, double, const DeviceMemory<double> &, int,
-               DeviceMemory<double> *, int> impl;
+               DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrmm, side, uplo, transa, diag, m,
               n, alpha, a, lda, b, ldb);
 }
@@ -4292,7 +4391,8 @@ Stream &Stream::ThenBlasTrmm(blas::Side side, blas::UpperLower uplo,
   ThenBlasImpl<blas::Side, blas::UpperLower, blas::Transpose, blas::Diagonal,
                uint64, uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrmm, side, uplo, transa, diag, m,
               n, alpha, a, lda, b, ldb);
 }
@@ -4309,7 +4409,8 @@ Stream &Stream::ThenBlasTrmm(blas::Side side, blas::UpperLower uplo,
   ThenBlasImpl<blas::Side, blas::UpperLower, blas::Transpose, blas::Diagonal,
                uint64, uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrmm, side, uplo, transa, diag, m,
               n, alpha, a, lda, b, ldb);
 }
@@ -4324,7 +4425,8 @@ Stream &Stream::ThenBlasTrsm(blas::Side side, blas::UpperLower uplo,
 
   ThenBlasImpl<blas::Side, blas::UpperLower, blas::Transpose, blas::Diagonal,
                uint64, uint64, float, const DeviceMemory<float> &, int,
-               DeviceMemory<float> *, int> impl;
+               DeviceMemory<float> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrsm, side, uplo, transa, diag, m,
               n, alpha, a, lda, b, ldb);
 }
@@ -4339,7 +4441,8 @@ Stream &Stream::ThenBlasTrsm(blas::Side side, blas::UpperLower uplo,
 
   ThenBlasImpl<blas::Side, blas::UpperLower, blas::Transpose, blas::Diagonal,
                uint64, uint64, double, const DeviceMemory<double> &, int,
-               DeviceMemory<double> *, int> impl;
+               DeviceMemory<double> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrsm, side, uplo, transa, diag, m,
               n, alpha, a, lda, b, ldb);
 }
@@ -4356,7 +4459,8 @@ Stream &Stream::ThenBlasTrsm(blas::Side side, blas::UpperLower uplo,
   ThenBlasImpl<blas::Side, blas::UpperLower, blas::Transpose, blas::Diagonal,
                uint64, uint64, std::complex<float>,
                const DeviceMemory<std::complex<float>> &, int,
-               DeviceMemory<std::complex<float>> *, int> impl;
+               DeviceMemory<std::complex<float>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrsm, side, uplo, transa, diag, m,
               n, alpha, a, lda, b, ldb);
 }
@@ -4373,7 +4477,8 @@ Stream &Stream::ThenBlasTrsm(blas::Side side, blas::UpperLower uplo,
   ThenBlasImpl<blas::Side, blas::UpperLower, blas::Transpose, blas::Diagonal,
                uint64, uint64, std::complex<double>,
                const DeviceMemory<std::complex<double>> &, int,
-               DeviceMemory<std::complex<double>> *, int> impl;
+               DeviceMemory<std::complex<double>> *, int>
+      impl;
   return impl(this, &blas::BlasSupport::DoBlasTrsm, side, uplo, transa, diag, m,
               n, alpha, a, lda, b, ldb);
 }
@@ -4582,8 +4687,10 @@ Stream &Stream::ThenRnnForward(
   // TODO(zhengxq): add VLOG PARAM calls.
   if (ok()) {
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
+      DeviceMemory<int> seq_lengths_ptr;
       auto status = dnn->DoRnnForward(
-          this, rnn_desc, input_desc, input_data, input_h_desc, input_h_data,
+          this, rnn_desc, input_desc, input_data,
+          /*seq_lengths_data*/ seq_lengths_ptr, input_h_desc, input_h_data,
           input_c_desc, input_c_data, params, output_desc, output_data,
           output_h_desc, output_h_data, output_c_desc, output_c_data,
           is_training, reserve_space_allocator, workspace_allocator,
@@ -4618,8 +4725,10 @@ Stream &Stream::ThenRnnForward(
   // TODO(zhengxq): add VLOG PARAM calls.
   if (ok()) {
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
+      DeviceMemory<int> seq_lengths_ptr;
       auto status = dnn->DoRnnForward(
-          this, rnn_desc, input_desc, input_data, input_h_desc, input_h_data,
+          this, rnn_desc, input_desc, input_data,
+          /*seq_lengths_data*/ seq_lengths_ptr, input_h_desc, input_h_data,
           input_c_desc, input_c_data, params, output_desc, output_data,
           output_h_desc, output_h_data, output_c_desc, output_c_data,
           is_training, reserve_space_allocator, workspace_allocator,
@@ -4655,8 +4764,10 @@ Stream &Stream::ThenRnnForward(
   // TODO(zhengxq): add VLOG PARAM calls.
   if (ok()) {
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
+      DeviceMemory<int> seq_lengths_ptr;
       auto status = dnn->DoRnnForward(
-          this, rnn_desc, input_desc, input_data, input_h_desc, input_h_data,
+          this, rnn_desc, input_desc, input_data,
+          /*seq_lengths_data*/ seq_lengths_ptr, input_h_desc, input_h_data,
           input_c_desc, input_c_data, params, output_desc, output_data,
           output_h_desc, output_h_data, output_c_desc, output_c_data,
           is_training, reserve_space_allocator, workspace_allocator,
@@ -4699,8 +4810,10 @@ Stream &Stream::ThenRnnBackward(
   // TODO(zhengxq): add VLOG PARAM calls.
   if (ok()) {
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
+      DeviceMemory<int> seq_lengths_ptr;
       auto status = dnn->DoRnnBackward(
-          this, rnn_desc, input_desc, input_data, input_h_desc, input_h_data,
+          this, rnn_desc, input_desc, input_data,
+          /*seq_lengths_data*/ seq_lengths_ptr, input_h_desc, input_h_data,
           input_c_desc, input_c_data, params, output_desc, output_data,
           output_h_desc, output_h_data, output_c_desc, output_c_data,
           output_backprop_data, output_h_backprop_data, output_c_backprop_data,
@@ -4745,8 +4858,10 @@ Stream &Stream::ThenRnnBackward(
   // TODO(zhengxq): add VLOG PARAM calls.
   if (ok()) {
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
+      DeviceMemory<int> seq_lengths_ptr;
       auto status = dnn->DoRnnBackward(
-          this, rnn_desc, input_desc, input_data, input_h_desc, input_h_data,
+          this, rnn_desc, input_desc, input_data,
+          /*seq_lengths_data*/ seq_lengths_ptr, input_h_desc, input_h_data,
           input_c_desc, input_c_data, params, output_desc, output_data,
           output_h_desc, output_h_data, output_c_desc, output_c_data,
           output_backprop_data, output_h_backprop_data, output_c_backprop_data,
@@ -4792,8 +4907,10 @@ Stream &Stream::ThenRnnBackward(
   // TODO(zhengxq): add VLOG PARAM calls.
   if (ok()) {
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
+      DeviceMemory<int> seq_lengths_ptr;
       auto status = dnn->DoRnnBackward(
-          this, rnn_desc, input_desc, input_data, input_h_desc, input_h_data,
+          this, rnn_desc, input_desc, input_data,
+          /*seq_lengths_data*/ seq_lengths_ptr, input_h_desc, input_h_data,
           input_c_desc, input_c_data, params, output_desc, output_data,
           output_h_desc, output_h_data, output_c_desc, output_c_data,
           output_backprop_data, output_h_backprop_data, output_c_backprop_data,

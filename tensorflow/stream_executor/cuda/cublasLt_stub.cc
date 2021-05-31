@@ -12,17 +12,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#if CUBLAS_VER_MAJOR >= 11
-#include "third_party/gpus/cuda/include/cublas_v2.h"
-#else
-#include "third_party/gpus/cuda/include/cublas.h"
-#endif
+#include "third_party/gpus/cuda/include/cublasLt.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "tensorflow/stream_executor/lib/env.h"
 #include "tensorflow/stream_executor/platform/dso_loader.h"
 
-// Implements the cuBLAS API by forwarding to cuBLAS loaded from the DSO.
-// Note that it does not implement the v1 interface.
+// Implements the cuBLASLt API by forwarding to cuBLASLt loaded from the DSO.
 
 namespace {
 // Returns DSO handle or null if loading the DSO fails.
@@ -31,7 +26,8 @@ void* GetDsoHandle() {
   return nullptr;
 #else
   static auto handle = []() -> void* {
-    auto handle_or = stream_executor::internal::DsoLoader::GetCublasDsoHandle();
+    auto handle_or =
+        stream_executor::internal::DsoLoader::GetCublasLtDsoHandle();
     if (!handle_or.ok()) return nullptr;
     return handle_or.ValueOrDie();
   }();
@@ -57,18 +53,7 @@ void LogFatalSymbolNotFound(const char* symbol_name) {
 cublasStatus_t GetSymbolNotFoundError() { return CUBLAS_STATUS_INTERNAL_ERROR; }
 }  // namespace
 
-#if CUDA_VERSION < 9000
-typedef enum {} cublasMath_t;
-#endif
-
-#if CUDA_VERSION < 10000
-#include "tensorflow/stream_executor/cuda/cublas_9_0.inc"
-#elif CUDA_VERSION < 10010
-#include "tensorflow/stream_executor/cuda/cublas_10_0.inc"
-#elif CUDA_VERSION < 10020
-#include "tensorflow/stream_executor/cuda/cublas_10_1.inc"
-#elif CUDA_VERSION < 11000
-#include "tensorflow/stream_executor/cuda/cublas_10_2.inc"
-#else
-#include "tensorflow/stream_executor/cuda/cublas_11_0.inc"
+// We only use cublasLt from CUDA 11.0 onward.
+#if CUDA_VERSION >= 11000
+#include "tensorflow/stream_executor/cuda/cublasLt_11_0.inc"
 #endif

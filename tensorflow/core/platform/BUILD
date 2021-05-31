@@ -102,6 +102,14 @@ cc_library(
 )
 
 cc_library(
+    name = "tensor_float_32_utils",
+    srcs = ["tensor_float_32_utils.cc"],
+    hdrs = ["tensor_float_32_utils.h"],
+    copts = tf_copts(),
+    alwayslink = 1,
+)
+
+cc_library(
     name = "env_time",
     srcs = tf_platform_srcs(["env_time.cc"]),
     hdrs = ["env_time.h"],

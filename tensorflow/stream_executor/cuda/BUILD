@@ -88,7 +88,7 @@ cc_library(
 cc_library(
     name = "cuda_stub",
     srcs = if_cuda_is_configured(["cuda_stub.cc"]),
-    textual_hdrs = ["cuda_10_0.inc"],
+    textual_hdrs = glob(["cuda_*.inc"]),
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "//tensorflow/stream_executor/lib",
@@ -230,6 +230,20 @@ cc_library(
     ]),
 )
 
+cc_library(
+    name = "cublas_lt_stub",
+    srcs = if_cuda_is_configured(["cublasLt_stub.cc"]),
+    textual_hdrs = glob(["cublasLt_*.inc"]),
+    deps = if_cuda_is_configured([
+        # LINT.IfChange
+        "@local_config_cuda//cuda:cublas_headers",
+        # LINT.ThenChange(//tensorflow/copy.bara.sky:cublasLt_headers)
+        "@local_config_cuda//cuda:cuda_headers",
+        "//tensorflow/stream_executor/lib",
+        "//tensorflow/stream_executor/platform:dso_loader",
+    ]),
+)
+
 alias(
     name = "cublas_lib",
     actual = select({
@@ -246,6 +260,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         ":cublas_lib",
+        ":cublas_lt_stub",
         ":cuda_activation",
         ":cuda_gpu_executor",
         ":cuda_platform_id",

@@ -1,4 +1,4 @@
-/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,18 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef CUDA_CUDA_CONFIG_H_
-#define CUDA_CUDA_CONFIG_H_
+#include "tensorflow/core/platform/tensor_float_32_utils.h"
 
-#define TF_CUDA_VERSION "%{cuda_version}"
-#define TF_CUDART_VERSION "%{cudart_version}"
-#define TF_CUBLAS_VERSION "%{cublas_version}"
-#define TF_CUSOLVER_VERSION "%{cusolver_version}"
-#define TF_CURAND_VERSION "%{curand_version}"
-#define TF_CUFFT_VERSION "%{cufft_version}"
-#define TF_CUSPARSE_VERSION "%{cusparse_version}"
-#define TF_CUDNN_VERSION "%{cudnn_version}"
+#include <atomic>
 
-#define TF_CUDA_TOOLKIT_PATH "%{cuda_toolkit_path}"
+namespace tensorflow {
 
-#endif  // CUDA_CUDA_CONFIG_H_
+// Whether TensorFloat-32 should be used where supported.
+static std::atomic<bool> tensor_float_32_enabled{true};
+
+void enable_tensor_float_32_execution(bool enabled) {
+  tensor_float_32_enabled = enabled;
+}
+
+bool tensor_float_32_execution_enabled() { return tensor_float_32_enabled; }
+
+}  // namespace tensorflow
