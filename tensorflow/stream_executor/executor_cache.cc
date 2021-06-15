@@ -15,10 +15,40 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/executor_cache.h"
 
+#include "tensorflow/core/util/env_var.h"
+
+#ifdef GOOGLE_CUDA
+#include "tensorflow/stream_executor/gpu/gpu_driver.h"
+#endif
+
+#include "absl/base/call_once.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 
 namespace stream_executor {
+
+namespace {
+static absl::once_flag flag_init;
+static void SetNumCudaContexts(int ordinal, int64 *num_cuda_contexts) {
+  *num_cuda_contexts = 1;
+#ifdef GOOGLE_CUDA
+  gpu::GpuDeviceHandle device;
+  if (gpu::GpuDriver::GetDevice(ordinal, &device).ok()) {
+    int cc_major = 0, cc_minor = 0;
+    gpu::GpuDriver::GetComputeCapability(&cc_major, &cc_minor, device);
+    bool use_mps;
+    tensorflow::ReadBoolFromEnvVar("TF_USE_MPS", false, &use_mps);
+    if (use_mps && cc_major >= 7) {
+      int64 num_contexts_env;
+      tensorflow::ReadInt64FromEnvVar("TF_NUM_CONTEXTS_PER_GPU", 4,
+                                      &num_contexts_env);
+      if (num_contexts_env > 0) *num_cuda_contexts = num_contexts_env;
+      LOG(INFO) << "TF_NUM_CONTEXTS_PER_GPU = " << *num_cuda_contexts;
+    }
+  }
+#endif  // GOOGLE_CUDA
+}
+}  // end namespace
 
 port::StatusOr<StreamExecutor*> ExecutorCache::GetOrCreate(
     const StreamExecutorConfig& config,
@@ -26,15 +56,22 @@ port::StatusOr<StreamExecutor*> ExecutorCache::GetOrCreate(
   // In the fast path case, the cache already has an entry and we can just
   // return after Get() which only takes a shared lock and not a unique lock.
   // If we need to create, we take a unique lock on cache_.
-  auto fast_result = Get(config);
+  static int64 num_cuda_contexts = 1;
+  absl::call_once(flag_init, &SetNumCudaContexts, config.ordinal,
+                  &num_cuda_contexts);
+
+  auto fast_result = Get(config, num_cuda_contexts);
   if (fast_result.ok()) {
     return fast_result;
   }
 
-  Entry* entry = nullptr;
+  LOG(INFO) << "TF_NUM_CONTEXTS_PER_GPU = " << num_cuda_contexts;
+  std::string key = std::to_string(config.ordinal) + "," +
+                    std::to_string(config.virtual_ordinal % num_cuda_contexts);
+  Entry *entry = nullptr;
   {
     absl::MutexLock lock{&mutex_};
-    entry = &cache_[config.ordinal];
+    entry = &cache_[key];
     // Release the map lock; the address of 'entry' is stable because
     // std::map guarantees reference stability.
   }
@@ -64,11 +101,13 @@ port::StatusOr<StreamExecutor*> ExecutorCache::GetOrCreate(
 }
 
 port::StatusOr<StreamExecutor*> ExecutorCache::Get(
-    const StreamExecutorConfig& config) {
-  Entry* entry = nullptr;
+    const StreamExecutorConfig& config, int num_cuda_contexts) {
+  std::string key = std::to_string(config.ordinal) + "," +
+                    std::to_string(config.virtual_ordinal % num_cuda_contexts);
+  Entry *entry = nullptr;
   {
     absl::ReaderMutexLock lock{&mutex_};
-    auto it = cache_.find(config.ordinal);
+    auto it = cache_.find(key);
     if (it != cache_.end()) {
       entry = &it->second;
     } else {
@@ -88,7 +127,7 @@ port::StatusOr<StreamExecutor*> ExecutorCache::Get(
   for (const auto& iter : entry->configurations) {
     if (iter.first.plugin_config == config.plugin_config &&
         iter.first.device_options == config.device_options) {
-      VLOG(2) << "hit in cache for device ordinal " << config.ordinal;
+      VLOG(2) << "hit in cache for device ordinal " << key;
       return iter.second.get();
     }
   }

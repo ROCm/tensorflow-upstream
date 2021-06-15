@@ -107,8 +107,7 @@ Allocator* GPUProcessState::GetGPUAllocator(const GPUOptions& options,
       gpu_visitors_.push_back({});
     }
     GPUMemAllocator* sub_allocator = new GPUMemAllocator(
-        GpuIdUtil::ExecutorForPlatformGpuId(platform_gpu_id).ValueOrDie(),
-        platform_gpu_id,
+        GpuIdUtil::ExecutorForTfGpuId(tf_gpu_id).ValueOrDie(), tf_gpu_id,
         (options.per_process_gpu_memory_fraction() > 1.0 ||
          options.experimental().use_unified_memory()),
         gpu_visitors_[bus_id], {});

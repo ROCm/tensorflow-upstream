@@ -246,6 +246,9 @@ PlatformUtil::GetStreamExecutors(
     device_count =
         GetDebugOptionsFromFlags().xla_force_host_platform_device_count();
   }
+  if (platform->id() == se::cuda::kCudaPlatformId) {
+    device_count = platform->VirtualDeviceCount();
+  }
   std::vector<se::StreamExecutor*> stream_executors(device_count, nullptr);
   VLOG(1) << "Initializing devices";
   {
@@ -258,16 +261,28 @@ PlatformUtil::GetStreamExecutors(
       // allowed_devices, we don't make any allocations on other devices.
       // This helps in multi-process executions on the same host like horovod or
       // shared hosts.
-      if (allowed_devices && allowed_devices->count(i) == 0) {
-        VLOG(1) << "Not initializing StreamExecutor for device " << i
-                << " since it is not in the visible device list";
-        continue;
-      }
-      thread_pool.Schedule([platform, i, &stream_executors]() {
+
+      // The following check is not compatible with GPU virtual_devices option.
+      // if (allowed_devices && allowed_devices->count(i) == 0) {
+      //   VLOG(1) << "Not initializing StreamExecutor for device " << i
+      //           << " since it is not in the visible device list";
+      //   continue;
+      // }
+      thread_pool.Schedule([platform, i, device_count, &stream_executors]() {
         VLOG(1) << "Started device init " << i;
-        se::StreamExecutorConfig config;
-        config.ordinal = i;
-        auto executor_status = platform->GetExecutor(config);
+        int ordinal = i;
+        int virtual_ordinal = 0;
+        if (platform->id() == se::cuda::kCudaPlatformId) {
+          CHECK(platform->VisibleDeviceCount() > 0);
+          int virtual_gpus_per_device =
+              device_count / platform->VisibleDeviceCount();
+          CHECK(virtual_gpus_per_device >= 1);
+          ordinal = i / virtual_gpus_per_device;
+          virtual_ordinal =
+              (virtual_gpus_per_device > 1) ? (i % virtual_gpus_per_device) : 0;
+        }
+        auto executor_status =
+            platform->ExecutorForDevice(ordinal, virtual_ordinal);
         if (executor_status.ok()) {
           se::StreamExecutor* executor = executor_status.ValueOrDie();
           if (IsDeviceSupported(executor)) {

@@ -4,7 +4,7 @@
 # Throughout this file, all targets are built with the standard crosstool and
 # do not link against restricted binary blobs.
 
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//tensorflow:tensorflow.bzl", "tf_cc_test", "tf_copts")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("//tensorflow/core/platform:default/build_config.bzl", "tf_proto_library")
@@ -383,6 +383,7 @@ cc_library(
         "temporary_device_memory.h",
         "temporary_memory_manager.h",
     ],
+    copts = tf_copts(),
     hdrs = [
         "blas.h",
         "dnn.h",
@@ -405,6 +406,7 @@ cc_library(
         "//tensorflow/core:lib",
         "//tensorflow/stream_executor/lib",
         "//tensorflow/stream_executor/platform",
+        "//tensorflow/stream_executor/gpu:gpu_driver_header",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",

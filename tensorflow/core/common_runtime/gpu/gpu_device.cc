@@ -1235,6 +1235,7 @@ Status BaseGPUDeviceFactory::CreateDevices(
     }
   }
   const int num_tf_gpus = next_tf_gpu_id;
+  gpu_manager->SetVirtualDeviceCount(num_tf_gpus);
 
   LocalityMap device_localities;
   TF_RETURN_IF_ERROR(

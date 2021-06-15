@@ -66,7 +66,10 @@ const DeviceOptions GetDeviceOptionsFromEnv() {
 }  // namespace
 
 CudaPlatform::CudaPlatform()
-    : name_("CUDA"), min_numa_node_(0), limit_numa_node_(0) {}
+    : name_("CUDA"),
+      min_numa_node_(0),
+      limit_numa_node_(0),
+      virtual_device_count_(-1) {}
 
 CudaPlatform::~CudaPlatform() {}
 
@@ -138,6 +141,19 @@ int CudaPlatform::VisibleDeviceCount() const {
   return GpuDriver::GetDeviceCount();
 }
 
+int CudaPlatform::VirtualDeviceCount() const {
+  if (virtual_device_count_ == -1) {
+    return VisibleDeviceCount();
+  } else {
+    return virtual_device_count_;
+  }
+}
+
+port::Status CudaPlatform::SetVirtualDeviceCount(int count) {
+  virtual_device_count_ = count;
+  return port::Status::OK();
+}
+
 const string& CudaPlatform::Name() const { return name_; }
 
 port::StatusOr<std::unique_ptr<DeviceDescription>>
@@ -146,8 +162,14 @@ CudaPlatform::DescriptionForDevice(int ordinal) const {
 }
 
 port::StatusOr<StreamExecutor*> CudaPlatform::ExecutorForDevice(int ordinal) {
+  return ExecutorForDevice(ordinal, 0);
+}
+
+port::StatusOr<StreamExecutor*> CudaPlatform::ExecutorForDevice(
+    int ordinal, int virtual_ordinal) {
   StreamExecutorConfig config;
   config.ordinal = ordinal;
+  config.virtual_ordinal = virtual_ordinal;
   config.plugin_config = PluginConfig();
   config.device_options = GetDeviceOptionsFromEnv();
   return GetExecutor(config);
@@ -155,8 +177,15 @@ port::StatusOr<StreamExecutor*> CudaPlatform::ExecutorForDevice(int ordinal) {
 
 port::StatusOr<StreamExecutor*> CudaPlatform::ExecutorForDeviceWithPluginConfig(
     int device_ordinal, const PluginConfig& plugin_config) {
+  return ExecutorForDeviceWithPluginConfig(device_ordinal, 0, plugin_config);
+}
+
+port::StatusOr<StreamExecutor*> CudaPlatform::ExecutorForDeviceWithPluginConfig(
+    int device_ordinal, int virtual_ordinal,
+    const PluginConfig& plugin_config) {
   StreamExecutorConfig config;
   config.ordinal = device_ordinal;
+  config.virtual_ordinal = virtual_ordinal;
   config.plugin_config = plugin_config;
   config.device_options = GetDeviceOptionsFromEnv();
   return GetExecutor(config);
