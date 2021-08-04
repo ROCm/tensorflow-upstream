@@ -35,13 +35,9 @@ limitations under the License.
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/kernels/transpose_functor.h"
 #include "tensorflow/core/platform/stream_executor.h"
+#include "tensorflow/core/util/gpu_solvers.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
-#if GOOGLE_CUDA
-#include "tensorflow/core/util/cuda_solvers.h"
-#elif TENSORFLOW_USE_ROCM
-#include "tensorflow/core/util/rocm_solvers.h"
-#endif
 
 namespace tensorflow {
 
@@ -329,9 +325,8 @@ struct LaunchBatchMatrixTriangularSolve<GPUDevice, Scalar> {
 
     uplo = lower ? CUBLAS_FILL_MODE_UPPER : CUBLAS_FILL_MODE_LOWER;
     trans = adjoint ? CUBLAS_OP_C : CUBLAS_OP_N;
-    auto solver = absl::make_unique<CudaSolver>(context);
-
 #elif TENSORFLOW_USE_ROCM
+
     rocblas_side side = rocblas_side_right;
     rocblas_fill uplo;
     rocblas_operation trans;
@@ -347,16 +342,15 @@ struct LaunchBatchMatrixTriangularSolve<GPUDevice, Scalar> {
     uplo = lower ? rocblas_fill_upper : rocblas_fill_lower;
     trans = adjoint ? rocblas_operation_conjugate_transpose
                     : rocblas_operation_none;
-    auto solver = absl::make_unique<ROCmSolver>(context);
-
 #endif
+    auto solver = absl::make_unique<GpuSolver>(context);
 
     const uint64 leading_dim_matrix = m;
     const uint64 leading_dim_output = n;
     const uint64 colmajor_rows = n;
     const uint64 colmajor_cols = m;
 
-    const int64 batch_size = bcast.output_batch_size();
+    const int64_t batch_size = bcast.output_batch_size();
     std::vector<const Scalar*> a_ptrs;
     std::vector<Scalar*> out_ptrs;
     std::vector<const Scalar*> a_tmp_ptrs;

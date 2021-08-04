@@ -1337,9 +1337,11 @@ tf_kernel_library(
         "where_op_gpu_impl_7.cu.cc",
         "where_op_gpu_impl_8.cu.cc",
     ],
-    deps = if_cuda_or_rocm([
+    deps = if_cuda([
                "//tensorflow/core/util:cuda_solvers",
-           ]) + [":gpu_prim_hdrs"] +
+           ]) + if_rocm([
+	       "//tensorflow/core/util:rocm_solvers",
+	   ]) + [":gpu_prim_hdrs"] +
            ARRAY_DEPS,
 )
 
@@ -1843,6 +1845,7 @@ tf_cuda_cc_test(
     size = "small",
     srcs = ["depthwise_conv_ops_test.cc"],
     tags = tf_cuda_tests_tags() + [
+        "no_gpu",  # TODO(b/194100358): re-enable after flakiness resolved.
         "no_cuda_asan",  # TODO(b/171342266): re-enable.
     ],
     deps = [
@@ -3295,6 +3298,19 @@ tf_cc_test(
     ],
 )
 
+tf_cc_test(
+    name = "resource_ops_test",
+    size = "small",
+    srcs = ["resource_ops_test.cc"],
+    deps = [
+        ":dense_update_functor",
+        ":ops_testutil",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
+)
+
 MATH_DEPS = [
     ":fill_functor",
     "//tensorflow/core:core_cpu",
@@ -3493,7 +3509,10 @@ tf_kernel_library(
     prefix = "segment_reduction_ops",
     deps = MATH_DEPS + if_cuda_or_rocm([
         ":gpu_prim_helpers",
+    ]) + if_cuda([
         "//tensorflow/core/util:cuda_solvers",
+    ]) + if_rocm([
+        "//tensorflow/core/util:rocm_solvers",
     ]),
 )
 
@@ -4129,15 +4148,11 @@ tf_kernel_library(
 
 tf_kernel_library(
     name = "softsign_op",
-    copts = if_mlir_generated_experimental_kernels_enabled(
-        ["-DMLIR_GENERATED_EXPERIMENTAL_KERNELS_ENABLED"],
-    ) + if_mlir_generated_gpu_kernels_enabled(
+    copts = if_mlir_generated_gpu_kernels_enabled(
         ["-DMLIR_GENERATED_GPU_KERNELS_ENABLED"],
     ),
     # *.cu.cc sources are compiled with gpu_copts instead of copts.
-    gpu_copts = if_mlir_generated_experimental_kernels_enabled(
-        ["-DMLIR_GENERATED_EXPERIMENTAL_KERNELS_ENABLED"],
-    ) + if_mlir_generated_gpu_kernels_enabled(
+    gpu_copts = if_mlir_generated_gpu_kernels_enabled(
         ["-DMLIR_GENERATED_GPU_KERNELS_ENABLED"],
     ),
     prefix = "softsign_op",

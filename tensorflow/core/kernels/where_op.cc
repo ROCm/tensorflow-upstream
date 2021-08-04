@@ -39,7 +39,7 @@ limitations under the License.
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/common_runtime/gpu/gpu_event_mgr.h"
-#include "tensorflow/core/util/cuda_solvers.h"
+#include "tensorflow/core/util/gpu_solvers.h"
 #if GOOGLE_CUDA
 #include "tensorflow/stream_executor/cuda/cuda_activation.h"
 using stream_executor::cuda::ScopedActivateExecutorContext;
@@ -59,7 +59,7 @@ namespace functor {
 namespace {
 template <typename T>
 int64 CountAccumulator(const T* begin, const T* end) {
-  return std::accumulate(begin, end, 0LL, [](int64 accum, const T& val) {
+  return std::accumulate(begin, end, 0LL, [](int64_t accum, const T& val) {
     return accum + (val != T(0));
   });
 }
@@ -140,7 +140,7 @@ class WhereCPUOp : public OpKernel {
 
     const int input_dims = input.dims();
 
-    int64 num_true;
+    int64_t num_true;
     TTypes<int64>::UnalignedScalar num_true_t(&num_true);
 
     Status s = functor::NumTrue<CPUDevice, T, int64>::Compute(
@@ -154,7 +154,7 @@ class WhereCPUOp : public OpKernel {
     // TODO(ebrevdo): Replace single-threaded copy with a multithreaded block
     // copy by getting block counts above instead of a global NumTrue, then
     // having each block filled in separate threads below.
-    int64 found_true = 0;
+    int64_t found_true = 0;
 
 #define HANDLE_DIM(NDIM)                                                      \
   case NDIM: {                                                                \

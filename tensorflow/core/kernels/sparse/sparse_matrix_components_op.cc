@@ -30,7 +30,7 @@ limitations under the License.
 #include "tensorflow/core/kernels/sparse/sparse_matrix.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#include "tensorflow/core/util/cuda_solvers.h"
+#include "tensorflow/core/util/gpu_solvers.h"
 #include "tensorflow/core/util/cuda_sparse.h"
 #endif
 
@@ -57,7 +57,7 @@ class CSRSparseMatrixComponentsOp : public OpKernel {
     OP_REQUIRES(c, index_t.dims() == 0,
                 errors::InvalidArgument("index should be a scalar, but saw: ",
                                         index_t.DebugString()));
-    int32 index = index_t.scalar<int32>()();
+    int32_t index = index_t.scalar<int32>()();
     OP_REQUIRES(c, index >= 0 && index < csr_sparse_matrix->batch_size(),
                 errors::InvalidArgument("index (", index, ") not in [0, ",
                                         csr_sparse_matrix->batch_size(), ")"));

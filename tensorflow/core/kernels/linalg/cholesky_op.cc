@@ -34,7 +34,7 @@ limitations under the License.
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/kernels/linalg/matrix_band_part_op.h"
 #include "tensorflow/core/platform/stream_executor.h"
-#include "tensorflow/core/util/cuda_solvers.h"
+#include "tensorflow/core/util/gpu_solvers.h"
 #endif
 
 namespace tensorflow {
@@ -99,7 +99,7 @@ class CholeskyOpGpu : public AsyncOpKernel {
   void ComputeAsync(OpKernelContext* context, DoneCallback done) final {
     const Tensor& input = context->input(0);
     const int ndims = input.dims();
-    const int64 n = input.dim_size(ndims - 1);
+    const int64_t n = input.dim_size(ndims - 1);
     // Validate inputs.
     OP_REQUIRES_ASYNC(
         context, ndims >= 2,
@@ -121,7 +121,7 @@ class CholeskyOpGpu : public AsyncOpKernel {
 
     // Allocate output.
     // TODO(rmlarsen): Convert to std::make_unique when available.
-    std::unique_ptr<CudaSolver> solver(new CudaSolver(context));
+    std::unique_ptr<GpuSolver> solver(new GpuSolver(context));
     Tensor* output;
     OP_REQUIRES_OK_ASYNC(context,
                          context->forward_input_or_allocate_output(
@@ -140,7 +140,7 @@ class CholeskyOpGpu : public AsyncOpKernel {
               output_reshaped);
 
     // Launch a Cholesky kernel for each matrix in the batch.
-    const int64 batch_size = input_reshaped.dimension(0);
+    const int64_t batch_size = input_reshaped.dimension(0);
     std::vector<DeviceLapackInfo> dev_info;
 
 #if CUDA_VERSION >= 9020
@@ -202,7 +202,7 @@ class CholeskyOpGpu : public AsyncOpKernel {
                         done);
       done();
     };
-    CudaSolver::CheckLapackInfoAndDeleteSolverAsync(std::move(solver), dev_info,
+    GpuSolver::CheckLapackInfoAndDeleteSolverAsync(std::move(solver), dev_info,
                                                     std::move(info_checker));
   }
 };
