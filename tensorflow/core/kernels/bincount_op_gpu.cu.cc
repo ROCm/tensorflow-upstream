@@ -203,7 +203,8 @@ struct BincountReduceFunctor<GPUDevice, Tidx, T, binary_count> {
     const int num_cols = in.dimension(1);
 
     auto d = context->eigen_gpu_device();
-    GpuLaunchConfig config = GetGpuLaunchConfig(max(1, num_rows * num_cols), d);
+    GpuLaunchConfig config = GetGpuLaunchConfig(num_rows * num_cols, d);
+    // GpuLaunchConfig config = GetGpuLaunchConfig(max(1, num_rows * num_cols), d);
 
     // Use half of maximum shared memory, approximately 6 * 1024 inputs.
     int smem_max = d.sharedMemPerBlock() / 2;
