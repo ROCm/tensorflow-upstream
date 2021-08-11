@@ -54,6 +54,7 @@ limitations under the License.
 #include "tensorflow/core/kernels/conv_ops_gpu.h"
 #include "tensorflow/core/platform/stream_executor.h"
 #include "tensorflow/core/protobuf/autotuning.pb.h"
+#include "tensorflow/core/util/autotune_maps/conv_parameters.h"
 #include "tensorflow/core/util/proto/proto_utils.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #if GOOGLE_CUDA
@@ -654,13 +655,13 @@ template struct LaunchConv2DBackpropFilterOp<CPUDevice, double>;
 // The slow version (but compiles for GPU)
 
 // A dummy type to group forward backward filter autotune results together.
-struct ConvBackwardFilterAutoTuneGroup {
+struct ConvBackwardFilterAutotuneGroup {
   static string name() { return "ConvBwdFilter"; }
 };
 
-typedef AutoTuneSingleton<ConvBackwardFilterAutoTuneGroup, ConvParameters,
+typedef AutotuneSingleton<ConvBackwardFilterAutotuneGroup, ConvParameters,
                           se::dnn::AlgorithmConfig>
-    AutoTuneConvBwdFilter;
+    AutotuneConvBwdFilter;
 
 template <typename T>
 void LaunchConv2DBackpropFilterOp<Eigen::GpuDevice, T>::operator()(
@@ -987,7 +988,7 @@ void LaunchConv2DBackpropFilterOp<Eigen::GpuDevice, T>::operator()(
 #endif
   AlgorithmConfig algorithm_config;
 
-  if (cudnn_use_autotune && !AutoTuneConvBwdFilter::GetInstance()->Find(
+  if (cudnn_use_autotune && !AutotuneConvBwdFilter::GetInstance()->Find(
                                 conv_parameters, &algorithm_config)) {
     profiler::ScopedAnnotation trace("cudnn_autotuning");
 
@@ -1160,7 +1161,7 @@ void LaunchConv2DBackpropFilterOp<Eigen::GpuDevice, T>::operator()(
       OP_REQUIRES_OK(
           ctx, BestCudnnConvAlgorithm(results, nullptr, &algorithm_config));
     }
-    AutoTuneConvBwdFilter::GetInstance()->Insert(conv_parameters,
+    AutotuneConvBwdFilter::GetInstance()->Insert(conv_parameters,
                                                  algorithm_config);
   }
 
@@ -1171,7 +1172,7 @@ void LaunchConv2DBackpropFilterOp<Eigen::GpuDevice, T>::operator()(
       VLOG(4) << "Conv2DBackpropFilter Execution Plan: "
               << algorithm_config.algorithm()->exec_plan_id();
     } else {
-      VLOG(4) << "Convolution AutoTune has been turned off";
+      VLOG(4) << "Convolution Autotune has been turned off";
     }
     cudnn_launch_status = stream->ConvolveBackwardFilterWithExecutionPlan(
         input_desc, input_ptr, output_desc, out_backprop_ptr, conv_desc,

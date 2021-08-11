@@ -41,6 +41,7 @@ from tensorflow.lite.python import lite
 from tensorflow.lite.python import lite_v2_test_util
 from tensorflow.lite.python import schema_py_generated as schema_fb
 from tensorflow.lite.python import test_util as tflite_test_util
+from tensorflow.lite.python import util
 from tensorflow.lite.python.convert import mlir_quantize
 from tensorflow.lite.python.interpreter import Interpreter
 from tensorflow.lite.python.interpreter import InterpreterWithCustomOps
@@ -809,9 +810,9 @@ class FromConcreteFunctionTest(lite_v2_test_util.ModelTest):
       ('_BlocklistedNodesWithLowering', None, {'PartitionedCall:0'}, True),
       ('_BlocklistedNodesWithoutLowering', None, {'Identity'}, False))
   @test_util.run_v2_only
-  def testNewQuantizerBlocklistingArgs(self, blocklisted_ops, blocklisted_nodes,
+  def testNewQuantizerBlocklistingArgs(self, denylisted_ops, denylisted_nodes,
                                        lower_to_saved_model):
-    """Test the model quantized by the new converter and blocklisted options."""
+    """Test the model quantized by the new converter and denylisted options."""
     root, func, calibration_gen = self._getIntegerQuantizeModel()
     quantized_converter = lite.TFLiteConverterV2.from_concrete_functions([func],
                                                                          root)
@@ -824,15 +825,16 @@ class FromConcreteFunctionTest(lite_v2_test_util.ModelTest):
     quantized_converter._experimental_calibrate_only = True
     quantized_converter.experimental_lower_to_saved_model = lower_to_saved_model
     calibrated = quantized_converter.convert()
-    quantized_tflite_model = mlir_quantize(calibrated,
-                                           blocklisted_ops=blocklisted_ops,
-                                           blocklisted_nodes=blocklisted_nodes)
+    quantized_tflite_model = mlir_quantize(
+        calibrated,
+        denylisted_ops=denylisted_ops,
+        denylisted_nodes=denylisted_nodes)
     interpreter = Interpreter(model_content=quantized_tflite_model)
     details = interpreter.get_tensor_details()
     num_quantized_tensors = sum(
         [1 for detail in details
          if len(detail['quantization_parameters']['scales'])])
-    if blocklisted_nodes or blocklisted_ops:
+    if denylisted_nodes or denylisted_ops:
       self.assertEqual(num_quantized_tensors, 0)
       return
     self.assertEqual(num_quantized_tensors, 4)  # quant, filter, bias, dequant
@@ -1054,6 +1056,64 @@ class FromSavedModelTest(lite_v2_test_util.ModelTest):
       self.assertEqual(np.float32, output_details[0]['dtype'])
       self.assertTrue([1, 16, 16, 3], output_details[0]['shape'])
       self.assertEqual((0., 0.), output_details[0]['quantization'])
+
+  @parameterized.named_parameters(
+      ('Default', False),
+      ('UnfoldLargeConstant', True),
+  )
+  @test_util.run_v2_only
+  def testUnfoldLargeConstant(self, unfold_large_constant):
+    """Test unfolding large splat constant in a TF Lite model."""
+    saved_model_dir = os.path.join(self.get_temp_dir(), 'simple_savedmodel')
+    with tf.Graph().as_default():
+      with tf.compat.v1.Session() as sess:
+        in_tensor = tf.compat.v1.placeholder(
+            shape=[1000, 1000], dtype=tf.float32, name='input')
+        constant = tf.constant(value=1, dtype=tf.float32, shape=[1000, 1000])
+        out_tensor = in_tensor + constant
+        inputs = {'x': in_tensor}
+        outputs = {'y': out_tensor}
+        saved_model.simple_save(sess, saved_model_dir, inputs, outputs)
+
+    # Convert model and ensure model is not None.
+    converter = lite.TFLiteConverterV2.from_saved_model(saved_model_dir)
+    converter._experimental_unfold_large_splat_constant = unfold_large_constant
+    tflite_model = converter.convert()
+    self.assertTrue(tflite_model)
+
+    model = util._convert_model_from_bytearray_to_object(tflite_model)
+    if unfold_large_constant:
+      self.assertEqual(model.operatorCodes[0].builtinCode,
+                       schema_fb.BuiltinOperator.FILL)
+      self.assertEqual(model.operatorCodes[1].builtinCode,
+                       schema_fb.BuiltinOperator.ADD)
+    else:
+      self.assertEqual(model.operatorCodes[0].builtinCode,
+                       schema_fb.BuiltinOperator.ADD)
+
+    # Check values from converted model.
+    interpreter = Interpreter(model_content=tflite_model)
+    interpreter.allocate_tensors()
+
+    input_details = interpreter.get_input_details()
+    self.assertLen(input_details, 1)
+    self.assertEqual('input:0', input_details[0]['name'])
+    self.assertEqual(np.float32, input_details[0]['dtype'])
+    self.assertAllEqual([1000, 1000], input_details[0]['shape'])
+    self.assertEqual((0., 0.), input_details[0]['quantization'])
+
+    output_details = interpreter.get_output_details()
+    self.assertEqual('add:0', output_details[0]['name'])
+    self.assertEqual(np.float32, output_details[0]['dtype'])
+    self.assertAllEqual([1000, 1000], output_details[0]['shape'])
+    self.assertEqual((0., 0.), output_details[0]['quantization'])
+
+    interpreter.set_tensor(input_details[0]['index'],
+                           np.ones(shape=[1000, 1000], dtype=np.float32))
+    interpreter.invoke()
+    self.assertAllEqual(
+        np.full(shape=[1000, 1000], fill_value=2.0, dtype=np.float32),
+        interpreter.get_tensor(output_details[0]['index']))
 
   @test_util.run_v2_only
   def testTF1HubFormattedModel(self):
@@ -1286,11 +1346,10 @@ class FromSavedModelTest(lite_v2_test_util.ModelTest):
     if not enable_resource_variables:
       with self.assertRaises(convert.ConverterError) as error:
         tflite_model = converter.convert()
-      self.assertEqual(
+      self.assertIn(
           'Variable constant folding is failed. Please consider using enabling '
           '`experimental_enable_resource_variables` flag in the TFLite '
-          'converter object. For example, '
-          'converter.experimental_enable_resource_variables = True',
+          'converter object.',
           str(error.exception))
       return
 
@@ -1551,6 +1610,38 @@ class FromSavedModelTest(lite_v2_test_util.ModelTest):
     sub_signature_runner = interpreter.get_signature_runner('sub')
     sub_output = sub_signature_runner(x=input_data)
     self.assertEqual(sub_output['output_0'], -2)
+
+  @test_util.run_v2_only
+  def testMultipleFunctionModelWithSharedWeight(self):
+    """Convert multiple functions with the shared weight."""
+    root = self._getMultiFunctionModelWithSharedWeight()
+    input_data = tf.constant(1., shape=[1])
+    add_func = root.add.get_concrete_function(input_data)
+    sub_func = root.sub.get_concrete_function(input_data)
+    mul_func = root.mul.get_concrete_function(input_data)
+
+    save_dir = os.path.join(self.get_temp_dir(), 'saved_model')
+    save(root, save_dir, {'add': add_func, 'sub': sub_func, 'mul': mul_func})
+
+    # Try converting multiple functions.
+    converter = lite.TFLiteConverterV2.from_saved_model(save_dir)
+    tflite_model = converter.convert()
+    self.assertIsNotNone(tflite_model)
+
+    # Make sure that the weight tensors are shared.
+    self.assertLess(len(tflite_model), 1100000)
+
+    # TODO(b/184696047): Write down the test codes for multiple signature
+    #                    runners once the Python API is ready to use.
+    interpreter = tf.lite.Interpreter(model_content=tflite_model)
+    signature_defs = interpreter.get_signature_list()
+    self.assertLen(signature_defs, 3)
+    add_signature_runner = interpreter.get_signature_runner('add')
+    sub_signature_runner = interpreter.get_signature_runner('sub')
+    mul_signature_runner = interpreter.get_signature_runner('mul')
+    self.assertIsNotNone(add_signature_runner)
+    self.assertIsNotNone(sub_signature_runner)
+    self.assertIsNotNone(mul_signature_runner)
 
   @test_util.run_v2_only
   def testNoConcreteFunctionModel(self):

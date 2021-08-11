@@ -37,6 +37,7 @@ limitations under the License.
 #include "tensorflow/core/kernels/pooling_ops_common.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/array_slice.h"
+#include "tensorflow/core/util/determinism.h"
 #include "tensorflow/core/util/env_var.h"
 #include "tensorflow/core/util/padding.h"
 #include "tensorflow/core/util/tensor_format.h"
@@ -74,6 +75,7 @@ static void SpatialMaxPoolWithArgMaxHelper(
         errors::Internal("SpatialMaxPoolWithArgMaxHelper requires Targmax "
                          "to be int64 when input_backprop != nullptr"));
   }
+  if (tensor_in.NumElements() == 0 || output->NumElements() == 0) return;
 
   typedef Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
       ConstEigenMatrixMap;
@@ -949,6 +951,10 @@ class MaxPoolingWithArgmaxOp : public OpKernel {
 
   void Compute(OpKernelContext* context) override {
     const Tensor& tensor_in = context->input(0);
+    OP_REQUIRES(context, tensor_in.dims() == 4,
+                errors::InvalidArgument("tensor_in must be 4-dimensional (2)"));
+    OP_REQUIRES(context, tensor_in.NumElements() > 0,
+                errors::InvalidArgument("tensor_in must not be empty (2)"));
 
     PoolParameters params{context,
                           ksize_,
@@ -1048,6 +1054,11 @@ class MaxPoolingGradWithArgmaxOp : public OpKernel {
   explicit MaxPoolingGradWithArgmaxOp(OpKernelConstruction* context)
       : OpKernel(context) {
     string data_format_str;
+    if (std::is_same<Device, GPUDevice>::value) {
+      OP_REQUIRES(context, !tensorflow::OpDeterminismRequired(),
+                  errors::Unimplemented("Determinism is not yet supported "
+                                        "for MaxPoolGradWithArgmax."));
+    }
     auto status = context->GetAttr("data_format", &data_format_str);
     if (status.ok()) {
       OP_REQUIRES(context, FormatFromString(data_format_str, &data_format_),

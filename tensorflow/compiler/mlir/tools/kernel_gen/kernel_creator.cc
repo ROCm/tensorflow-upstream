@@ -35,6 +35,7 @@ limitations under the License.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // from @llvm-project
 #include "mlir/Dialect/Linalg/Passes.h"  // from @llvm-project
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"  // from @llvm-project
+#include "mlir/Dialect/MemRef/Transforms/Passes.h"  // from @llvm-project
 #include "mlir/Dialect/SCF/Passes.h"  // from @llvm-project
 #include "mlir/Dialect/SCF/SCF.h"  // from @llvm-project
 #include "mlir/Dialect/SCF/Transforms.h"  // from @llvm-project
@@ -208,6 +209,7 @@ class TileLoops : public mlir::PassWrapper<TileLoops, mlir::FunctionPass> {
 };
 
 Status LowerTFToJITInvocation(mlir::ModuleOp module,
+                              llvm::ArrayRef<std::string> architectures,
                               llvm::ArrayRef<int64_t> tile_sizes,
                               llvm::ArrayRef<int64_t> unroll_factors,
                               int64_t max_supported_rank, bool cpu_codegen) {
@@ -216,7 +218,8 @@ Status LowerTFToJITInvocation(mlir::ModuleOp module,
 
   pm.addNestedPass<mlir::FuncOp>(
       mlir::kernel_gen::transforms::CreateTFToJITInvocationPass(
-          tile_sizes, unroll_factors, max_supported_rank, cpu_codegen));
+          architectures, tile_sizes, unroll_factors, max_supported_rank,
+          cpu_codegen));
   pm.addPass(mlir::kernel_gen::tf_framework::CreateEmbedTFFrameworkPass());
   pm.addPass(
       mlir::kernel_gen::transforms::CreateComputeOpAndFuncBufferizePass());
@@ -259,6 +262,8 @@ Status LowerTFtoLoops(mlir::ModuleOp module, llvm::ArrayRef<int64_t> tile_sizes,
   pm.addNestedPass<mlir::FuncOp>(::mlir::createConvertComplexToStandardPass());
 
   // Fuse linalg operations.
+  pm.addPass(mlir::memref::createResolveShapedTypeResultDimsPass());
+  pm.addPass(mlir::createCanonicalizerPass());
   pm.addNestedPass<mlir::FuncOp>(mlir::createLinalgElementwiseOpFusionPass());
 
   // Partial bufferization: Transforms inparticular HLO and Linalg operations to
@@ -276,6 +281,12 @@ Status LowerTFtoLoops(mlir::ModuleOp module, llvm::ArrayRef<int64_t> tile_sizes,
   // of bufferizing to memref dialect) we can remove the remaining references
   // to unsigned types.
   pm.addPass(mlir::kernel_gen::transforms::CreateConvertToSignlessPass());
+  // Remove UnrealizedConversionCastOps and TensorLoadOps.
+  pm.addNestedPass<mlir::FuncOp>(mlir::createCanonicalizerPass());
+  // Remove copies which are introduced by canonicalizing
+  // BufferCastOp(TensorLoadOp).
+  pm.addNestedPass<mlir::FuncOp>(
+      mlir::kernel_gen::transforms::CreateCopyCleanupPass());
   // Find candidates for buffer reuse. This is only successful if buffer size
   // equality can be determined based on `linalg.generic` operations.
   pm.addNestedPass<mlir::FuncOp>(
@@ -510,8 +521,8 @@ StatusOr<mlir::OwningModuleRef> GenerateKernelForTfCode(
                       SetupContextAndParseModule(context, tf_code));
 
   if (jit_compile) {
-    TF_RETURN_IF_ERROR(LowerTFToJITInvocation(module.get(), tile_sizes,
-                                              unroll_factors,
+    TF_RETURN_IF_ERROR(LowerTFToJITInvocation(module.get(), architectures,
+                                              tile_sizes, unroll_factors,
                                               max_supported_rank, cpu_codegen));
   } else {
     TF_RETURN_IF_ERROR(LowerTFtoLoops(module.get(), tile_sizes, unroll_factors,

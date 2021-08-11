@@ -201,7 +201,7 @@ def : Pat<(TF_RiscDotOp $a, $b, $transpose_a, $transpose_b),
 class DirectLogicalBinaryPat<Op FromOp, Op ToOp>
   : Pat<(FromOp AnyTensor:$l, AnyTensor:$r),
         (ToOp $l, $r, (BinBroadcastDimensions $l, $r)),
-        [(SignedIntTensor $l)]>;
+        [(AnyTypeOf<[SignedIntTensor, UnsignedIntTensor]> $l)]>;
 
 foreach fromToBinPair = [[TF_LogicalAndOp, HLOClient_BroadcastAndOp],
                          [TF_LogicalOrOp, HLOClient_BroadcastOrOp],
@@ -345,7 +345,7 @@ def : Pat<(TF_PadV2Op $input, (ConstantLikeMatcher ElementsAttr:$padding), $c),
 // Identity op patterns.
 //===----------------------------------------------------------------------===//
 
-foreach src = [TF_IdentityOp, TF_StopGradientOp] in
+foreach src = [TF_IdentityOp, TF_StopGradientOp, TF__EagerConstOp] in
   def : Pat<(src $op), (replaceWithValue $op)>;
 
 // TODO(b/32223192): Support CheckNumerics in HLO.

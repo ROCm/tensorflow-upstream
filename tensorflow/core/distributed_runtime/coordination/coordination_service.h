@@ -25,6 +25,7 @@ limitations under the License.
 #include "tensorflow/core/platform/statusor.h"
 
 namespace tensorflow {
+class DeviceAttributes;
 class ServerDef;
 class WorkerEnv;
 
@@ -64,7 +65,7 @@ class CoordinationServiceInterface {
  public:
   using CoordinationServiceFactory =
       std::function<std::unique_ptr<CoordinationServiceInterface>(
-          WorkerEnv* env, const ServerDef& server_def,
+          const WorkerEnv* env, const ServerDef& server_def,
           std::unique_ptr<CoordinationClientCache> cache)>;
 
   using StatusOrValueCallback =
@@ -80,8 +81,8 @@ class CoordinationServiceInterface {
   }
 
   static std::unique_ptr<CoordinationServiceInterface>
-  EnableCoordinationService(const std::string& service_type, WorkerEnv* env,
-                            const ServerDef& server_def,
+  EnableCoordinationService(const std::string& service_type,
+                            const WorkerEnv* env, const ServerDef& server_def,
                             std::unique_ptr<CoordinationClientCache> cache) {
     const auto* factories = GetCoordinationServiceFactories();
     auto factories_iter = factories->find(service_type);
@@ -91,7 +92,9 @@ class CoordinationServiceInterface {
       return nullptr;
     }
     auto service = factories_iter->second(env, server_def, std::move(cache));
-    *GetCoordinationServiceInstancePtr() = service.get();
+    if (service != nullptr) {
+      *GetCoordinationServiceInstancePtr() = service.get();
+    }
     return service;
   }
 
@@ -102,6 +105,7 @@ class CoordinationServiceInterface {
   // Register a worker to the service.
   virtual void RegisterWorker(const std::string& job_name, const int task_id,
                               const uint64 incarnation,
+                              std::vector<DeviceAttributes> devices,
                               StatusCallback done) = 0;
 
   // Wait for all tasks to be up and running. The callback is invoked when all
@@ -137,6 +141,9 @@ class CoordinationServiceInterface {
   virtual Status DeleteKeyValue(const std::string& key) = 0;
 
  private:
+  friend class CoordinationServiceRpcHandler;
+  virtual const std::vector<DeviceAttributes>& ListClusterDevices() = 0;
+
   static std::unordered_map<std::string, CoordinationServiceFactory>*
   GetCoordinationServiceFactories() {
     static auto* coordination_service_factories =

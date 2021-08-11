@@ -739,6 +739,23 @@ class Function(core.GenericFunction):
       add_initializers_to: Where to collect variable initializers, if not None.
     """
 
+    if self._input_signature is not None:
+      arglen = len(self._input_signature)
+      arg_names_len = len(self.function_spec.arg_names)
+      default_arg_len = len(self.function_spec.fullargspec.defaults or ())
+      required_arg_len = arg_names_len - default_arg_len
+      # The input signature must cover all required function arguments.
+      if arglen < required_arg_len:
+        missing_tensor_specs = self.function_spec.arg_names[
+            arglen:required_arg_len]
+        raise TypeError(
+            f"The decorated function {self._name} has {required_arg_len} "
+            f"required argument(s), but tf.function was only passed an "
+            f"input_signature of length {arglen}. This covers {arglen} "
+            f"required argument(s): {self.function_spec.arg_names[:arglen]}, "
+            f"but TensorSpecs are still required for the remaining "
+            f"{len(missing_tensor_specs)} argument(s): {missing_tensor_specs}.")
+
     created_variables = []
     lifted_initializer_graph = func_graph_module.FuncGraph("initializer")
 
@@ -863,7 +880,7 @@ class Function(core.GenericFunction):
       with trace.Trace(self._name, tf_function_call="eager"):
         return self._python_function(*args, **kwds)
 
-    # Only count the statistics the fitst time, before initialization took
+    # Only count the statistics the first time, before initialization took
     # place.
     if self._created_variables is None:
       compiled = bool(self._jit_compile and
@@ -1282,7 +1299,13 @@ def function(func=None,
 
   `tf.function` constructs a `tf.types.experimental.GenericFunction` that
   executes a TensorFlow graph (`tf.Graph`) created by trace-compiling the
-  TensorFlow operations in `func`.
+  TensorFlow operations in `func`. More information on the topic can be found
+  in [Introduction to Graphs and tf.function]
+  (https://www.tensorflow.org/guide/intro_to_graphs).
+
+  See [Better Performance with tf.function]
+  (https://www.tensorflow.org/guide/function) for tips on performance and
+  known limitations.
 
   Example usage:
 
@@ -1553,7 +1576,7 @@ def function(func=None,
     autograph: Whether autograph should be applied on `func` before tracing a
       graph. Data-dependent control flow requires `autograph=True`. For more
       information, see the [tf.function and AutoGraph guide](
-      https://www.tensorflow.org/guide/function).
+      https://www.tensorflow.org/guide/function#autograph_transformations).
     jit_compile: If `True`, compiles the function using
       [XLA](https://tensorflow.org/xla). XLA performs compiler optimizations,
       such as fusion, and attempts to emit more efficient code. This may
@@ -1607,6 +1630,8 @@ def function(func=None,
      `ValueError` when attempting to use `jit_compile=True`, but XLA support is
      not available.
   """
+  if func is not None:
+    function_lib.validate_python_function(func)
   if input_signature is not None:
     function_lib.validate_signature(input_signature)
   if experimental_follow_type_hints is None:

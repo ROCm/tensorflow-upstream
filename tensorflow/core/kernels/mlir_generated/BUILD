@@ -14,7 +14,6 @@ load(
     "if_cuda_or_rocm",
     "tf_cc_test",
 )
-load("//tensorflow:tensorflow.bzl", "get_compatible_with_cloud")  # buildifier: disable=same-origin-load
 load("//tensorflow:tensorflow.bzl", "tf_cuda_cc_test")  # buildifier: disable=same-origin-load
 load("//tensorflow:tensorflow.bzl", "tf_kernel_library")  # buildifier: disable=same-origin-load
 load(
@@ -71,7 +70,6 @@ cc_library(
     name = "base_op",
     srcs = ["base_op.cc"],
     hdrs = ["base_op.h"],
-    compatible_with = get_compatible_with_cloud(),
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
@@ -85,14 +83,12 @@ cc_library(
 cc_library(
     name = "base_gpu_op",
     hdrs = ["base_gpu_op.h"],
-    compatible_with = get_compatible_with_cloud(),
     deps = [":base_op"],
 )
 
 cc_library(
     name = "base_cpu_op",
     hdrs = ["base_cpu_op.h"],
-    compatible_with = get_compatible_with_cloud(),
     deps = [":base_op"],
 )
 
@@ -197,7 +193,7 @@ tf_kernel_library(
     srcs = if_mlir_generated_cpu_kernels_enabled([
     ]) + if_mlir_generated_experimental_kernels_enabled([
         "cpu_op_abs.cc",
-        ":cpu_op_angle.cc",
+        "cpu_op_angle.cc",
         "cpu_op_ceil.cc",
         "cpu_op_cos.cc",
         "cpu_op_floor.cc",
@@ -261,10 +257,9 @@ tf_kernel_library(
         "gpu_op_squared_difference.cc",
         "gpu_op_sub.cc",
         "gpu_op_xdivy.cc",
-        "gpu_op_zeta.cc",
-    ]) + if_mlir_generated_experimental_kernels_enabled([
-        "gpu_op_xlogy.cc",
         "gpu_op_xlog1py.cc",
+        "gpu_op_xlogy.cc",
+        "gpu_op_zeta.cc",
     ]),
     tags = ["manual"],
     deps = if_mlir_generated_gpu_kernels_enabled([
@@ -298,11 +293,10 @@ tf_kernel_library(
         ":gpu_squared_difference_kernels",
         ":gpu_sub_kernels",
         ":gpu_xdivy_kernels",
+        ":gpu_xlog1py_kernels",
+        ":gpu_xlogy_kernels",
         ":gpu_zeta_kernels",
         "//third_party/eigen3",
-    ]) + if_mlir_generated_experimental_kernels_enabled([
-        ":gpu_xlogy_kernels",
-        ":gpu_xlog1py_kernels",
     ]),
 )
 
@@ -483,6 +477,7 @@ cc_library(
     hdrs = ["base_unary_ops_test.h"],
     deps = [
         ":base_ops_test",
+        "//tensorflow/compiler/mlir/tools/kernel_gen:tf_jit_cache",
         "//tensorflow/core:framework",
         "//tensorflow/core:framework_internal",
         "//tensorflow/core:tensorflow",
@@ -1006,6 +1001,7 @@ gpu_kernel_library(
         "c128",
         "i8",
         "i16",
+        "i32",
         "i64",
     ],
     # For complex MulOp kernels, we don't use unrolling, it would only cause
@@ -1506,8 +1502,12 @@ cpu_kernel_library(
         "f16",
         "f32",
         "f64",
+        "i8",
+        "i16",
         "i32",
         "i64",
+        "c64",
+        "c128",
     ],
     unroll_factors = "4",
 )
@@ -1523,11 +1523,6 @@ cpu_kernel_library(
             "i16",
             "i32",
             "i64",
-            # TODO(b/172804967): Enable once fixed.
-            # "ui8",
-            # "ui16",
-            # "ui32",
-            # "ui64",
         ],
         unroll_factors = "4",
     )
@@ -1536,9 +1531,25 @@ cpu_kernel_library(
         "bitwise_or",
         "bitwise_xor",
         "left_shift",
-        "right_shift",
     ]
 ]
+
+cpu_kernel_library(
+    name = "cpu_right_shift_kernels",
+    op = "right_shift",
+    tile_size = "1024",
+    types = [
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "ui8",
+        "ui16",
+        "ui32",
+        "ui64",
+    ],
+    unroll_factors = "4",
+)
 
 gpu_kernel_library(
     name = "gpu_xlogy_kernels",

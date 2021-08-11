@@ -18,6 +18,8 @@ limitations under the License.
 
 #include <string>
 
+#include "tensorflow/core/data/service/common.pb.h"
+#include "tensorflow/core/framework/dataset_options.pb.h"
 #include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/platform/types.h"
@@ -39,16 +41,13 @@ bool IsDynamicShard(const ProcessingModeDef& processing_mode);
 // Returns true if `processing_mode` is static sharding.
 bool IsStaticShard(const ProcessingModeDef& processing_mode);
 
-// Specifies which tf.data service workers to read from.
-enum class TargetWorkers : int64 {
-  UNSET = 0,
-  // tf.data service runtime decides which workers to read from.
-  AUTO = 1,
-  // Reads from any available worker.
-  ANY = 2,
-  // Only reads from local workers. If no local worker is found, it is an error.
-  LOCAL = 3,
-};
+// Returns an internal error if `processing_mode` is invalid.
+Status ValidateProcessingMode(const ProcessingModeDef& processing_mode);
+
+// Converts tf.data service `sharding_policy` to `AutoShardPolicy`. Returns an
+// internal error if `sharding_policy` is not supported.
+StatusOr<AutoShardPolicy> ToAutoShardPolicy(
+    ProcessingModeDef::ShardingPolicy sharding_policy);
 
 // Parses a string representing a `TargetWorkers` (case-insensitive).
 // Returns InvalidArgument if the string is not recognized.

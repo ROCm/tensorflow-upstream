@@ -692,6 +692,8 @@ TfLiteStatus MultiplyAndCheckOverflow(size_t a, size_t b, size_t* product) {
 TfLiteStatus Subgraph::BytesRequired(TfLiteType type, const int* dims,
                                      size_t dims_size, size_t* bytes) {
   TF_LITE_ENSURE(&context_, bytes != nullptr);
+  // When 'dims_size' is 0, we simply assume it's a scalar. Therefore, we start
+  // 'count' as 1.
   size_t count = 1;
   for (int k = 0; k < dims_size; k++) {
     size_t old_count = count;
@@ -951,11 +953,17 @@ TfLiteStatus Subgraph::OpPrepare(const TfLiteRegistration& op_reg,
     if (IsUnresolvedCustomOp(op_reg)) {
       if (IsFlexOp(op_reg.custom_name)) {
         ReportError(
-            "Regular TensorFlow ops are not supported by this interpreter. "
-            "Make sure you apply/link the Flex delegate before inference.");
+            "Select TensorFlow op(s), included in the given model, is(are) not "
+            "supported by this interpreter. Make sure you apply/link the Flex "
+            "delegate before inference. For the Android, it can be resolved by "
+            "adding \"org.tensorflow:tensorflow-lite-select-tf-ops\" "
+            "dependency. See instructions: "
+            "https://www.tensorflow.org/lite/guide/ops_select");
       } else {
-        ReportError("Encountered unresolved custom op: %s.",
-                    op_reg.custom_name ? op_reg.custom_name : "UnknownOp");
+        ReportError(
+            "Encountered unresolved custom op: %s.\nSee instructions: "
+            "https://www.tensorflow.org/lite/guide/ops_custom",
+            op_reg.custom_name ? op_reg.custom_name : "UnknownOp");
       }
       return kTfLiteError;
     }
@@ -1002,12 +1010,11 @@ TfLiteStatus Subgraph::PrepareOpsStartingAt(
 TfLiteStatus Subgraph::PrepareOpsAndTensors() {
   if (!memory_planner_) {
 #ifdef TFLITE_USE_SIMPLE_MEMORY_PLANNER
-    memory_planner_.reset(new SimplePlanner(
-        &context_, std::unique_ptr<GraphInfo>(new InterpreterInfo(this))));
+    memory_planner_.reset(new SimplePlanner(&context_, CreateGraphInfo()));
 #else
-    memory_planner_.reset(new ArenaPlanner(
-        &context_, std::unique_ptr<GraphInfo>(new InterpreterInfo(this)),
-        preserve_all_tensors_, kDefaultTensorAlignment));
+    memory_planner_.reset(new ArenaPlanner(&context_, CreateGraphInfo(),
+                                           preserve_all_tensors_,
+                                           kDefaultTensorAlignment));
 #endif
     memory_planner_->PlanAllocations();
   }
@@ -1751,6 +1758,10 @@ TfLiteStatus Subgraph::PreserveAllTensorsExperimental() {
   }
   preserve_all_tensors_ = true;
   return kTfLiteOk;
+}
+
+std::unique_ptr<GraphInfo> Subgraph::CreateGraphInfo() {
+  return std::unique_ptr<GraphInfo>(new InterpreterInfo(this));
 }
 
 }  // namespace tflite

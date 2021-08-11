@@ -36,6 +36,7 @@ limitations under the License.
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/platform/stream_executor.h"
 #include "tensorflow/core/protobuf/autotuning.pb.h"
+#include "tensorflow/core/util/autotune_maps/conv_parameters.h"
 #include "tensorflow/core/util/proto/proto_utils.h"
 using stream_executor::dnn::DimIndex;
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -207,13 +208,13 @@ TF_CALL_double(REGISTER_CPU_KERNEL);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 // A dummy type to group forward convolution autotune results together.
-struct Conv3dAutoTuneGroup {
+struct Conv3dAutotuneGroup {
   static string name() { return "Conv3d"; }
 };
 
-typedef AutoTuneSingleton<Conv3dAutoTuneGroup, ConvParameters,
+typedef AutotuneSingleton<Conv3dAutotuneGroup, ConvParameters,
                           se::dnn::AlgorithmConfig>
-    AutoTuneConv3d;
+    AutotuneConv3d;
 
 // TODO(mjanusz): Share logic with 2d implementation as much as possible.
 template <typename T>
@@ -501,7 +502,7 @@ struct LaunchConvOp<GPUDevice, T> {
 #endif
     AlgorithmConfig algorithm_config;
 
-    if (cudnn_use_autotune && !AutoTuneConv3d::GetInstance()->Find(
+    if (cudnn_use_autotune && !AutotuneConv3d::GetInstance()->Find(
                                   conv_parameters, &algorithm_config)) {
       profiler::ScopedAnnotation trace("cudnn_autotuning");
 
@@ -666,7 +667,7 @@ struct LaunchConvOp<GPUDevice, T> {
         OP_REQUIRES_OK(
             ctx, BestCudnnConvAlgorithm(results, nullptr, &algorithm_config));
       }
-      AutoTuneConv3d::GetInstance()->Insert(conv_parameters, algorithm_config);
+      AutotuneConv3d::GetInstance()->Insert(conv_parameters, algorithm_config);
     }
 
     Status cudnn_launch_status;
@@ -676,7 +677,7 @@ struct LaunchConvOp<GPUDevice, T> {
         VLOG(4) << "Conv3D Execution Plan: "
                 << algorithm_config.algorithm()->exec_plan_id();
       } else {
-        VLOG(4) << "Convolution AutoTune has been turned off";
+        VLOG(4) << "Convolution Autotune has been turned off";
       }
       cudnn_launch_status = stream->ConvolveWithExecutionPlan(
           input_desc, input_ptr, filter_desc, filter_ptr, conv_desc,

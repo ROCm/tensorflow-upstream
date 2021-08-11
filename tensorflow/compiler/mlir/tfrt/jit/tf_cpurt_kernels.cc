@@ -20,23 +20,6 @@ limitations under the License.
 
 #include "mlir/Dialect/Async/IR/AsyncTypes.h"
 #include "mlir/ExecutionEngine/AsyncRuntime.h"
-#include "tfrt/cpu/jit/async_runtime.h"
-#include "tfrt/cpu/jit/async_runtime_api.h"
-#include "tfrt/cpu/jit/cpurt.h"
-#include "tfrt/host_context/async_dispatch.h"
-#include "tfrt/host_context/async_value_ref.h"
-#include "tfrt/host_context/chain.h"
-#include "tfrt/host_context/execution_context.h"
-#include "tfrt/host_context/host_buffer.h"
-#include "tfrt/host_context/host_context.h"
-#include "tfrt/host_context/kernel_registry.h"
-#include "tfrt/host_context/kernel_utils.h"
-#include "tfrt/support/error_util.h"
-#include "tfrt/support/forward_decls.h"
-#include "tfrt/support/rc_array.h"
-#include "tfrt/support/string_util.h"
-#include "tfrt/tensor/tensor_metadata.h"
-#include "tfrt/tensor/tensor_shape.h"
 #include "tensorflow/compiler/mlir/tensorflow/dialect_registration.h"
 #include "tensorflow/compiler/mlir/tfrt/jit/tf_cpurt.h"
 #include "tensorflow/compiler/mlir/tfrt/jit/tf_cpurt_passes.h"
@@ -46,6 +29,24 @@ limitations under the License.
 #include "tensorflow/core/platform/dynamic_annotations.h"
 #include "tensorflow/core/runtime_fallback/kernel/kernel_fallback_compat_request_state.h"
 #include "tensorflow/core/tfrt/utils/fallback_tensor.h"
+#include "tfrt/cpu/jit/async_runtime.h"  // from @tf_runtime
+#include "tfrt/cpu/jit/async_runtime_api.h"  // from @tf_runtime
+#include "tfrt/cpu/jit/cpurt.h"  // from @tf_runtime
+#include "tfrt/host_context/async_dispatch.h"  // from @tf_runtime
+#include "tfrt/host_context/async_value_ref.h"  // from @tf_runtime
+#include "tfrt/host_context/chain.h"  // from @tf_runtime
+#include "tfrt/host_context/execution_context.h"  // from @tf_runtime
+#include "tfrt/host_context/host_buffer.h"  // from @tf_runtime
+#include "tfrt/host_context/host_context.h"  // from @tf_runtime
+#include "tfrt/host_context/kernel_registry.h"  // from @tf_runtime
+#include "tfrt/host_context/kernel_utils.h"  // from @tf_runtime
+#include "tfrt/support/error_util.h"  // from @tf_runtime
+#include "tfrt/support/forward_decls.h"  // from @tf_runtime
+#include "tfrt/support/rc_array.h"  // from @tf_runtime
+#include "tfrt/support/string_util.h"  // from @tf_runtime
+#include "tfrt/tensor/tensor_metadata.h"  // from @tf_runtime
+#include "tfrt/tensor/tensor_shape.h"  // from @tf_runtime
+#include "tfrt/tracing/tracing.h"  // from @tf_runtime
 
 namespace tensorflow {
 namespace tfrt {
@@ -242,15 +243,16 @@ static void ConvertTensorOperandsToMemrefDesc(
 }
 
 struct DebugListener : public JitExecutable::Listener {
-  void notifyModuleSpecialized(ArrayRef<mlir::Type> inputs) override {
+  void notifyModuleSpecialized(ArrayRef<mlir::Type> inputs) const override {
     std::string message;
     llvm::raw_string_ostream(message)
         << "Specialized module: " << inputs << "\n";
     printf("%s", message.c_str());
     fflush(stdout);
   }
+
   void notifyValueSpecialized(unsigned index, mlir::Type type,
-                              mlir::Attribute attr) override {
+                              mlir::Attribute attr) const override {
     std::string message;
     llvm::raw_string_ostream(message) << "Arg[" << index << "] "
                                       << "value specialized: " << attr << "\n";
@@ -264,6 +266,8 @@ static void ExecuteImpl(Executable& executable,
                         RepeatedArguments<FallbackTensor> operands,
                         RemainingResults results,
                         const ExecutionContext& exec_ctx) {
+  TFRT_TRACE_SCOPE(Default, StrCat("tf_cpurt.Execute: @", executable.name()));
+
   // Keep track of memory address to tensor mapping for result conversion.
   auto ctx = std::make_unique<TensorflowConversionContext>(operands.size());
   for (auto& t : operands)
@@ -306,15 +310,11 @@ static void ExecuteImpl(JitExecutable& jit_executable,
   llvm::SmallVector<MemrefDesc> memrefs;
   ConvertTensorOperandsToMemrefDesc(operands, &memrefs);
 
-  DebugListener debug_listener;
-  if (debug) jit_executable.setListener(&debug_listener);
-
   // Get an executable that might be specialized to the operands.
-  AsyncValuePtr<Executable> executable =
-      jit_executable.GetExecutable(memrefs, exec_ctx);
+  DebugListener debug_listener;
 
-  // TODO(ezhulenev): Listener should be a GetExecutable argument.
-  if (debug) jit_executable.setListener(nullptr);
+  AsyncValuePtr<Executable> executable = jit_executable.GetExecutable(
+      memrefs, exec_ctx, debug ? &debug_listener : nullptr);
 
   // If executable is available execute it inline.
   if (executable.IsAvailable()) {

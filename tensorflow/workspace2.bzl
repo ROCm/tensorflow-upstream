@@ -19,6 +19,7 @@ load("//tensorflow/tools/def_file_filter:def_file_filter_configure.bzl", "def_fi
 load("//third_party/FP16:workspace.bzl", FP16 = "repo")
 load("//third_party/absl:workspace.bzl", absl = "repo")
 load("//third_party/aws:workspace.bzl", aws = "repo")
+load("//third_party/benchmark:workspace.bzl", benchmark = "repo")
 load("//third_party/clog:workspace.bzl", clog = "repo")
 load("//third_party/cpuinfo:workspace.bzl", cpuinfo = "repo")
 load("//third_party/dlpack:workspace.bzl", dlpack = "repo")
@@ -55,6 +56,7 @@ def _initialize_third_party():
     FP16()
     absl()
     aws()
+    benchmark()
     clog()
     cpuinfo()
     dlpack()
@@ -129,11 +131,11 @@ def _tf_repositories():
     # LINT.IfChange
     tf_http_archive(
         name = "XNNPACK",
-        sha256 = "e1fee5a16e4a06d3bd77ab33cf87b1c6d826715906248a308ab790486198d3c9",
-        strip_prefix = "XNNPACK-476eb84d6a8e6f8249d5584d30759c6fbdbf791d",
+        sha256 = "8c1603a2650feee3d50cfb1251ace100ae7e57b175982dbf40cdaeb0a552a595",
+        strip_prefix = "XNNPACK-dfc2db03388eb29adade291cc4e0efe6652b0472",
         urls = [
-            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/google/XNNPACK/archive/476eb84d6a8e6f8249d5584d30759c6fbdbf791d.zip",
-            "https://github.com/google/XNNPACK/archive/476eb84d6a8e6f8249d5584d30759c6fbdbf791d.zip",
+            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/google/XNNPACK/archive/dfc2db03388eb29adade291cc4e0efe6652b0472.zip",
+            "https://github.com/google/XNNPACK/archive/dfc2db03388eb29adade291cc4e0efe6652b0472.zip",
         ],
     )
     # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/xnnpack.cmake)
@@ -350,12 +352,12 @@ def _tf_repositories():
     tf_http_archive(
         name = "org_sqlite",
         build_file = "//third_party:sqlite.BUILD",
-        sha256 = "b49409ef123e193e719e2536f9b795482a69e61a9cc728933739b9024f035061",
-        strip_prefix = "sqlite-amalgamation-3350500",
+        sha256 = "999826fe4c871f18919fdb8ed7ec9dd8217180854dd1fe21eea96aed36186729",
+        strip_prefix = "sqlite-amalgamation-3360000",
         system_build_file = "//third_party/systemlibs:sqlite.BUILD",
         urls = [
-            "https://storage.googleapis.com/mirror.tensorflow.org/sqlite.org/2021/sqlite-amalgamation-3350500.zip",
-            "https://sqlite.org/2021/sqlite-amalgamation-3350500.zip",
+            "https://storage.googleapis.com/mirror.tensorflow.org/sqlite.org/2021/sqlite-amalgamation-3360000.zip",
+            "https://www.sqlite.org/2021/sqlite-amalgamation-3360000.zip",
         ],
     )
 
@@ -438,7 +440,7 @@ def _tf_repositories():
         strip_prefix = "gast-0.4.0",
         system_build_file = "//third_party/systemlibs:gast.BUILD",
         urls = [
-            "https://storage.googleapis.com/mirror.tensorflow.org/files.pythonhosted.org/packages/12/59/eaa15ab9710a20e22225efd042cd2d6a0b559a0656d5baba9641a2a4a921/gast-0.4.0.tar.gz",
+            "https://storage.googleapis.com/mirror.tensorflow.org/files.pythonhosted.org/packages/83/4a/07c7e59cef23fb147454663c3271c21da68ba2ab141427c20548ae5a8a4d/gast-0.4.0.tar.gz",
             "https://files.pythonhosted.org/packages/83/4a/07c7e59cef23fb147454663c3271c21da68ba2ab141427c20548ae5a8a4d/gast-0.4.0.tar.gz",
         ],
     )

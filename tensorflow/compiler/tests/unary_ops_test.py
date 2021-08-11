@@ -26,8 +26,10 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
 
 from tensorflow.compiler.tests import xla_test
 from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import bitwise_ops
+from tensorflow.python.ops import gen_functional_ops
 from tensorflow.python.ops import gen_nn_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
@@ -955,6 +957,18 @@ class UnaryOpsTest(xla_test.XLATestCase):
           np.array([1, 0x100000003f800000], np.int64),
           expected=np.array([1, 0x100000003f800000], np.uint64))
 
+  @test_util.disable_mlir_bridge(
+      "TODO(b/195120263): MLIR bridge does not support int8 <-> float bitcast")
+  def testBitcastInt8ToFloat(self):
+    self._assertOpOutputMatchesExpected(
+        lambda x: array_ops.bitcast(x, dtypes.float32),
+        np.array([[1, 0, 0, 0], [0xd0, 0x0f, 0x49, 0x40]], np.int8),
+        expected=np.array([1e-45, 3.14159], np.float32))
+    self._assertOpOutputMatchesExpected(
+        lambda x: array_ops.bitcast(x, dtypes.np.int8),
+        np.array([1e-45, 3.14159], np.float32),
+        expected=np.array([[1, 0, 0, 0], [0xd0, 0x0f, 0x49, 0x40]], np.int8))
+
   def testInvertPermutation(self):
     for np_dtype in [np.int32, np.int64]:
       self._assertOpOutputMatchesExpected(
@@ -1202,6 +1216,28 @@ class UnaryOpsTest(xla_test.XLATestCase):
           equality_test=self.AssertCloseAndSorted,
           rtol=9e-5,
           atol=9e-5)
+
+  def testToBool(self):
+    for dtype in self.numeric_types - self.complex_types:
+      self._assertOpOutputMatchesExpected(
+          gen_functional_ops.to_bool,
+          np.array(5, dtype=dtype),
+          expected=np.array(True))
+
+      self._assertOpOutputMatchesExpected(
+          gen_functional_ops.to_bool,
+          np.array(0, dtype=dtype),
+          expected=np.array(False))
+
+      self._assertOpOutputMatchesExpected(
+          gen_functional_ops.to_bool,
+          np.array([], dtype=dtype),
+          expected=np.array(False))
+
+      self._assertOpOutputMatchesExpected(
+          gen_functional_ops.to_bool,
+          np.array([1, 2, 3], dtype=dtype),
+          expected=np.array(True))
 
 
 if __name__ == "__main__":

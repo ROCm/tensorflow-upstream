@@ -1205,8 +1205,11 @@ REGISTER_OP("GatherV2")
       // indices_rank - 1.
       if (axis_t == nullptr) {
         if (c->RankKnown(params_shape) && c->RankKnown(indices_shape)) {
+          int32_t batch_dims;
+          TF_RETURN_IF_ERROR(c->GetAttr("batch_dims", &batch_dims));
           c->set_output(0, c->UnknownShapeOfRank(c->Rank(params_shape) +
-                                                 c->Rank(indices_shape) - 1));
+                                                 c->Rank(indices_shape) - 1 -
+                                                 batch_dims));
         } else {
           c->set_output(0, c->UnknownShape());
         }
@@ -2989,6 +2992,10 @@ REGISTER_OP("Dequantize")
       Status s = c->GetAttr("axis", &axis);
       if (!s.ok() && s.code() != error::NOT_FOUND) {
         return s;
+      }
+      if (axis < -1) {
+        return errors::InvalidArgument("axis should be at least -1, got ",
+                                       axis);
       }
       const int minmax_rank = (axis == -1) ? 0 : 1;
       TF_RETURN_IF_ERROR(shape_inference::UnchangedShape(c));
