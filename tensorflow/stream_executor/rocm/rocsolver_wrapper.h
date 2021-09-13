@@ -83,19 +83,10 @@ namespace wrap {
   __macro(rocsolver_dpotrf)                 \
   __macro(rocsolver_spotrf)                 \
   __macro(rocsolver_zpotrf)                 \
-  __macro(rocsolver_cpotrf_batched)         	      \
-  __macro(rocsolver_dpotrf_batched)                 \
-  __macro(rocsolver_spotrf_batched)                 \
-  __macro(rocsolver_zpotrf_batched)                 
-
-  // __macro(rocsolver_cpotrs)         	      \
-  // __macro(rocsolver_dpotrs)                 \
-  // __macro(rocsolver_spotrs)                 \
-  // __macro(rocsolver_zpotrs)                 \
-  // __macro(rocsolver_cpotrs_batched)         	      \
-  // __macro(rocsolver_dpotrs_batched)                 \
-  // __macro(rocsolver_spotrs_batched)                 \
-  // __macro(rocsolver_zpotrs_batched)                 
+  __macro(rocsolver_cpotrf_batched)         \
+  __macro(rocsolver_dpotrf_batched)         \
+  __macro(rocsolver_spotrf_batched)         \
+  __macro(rocsolver_zpotrf_batched)               
 // clang-format on
 
 FOREACH_ROCSOLVER_API(ROCSOLVER_API_WRAPPER)
