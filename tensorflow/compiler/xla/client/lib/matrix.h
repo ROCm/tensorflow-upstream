@@ -96,7 +96,8 @@ xla::XlaOp BatchDot(
 xla::XlaOp BatchDot(
     xla::XlaOp x, bool transpose_x, xla::XlaOp y, bool transpose_y,
     xla::PrecisionConfig::Precision precision = xla::PrecisionConfig::DEFAULT,
-    absl::optional<PrimitiveType> preferred_element_type = absl::nullopt);
+    absl::optional<PrimitiveType> preferred_element_type = absl::nullopt,
+    bool grad_x = false, bool grad_y = false);
 
 // Parse an einsum string into dimension numbers:
 //   "ab,cb->ac"
@@ -127,7 +128,8 @@ std::string NormalizeEinsumString(absl::string_view einsum_config);
 xla::XlaOp Einsum(
     xla::XlaOp x, xla::XlaOp y, absl::string_view einsum_config,
     xla::PrecisionConfig::Precision precision = xla::PrecisionConfig::DEFAULT,
-    absl::optional<PrimitiveType> preferred_element_type = absl::nullopt);
+    absl::optional<PrimitiveType> preferred_element_type = absl::nullopt,
+    bool grad_x = false, bool grad_y = false);
 xla::XlaOp Einsum(
     xla::XlaOp x, absl::string_view einsum_config,
     xla::PrecisionConfig::Precision precision = xla::PrecisionConfig::DEFAULT);
@@ -142,7 +144,8 @@ xla::XlaOp Einsum(
     xla::XlaOp x, absl::Span<const int64_t> x_config, xla::XlaOp y,
     absl::Span<const int64_t> y_config, absl::Span<const int64_t> output_config,
     xla::PrecisionConfig::Precision precision = xla::PrecisionConfig::DEFAULT,
-    absl::optional<PrimitiveType> preferred_element_type = absl::nullopt);
+    absl::optional<PrimitiveType> preferred_element_type = absl::nullopt,
+    bool grad_x = false, bool grad_y = false);
 
 // Transposes a stack of matrices `x` by swapping the last two dimensions.
 xla::XlaOp TransposeInMinorDims(xla::XlaOp x);

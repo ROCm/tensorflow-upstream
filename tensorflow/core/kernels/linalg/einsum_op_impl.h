@@ -581,9 +581,9 @@ struct EinsumHelper {
     Tensor output_reshaped;
     TF_RETURN_IF_ERROR(
         ReshapeToRank3(*output, bcast.output_batch_size(), &output_reshaped));
-    LaunchBatchMatMul<Device, T>::Launch(ctx, lhs, rhs, /*adj_x=*/false,
-                                         /*adj_y=*/false, trans_x, trans_y,
-                                         bcast, &output_reshaped);
+    LaunchBatchMatMul<Device, T>::Launch(
+        ctx, lhs, rhs, /*adj_x=*/false, /*adj_y=*/false, trans_x, trans_y,
+        /*grad_x=*/false, /*gradj_x=*/false, bcast, &output_reshaped);
     return Status::OK();
   }
 };

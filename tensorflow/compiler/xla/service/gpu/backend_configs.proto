@@ -60,6 +60,9 @@ message GemmBackendConfig {
 
   int64 lhs_stride = 10;
   int64 rhs_stride = 11;
+
+  bool grad_x = 12;
+  bool grad_y = 13;
 }
 
 // Backend config for bitcast operation generated from MLIR MHLO dialect.

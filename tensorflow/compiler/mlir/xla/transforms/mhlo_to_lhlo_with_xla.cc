@@ -807,6 +807,8 @@ StatusOr<Operation*> LhloDialectEmitter::EmitGemm(
         xla::gpu::GemmBackendConfig::kSelectedAlgorithm) {
       op.algorithmAttr(builder_.getI64IntegerAttr(config.selected_algorithm()));
     }
+    op->setAttr("grad_x", builder_.getBoolAttr(config.grad_x()));
+    op->setAttr("grad_y", builder_.getBoolAttr(config.grad_y()));
     return op.getOperation();
   };
 

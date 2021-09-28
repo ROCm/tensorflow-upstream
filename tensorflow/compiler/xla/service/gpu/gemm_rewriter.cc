@@ -81,6 +81,10 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
           instr->dot_dimension_numbers();
       gemm_config.set_batch_size(batch_size);
 
+      auto attributes = instr->frontend_attributes().map();
+      gemm_config.set_grad_x(attributes["grad_x"] == "true");
+      gemm_config.set_grad_y(attributes["grad_y"] == "true");
+
       int64_t lhs_batch_dims_size =
           instr->dot_dimension_numbers().lhs_batch_dimensions_size();
       int64_t lhs_stride = lhs->shape().dimensions(lhs_batch_dims_size) *

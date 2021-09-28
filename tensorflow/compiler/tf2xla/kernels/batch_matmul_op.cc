@@ -29,6 +29,8 @@ class BatchMatMulOp : public XlaOpKernel {
   explicit BatchMatMulOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("adj_x", &adj_x_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("adj_y", &adj_y_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("grad_x", &grad_x_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("grad_y", &grad_y_));
 
     if (ctx->HasAttr("Tout")) {
       DataType output_type;
@@ -41,16 +43,18 @@ class BatchMatMulOp : public XlaOpKernel {
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
-    auto result =
-        xla::BatchDot(MaybeConjugate(ctx->Input(0), adj_x_), adj_x_,
-                      MaybeConjugate(ctx->Input(1), adj_y_), adj_y_,
-                      xla::PrecisionConfig::DEFAULT, preferred_element_type_);
+    auto result = xla::BatchDot(MaybeConjugate(ctx->Input(0), adj_x_), adj_x_,
+                                MaybeConjugate(ctx->Input(1), adj_y_), adj_y_,
+                                xla::PrecisionConfig::DEFAULT,
+                                preferred_element_type_, grad_x_, grad_y_);
     ctx->SetOutput(0, result);
   }
 
  private:
   bool adj_x_;
   bool adj_y_;
+  bool grad_x_;
+  bool grad_y_;
   absl::optional<xla::PrimitiveType> preferred_element_type_;
 };
 
