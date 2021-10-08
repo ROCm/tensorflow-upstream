@@ -342,6 +342,7 @@ class Stream {
       const dnn::ConvolutionDescriptor &convolution_descriptor,
       ScratchAllocator *scratch_allocator,
       const dnn::AlgorithmConfig &algorithm_config,
+      dnn::CallContext call_context,
       dnn::ProfileResult *output_profile_result) {
     DeviceMemory<uint8> scratch_memory;
     dnn::AlgorithmDesc algorithm_desc;
@@ -351,12 +352,12 @@ class Stream {
           filter_data, output_descriptor, output_data, convolution_descriptor,
           algorithm_config, scratch_allocator, &algorithm_desc,
           &scratch_memory));
-      return dnn->DoConvolve(kind, dnn::ToDataType<InputType>::value,
-                             dnn::ToDataType<OutputType>::value, this,
-                             input_descriptor, input_data, filter_descriptor,
-                             filter_data, output_descriptor, output_data,
-                             convolution_descriptor, algorithm_desc,
-                             scratch_memory, output_profile_result);
+      return dnn->DoConvolve(
+          kind, dnn::ToDataType<InputType>::value,
+          dnn::ToDataType<OutputType>::value, this, input_descriptor,
+          input_data, filter_descriptor, filter_data, output_descriptor,
+          output_data, convolution_descriptor, algorithm_desc, scratch_memory,
+          call_context, output_profile_result);
     }
     return port::UnimplementedError("DNN library is not found.");
   }

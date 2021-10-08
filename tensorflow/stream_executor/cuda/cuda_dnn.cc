@@ -3926,7 +3926,7 @@ port::Status CudnnSupport::DoConvolve(
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::AlgorithmDesc algorithm_desc, DeviceMemory<uint8> scratch_memory,
-    dnn::ProfileResult* output_profile_result) {
+    dnn::CallContext call_context, dnn::ProfileResult* output_profile_result) {
   cudnnDataType_t cudnn_type =
       ToCudnnDataType(element_type, input_descriptor.layout());
 

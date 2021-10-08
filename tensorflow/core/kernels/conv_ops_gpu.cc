@@ -344,7 +344,7 @@ StatusOr<se::dnn::AlgorithmConfig> AutotuneUnfusedConv(
         return stream->ConvolveWithAlgorithm(
             kind, input_desc, input_ptr, filter_desc, filter_ptr, output_desc,
             output_ptr, conv_desc, allocator_used, profile_config,
-            profile_result);
+            se::dnn::CallContext::kNone, profile_result);
       }
     };
 
@@ -354,11 +354,27 @@ StatusOr<se::dnn::AlgorithmConfig> AutotuneUnfusedConv(
 #elif TENSORFLOW_USE_ROCM
     DnnScratchAllocator scratch_allocator(scratch_size_limit, ctx);
 
+    se::dnn::CallContext call_context = se::dnn::CallContext::kNone;
+    switch (kind) {
+      case se::dnn::ConvolutionKind::FORWARD:
+        call_context == se::dnn::CallContext::kForward;
+        break;
+      case se::dnn::ConvolutionKind::BACKWARD_DATA:
+        call_context == se::dnn::CallContext::kBackpropData;
+        break;
+      case se::dnn::ConvolutionKind::BACKWARD_FILTER:
+        call_context == se::dnn::CallContext::kBackpropFilter;
+        break;
+      default:
+        return errors::InvalidArgument(
+            absl::StrFormat("Unknown ConvolutionKind %d", kind));
+    }
+
     std::vector<se::dnn::ProfileResult> algorithms;
     if (!stream->parent()->GetMIOpenConvolveAlgorithms(
             kind, se::dnn::ToDataType<T>::value, stream, input_desc, input_ptr,
             filter_desc, filter_ptr, output_desc, output_ptr, conv_desc,
-            &scratch_allocator, &algorithms)) {
+            &scratch_allocator, call_context, &algorithms)) {
       return errors::Unknown(
           "Failed to get convolution algorithm. This is probably "
           "because MIOpen failed to initialize, so try looking to "
@@ -387,7 +403,7 @@ StatusOr<se::dnn::AlgorithmConfig> AutotuneUnfusedConv(
             output_ptr, conv_desc, &scratch_allocator,
             se::dnn::AlgorithmConfig(profile_algorithm,
                                      miopen_algorithm.scratch_size()),
-            &profile_result);
+            call_context, &profile_result);
         if (miopen_launch_status.ok() && profile_result.is_valid()) {
           results.emplace_back();
           auto& result = results.back();

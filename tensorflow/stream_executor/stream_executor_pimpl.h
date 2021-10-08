@@ -414,7 +414,7 @@ class StreamExecutor {
       const dnn::BatchDescriptor &output_descriptor,
       DeviceMemoryBase output_data,
       const dnn::ConvolutionDescriptor &convolution_descriptor,
-      ScratchAllocator *scratch_allocator,
+      ScratchAllocator *scratch_allocator, dnn::CallContext call_context,
       std::vector<dnn::ProfileResult> *out_algorithms);
 
   // Returns the list of supported algorithms for rnn operation.

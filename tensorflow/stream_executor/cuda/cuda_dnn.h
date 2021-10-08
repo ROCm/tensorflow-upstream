@@ -307,6 +307,7 @@ class CudnnSupport : public dnn::DnnSupport {
       DeviceMemoryBase output_data,
       const dnn::ConvolutionDescriptor& convolution_descriptor,
       dnn::AlgorithmDesc algorithm_desc, DeviceMemory<uint8> scratch_memory,
+      dnn::CallContext call_context,
       dnn::ProfileResult* output_profile_result) override;
 
   port::Status DoConvolveWithExecutionPlan(

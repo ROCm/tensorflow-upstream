@@ -1137,7 +1137,7 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
     cudnn_launch_status = stream->ConvolveWithAlgorithm(
         se::dnn::ConvolutionKind::FORWARD, input_desc, input_ptr, filter_desc,
         filter_ptr, output_desc, output_ptr, conv_desc, &scratch_allocator,
-        algorithm_config, nullptr);
+        algorithm_config, se::dnn::CallContext::kForward, nullptr);
   }
 
   if (!cudnn_launch_status.ok()) {

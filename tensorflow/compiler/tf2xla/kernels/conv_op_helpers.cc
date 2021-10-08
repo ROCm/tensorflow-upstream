@@ -193,6 +193,8 @@ StatusOr<xla::XlaOp> MakeXlaForwardConvOp(
   // Filter has the form [filter_rows, filter_cols, ..., in_depth, out_depth]
   TF_ASSIGN_OR_RETURN(xla::Shape filter_shape, builder->GetShape(filter));
 
+  xla::XlaOp conv_forward;
+
   // For 2D convolution, there should be 4 dimensions.
   int num_dims = attrs.num_spatial_dims + 2;
   if (input_shape.dimensions_size() != num_dims) {
@@ -275,19 +277,26 @@ StatusOr<xla::XlaOp> MakeXlaForwardConvOp(
   }
 
   if (padding_type != xla::PaddingType::PADDING_INVALID) {
-    return xla::DynamicConvForward(
+    conv_forward = xla::DynamicConvForward(
         conv_input, filter, window_strides, padding, lhs_dilation, rhs_dilation,
         dims,
         /*feature_group_count=*/attrs.depthwise ? in_depth
                                                 : feature_group_count,
         /*batch_group_count=*/1, precision_config, padding_type);
+  } else {
+    conv_forward = xla::ConvGeneralDilated(
+        conv_input, filter, window_strides, padding, lhs_dilation, rhs_dilation,
+        dims,
+        /*feature_group_count=*/attrs.depthwise ? in_depth
+                                                : feature_group_count,
+        /*batch_group_count=*/1, precision_config);
   }
 
-  return xla::ConvGeneralDilated(
-      conv_input, filter, window_strides, padding, lhs_dilation, rhs_dilation,
-      dims,
-      /*feature_group_count=*/attrs.depthwise ? in_depth : feature_group_count,
-      /*batch_group_count=*/1, precision_config);
+  // TODO : CHECK_EQ(HloOpcode::kConvolution, conv_forward->opcode());
+  builder->SetInstructionFrontendAttribute(conv_forward, "call_context",
+                                           "kForward");
+
+  return conv_forward;
 }
 
 StatusOr<xla::XlaOp> MakeXlaBackpropInputConvOp(
@@ -304,6 +313,8 @@ StatusOr<xla::XlaOp> MakeXlaBackpropInputConvOp(
   TF_ASSIGN_OR_RETURN(xla::Shape filter_shape, builder->GetShape(filter));
   TF_ASSIGN_OR_RETURN(xla::Shape out_backprop_shape,
                       builder->GetShape(out_backprop));
+
+  xla::XlaOp input_backprop;
 
   int64_t in_depth = input_shape.dimensions(feature_dim),
           filter_in_depth = filter_shape.dimensions(attrs.num_spatial_dims),
@@ -372,20 +383,28 @@ StatusOr<xla::XlaOp> MakeXlaBackpropInputConvOp(
   filter = xla::Rev(filter, kernel_spatial_dims);
   if (padding_type != xla::PaddingType::PADDING_INVALID) {
     TF_RET_CHECK(input_sizes != nullptr);
-    return xla::DynamicConvInputGrad(
+    input_backprop = xla::DynamicConvInputGrad(
         *input_sizes, out_backprop, filter, /*window_strides=*/ones, padding,
         lhs_dilation, rhs_dilation, dnums,
         /*feature_group_count=*/
         feature_group_count,
         /*batch_group_count=*/1, precision_config, padding_type);
+  } else {
+    // activation gradients
+    //   = gradients (with padding and dilation) <conv> mirrored_weights
+    input_backprop =
+        xla::ConvGeneralDilated(out_backprop, filter, /*window_strides=*/ones,
+                                padding, lhs_dilation, rhs_dilation, dnums,
+                                /*feature_group_count=*/
+                                feature_group_count,
+                                /*batch_group_count=*/1, precision_config);
   }
-  // activation gradients
-  //   = gradients (with padding and dilation) <conv> mirrored_weights
-  return xla::ConvGeneralDilated(out_backprop, filter, /*window_strides=*/ones,
-                                 padding, lhs_dilation, rhs_dilation, dnums,
-                                 /*feature_group_count=*/
-                                 feature_group_count,
-                                 /*batch_group_count=*/1, precision_config);
+
+  // TODO : CHECK_EQ(HloOpcode::kConvolution, input_backprop->opcode());
+  builder->SetInstructionFrontendAttribute(input_backprop, "call_context",
+                                           "kBackpropData");
+
+  return input_backprop;
 }
 
 StatusOr<xla::XlaOp> MakeXlaBackpropFilterConvOp(
@@ -538,6 +557,10 @@ StatusOr<xla::XlaOp> MakeXlaBackpropFilterConvOp(
         /*feature_group_count=*/1,
         /*batch_group_count=*/batch_group_count, precision_config);
   }
+
+  // TODO : CHECK_EQ(HloOpcode::kConvolution, filter_backprop->opcode());
+  builder->SetInstructionFrontendAttribute(filter_backprop, "call_context",
+                                           "kBackpropFilter");
 
   if (attrs.depthwise) {
     filter_backprop = xla::Reshape(filter_backprop, filter_shape.dimensions());
