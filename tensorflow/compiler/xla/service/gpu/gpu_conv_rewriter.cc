@@ -709,8 +709,11 @@ StatusOr<bool> RunOnInstruction(HloInstruction* conv) {
     return false;
   }
 
-  TF_RETURN_IF_ERROR(
-      custom_call->set_backend_config(GetDefaultBackendConfig()));
+  auto backend_config = GetDefaultBackendConfig();
+  auto attributes = conv->frontend_attributes().map();
+  backend_config.set_call_context(attributes["call_context"]);
+
+  TF_RETURN_IF_ERROR(custom_call->set_backend_config(backend_config));
 
   VLOG(1) << "Replacing convolution " << conv->ToString() << " with "
           << custom_call->ToString();

@@ -1077,6 +1077,29 @@ Status IrEmitterUnnested::EmitConvolutionThunk(mlir::Operation* op) {
     }
     descriptor.backend_config.set_conv_result_scale(
         op.result_scale().convertToDouble());
+
+    auto attr_call_context =
+        op->template getAttrOfType<mlir::StringAttr>("call_context");
+    if (attr_call_context) {
+      descriptor.backend_config.set_call_context(
+          attr_call_context.getValue().str());
+    } else {
+      std::string call_context = "kNone";
+      switch (descriptor.kind) {
+        case CudnnConvKind::kForward:
+          call_context = "kForward";
+          break;
+        case CudnnConvKind::kBackwardInput:
+          call_context = "kBackpropData";
+          break;
+        case CudnnConvKind::kBackwardFilter:
+          call_context = "kBackpropFilter";
+          break;
+        default:
+          break;
+      }
+      descriptor.backend_config.set_call_context(call_context);
+    }
   };
 
   auto set_activation_mode = [&](auto op) -> Status {

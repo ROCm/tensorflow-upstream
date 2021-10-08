@@ -38,6 +38,8 @@ message CudnnConvBackendConfig {
   // The scaling factor multiplied with the side input. If no side input buffer
   // is provided, this field must be 0.
   double side_input_scale = 5;
+
+  string call_context = 7;
 }
 
 // Backend config for the GEMM operation running through cuBLAS.

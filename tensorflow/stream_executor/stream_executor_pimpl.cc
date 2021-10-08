@@ -297,7 +297,8 @@ port::Status StreamExecutor::GetConvolveRunners(
     const dnn::FilterDescriptor& filter_descriptor,
     DeviceMemoryBase filter_data, const dnn::BatchDescriptor& output_descriptor,
     DeviceMemoryBase output_data,
-    const dnn::ConvolutionDescriptor& convolution_descriptor, bool use_fallback,
+    const dnn::ConvolutionDescriptor& convolution_descriptor,
+    dnn::CallContext call_context, bool use_fallback,
     ScratchAllocator* scratch_allocator,
     std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_exec_plans) {
   dnn::DnnSupport* dnn_support = AsDnn();
@@ -307,7 +308,8 @@ port::Status StreamExecutor::GetConvolveRunners(
   return dnn_support->GetConvolveRunners(
       use_cudnn_frontend, kind, input_type, output_type, stream,
       input_descriptor, input_data, filter_descriptor, filter_data,
-      output_descriptor, output_data, convolution_descriptor, use_fallback,
+      output_descriptor, output_data, convolution_descriptor, call_context,
+      use_fallback,
       scratch_allocator, out_exec_plans);
 }
 
@@ -340,7 +342,7 @@ bool StreamExecutor::GetMIOpenConvolveAlgorithms(
     DeviceMemoryBase filter_data, const dnn::BatchDescriptor& output_descriptor,
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
-    ScratchAllocator* scratch_allocator,
+    ScratchAllocator* scratch_allocator, dnn::CallContext call_context,
     std::vector<dnn::ProfileResult>* out_algorithms) {
   dnn::DnnSupport* dnn_support = AsDnn();
   if (!dnn_support) {
@@ -349,7 +351,7 @@ bool StreamExecutor::GetMIOpenConvolveAlgorithms(
   return dnn_support->GetMIOpenConvolveAlgorithms(
       kind, element_type, stream, input_descriptor, input_data,
       filter_descriptor, filter_data, output_descriptor, output_data,
-      convolution_descriptor, scratch_allocator, out_algorithms);
+      convolution_descriptor, scratch_allocator, call_context, out_algorithms);
 }
 
 bool StreamExecutor::GetRnnAlgorithms(

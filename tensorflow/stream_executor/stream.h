@@ -333,16 +333,17 @@ class Stream {
 
   template <typename InputType, typename OutputType>
   port::Status ConvolveWithAlgorithm(
-      dnn::ConvolutionKind kind, const dnn::BatchDescriptor &input_descriptor,
+      dnn::ConvolutionKind kind, const dnn::BatchDescriptor& input_descriptor,
       DeviceMemory<InputType> input_data,
-      const dnn::FilterDescriptor &filter_descriptor,
+      const dnn::FilterDescriptor& filter_descriptor,
       DeviceMemory<InputType> filter_data,
-      const dnn::BatchDescriptor &output_descriptor,
+      const dnn::BatchDescriptor& output_descriptor,
       DeviceMemory<OutputType> output_data,
-      const dnn::ConvolutionDescriptor &convolution_descriptor,
-      ScratchAllocator *scratch_allocator,
-      const dnn::AlgorithmConfig &algorithm_config,
-      dnn::ProfileResult *output_profile_result) {
+      const dnn::ConvolutionDescriptor& convolution_descriptor,
+      ScratchAllocator* scratch_allocator,
+      const dnn::AlgorithmConfig& algorithm_config,
+      dnn::CallContext call_context,
+      dnn::ProfileResult* output_profile_result) {
     DeviceMemory<uint8> scratch_memory;
     dnn::AlgorithmDesc algorithm_desc;
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
@@ -351,12 +352,12 @@ class Stream {
           filter_data, output_descriptor, output_data, convolution_descriptor,
           algorithm_config, scratch_allocator, &algorithm_desc,
           &scratch_memory));
-      return dnn->DoConvolve(kind, dnn::ToDataType<InputType>::value,
-                             dnn::ToDataType<OutputType>::value, this,
-                             input_descriptor, input_data, filter_descriptor,
-                             filter_data, output_descriptor, output_data,
-                             convolution_descriptor, algorithm_desc,
-                             scratch_memory, output_profile_result);
+      return dnn->DoConvolve(
+          kind, dnn::ToDataType<InputType>::value,
+          dnn::ToDataType<OutputType>::value, this, input_descriptor,
+          input_data, filter_descriptor, filter_data, output_descriptor,
+          output_data, convolution_descriptor, algorithm_desc, scratch_memory,
+          call_context, output_profile_result);
     }
     return port::UnimplementedError("DNN library is not found.");
   }
@@ -390,19 +391,21 @@ class Stream {
   }
 
   port::StatusOr<std::unique_ptr<const dnn::ConvRunner>> ConvolveRunnerFromDesc(
-      const dnn::AlgorithmDesc &algorithm_desc, dnn::ConvolutionKind kind,
+      const dnn::AlgorithmDesc& algorithm_desc, dnn::ConvolutionKind kind,
       dnn::DataType element_type, dnn::DataType output_type,
-      const dnn::BatchDescriptor &input_descriptor,
-      const dnn::FilterDescriptor &filter_descriptor,
-      const dnn::BatchDescriptor &output_descriptor,
-      const dnn::ConvolutionDescriptor &convolution_descriptor) {
+      const dnn::BatchDescriptor& input_descriptor,
+      const dnn::FilterDescriptor& filter_descriptor,
+      const dnn::BatchDescriptor& output_descriptor,
+      const dnn::ConvolutionDescriptor& convolution_descriptor,
+      dnn::CallContext call_context) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
     if (!dnn_support) {
       return port::UnimplementedError("DNN library is not found.");
     }
     return dnn_support->ConvolveRunnerFromDesc(
         this, algorithm_desc, kind, element_type, output_type, input_descriptor,
-        filter_descriptor, output_descriptor, convolution_descriptor);
+        filter_descriptor, output_descriptor, convolution_descriptor,
+        call_context);
   }
 
   port::StatusOr<std::unique_ptr<const dnn::FusedConvRunner>>
