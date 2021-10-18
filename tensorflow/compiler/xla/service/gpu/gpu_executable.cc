@@ -79,6 +79,15 @@ bool NeedsAsyncCommsStream(Thunk& thunk) {
   }
 }
 
+static std::string ModuleUniqueName(absl::string_view module_name,
+                                    const HloModule* module) {
+  std::string unique_id;
+  if (module != nullptr) {
+    unique_id = absl::StrCat("module.", module->unique_id(), ".");
+  }
+  return absl::StrCat(unique_id, module_name);
+}
+
 }  // namespace
 
 void GpuExecutable::BefBufferDeleter::operator()(uint8_t* ptr) const {
@@ -117,13 +126,15 @@ GpuExecutable::GpuExecutable(GpuExecutable::Params params)
   // workaround for a bug in ROCm 3.3 hipModuleLoadData
   binary_.reserve(binary_.size() + 256);
 #endif
-  XlaDebugInfoManager::Get()->RegisterModule(module_name_, shared_module(),
-                                             debug_buffer_assignment_);
+  XlaDebugInfoManager::Get()->RegisterModule(
+      ModuleUniqueName(module_name_, shared_module().get()), shared_module(),
+      debug_buffer_assignment_);
 }
 
 GpuExecutable::~GpuExecutable() {
-  XlaDebugInfoManager::Get()->UnregisterModule(module_name_, shared_module(),
-                                               debug_buffer_assignment_);
+  XlaDebugInfoManager::Get()->UnregisterModule(
+      ModuleUniqueName(module_name_, shared_module().get()), shared_module(),
+      debug_buffer_assignment_);
 
   {
     // We could have issued host->device mem copies in ResolveConstantGlobals.
@@ -770,9 +781,9 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
       return InternalError("Failed to load BEF file.");
     }
 
-    TF_RETURN_IF_ERROR(ExecuteBef(bef_file, module_name_, run_options,
-                                  buffer_allocations, allocations_.size(),
-                                  block_host_until_done));
+    TF_RETURN_IF_ERROR(ExecuteBef(
+        bef_file, bef_buffer.get_deleter().entry_function_name, run_options,
+        buffer_allocations, allocations_.size(), block_host_until_done));
   } else {
     return FailedPrecondition("Expected BefBuffer is not supplied.");
   }
