@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "third_party/eigen3/Eigen/Core"
 #include "rocm/include/miopen/miopen.h"
+#include "rocm/rocm_config.h"
 #include "tensorflow/core/lib/hash/hash.h"
 #include "tensorflow/core/util/env_var.h"
 #include "tensorflow/stream_executor/dnn.h"
@@ -363,6 +364,12 @@ namespace wrap {
 // clang-format on
 
 MIOPEN_DNN_ROUTINE_EACH(STREAM_EXECUTOR_MIOPEN_WRAP)
+
+#if TF_ROCM_VERSION >= 50000
+
+STREAM_EXECUTOR_MIOPEN_WRAP(miopenSetConvolutionAttribute)
+
+#endif
 
 #undef MIOPEN_DNN_ROUTINE_EACH
 
@@ -3021,7 +3028,17 @@ class RocmConvRunner : public dnn::ConvRunner {
         output_desc_{output_descriptor, ToMIOpenDataType(input_type)},
         filter_desc_{filter_descriptor, ToMIOpenDataType(input_type)},
         conv_desc_{conv_descriptor, ToMIOpenDataType(input_type)},
-        call_context_(call_context) {}
+        call_context_(call_context) {
+    bool is_backprop = (call_context == dnn::CallContext::kBackpropData) ||
+                       (call_context == dnn::CallContext::kBackpropFilter);
+
+#if TF_ROCM_VERSION >= 50000
+    if (is_backprop && (ToMIOpenDataType(input_type) == miopenHalf)) {
+      wrap::miopenSetConvolutionAttribute(
+          conv_desc_.handle(), MIOPEN_CONVOLUTION_ATTRIB_FP16_ALT_IMPL, 1);
+    }
+#endif
+  }
 
   std::string ToString() const override {
     return dnn::AlgorithmDesc{algo_id_, false, workspace_size_}.ToString();
@@ -3311,6 +3328,15 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsImmediateMode(
   ScopedConvolutionDescriptor conv{convolution_descriptor,
                                    ToMIOpenDataType(element_type)};
 
+  bool is_backprop = (call_context == dnn::CallContext::kBackpropData) ||
+                     (call_context == dnn::CallContext::kBackpropFilter);
+
+#if TF_ROCM_VERSION >= 50000
+  if (is_backprop && (ToMIOpenDataType(element_type) == miopenHalf)) {
+    wrap::miopenSetConvolutionAttribute(
+        conv.handle(), MIOPEN_CONVOLUTION_ATTRIB_FP16_ALT_IMPL, 1);
+  }
+#endif
   // First determine the number of algorityhms available
   size_t maxSolutionCount = 0;
 
@@ -3520,6 +3546,15 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsFindMode(
   ScopedConvolutionDescriptor conv{convolution_descriptor,
                                    ToMIOpenDataType(element_type)};
 
+  bool is_backprop = (call_context == dnn::CallContext::kBackpropData) ||
+                     (call_context == dnn::CallContext::kBackpropFilter);
+
+#if TF_ROCM_VERSION >= 50000
+  if (is_backprop && (ToMIOpenDataType(element_type) == miopenHalf)) {
+    wrap::miopenSetConvolutionAttribute(
+        conv.handle(), MIOPEN_CONVOLUTION_ATTRIB_FP16_ALT_IMPL, 1);
+  }
+#endif
   // Determine the workspace memory size that will need by the call to Find
   size_t scratch_memory_size = 0;
   switch (kind) {
