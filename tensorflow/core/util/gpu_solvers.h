@@ -35,6 +35,7 @@ limitations under the License.
 #include "rocm/include/rocblas.h"
 #include "tensorflow/stream_executor/blas.h"
 #include "tensorflow/stream_executor/rocm/rocsolver_wrapper.h"
+#include "tensorflow/stream_executor/rocm/hipsolver_wrapper.h"
 #endif
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -97,6 +98,35 @@ inline const typename ROCmComplexT<T>::type* ROCmComplex(const T* p) {
 template <typename T>
 inline typename ROCmComplexT<T>::type* ROCmComplex(T* p) {
   return reinterpret_cast<typename ROCmComplexT<T>::type*>(p);
+}
+
+// Type traits to get HIP complex types from std::complex<>
+
+template <typename T>
+struct HipComplexT {
+  typedef T type;
+};
+
+template <>
+struct HipComplexT<std::complex<float>> {
+  typedef hipFloatComplex type;
+};
+
+template <>
+struct HipComplexT<std::complex<double>> {
+  typedef hipDoubleComplex type;
+};
+
+// Convert pointers of std::complex<> to pointers of
+// hipFloatComplex/hipDoubleComplex. No type conversion for non-complex types.
+template <typename T>
+inline const typename HipComplexT<T>::type* AsHipComplex(const T* p) {
+  return reinterpret_cast<const typename HipComplexT<T>::type*>(p);
+}
+
+template <typename T>
+inline typename HipComplexT<T>::type* AsHipComplex(T* p) {
+  return reinterpret_cast<typename HipComplexT<T>::type*>(p);
 }
 
 // Template to give the Rocblas adjoint operation for real and complex types.
@@ -228,10 +258,10 @@ class GpuSolver {
 
 #if TENSORFLOW_USE_ROCM
   // ====================================================================
-  // Wrappers for ROCSolver start here
+  // Wrappers for ROCSolver/HIPSolver start here
   //
   // The method names below
-  // map to those in ROCSolver, which follow the naming
+  // map to those in ROCSolver/HIPSolver, which follow the naming
   // convention in LAPACK see
 
   // LU factorization.

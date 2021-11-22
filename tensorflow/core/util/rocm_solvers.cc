@@ -219,27 +219,40 @@ void GpuSolver::CheckLapackInfoAndDeleteSolverAsync(
 
 // Macro that specializes a solver method for all 4 standard
 // numeric types.
-#define TF_CALL_LAPACK_TYPES(m) \
+#define TF_CALL_ROCSOLV_TYPES(M) \
   m(float, s) m(double, d) m(std::complex<float>, c) m(std::complex<double>, z)
+#define TF_CALL_LAPACK_TYPES(m) \
+  m(float, S) m(double, D) m(std::complex<float>, C) m(std::complex<double>, Z)
 #define TF_CALL_LAPACK_TYPES_NO_COMPLEX(m) m(float, s) m(double, d)
 #define TF_CALL_LAPACK_TYPES_NO_REAL(m) m(std::complex<float>, c) m(std::complex<double>, z)
 
 #define BLAS_SOLVER_FN(method, type_prefix) \
   wrap::rocblas##_##type_prefix##method
 
-// Macro to construct rocsolver method names.
-#define SOLVER_FN(method, type_prefix) wrap::rocsolver##_##type_prefix##method
+// Macros to construct rocsolver/hipsolver method names.
+#define ROCSOLVER_FN(method, type_prefix) wrap::rocsolver##_##type_prefix##method
+#define HIPSOLVER_FN(method, hip_prefix) wrap::hipsolver##hip_prefix##method
+#define BUFSIZE_FN(method, hip_prefix) \
+  wrap::hipsolver##hip_prefix##method##_bufferSize
 
-#define GETRF_INSTANCE(Scalar, type_prefix)                                \
-  template <>                                                              \
-  Status GpuSolver::Getrf<Scalar>(int m, int n, Scalar* A, int lda,        \
-                                  int* dev_pivots, int* dev_lapack_info) { \
-    mutex_lock lock(handle_map_mutex);                                     \
-    using ROCmScalar = typename ROCmComplexT<Scalar>::type;                \
-    TF_RETURN_IF_ROCBLAS_ERROR(SOLVER_FN(getrf, type_prefix)(              \
-        rocm_blas_handle_, m, n, reinterpret_cast<ROCmScalar*>(A), lda,    \
-        dev_pivots, dev_lapack_info));                                     \
-    return Status::OK();                                                   \
+template<typename Scalar, typename SolverFnT>
+static inline Status GetrfImpl( SolverFnT Op, hipsolverHandle_t handle,
+    int m, int n, Scalar* A, int lda, Scalar* work, int lwork, int* dev_pivots, 
+    int* dev_lapack_info) {
+    TF_RETURN_IF_ROCBLAS_ERROR(op(
+        handle, m, n, AsHipComplex(A), lda, work, lwork, 
+        dev_pivots, dev_lapack_info)):
+    return Status::OK();
+}
+
+
+#define GETRF_INSTANCE(Scalar, type_prefix)                                   \
+  template <>                                                                 \
+  Status GpuSolver::Getrf<Scalar>(int m, int n, Scalar* A, int lda,           \
+                                  int* dev_pivots, int* dev_lapack_info) {    \
+    mutex_lock lock(handle_map_mutex);                                        \
+    return GetrfImpl(HIPSOLVER_FN(getrf, type_prefix), rocm_blas_handle_,     \
+                     m, n, A, lda, work, lwork, dev_pivots, dev_lapack_info); \
   }
 
 TF_CALL_LAPACK_TYPES(GETRF_INSTANCE);
