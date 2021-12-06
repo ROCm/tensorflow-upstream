@@ -56,7 +56,7 @@ bazel test \
       --test_size_filters=small,medium,large \
       --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute \
       -- \
-      //tensorflow/python/kernel_tests:matrix_inverse_op_test \
+      //tensorflow/python/kernel_tests/linalg:self_adjoint_eig_op_test \
 
 
 # --test_tag_filters=gpu,-no_oss,-oss_serial,-no_gpu,-no_rocm,-benchmark-test,-v1only \
