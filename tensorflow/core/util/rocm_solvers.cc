@@ -236,6 +236,11 @@ void GpuSolver::CheckLapackInfoAndDeleteSolverAsync(
 #define BUFSIZE_FN(method, hip_prefix) \
   wrap::hipsolver##hip_prefix##method##_bufferSize
 
+
+template<typename Scalar, typename SolverFnT>
+static inline Status GetrfBufferSizeImpl( SolverFnT Op, hipsolverHandle_t handle,
+    int m, int n, Scalar* A, 
+
 template<typename Scalar, typename SolverFnT>
 static inline Status GetrfImpl( SolverFnT Op, hipsolverHandle_t handle,
     int m, int n, Scalar* A, int lda, Scalar* work, int lwork, int* dev_pivots, 
@@ -252,6 +257,9 @@ static inline Status GetrfImpl( SolverFnT Op, hipsolverHandle_t handle,
   Status GpuSolver::Getrf<Scalar>(int m, int n, Scalar* A, int lda,           \
                                   int* dev_pivots, int* dev_lapack_info) {    \
     mutex_lock lock(handle_map_mutex);                                        \
+    Scalar* lwork;                                                            \
+    GetrfBufferSizeImpl(BUFSIZE_FN(getrf, type_prefix), rocm_blas_handle_, m, \
+                         n, A, lda, lwork);                                   \
     return GetrfImpl(HIPSOLVER_FN(getrf, type_prefix), rocm_blas_handle_,     \
                      m, n, A, lda, work, lwork, dev_pivots, dev_lapack_info); \
   }
