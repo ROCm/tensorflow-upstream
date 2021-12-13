@@ -449,6 +449,26 @@ TF_CALL_LAPACK_TYPES(POTRF_BATCHED_INSTANCE);
 
 TF_CALL_LAPACK_TYPES(GETRS_BATCHED_INSTANCE);
 
+#define HEEVD_INSTANCE(Scalar, type_prefix)                                   \
+  template <>                                                                 \
+  Status GpuSolver::Heevd<Scalar>(                                            \
+      rocblas_evect jobz, rocblas_fill uplo, int n, Scalar* dev_A, int lda,   \
+      typename Eigen::NumTraits<Scalar>::Real* dev_W, int* dev_lapack_info) { \
+    mutex_lock lock(handle_map_mutex);                                        \
+    using ROCmScalar = typename ROCmComplexT<Scalar>::type;                   \
+    using EigenScalar = typename Eigen::NumTraits<Scalar>::Real;              \
+    ScratchSpace<uint8> dev_workspace = this->GetScratchSpace<uint8>(         \
+        sizeof(EigenScalar*) * n, "", /*on host */ false);                    \
+    TF_RETURN_IF_ROCBLAS_ERROR(SOLVER_FN(heevd, type_prefix)(                 \
+        rocm_blas_handle_, jobz, uplo, n,                                     \
+        reinterpret_cast<ROCmScalar*>(dev_A), lda, dev_W,                     \
+        reinterpret_cast<EigenScalar*>(dev_workspace.mutable_data()),         \
+        dev_lapack_info));                                                    \
+    return Status::OK();                                                      \
+  }
+
+TF_CALL_LAPACK_TYPES_NO_REAL(HEEVD_INSTANCE);
+
 // Allocates a temporary tensor. The GpuSolver object maintains a
 // TensorReference to the underlying Tensor to prevent it from being deallocated
 // prematurely.
@@ -550,29 +570,8 @@ Status MatInvBatchedImpl(GpuExecutor* gpu_executor, SolverFnT solver,
         host_a_inverse_dev_ptrs, ldainv, dev_lapack_info, batch_size);        \
   }
 
-}
 
-#define HEEVD_INSTANCE(Scalar, function_prefix, type_prefix)                                  \
-  template <>                                                                 \
-  Status GpuSolver::Heevd<Scalar>(                                            \
-      rocblas_evect jobz, rocblas_fill uplo, int n, Scalar* dev_A, int lda,   \
-      typename Eigen::NumTraits<Scalar>::Real* dev_W, int* dev_lapack_info) { \
-    mutex_lock lock(handle_map_mutex);                                        \
-    using ROCmScalar = typename ROCmComplexT<Scalar>::type;                   \
-    ScratchSpace<uint8> dev_workspace = this->GetScratchSpace<uint8>(         \
-        sizeof(ROCmScalar*) * n, "", /*on host */ false);                     \
-    if (!CopyHostToDevice(context_, dev_workspace.mutable_data(), dev_W,      \
-                          dev_workspace.bytes())) {                           \
-      return errors::Internal("Heevd: Failed to copy ptrs to device");        \
-    }                                                                         \
-    TF_RETURN_IF_ROCBLAS_ERROR(SOLVER_FN(heevd, type_prefix)(                 \
-        rocm_blas_handle_, jobz, uplo, n,                                     \
-        reinterpret_cast<ROCmScalar**>(dev_A.mutable_data()), lda,            \
-        reinterpret_cast<ROCmScalar**>(dev_W.mutable_data()),                 \
-        reinterpret_cast<ROCmScalar**>(dev_workspace.mutable_data()),         \
-        dev_lapack_info->mutable_data()));                                    \
-    return Status::OK();                                                      \
-  }                                                                           \
-  TF_CALL_LAPACK_TYPES_NO_REAL(HEEVD_INSTANCE);
+
+}
 
 #endif  // TENSORFLOW_USE_ROCM
