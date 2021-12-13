@@ -330,6 +330,13 @@ class GpuSolver {
                        const Scalar* const host_a_inverse_dev_ptrs[],
                        int ldainv, DeviceLapackInfo* dev_lapack_info,
                        int batch_size);
+  
+  // Hermitian (Symmetric) Eigen decomposition.
+  template <typename Scalar>
+  Status Heevd(rocblas_evect jobz, rocblas_fill uplo, int n,
+               Scalar* dev_A, int lda,
+               typename Eigen::NumTraits<Scalar>::Real* dev_W,
+               int* dev_lapack_info);
 
 #else //GOOGLE_CUDA
   // ====================================================================

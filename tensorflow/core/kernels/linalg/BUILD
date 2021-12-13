@@ -180,7 +180,7 @@ tf_kernel_library(
 tf_kernel_library(
     name = "eig_op",
     prefix = "eig_op",
-    deps = LINALG_DEPS + ["//tensorflow/core:lib_internal"] + if_cuda([
+    deps = LINALG_DEPS + ["//tensorflow/core:lib_internal"] + if_cuda_or_rocm([
         "//tensorflow/core/kernels:cwise_op",
     ]),
 )

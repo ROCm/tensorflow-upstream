@@ -1,2 +1,2 @@
 clear
-sh scripts/amd/test.sh
+bash scripts/amd/test.sh
