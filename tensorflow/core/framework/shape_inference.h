@@ -220,6 +220,9 @@ class InferenceContext {
 
   ~InferenceContext();
 
+  void Clear() {
+    shape_manager_.Clear();
+  }
   // Runs the shape inference function 'fn' with 'this' as the
   // argument, returns the status of the inference.
   //
@@ -358,8 +361,29 @@ class InferenceContext {
     DCHECK(s.IsSet());
     return s.IsSet() ? s->rank_ : kUnknownRank;
   }
+  static int32 Value(ShapeHandle s, int dim) {
+    DCHECK(s.IsSet());
+	DCHECK(dim >=0 && dim <  s->dims_.size());
+	return Value(s->dims_[dim]);
+  }
+  static std::vector<int32> Dims(ShapeHandle s) {
+    DCHECK(s.IsSet());
+    std::vector<int32> res;
+    for (auto d : s->dims_) {
+	  res.push_back(Value(d));
+    }
+    return res;
+  }
   static bool RankKnown(ShapeHandle s) {
     return (s.IsSet() && (Rank(s) != kUnknownRank));
+  }
+  static bool RankAndDimKnown(ShapeHandle s) {
+    bool rank_known = (s.IsSet() && (Rank(s) != kUnknownRank));
+	if (!rank_known) return false;
+	for (auto d : s->dims_) {
+	  if (Value(d) == kUnknownDim) return false;
+	}
+	return true;
   }
   static inline int64 Value(DimensionOrConstant d) {
     return d.dim.IsSet() ? d.dim->value_ : d.val;
@@ -672,6 +696,7 @@ class InferenceContext {
         return all_dims_.back();
       }
     }
+    void Clear();
 
    private:
     std::vector<Shape*> all_shapes_;    // values are owned.

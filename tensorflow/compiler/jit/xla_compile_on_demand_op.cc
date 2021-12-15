@@ -61,9 +61,10 @@ Status XlaCompileOnDemandOp::Run(OpKernelContext* ctx,
       client, client->backend().memory_allocator(),
       /*allocate_xla_tensors=*/true,
       /*use_multiple_streams=*/metadata.UseMultipleStreams());
-
+  std::vector<std::shared_ptr<Tensor>> tmp_inputs;
   launch_context.PopulateInputs(ctx, result, variables,
-                                /*missing_ctx_input_prefix=*/0);
+                                /*missing_ctx_input_prefix=*/0, 
+   nullptr, tmp_inputs);
 
   se::Stream* stream =
       ctx->op_device_context() ? ctx->op_device_context()->stream() : nullptr;

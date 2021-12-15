@@ -32,14 +32,6 @@ limitations under the License.
 #include "tensorflow/stream_executor/device_memory_allocator.h"
 
 namespace tensorflow {
-
-// Struct that represents a possibly-absent Tensor.
-struct OptionalTensor {
-  string name;           // A descriptive name
-  bool present = false;  // Is the tensor present?
-  Tensor value;          // If present, what is the Tensor's value?
-};
-
 // Takes a snapshot of the values of resource variable arguments, whose indices
 // are specified in `variable_indices` argument. We snapshot tensors that back
 // resource variables since concurrent updates may modify the shape, and it is
@@ -125,7 +117,9 @@ class XlaComputationLaunchContext {
   static Status BuildXlaCompilerArguments(
       const std::map<int, Tensor>& constant_args,
       const std::map<int, OptionalTensor>& variable_args, OpKernelContext* ctx,
-      std::vector<XlaCompiler::Argument>* args);
+      std::vector<XlaCompiler::Argument>* args,
+      std::shared_ptr<InputsShapeInfo> inputs_shape_info=nullptr,
+      XlaCompilationCache* cache=nullptr);
 
   // Add all inputs within `ctx` as XLA arguments (returned by arguments()).
   // `variables` is a map from TensorFlow argument number to resource variable.
@@ -134,10 +128,12 @@ class XlaComputationLaunchContext {
   // missing and adjusts input indices accordingly.  All elements in kernel's
   // input_mapping must be greater than or equal to `missing_ctx_input_prefix`
   // (in other words, no inputs actually required by the kernel can be missing).
-  void PopulateInputs(OpKernelContext* ctx,
+  Status PopulateInputs(OpKernelContext* ctx,
                       const XlaCompiler::CompilationResult* kernel,
                       const std::map<int, OptionalTensor>& variables,
-                      int missing_ctx_input_prefix);
+                      int missing_ctx_input_prefix,
+                      std::shared_ptr<InputsShapeInfo> inputs_shape_info,
+                      std::vector<std::shared_ptr<Tensor>>& tmp_inputs);
 
   // Given the XLA output in `output`, populate all outputs of `ctx`.  Also
   // writes out the resource variable updates.
@@ -152,8 +148,8 @@ class XlaComputationLaunchContext {
   Status PopulateOutputs(OpKernelContext* ctx,
                          const XlaCompiler::CompilationResult* kernel,
                          xla::ScopedShapedBuffer output,
-                         int missing_ctx_input_prefix);
-
+                         int missing_ctx_input_prefix,
+                         std::shared_ptr<InputsShapeInfo> inputs_shape_info = nullptr);
   // Return the argument list. Only valid after PopulateInputs() has been
   // called.
   const std::vector<xla::ShapedBuffer*>& arguments() const { return arg_ptrs_; }

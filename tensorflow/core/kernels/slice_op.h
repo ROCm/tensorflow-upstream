@@ -20,9 +20,19 @@ limitations under the License.
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/tensor_types.h"
+#include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
 
 namespace tensorflow {
 namespace functor {
+
+Status DoSlice(OpKernelContext* context, 
+               const Tensor& input, 
+               const std::vector<int64>& begin,
+               const std::vector<int64>& size,
+               Tensor& output,
+               bool is_cpu_device);
 
 template <typename Device, typename T, int NDIMS>
 struct Slice {

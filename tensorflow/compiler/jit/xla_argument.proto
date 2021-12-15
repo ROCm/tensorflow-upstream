@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package tensorflow;
+
+import "tensorflow/core/framework/tensor.proto";
+import "tensorflow/core/framework/tensor_shape.proto";
+import "tensorflow/core/framework/types.proto";
+
+option cc_enable_arenas = true;
+
+enum CacheKind {
+  // Default value; not a valid kind.
+  kInvalid = 0;
+
+  // Argument is a compile-time constant. No associated runtime parameter.
+  kConstant = 1;
+
+  // Argument is a Variable, TensorArray, or Stack resource. Has an
+  // associated runtime parameter iff `initialized` is true.
+  kResource = 2;
+
+  // Argument is a run-time parameter.
+  kParameter = 3;
+
+  // Argument is an XLA token.
+  kToken = 4;
+
+  // Argument is a TensorList.
+  kTensorList = 5;
+}
+
+message XlaArgumentProto {
+  TensorShapeProto shape = 1;
+  CacheKind kind = 2;
+  DataType type = 3;
+  TensorProto constant_value = 4;
+}
+
+message XlaArgumensProto {
+  repeated XlaArgumentProto xla_arguments = 1;
+}
+

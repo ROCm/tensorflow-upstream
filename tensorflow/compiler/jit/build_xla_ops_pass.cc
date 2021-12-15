@@ -394,6 +394,15 @@ Status ReplaceNodeWithXlaCompileAndXlaRun(
     requires_compilation = true;
   }
 
+  bool enable_xla_auto_padding = options.session_options->config.enable_xla_auto_padding();
+  LOG(INFO) << "enable_xla_auto_padding=" << enable_xla_auto_padding;
+  if (enable_xla_auto_padding) {
+    // xla padding requires lazy compile
+    requires_compilation = false;
+  }
+  std::string auto_padding_shape = options.session_options->config.auto_padding_shape();
+  LOG(INFO) << "auto_padding_shape " << auto_padding_shape;
+
   string device_name_str = string(device_info_cache->GetNameFor(device));
 
   Status status;
@@ -402,28 +411,33 @@ Status ReplaceNodeWithXlaCompileAndXlaRun(
                    .WithDevice(n->requested_device())
                    .WithAssignedDevice(device_name_str);
 
-  ops::_XlaCompile xla_compile(root.WithOpName("xla_compile"),
+if (requires_compilation) {
+    ops::XlaLaunch xla_launch(root.WithOpName("xla_launch"),
                                /*constants=*/cluster_info.constant_inputs,
                                /*args=*/cluster_info.non_constant_inputs,
                                /*resources=*/cluster_info.resource_inputs,
-                               /*must_compile=*/requires_compilation,
+                               n->output_types(),
                                cluster_info.function);
-  TF_RETURN_IF_ERROR(
-      CopyIncomingControlEdges(g, /*from=*/n, /*to=*/xla_compile.key.node()));
-
-  std::vector<Output> xla_run_args =
-      GetXlaRunArgs(root, cluster_info, debugging_opts);
-
-  if (requires_compilation) {
-    // "Strict" compilation:  every _XlaCompile invocation must compile the
-    // cluster.
-    ops::_XlaRun xla_run(root.WithOpName("xla_run"), xla_run_args,
-                         xla_compile.key, n->output_types());
-
+    TF_RETURN_IF_ERROR(
+          CopyIncomingControlEdges(g, /*from=*/n, /*to=*/xla_launch.operation.node()));
+ 
     MoveOutgoingEdges(g, /*old_node=*/n,
-                      /*new_node=*/xla_run.operation.node());
+                      /*new_node=*/xla_launch.operation.node());
     g->RemoveNode(n);
   } else {
+    ops::_XlaCompile xla_compile(root.WithOpName("xla_compile"),
+                                 /*constants=*/cluster_info.constant_inputs,
+                                 /*args=*/cluster_info.non_constant_inputs,
+                                 /*resources=*/cluster_info.resource_inputs,
+                                 /*must_compile=*/requires_compilation,
+                                 enable_xla_auto_padding,
+                                 auto_padding_shape,
+                                 cluster_info.function);
+    TF_RETURN_IF_ERROR(
+        CopyIncomingControlEdges(g, /*from=*/n, /*to=*/xla_compile.key.node()));
+
+    std::vector<Output> xla_run_args =
+        GetXlaRunArgs(root, cluster_info, debugging_opts);
     // "Lazy" compilation: an _XlaCompile invocation may decide not to compile
     // the cluster based on profitability heuristics.
 

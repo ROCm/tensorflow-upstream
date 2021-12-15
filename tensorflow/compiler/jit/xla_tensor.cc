@@ -32,14 +32,19 @@ namespace tensorflow {
 }
 
 /*static*/ se::DeviceMemoryBase XlaTensor::DeviceMemoryFromTensor(
-    const Tensor& tensor) {
+    const Tensor& tensor, const xla::Shape& padded_shape) {
   const XlaTensor* xla_tensor = FromTensor(&tensor);
   if (xla_tensor) {
     CHECK(xla_tensor->has_shaped_buffer());
     return xla_tensor->shaped_buffer().root_buffer();
   } else {
+    std::vector<int64> dims = padded_shape.dimensions();
+    int64 size = DataTypeSize(tensor.dtype());
+    for (int64 d: dims){
+      size *= d;
+    }
     return se::DeviceMemoryBase(const_cast<char*>(tensor.tensor_data().data()),
-                                tensor.tensor_data().size());
+                                size);
   }
 }
 

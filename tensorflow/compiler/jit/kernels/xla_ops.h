@@ -153,6 +153,10 @@ class XlaCompileOp : public OpKernel {
 
   const bool must_compile_;
 
+  const bool enable_xla_auto_padding_;
+
+  const std::vector<std::vector<int>> auto_padding_shape_;
+
   // cannot_compile_cluster_ is set to true if XLA returns an Unimplemented
   // error when compiling the cluster this _XlaCompile is supposed to compile.
   // If `cannot_compile_cluster_` is true then we avoid compiling this cluster
@@ -167,9 +171,32 @@ class XlaRunOp : public OpKernel {
   explicit XlaRunOp(OpKernelConstruction* ctx);
 
   void Compute(OpKernelContext* ctx) override;
-
+  
+  void InferOutputShape(OpKernelContext* ctx,
+      const XlaCompiler::CompilationResult* compile_result,
+      std::shared_ptr<InputsShapeInfo> inputs_shape_info);
  private:
+  std::string name_ = "";
   const XlaPlatformInfo platform_info_;
+  std::shared_ptr<thread::ThreadPool> shape_infer_thread_pool_ = nullptr;
+  std::map<std::string, std::vector<TensorShapeProto>> cached_inferred_shapes_;
+  mutex cached_inferred_shapes_mu_;
+  bool GetCachedInferShapes(std::string uuid,
+      std::vector<TensorShapeProto>& protos) {
+    mutex_lock lock(cached_inferred_shapes_mu_);
+    auto iter_cache = cached_inferred_shapes_.find(uuid);
+    bool use_cache = iter_cache != cached_inferred_shapes_.end();
+    if (use_cache) {
+      protos = iter_cache->second;
+    }
+    return use_cache;
+  }
+
+  void SetCachedInferShapes(std::string uuid,
+      const std::vector<TensorShapeProto>& protos) {
+    mutex_lock lock(cached_inferred_shapes_mu_);
+    cached_inferred_shapes_[uuid] = protos;
+  }
 };
 
 }  // namespace tensorflow

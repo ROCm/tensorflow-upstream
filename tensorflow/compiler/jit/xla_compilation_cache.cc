@@ -39,14 +39,20 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/public/version.h"
 #include "tensorflow/core/util/dump_graph.h"
+#include "tensorflow/core/util/env_var.h"
 
 namespace tensorflow {
 
+using namespace xla_padding_rule;
 constexpr int64 XlaCompilationCache::kDefaultCompilationThreshold;
 
 XlaCompilationCache::XlaCompilationCache(xla::LocalClient* client,
-                                         DeviceType device_type)
-    : client_(client), device_type_(std::move(device_type)) {}
+                                         DeviceType device_type,
+                                         std::string name)
+    : client_(client), device_type_(std::move(device_type)),
+      name_(name) {
+  xla_auto_padding_ = std::make_shared<XlaAutoPadding>(this, name_);
+}
 
 XlaCompilationCache::~XlaCompilationCache() {
   // Ensure any use of our programs have completed by waiting for all stream
@@ -141,6 +147,33 @@ XlaCompilationCache::BuildSignature(
   return std::move(signature);
 }
 
+
+xla::StatusOr<XlaCompilationCache::Signature>
+XlaCompilationCache::BuildSignatureNoShape(
+    const NameAttrList& function,
+    absl::Span<const XlaCompiler::Argument> args) {
+  Signature signature;
+  signature.name = Canonicalize("XLA-", AttrSlice(&function.attr()));
+  for (const XlaCompiler::Argument& arg : args) {
+    switch (arg.kind) {
+      case XlaCompiler::Argument::kConstant:
+        signature.arg_values.push_back(arg.constant_value);
+        break;
+      case XlaCompiler::Argument::kParameter:
+      case XlaCompiler::Argument::kResource: {
+        std::vector<int64> tmp(arg.DimensionSizes().size(), 1);
+        signature.arg_shapes.emplace_back(arg.type, tmp); 
+        break;
+       }
+      default:
+        return errors::InvalidArgument(
+            "Unhandled argument kind in XlaCompilationCache: ",
+            arg.HumanString());
+    }
+  }
+  return std::move(signature);
+}
+
 Status XlaCompilationCache::BuildExecutable(
     const XlaCompiler::Options& options,
     const XlaCompiler::CompilationResult& result,
@@ -174,22 +207,39 @@ Status XlaCompilationCache::Compile(
     const XlaCompiler::CompileOptions& compile_options,
     CompileMode compile_mode,
     const XlaCompiler::CompilationResult** out_compilation_result,
-    xla::LocalExecutable** out_executable) {
+    xla::LocalExecutable** out_executable,
+    std::shared_ptr<InputsShapeInfo> inputs_shape_info) {
   absl::optional<int64> compile_threshold;
   if (compile_mode == CompileMode::kLazy) {
     compile_threshold = kDefaultCompilationThreshold;
   }
-  auto compile_fn = [&](XlaCompiler* compiler,
-                        XlaCompiler::CompilationResult* result) {
-    return compiler->CompileFunction(compile_options, function, args, result);
+
+  auto compile_fn = [](XlaCompiler* compiler,
+                        XlaCompiler::CompilationResult* result,
+                        const XlaCompiler::CompileOptions& compile_options,
+                        const NameAttrList& function,
+                        absl::Span<const XlaCompiler::Argument> new_args,
+                        std::shared_ptr<InputsShapeInfo> inputs_shape_info) {
+    return compiler->CompileFunction(compile_options, function, new_args, result, 
+                                     inputs_shape_info);
   };
-  return CompileImpl(options, function, args, compile_fn,
-                     /*compile_threshold=*/compile_threshold,
-                     out_compilation_result, out_executable);
+  // if inputs_shape_info is nullptr, indicates it is from xlalaunch 
+  // or disabled xla auto padding
+  if (inputs_shape_info == nullptr) {
+    VLOG(1) << name_ << " Compile local";
+    return CompileImpl(options, function, args, compile_options, compile_fn,
+                       /*compile_threshold=*/compile_threshold,
+                       out_compilation_result, out_executable, nullptr);
+  } else {
+    VLOG(1) << name_ << " Compile auto padding";
+    return xla_auto_padding_->Compile( options, function, args, compile_options, compile_fn,
+                       /*compile_threshold=*/compile_threshold,
+                       out_compilation_result, out_executable, inputs_shape_info);
+  }
 }
 
 static bool IsMegamorphic(int64 compile_count, int64 execution_count) {
-  const int64 kCompileThreshold = 10;
+  const int64 kCompileThreshold = 500;
   const int64 kMinExecutionsPerCompile = 50;
 
   // This heuristic is trying to capture the following property: have we sunk a
@@ -214,7 +264,11 @@ Status XlaCompilationCache::CompileSingleOp(
   // and causes false uniqueness between nodes.
   name.mutable_attr()->erase("_class");
   auto compile_op = [&](XlaCompiler* compiler,
-                        XlaCompiler::CompilationResult* result) {
+                        XlaCompiler::CompilationResult* result,
+                        const XlaCompiler::CompileOptions& compile_options,
+                        const NameAttrList& function,
+                        absl::Span<const XlaCompiler::Argument> args,
+                        std::shared_ptr<InputsShapeInfo> inputs_shape_info) {
     std::vector<DataType> result_dtypes(ctx->num_outputs());
     for (int i = 0; i < result_dtypes.size(); ++i) {
       result_dtypes[i] = ctx->expected_output_dtype(i);
@@ -222,7 +276,7 @@ Status XlaCompilationCache::CompileSingleOp(
     return compiler->CompileSingleOp(compile_options, ctx->op_kernel().def(),
                                      args, result_dtypes, result);
   };
-  return CompileImpl(options, name, args, compile_op,
+  return CompileImpl(options, name, args, compile_options, compile_op,
                      /*compile_threshold=*/absl::nullopt,
                      out_compilation_result, out_executable);
 }
@@ -244,12 +298,17 @@ void LogOnceXlaCompiledFirstCluster() {
 Status XlaCompilationCache::CompileImpl(
     const XlaCompiler::Options& options, const NameAttrList& function,
     absl::Span<const XlaCompiler::Argument> args,
+    const XlaCompiler::CompileOptions& compile_options,
     const std::function<Status(XlaCompiler* compiler,
-                               XlaCompiler::CompilationResult*)>& compile_fn,
+            XlaCompiler::CompilationResult*,
+            const XlaCompiler::CompileOptions& compile_options,
+            const NameAttrList& function,
+            absl::Span<const XlaCompiler::Argument> args,
+            std::shared_ptr<InputsShapeInfo> inputs_shape_info)>& compile_fn,
     absl::optional<int64> compile_threshold,
     const XlaCompiler::CompilationResult** out_compilation_result,
-    xla::LocalExecutable** out_executable) {
-  DCHECK_NE(out_executable, nullptr);
+    xla::LocalExecutable** out_executable,
+    std::shared_ptr<InputsShapeInfo> inputs_shape_info) {
   VLOG(2) << "XlaCompilationCache::Compile " << DebugString();
 
   if (VLOG_IS_ON(2)) {
@@ -306,11 +365,12 @@ Status XlaCompilationCache::CompileImpl(
   // cache eviction.
   mutex_lock entry_lock(entry->mu);
   int64 current_request_count = ++entry->request_count;
-  VLOG(2) << "Compilation cache entry hit: " << entry->compiled
-          << " signature: " << signature.HumanString() << " with request count "
-          << current_request_count << " and compile threshold "
-          << compile_threshold.value_or(0);
   if (!entry->compiled) {
+    VLOG(0) << "Compilation cache entry hit: " << entry->compiled << " " 
+            << " signature: " << signature.HumanString() << " with request count "
+            << current_request_count << " and compile threshold "
+            << compile_threshold.value_or(0) << " shape info="
+            << inputs_shape_info.get();
     const bool should_compile = [&] {
       if (!compile_threshold.has_value()) {
         // Lazy compilation is disabled.
@@ -321,7 +381,7 @@ Status XlaCompilationCache::CompileImpl(
         BroadcastOptimizationRemark(XlaOptimizationRemark::MEGAMORPHIC_FUNCTION,
                                     function.name())
             .IgnoreError();
-        VLOG(3) << "Not compiling cluster " << function.name()
+        LOG(WARNING) << "Not compiling cluster " << function.name()
                 << " because it is megamorphic.";
         return false;
       }
@@ -358,11 +418,16 @@ Status XlaCompilationCache::CompileImpl(
     entry->compiled = true;
 
     entry->compilation_status =
-        compile_fn(&compiler, &entry->compilation_result);
-    TF_RETURN_IF_ERROR(entry->compilation_status);
+        compile_fn(&compiler, &entry->compilation_result, 
+        compile_options, function, args, inputs_shape_info);
+    if(!entry->compilation_status.ok()) {
+      LOG(ERROR) << "compile " << name_ << " error: " << entry->compilation_status.error_message();
+      return entry->compilation_status;
+    }
     CHECK_EQ(entry->executable.get(), nullptr);
     entry->compilation_status =
         BuildExecutable(options, entry->compilation_result, &entry->executable);
+    TF_RETURN_IF_ERROR(entry->compilation_status);
 
     const uint64 compile_end_us = env->NowMicros();
     const uint64 compile_time_us = compile_end_us - compile_start_us;
@@ -396,9 +461,18 @@ Status XlaCompilationCache::CompileImpl(
           BroadcastXlaActivity(std::move(jit_compilation_activity)));
     }
   }
+  if (inputs_shape_info) {
+    // Init the xla padding state
+    TF_RETURN_IF_ERROR(xla_auto_padding_->CompileCallback(options, args, 
+       &entry->compilation_result, entry->executable.get(), inputs_shape_info));
+  }
+
   TF_RETURN_IF_ERROR(entry->compilation_status);
-  *out_compilation_result = &entry->compilation_result;
-  *out_executable = entry->executable.get();
+  if (out_compilation_result != nullptr &&
+      out_executable != nullptr) {
+    *out_compilation_result = &entry->compilation_result;
+    *out_executable = entry->executable.get();
+  }
   return Status::OK();
 }
 

@@ -38,6 +38,8 @@ limitations under the License.
 #include "tensorflow/core/platform/notification.h"
 #include "tensorflow/core/platform/thread_annotations.h"
 #include "tensorflow/core/public/version.h"
+#include "tensorflow/core/grappler/grappler_item.h"
+#include "tensorflow/core/grappler/costs/graph_properties.h"
 
 namespace tensorflow {
 
@@ -95,6 +97,20 @@ class XlaContext;
 // the packed representation is a (array, gradient0, gradient1, ...) tuple,
 // where gradient_k is the value of the k-th gradient in the
 // `tensor_array_gradients` ordered set.
+
+class InputsShapeInfo;
+
+enum class CompileMode {
+  kLazy,
+  kStrict,
+};
+
+struct OptionalTensor {
+  string name;           // A descriptive name
+  bool present = false;  // Is the tensor present?
+  Tensor value;          // If present, what is the Tensor's value?
+};
+
 class XlaCompiler {
  public:
   // Describes how to derive the value of each _Arg node in the graph/function
@@ -350,14 +366,15 @@ class XlaCompiler {
   Status CompileFunction(const CompileOptions& options,
                          const NameAttrList& fn_name_attrs,
                          absl::Span<const Argument> args,
-                         CompilationResult* result);
+                         CompilationResult* result, 
+                         std::shared_ptr<InputsShapeInfo> inputs_shape_info=nullptr);
 
   // Compiles a tensorflow::Graph into an xla::XlaComputation.
   // Similar to CompileFunction, but takes a Graph as input rather than a
   // function.
   Status CompileGraph(
       const CompileOptions& options, string const& name,
-      std::unique_ptr<Graph> graph, absl::Span<const Argument> args,
+      Graph* graph, absl::Span<const Argument> args,
       absl::Span<const xla::XlaBuilder::InputOutputAlias> user_aliases,
       CompilationResult* result);
 
@@ -437,9 +454,9 @@ class XlaCompiler {
   Status FindFunctionBody(const NameAttrList& function,
                           const FunctionBody** fbody);
 
- private:
   // Returns the optimized graph object in this function body.
   std::unique_ptr<Graph> GetGraph(const FunctionBody* fbody);
+ private:
 
   // Builds XLA computations for each of the arguments to the computation.
   // `args` are the arguments to the computation.
@@ -508,6 +525,133 @@ class XlaCompiler {
   std::stack<std::map<string, xla::XlaOp>> node_token_mapping_stack_;
 
   TF_DISALLOW_COPY_AND_ASSIGN(XlaCompiler);
+};
+
+ /////////////////////////////////////////////////////////////
+// The ShapeInferCtx is used to do shape inference. by yuxing
+
+struct InputsShapeInfo{
+  // user define xla auto padding shape regular
+  std::vector<std::vector<int>> auto_padding_shape;
+  // 
+  bool first_request = false;
+  // record the times of hit cache
+  uint64 hit_times = 0;
+  // shape inference item
+  std::shared_ptr<grappler::GraphProperties> graph_properties = nullptr;
+  // 
+  bool is_cpu_device = false;
+  //
+  std::vector<TensorShapeProto> inferred_shape_protos;
+  // 
+  std::vector<Tensor> input_tensors;
+
+  // Used for init Shape infer entity
+  std::unique_ptr<Graph> graph;
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names;
+
+  XlaCompiler::CompilationResult* out_compilation_result = nullptr;
+  xla::LocalExecutable* out_executable = nullptr;
+
+  int64 size = 0;
+  std::vector<int> var_indexs;
+  std::vector<int> const_indexs;
+  // input_shapes are not always equal to the shape of inputs
+  // they are the padded shapes which execute by xla
+  std::vector<TensorShape> input_shapes;
+
+  std::string uuid_;
+
+  std::string uuid() {
+    if (!uuid_.empty()) return uuid_;
+
+    std::string result;
+    for (int i: var_indexs) {
+      auto& shape = input_tensors[i].shape();
+      if (shape.dims() <= 0) continue;
+      absl::StrAppend(&result, shape.DebugString());
+    }
+    uuid_ = result;
+    return uuid_;
+  }
+ 
+  std::string padded_shape_uuid_;
+  std::string padded_shape_uuid() {
+    if (!padded_shape_uuid_.empty()) return padded_shape_uuid_;
+
+    std::string result;
+    for (int i: var_indexs) {
+      auto& shape = input_shapes[i];
+      if (shape.dims() <= 0) continue;
+      absl::StrAppend(&result, shape.DebugString());
+    }
+    padded_shape_uuid_ = result;
+    return padded_shape_uuid_;
+  }
+
+  std::string DebugString() const{
+    std::string result = "{Total elements=" + 
+        std::to_string(size) + " shapes:(";
+    for (int i: var_indexs) {
+      absl::StrAppend(&result, input_shapes[i].DebugString() +  ", ");
+    }
+    
+    absl::StrAppend(&result,  ")} hit_times=");
+    absl::StrAppend(&result,  std::to_string(hit_times));
+    return result;
+  }
+ 
+  // input shape dims 
+  std::vector<int> all_dims;
+
+  void refresh_size() {
+    CHECK_EQ(input_shapes.size(), input_tensors.size());
+    all_dims.clear();
+    // every shape has 4 dims is enough
+    all_dims.reserve(var_indexs.size() * 4);
+
+    size = 0;
+    for (int i: var_indexs) {
+      const auto& shape = input_tensors[i].shape();
+      for (int j = 0; j < shape.dims(); j++) {
+        all_dims.push_back(shape.dim_size(j));
+      }
+      size += shape.num_elements();
+    }
+  }
+
+  void copy_shapes(const std::shared_ptr<InputsShapeInfo>& src) {
+	  size = 0;
+    for (int i = 0; i < input_shapes.size(); i++) {
+      input_shapes[i] = src->input_shapes[i];
+    }
+    size = src->size;
+    padded_shape_uuid_ = src->padded_shape_uuid_;
+  }
+ 
+  void refresh_shape() {
+    size = 0;
+    int cnt = 0;
+    for (int i: var_indexs) {
+      auto& shape = input_shapes[i];
+      for (int j = 0; j < shape.dims(); j++) {
+        shape.set_dim(j, all_dims[cnt++]); 
+      }
+      size += shape.num_elements();
+    }
+    CHECK(cnt == all_dims.size());
+  }
+ 
+  bool operator <(const InputsShapeInfo& rhs) const 
+  {
+      return size < rhs.size;
+  }
+
+  bool operator >(const InputsShapeInfo& rhs) const 
+  {
+      return size > rhs.size;
+  }
 };
 
 }  // namespace tensorflow

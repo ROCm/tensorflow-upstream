@@ -1318,5 +1318,16 @@ ShapeHandle InferenceContext::ShapeManager::UnknownShape() {
   return all_shapes_.back();
 }
 
+void InferenceContext::ShapeManager::Clear() {
+  for (auto* s : all_shapes_){
+     delete s;
+  }
+  for (auto* d : all_dims_) {
+    delete d;
+  }
+  all_shapes_.clear();
+  all_dims_.clear();
+}
+
 }  // namespace shape_inference
 }  // namespace tensorflow

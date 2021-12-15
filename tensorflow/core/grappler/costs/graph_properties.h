@@ -24,11 +24,16 @@ limitations under the License.
 #include "tensorflow/core/grappler/clusters/cluster.h"
 #include "tensorflow/core/grappler/costs/op_performance_data.pb.h"
 #include "tensorflow/core/grappler/grappler_item.h"
+#include "tensorflow/core/grappler/mutable_graph_view.h"
+#include "tensorflow/core/grappler/costs/xla_padding_rule.h"
+#include "tensorflow/core/grappler/costs/context_index_pool.h"
 
+class SymbolicShapeRefiner;
 namespace tensorflow {
 
 namespace grappler {
 
+using namespace xla_padding_rule;
 // Optional attributes that tell about node output information.
 // We use these side information, if provided, for static shape inference
 // and VirtualScheduler scheduling.
@@ -80,8 +85,10 @@ class TopoQueue;
 class GraphProperties {
  public:
   // The item must outlive the properties
-  explicit GraphProperties(const GrapplerItem& item) : item_(item) {}
-
+  explicit GraphProperties(const GrapplerItem& item)  : item_(item), 
+                                 fetch_(item.fetch),
+                                 graph_(item.graph) {}
+ 
   // Infer the shapes through abstract interpretation. Feed information can be
   // incorrect so it should be discarded to ensure correctness of the analysis.
   // However, it can help infer shapes in the fanout of fed nodes (even though
@@ -98,7 +105,9 @@ class GraphProperties {
   Status InferStatically(bool assume_valid_feeds,
                          bool aggressive_shape_inference,
                          bool include_input_tensor_values,
-                         bool include_output_tensor_values);
+                         bool include_output_tensor_values,
+                         const std::vector<Tensor>& feed_tensors={},
+                         int infer_count=1);
   Status InferStatically(bool assume_valid_feeds,
                          bool aggressive_shape_inference,
                          bool include_tensor_values) {
@@ -113,6 +122,12 @@ class GraphProperties {
                            /*aggressive_shape_inference=*/false,
                            /*include_tensor_values=*/true);
   }
+  PaddingState GetXlaPaddingState(const std::string& inputs_signature="default") const;
+  void SetXlaPaddingState(const std::string& inputs_signature, PaddingState state);
+  void ForceRestPaddingState();
+  Status InferStaticallyFastMode(
+             const std::vector<Tensor>& feed_tensors,
+             std::vector<TensorShapeProto>& output_shapes);
   // Infer the shape by running the graph on the specified cluster and recording
   // the shapes of the processed tensors.
   Status InferDynamically(Cluster* cluster);
@@ -150,6 +165,17 @@ class GraphProperties {
     return incompatible_shape_nodes_.find(node_name) !=
            incompatible_shape_nodes_.end();
   }
+  
+  void GetOuputResult(std::vector<TensorShapeProto>& output_shapes){
+    output_shapes.clear();
+    for (auto output_name: fetch_) {
+      auto output = GetInputProperties(output_name);
+      for (auto prop: output) {
+        auto shape_proto = prop.shape();
+        output_shapes.emplace_back(shape_proto);
+      }
+    }
+  }
 
  private:
   // Relaxes shapes <shapes_and_types>, determined from an EnqueueV2 node, into
@@ -157,43 +183,77 @@ class GraphProperties {
   static Status RelaxEnqueueShapesAndMergeTypes(
       SymbolicShapeRefiner* shape_refiner, const NodeDef* qnode,
       const std::vector<shape_inference::ShapeAndType>& shapes_and_types,
-      std::vector<shape_inference::ShapeAndType>* queue_shapes_and_types);
+      std::vector<shape_inference::ShapeAndType>* queue_shapes_and_types,
+      int ctx_idx);
 
   // Update the shapes of the enqueue node, port them over to the corresponding
   // queue, and schedule the reprocessing of the queue if needed.
   static Status UpdateEnqueue(
       const NodeDef* enqueue_node,
-      const std::unordered_map<const NodeDef*, const NodeDef*>&
-          resource_handles,
-      SymbolicShapeRefiner* shape_refiner, bool* new_shapes);
+      std::unordered_map<const NodeDef*, const NodeDef*> resource_handles,
+      SymbolicShapeRefiner* shape_refiner, bool* new_shapes, int ctx_idx);
 
   // Update the shapes and types of the Queue node, if not set by Enqueue node.
   static Status UpdateQueue(const NodeDef* queue_node,
                             SymbolicShapeRefiner* shape_refiner,
-                            bool* new_shapes);
+                            bool* new_shapes, int ctx_idx);
 
   // Update the output shapes of a Merge node, and enqueue its fanout in
   // new_shapes if needed.
   Status UpdateMerge(SymbolicShapeRefiner* shape_refiner, const NodeDef* node,
-                     bool* new_shapes) const;
+                     bool* new_shapes, int ctx_idx) const;
   // Process the Enter node, and enqueue its fanout in new_shapes if needed.
   static Status UpdateEnter(SymbolicShapeRefiner* shape_refiner,
-                            const NodeDef* node, bool* new_shapes);
+                            const NodeDef* node, bool* new_shapes, int ctx_idx);
   // Update the shapes for node 'n'. If output shapes for n have changed,
   // enqueue its fanout in 'new_shapes'.
   Status UpdateShapes(SymbolicShapeRefiner* shape_refiner,
-                      const std::unordered_map<const NodeDef*, const NodeDef*>&
+                      const std::unordered_map<const NodeDef*, const NodeDef*>& 
                           resource_handles,
-                      const NodeDef* n, bool* new_shapes) const;
+                      const NodeDef* n, bool* new_shapes, 
+                      const std::vector<Tensor>& feed_tensors,
+                      std::vector<TensorShapeProto>& output_shapes,
+                      bool is_fast_mode, int ctx_idx) const;
   // Propagate the shapes for the nodes enqueued in new_shapes and their
   // transitive fanout until a fixed point is reached.
   Status PropagateShapes(
-      SymbolicShapeRefiner* shape_refiner, TopoQueue* new_shapes,
-      const std::unordered_map<const NodeDef*, const NodeDef*>&
-          resource_handles,
-      int num_loops) const;
+      std::shared_ptr<SymbolicShapeRefiner> shape_refiner, TopoQueue* new_shapes,
+      const std::vector<Tensor>& feed_tensors,
+      int num_loops, int ctx_idx);
 
+  Status PropagateShapesFastMode(
+      const std::vector<Tensor>& feed_tensors,
+      std::vector<TensorShapeProto>& output_shapes, int ctx_idx) const;
+
+  int AcquireCtxIndex() {
+    mutex_lock lock(infer_ctx_index_mu_);
+
+    if (infer_ctx_index_ == infer_count_) {
+      infer_ctx_index_ = 1;
+    } else {
+      infer_ctx_index_++;
+    }
+
+    return infer_ctx_index_ - 1;
+  }
+
+  std::shared_ptr<ContextIndexPool> context_index_pool_ = nullptr;
   // Data members
+  GraphDef graph_;
+  int infer_count_;
+  mutex infer_ctx_index_mu_;
+  int infer_ctx_index_ = 0;
+  std::vector<std::string> fetch_;
+  std::vector<const NodeDef*> topo_order_nodes_;
+  std::shared_ptr<SymbolicShapeRefiner> refiner_ = nullptr;
+  std::unique_ptr<GraphView> graph_view_ = nullptr;
+  std::vector<const NodeDef*> topo_order_;
+  std::unordered_map<const NodeDef*, const NodeDef*> resource_handles_;
+  std::unordered_set<const NodeDef*> fed_nodes_;
+  std::unordered_set<const NodeDef*> primary_inputs_;
+  std::unordered_map<string, std::unordered_set<int>> fed_ports_;
+  int num_loops_ = 0;
+
   const GrapplerItem& item_;
   std::unordered_map<string, std::vector<OpInfo::TensorProperties>>
       input_properties_;

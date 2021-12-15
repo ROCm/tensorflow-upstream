@@ -48,6 +48,10 @@ void DumpToFileInDir(const HloModule& module, absl::string_view file_suffix,
 void DumpToFileInDirOrStdout(const HloModule& module,
                              absl::string_view file_suffix,
                              absl::string_view contents);
+void DumpPtxToFileInDir(string dir, string filename,
+                        absl::string_view contents);
+void DumpCubinToFileInDir(string dir, string filename,
+                        std::vector<uint8> cubin);
 
 // Dumps the given HLO module if dumping is enabled for the module.  Exactly
 // where and in what formats it's dumped is determined by the module's config.

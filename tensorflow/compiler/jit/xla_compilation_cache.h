@@ -30,6 +30,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/threadpool.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/thread_annotations.h"
+#include "tensorflow/compiler/jit/xla_auto_padding.h"
 
 namespace tensorflow {
 
@@ -43,13 +44,9 @@ namespace tensorflow {
 // bound.
 class XlaCompilationCache : public ResourceBase {
  public:
-  XlaCompilationCache(xla::LocalClient* client, DeviceType device_type);
+  XlaCompilationCache(xla::LocalClient* client, DeviceType device_type, 
+                      std::string name="");
   ~XlaCompilationCache() override;
-
-  enum class CompileMode {
-    kLazy,
-    kStrict,
-  };
 
   // Compiles a function into a XlaCompiler::CompilationResult that can be used
   // to execute an XLA Computation. Compilation results are cached.
@@ -74,7 +71,8 @@ class XlaCompilationCache : public ResourceBase {
                  const XlaCompiler::CompileOptions& compile_options,
                  CompileMode compile_mode,
                  const XlaCompiler::CompilationResult** out_compilation_result,
-                 xla::LocalExecutable** out_executable);
+                 xla::LocalExecutable** out_executable,
+                 std::shared_ptr<InputsShapeInfo> inputs_shape_info);
 
   // As above, but calls XlaCompiler::CompileSingleOp instead of
   // XlaCompiler::CompileFunction.
@@ -118,16 +116,30 @@ class XlaCompilationCache : public ResourceBase {
       const NameAttrList& function,
       absl::Span<const XlaCompiler::Argument> args);
 
- private:
-  // Common implementation of Compile and CompileSingleOp.
+  // Dont contains function name
+  static xla::StatusOr<Signature> BuildSignatureNoShape(
+      const NameAttrList& function,
+      absl::Span<const XlaCompiler::Argument> args);
+  std::shared_ptr<XlaAutoPadding> GetPaddingPtr() {return xla_auto_padding_;}
+
   Status CompileImpl(
       const XlaCompiler::Options& options, const NameAttrList& function,
       absl::Span<const XlaCompiler::Argument> args,
+      const XlaCompiler::CompileOptions& compile_options,
       const std::function<Status(XlaCompiler* compiler,
-                                 XlaCompiler::CompilationResult*)>& compile_fn,
+                XlaCompiler::CompilationResult*,
+                const XlaCompiler::CompileOptions& compile_options,
+                const NameAttrList& function,
+                absl::Span<const XlaCompiler::Argument> args,
+                std::shared_ptr<InputsShapeInfo> inputs_shape_info)>& compile_fn,
       absl::optional<int64> compile_threshold,
       const XlaCompiler::CompilationResult** out_compilation_result,
-      xla::LocalExecutable** out_executable);
+      xla::LocalExecutable** out_executable,
+      std::shared_ptr<InputsShapeInfo> inputs_shape_info=nullptr);
+ 
+ private:
+  std::string name_;
+  std::shared_ptr<XlaAutoPadding> xla_auto_padding_ = nullptr;
 
   // Takes `result` which has been compiled from a Tensorflow subgraph to a
   // XLA computation already, and generates an XLA LocalExecutable `executable`.
@@ -187,7 +199,7 @@ class XlaCompilationCache : public ResourceBase {
 
   // The number of times a lazy compilation must be requested for a specific
   // signature before  we attempt to compile it.
-  static constexpr int64 kDefaultCompilationThreshold = 2;
+  static constexpr int64 kDefaultCompilationThreshold = 1;
 
   TF_DISALLOW_COPY_AND_ASSIGN(XlaCompilationCache);
 };

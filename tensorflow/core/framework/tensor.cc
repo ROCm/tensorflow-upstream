@@ -685,6 +685,14 @@ Status Tensor::BitcastFrom(const Tensor& other, DataType dtype,
   return Status::OK();
 }
 
+bool Tensor::SameAs(const Tensor& other) const {
+  TensorBuffer* buf1 = this->buf_;
+  TensorBuffer* buf2 = other.buf_;
+  if (buf1->size() != buf2->size()) return false;
+
+  return memcmp(buf1->data(), buf2->data(), buf1->size()) == 0;
+}
+
 // Notice that buf_ either points to a regular TensorBuffer or a SubBuffer.
 // For the latter case, we have to make sure that the refcount is
 // one both for the SubBuffer _and_ the underlying TensorBuffer.

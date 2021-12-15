@@ -462,6 +462,14 @@ bool TensorShape::IsSameSize(const TensorShape& b) const {
   return true;
 }
 
+bool TensorShape::operator>(const TensorShape& b) const {
+  if (b.dims() != dims()) return false;
+  for (int d = 0; d < dims(); d++) {
+    if (dim_size(d) <= b.dim_size(d)) return false;
+  }
+  return true;
+}
+
 template <class Shape>
 void TensorShapeBase<Shape>::AsProto(TensorShapeProto* proto) const {
   proto->Clear();
