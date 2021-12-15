@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
-
+#include "tensorflow/core/util/env_var.h"
 #include <utility>
 
 #include "absl/memory/memory.h"
@@ -177,6 +177,11 @@ void BufferAllocations::SetBuffer(BufferAllocation::Index buffer_index,
 
 bool ShouldEmitLiteralInLlvmIr(const Literal& literal) {
   // LLVM can sometimes do interesting optimizations using scalar constants.
+  bool scalar_const_in_ptx;
+  tensorflow::ReadBoolFromEnvVar("TF_SCALAR_CONST_IN_PTX", true, &scalar_const_in_ptx);
+  VLOG(1) << "TF_SCALAR_CONST_IN_PTX is " << scalar_const_in_ptx;
+  if (!scalar_const_in_ptx) return false;
+
   return ShapeUtil::IsScalar(literal.shape());
 }
 

@@ -258,7 +258,8 @@ Status RunGemm(const HloInstruction *gemm,
         GemmBackendConfig::ALGORITHM_NOT_SET) {
       return absl::nullopt;
     }
-    return backend_config.selected_algorithm();
+    //return backend_config.selected_algorithm();
+    return absl::nullopt;
   }();
 
   complex128 alpha = {backend_config.alpha_real(), backend_config.alpha_imag()};

@@ -68,17 +68,14 @@ REQUIRED_PACKAGES = [
     # python3 requires wheel 0.26
     'wheel >= 0.26;python_version>="3"',
     'wheel;python_version<"3"',
-<<<<<<< HEAD
     # mock comes with unittest.mock for python3, need to install for python2
     'mock >= 2.0.0;python_version<"3"',
     # functools comes with python3, need to install the backport for python2
     'functools32 >= 3.2.3;python_version<"3"',
     'six >= 1.12.0',
-=======
     'wrapt >= 1.11.1',
     # Pin h5py to at most 2.10.0 as newer versions break old keras tests
     'h5py <= 2.10.0',
->>>>>>> 03d7ca7871b (Add upper bound to `h5py`.)
 ]
 
 if sys.byteorder == 'little':

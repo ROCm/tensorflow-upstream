@@ -53,6 +53,8 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/stringprintf.h"
 #include "tensorflow/core/public/version.h"
 #include "tensorflow/core/util/dump_graph.h"
+#include "tensorflow/core/util/env_var.h"
+#include "tensorflow/core/grappler/costs/xla_padding_rule.h"
 
 namespace tensorflow {
 
@@ -61,6 +63,7 @@ using DeadnessPredicate = DeadnessAnalysis::DeadnessPredicate;
 using jit::DeviceId;
 using jit::DeviceSet;
 using xla::StatusOr;
+using namespace xla_padding_rule;
 
 // The clusters we create here are eventually lowered into an
 // _XlaCompile/_XlaRun pair with a TF executor "fallback" that uses the
@@ -109,11 +112,13 @@ class MarkForCompilationPassImpl {
 
   MarkForCompilationPassImpl(DebugOptions debug_options, Graph* graph,
                              FunctionLibraryDefinition* flib_def, Env* env,
-                             OptimizerOptions::GlobalJitLevel global_jit_level)
+                             OptimizerOptions::GlobalJitLevel global_jit_level,
+                             bool enable_xla_auto_padding)
       : debug_options_(debug_options),
         graph_(graph),
         flib_def_(flib_def),
         env_(env),
+        enable_xla_auto_padding_(enable_xla_auto_padding),
         global_jit_level_(global_jit_level) {}
 
   Status Run();
@@ -282,6 +287,7 @@ class MarkForCompilationPassImpl {
   Status FindCompilationCandidates();
 
   bool CompilationDisallowedByXlaCompileAttr(Node* node);
+  bool CompilationDisallowedByUserDefine(Node* node);
 
   // Populates `clusters_`.
   Status BuildInitialClusterSet();
@@ -417,6 +423,7 @@ class MarkForCompilationPassImpl {
   bool initialized_ = false;
   bool edges_contracted_ = false;
   bool clusters_created_ = false;
+  bool enable_xla_auto_padding_ = false;
 
   std::vector<std::unique_ptr<Cluster>> cluster_storage_;
   std::vector<UnionFind<Cluster*>> cluster_for_node_;
@@ -1029,18 +1036,9 @@ Status MarkForCompilationPassImpl::BuildInitialClusterSet() {
 
     bool is_xla_compile_attr_true = false;
 
-    bool xla_compile_attr;
-    if (TryGetNodeAttr(node->attrs(), kXlaCompileAttr, &xla_compile_attr)) {
-      is_xla_compile_attr_true |= xla_compile_attr;
-    }
-
-    if (flib_def_->GetAttr(*node, kXlaCompileAttr, &xla_compile_attr).ok()) {
-      is_xla_compile_attr_true |= xla_compile_attr;
-    }
-
     DeviceSet devices;
     devices.Insert(device);
-
+    
     Cluster* new_cluster = MakeNewCluster(
         /*cycles_graph_node_id=*/node->id(),
         /*effective_cluster_size=*/effective_cluster_size,
@@ -1139,6 +1137,11 @@ Status MarkForCompilationPassImpl::FindCompilationCandidates() {
       continue;
     }
 
+    if (enable_xla_auto_padding_ && CompilationDisallowedByUserDefine(node)) {
+      VLOG(2) << "Not clustering " << node->name()
+              << ": disallowed by user define";
+      continue;
+    }
     const XlaOpRegistry::DeviceRegistration* registration;
     if (!XlaOpRegistry::GetCompilationDevice(device_type.type(),
                                              &registration)) {
@@ -1276,6 +1279,53 @@ bool MarkForCompilationPassImpl::CompilationDisallowedByXlaCompileAttr(
   return false;
 }
 
+bool MarkForCompilationPassImpl::CompilationDisallowedByUserDefine(
+    Node* node) {
+  bool ignore_const_op;
+  ReadBoolFromEnvVar("TF_XLA_IGNORE_CONST", false, &ignore_const_op);
+  if (ignore_const_op && node->type_string() == "Const") {
+    VLOG(1) << "XLA ignore const op " << node->name() << ";  node type: " << node->type_string();
+    return true;
+  }
+  // TODO(jinluyang.jly): in gpt-2 model we found Cumsum could slow down our XLA,
+  // going to investigate real reason behind this when we have time.
+  if (node->type_string() == "Cumsum") {
+    VLOG(1) << "XLA ignore Cumsum op " << node->name();
+    return true;
+  }
+  if (! enable_xla_auto_padding_) return false;
+
+  // If in auto padding black list, not compile
+  if (XlaPaddingRule::IsBlackListOp(node->type_string())) {
+    LOG(INFO) << "XLA ignore " << node->name() 
+            << "(" << node->type_string() << ") because of xla auto padding";
+    return true;
+  }
+
+  // If may cause const input to cluster, not compile
+  // kXlaDisableByPadding attr is set by MarkShapeConsumerOpUncompile
+  // which trace all shape ops
+  bool compile = false;
+  Status status = GetNodeAttr(node->attrs(), kXlaDisableByPadding, &compile);
+  if (status.ok()) {
+    if (!compile) {
+      VLOG(2) << "Rejecting " << node->name() << ": kXlaDisableByPadding("
+              << kXlaDisableByPadding << ") is false.";
+    }
+    return !compile;
+  }
+
+  status = flib_def_->GetAttr(*node, kXlaDisableByPadding, &compile);
+  if (status.ok()) {
+    if (!compile) {
+      VLOG(2) << "Rejecting " << node->name() << ": kXlaDisableByPadding("
+              << kXlaDisableByPadding << ") on callee is false.";
+    }
+    return !compile;
+  }
+  return false;
+}
+
 bool MarkForCompilationPassImpl::LogNotContractableAndReturnFalse(
     Cluster* from, Cluster* to, absl::string_view reason) {
   VLOG(3) << EdgeContractionFailureMsg(from, to, reason);
@@ -1354,6 +1404,8 @@ StatusOr<bool> MarkForCompilationPassImpl::TryToContractEdge(Cluster* from,
 }
 
 Status MarkForCompilationPassImpl::Run() {
+  // Each graph has cluster number from 0
+  cluster_sequence_num = 0;
   // Make sure that kernels have been registered on the JIT device.
   XlaOpRegistry::RegisterCompilationKernels();
 
@@ -1529,6 +1581,23 @@ StatusOr<bool> MarkForCompilationPassImpl::AreDevicesCompatible(
   DeviceSet devices = cluster_a.devices();
   devices.UnionWith(cluster_b.devices());
 
+  bool must_same_device;
+  ReadBoolFromEnvVar("TF_XLA_SAME_DEVICE", true, &must_same_device);
+  if (enable_xla_auto_padding_ && must_same_device) {
+    int d = 0;
+    devices.ForEach([&](jit::DeviceId device) {
+      if (device_info_cache_.IsGpu(device)) {
+        d = d | 0x01;
+        return true;
+      } else if (device_info_cache_.IsCpu(device)) {
+        d = d | 0x10;
+        return true;
+      }
+      return true;
+    });
+    if (d == 0x11) return false;
+  }
+
   TF_ASSIGN_OR_RETURN(
       absl::optional<jit::DeviceId> maybe_chosen_device,
       MaybePickDeviceForXla(device_info_cache_, devices,
@@ -1619,6 +1688,68 @@ StatusOr<bool> MarkForCompilationPassImpl::ShouldCompileCluster(
   return should_compile;
 }
 
+DataType GetNodeDataType(Node* n) {
+   DataType type = DataType::DT_INVALID;
+   Status status = GetNodeAttr(n->attrs(), "T", &type);
+   if (status.ok()) return type;
+ 
+   status = GetNodeAttr(n->attrs(), "dtype", &type);
+   if (status.ok()) return type;
+
+   status = GetNodeAttr(n->attrs(), "DstT", &type);
+   if (status.ok()) return type;
+
+   status = GetNodeAttr(n->attrs(), "VALUE_TYPE", &type);
+   if (status.ok()) return type;
+
+   status = GetNodeAttr(n->attrs(), "Tparams", &type);
+   if (status.ok()) return type;
+
+   std::vector<DataType> types;
+   status = GetNodeAttr(n->attrs(), "T", &types);
+   if (status.ok()) return DataType::DT_INVALID;
+
+   // TODO Should return false   
+   LOG(ERROR) << "GetNodeDataType Error:" << n->DebugString();
+   return type; 
+}
+
+bool PostOrderTrace(Node* n) { 
+  string node_name = n->name() + "(" + n->type_string() + ")";
+  VLOG(1) << "Trace " << node_name << " xla compile false";
+
+  n->AddAttr(kXlaDisableByPadding, false);
+  for (const Edge* e: n->out_edges()) {
+    Node& dst = *e->dst();
+    auto output_type = GetNodeDataType(&dst);
+    if (output_type == DT_INT32 || output_type == DT_INT64) {
+       PostOrderTrace(&dst);
+    } else {
+      dst.AddAttr(kXlaDisableByPadding, false);
+      VLOG(1) << "Trace " << dst.name() << + "(" << n->type_string() 
+              << ") xla compile false, output type " << output_type;
+    }
+  }
+
+  return true;
+}
+
+// Mark the shape sensitive op(such as tf.shape, tf.size)
+// uncompile by xla, becase it will produce const input for cluster.
+// We remove tf.shape and all its consumer util the op's input are
+// not shape related(espically the input is not int32 type)
+
+void MarkShapeConsumerOpUncompile(Graph* graph) {
+  for (Node* n : graph->nodes()) {
+    if (!XlaPaddingRule::IsShapeSensitiveOp(n->type_string())) {
+      continue;
+    }
+    VLOG(1) << "MarkShapeConsumerOpUncompile find node " << n->name() 
+            << "(" << n->type_string() << ")";
+    PostOrderTrace(n);
+  }
+}
+
 Status MarkForCompilation(
     const GraphOptimizationPassOptions& options,
     const MarkForCompilationPassImpl::DebugOptions& debug_options) {
@@ -1636,12 +1767,18 @@ Status MarkForCompilation(
       return Status::OK();
     }
   }
-
+  
+  bool enable_xla_auto_padding = options.session_options->config.enable_xla_auto_padding();
+  if (enable_xla_auto_padding) {
+    MarkShapeConsumerOpUncompile(graph);
+  }
+ 
   return MarkForCompilationPassImpl{debug_options, graph, flib_def,
                                     options.session_options != nullptr
                                         ? options.session_options->env
                                         : Env::Default(),
-                                    GetGlobalJitLevelForGraph(options)}
+                                    GetGlobalJitLevelForGraph(options), 
+                                    enable_xla_auto_padding}
       .Run();
 }
 

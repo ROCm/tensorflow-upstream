@@ -37,11 +37,26 @@ limitations under the License.
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/refcount.h"
 #include "tensorflow/core/util/stream_executor_util.h"
+#include "tensorflow/compiler/xla/service/hlo_module_config.h"
+#include "tensorflow/compiler/xla/service/hlo_proto_util.h"
+#include "tensorflow/compiler/xla/service/hlo_module.h"
+#include "tensorflow/compiler/xla/shape.h"
+#include "tensorflow/compiler/xla/service/hlo_verifier.h"
+#include "tensorflow/compiler/xla/service/hlo_opcode.h"
+#include "tensorflow/compiler/xla/service/hlo_instruction.h"
+#include "tensorflow/compiler/xla/service/hlo_instructions.h"
+#include "tensorflow/compiler/xla/service/shape_inference.h"
+#include "tensorflow/core/grappler/costs/graph_properties.h"
+#include "tensorflow/core/kernels/transpose_functor.h"
+#include "tensorflow/core/kernels/pad_op.h"
+#include "tensorflow/core/kernels/slice_op.h"
 
 namespace tensorflow {
 namespace {
 using xla::ScopedShapedBuffer;
 using xla::ShapedBuffer;
+using namespace xla ;
+using tensorflow::grappler::GraphProperties;
 
 const char kPossibleNonVariableResourceHintMessage[] =
     "If the error is similar to `Trying to access resource using the wrong "
@@ -193,18 +208,98 @@ XlaComputationLaunchContext::XlaComputationLaunchContext(
   }
 }
 
-void XlaComputationLaunchContext::PopulateInputs(
+Status CopyTensor(se::Stream* stream,
+                 OpKernelContext* ctx, 
+                 const Tensor& src_tensor, const TensorShape& dst_shape,
+                 bool is_cpu_device, std::shared_ptr<Tensor>& dst_tensor) {
+  auto type = src_tensor.dtype();
+  dst_tensor = std::make_shared<Tensor>(ctx->device()->GetAllocator({}), type, dst_shape);
+  if (is_cpu_device) {
+    std::memset(DMAHelper::buffer(dst_tensor.get())->data(), 
+                0, 
+                DMAHelper::buffer(dst_tensor.get())->size());
+    std::memcpy(DMAHelper::buffer(dst_tensor.get())->data(),
+                DMAHelper::buffer(&src_tensor)->data(),
+                DMAHelper::buffer(&src_tensor)->size());
+  } else {
+    xla::Shape src_tensor_shape;
+    xla::Shape dst_tensor_shape;
+    for(int i = 0; i < src_tensor.shape().dims(); i++) {
+      src_tensor_shape.add_dimensions(src_tensor.shape().dim_size(i));
+      dst_tensor_shape.add_dimensions(dst_shape.dim_size(i));
+    }
+    se::DeviceMemoryBase src = XlaTensor::DeviceMemoryFromTensor(src_tensor,
+                                                              src_tensor_shape);
+    se::DeviceMemoryBase dst = XlaTensor::DeviceMemoryFromTensor(*dst_tensor,
+                                                               dst_tensor_shape);
+    //stream->ThenMemZero(&dst, dst_tensor.TotalBytes());
+    stream->ThenMemcpy(&dst, src, src_tensor.TotalBytes());
+  }
+  return Status::OK();
+}
+
+Status PadInputTensor(se::Stream* stream,
+                      OpKernelContext* ctx,
+                      const xla::Shape& padded_shape_proto,
+                      const Tensor& input_tensor,
+                      bool is_cpu_device,
+                      std::shared_ptr<Tensor>& padded_tensor){
+  const TensorShape input_shape = input_tensor.shape();
+  auto type = input_tensor.dtype();
+  VLOG(1) << " pad from " << input_shape.DebugString() 
+          << " to " << padded_shape_proto << " type=" << type;
+
+  std::vector<int> padded_dims;
+  std::vector<int> dims_vec;
+  dims_vec.reserve(2 * input_shape.dims());
+  TensorShape padded_shape;
+  for (int j = 0; j < input_shape.dims(); j++){
+    padded_shape.AddDim(padded_shape_proto.dimensions(j));
+    int to_pad = padded_shape_proto.dimensions(j) -
+                 input_shape.dim_size(j);
+    CHECK(to_pad >= 0);
+    dims_vec.push_back(0);
+    dims_vec.push_back(to_pad); 
+    if(to_pad != 0) {
+      VLOG(1) << "push dims " << j << " " << input_shape.dim_size(j) << " vs " <<
+               padded_shape_proto.dimensions(j);
+      padded_dims.push_back(j);
+    }
+  }
+
+  // shapes are same, not padding
+  if(padded_dims.empty()) {
+    return Status::OK();
+  }
+  // pad in 1st dim, use memcpy
+  if(padded_dims.size() == 1 &&
+     padded_dims[0] == 0) {
+    return CopyTensor(stream, ctx, input_tensor, 
+               padded_shape, is_cpu_device, padded_tensor);
+  } 
+
+  // pad on other one or more dims
+  TensorShape paddings_shape({input_shape.dims(), 2});
+  Tensor paddings(DT_INT32, paddings_shape);
+  std::copy_n(dims_vec.begin(), dims_vec.size(), paddings.flat<int>().data());
+  padded_tensor = std::make_shared<Tensor>();
+  return functor::DoPadding(ctx, input_tensor, paddings, *padded_tensor, 
+                            is_cpu_device);
+}
+
+Status XlaComputationLaunchContext::PopulateInputs(
     OpKernelContext* ctx, const XlaCompiler::CompilationResult* kernel,
     const std::map<int, OptionalTensor>& variables,
-    int missing_ctx_input_prefix) {
+    int missing_ctx_input_prefix,
+    std::shared_ptr<InputsShapeInfo> inputs_shape_info,
+    std::vector<std::shared_ptr<Tensor>>& padded_inputs) {
   se::Stream* stream =
       ctx->op_device_context() ? ctx->op_device_context()->stream() : nullptr;
   // Build ShapedBuffers that point directly to the Tensor buffers.
   arg_buffers_.reserve(kernel->xla_input_shapes.size() + 1);
   arg_buffers_.resize(kernel->xla_input_shapes.size());
   arg_ptrs_ = std::vector<ShapedBuffer*>(arg_buffers_.size());
-
-  // Pass remaining parameters.
+  padded_inputs.reserve(kernel->xla_input_shapes.size());
   const Tensor* t;
   for (int i = 0; i < kernel->xla_input_shapes.size(); ++i) {
     int arg_num = kernel->input_mapping[i];
@@ -237,19 +332,69 @@ void XlaComputationLaunchContext::PopulateInputs(
           << xla::ShapeUtil::HumanStringWithLayout(on_device_shape)
           << " not the same as on-host shape "
           << xla::ShapeUtil::HumanStringWithLayout(shape);
-      se::DeviceMemoryBase dmem = XlaTensor::DeviceMemoryFromTensor(*t);
+      
+      std::shared_ptr<Tensor> padded_tensor = nullptr; 
+      if (inputs_shape_info != nullptr) { 
+        TF_RETURN_IF_ERROR( 
+            PadInputTensor(stream, ctx, shape, *t, 
+               inputs_shape_info->is_cpu_device, padded_tensor));
+        padded_inputs.push_back(padded_tensor);
+      }
+
       arg_buffers_[i] = absl::make_unique<ShapedBuffer>(
           /*on_host_shape=*/shape, /*on_device_shape=*/shape,
           client_->platform(), client_->default_device_ordinal());
-      arg_buffers_[i]->set_buffer(dmem, /*index=*/{});
+      if (padded_tensor == nullptr) {
+        arg_buffers_[i]->set_buffer(
+            XlaTensor::DeviceMemoryFromTensor(*t, shape), 
+            /*index=*/{});
+      } else {
+        arg_buffers_[i]->set_buffer(
+            XlaTensor::DeviceMemoryFromTensor(*padded_tensor, shape), 
+            /*index=*/{});
+      }
       arg_ptrs_[i] = arg_buffers_[i].get();
     }
+  }
+  return Status::OK();
+}
+
+Status SplitOutputTensor(OpKernelContext* ctx,
+                         bool is_cpu_device,
+                         const Tensor& tensor_unsliced,
+                         Tensor& tensor_sliced){
+  const TensorShape unsliced_shape = tensor_unsliced.shape();
+  TensorShape sliced_shape = tensor_sliced.shape();
+  VLOG(1) << sliced_shape << " vs " << tensor_unsliced.shape();
+
+  std::vector<int64> begin(unsliced_shape.dims(), 0);
+  std::vector<int64> size(unsliced_shape.dims());
+  int slice_dim = -1;
+  for (int j = 0; j < unsliced_shape.dims(); j++){
+    if(unsliced_shape.dim_size(j) != sliced_shape.dim_size(j)) {
+      slice_dim = j;
+    }
+    size[j] = sliced_shape.dim_size(j);
+  }
+
+  if (slice_dim == 0) {
+    //1st dim, direct slice
+    tensor_sliced = tensor_unsliced.Slice(0, sliced_shape.dim_size(0));
+    return Status::OK();
+  } else if (slice_dim > 0) {
+    return functor::DoSlice(ctx, tensor_unsliced, begin, size, 
+                              tensor_sliced, is_cpu_device);
+  } else {
+    //shape are equal
+    tensor_sliced = tensor_unsliced;
+    return Status::OK();
   }
 }
 
 Status XlaComputationLaunchContext::PopulateOutputs(
     OpKernelContext* ctx, const XlaCompiler::CompilationResult* kernel,
-    ScopedShapedBuffer output, int missing_ctx_input_prefix) {
+    ScopedShapedBuffer output, int missing_ctx_input_prefix,
+    std::shared_ptr<InputsShapeInfo> inputs_shape_info) {
   se::Stream* stream =
       ctx->op_device_context() ? ctx->op_device_context()->stream() : nullptr;
 
@@ -285,6 +430,12 @@ Status XlaComputationLaunchContext::PopulateOutputs(
     stream->ThenRecordEvent(definition_event.get());
   }
 
+  if (inputs_shape_info) {
+    CHECK(inputs_shape_info->inferred_shape_protos.size() == ctx->num_outputs())
+        << "infer output size and ctx output size not equal "
+        << inputs_shape_info->inferred_shape_protos.size() << " vs " 
+        <<  ctx->num_outputs();
+  }
   // Copy XLA results to the OpOutputList.
   int output_num = 0;
   for (int i = 0; i < ctx->num_outputs(); ++i) {
@@ -359,10 +510,34 @@ Status XlaComputationLaunchContext::PopulateOutputs(
             CHECK_EQ(output_tensor->TotalBytes(), 0);
           }
         } else {
-          Tensor output_tensor = XlaTensorBuffer::MakeTensor(
-              ctx->expected_output_dtype(i), shape, buffer, allocator);
-          output.set_buffer(se::OwningDeviceMemory(), {output_num});
-          ctx->set_output(i, output_tensor);
+          if (inputs_shape_info != nullptr) { 
+            // If enable xla auto padding
+            // Use the shape inference shape to slice output
+            TensorShapeProto sliced_shape_proto = 
+                inputs_shape_info->inferred_shape_protos[i];
+            VLOG(1) << "sliced_shape_proto  " << sliced_shape_proto.DebugString();
+            Tensor output_tensor = XlaTensorBuffer::MakeTensor(
+                ctx->expected_output_dtype(i), 
+                shape, buffer, allocator);
+            output.set_buffer(se::OwningDeviceMemory(), {output_num});
+            TensorShape sliced_shape(sliced_shape_proto);
+            Tensor slice_output_tensor(output_tensor.dtype(), sliced_shape);
+            TF_RETURN_IF_ERROR(
+                SplitOutputTensor(ctx,
+                          inputs_shape_info->is_cpu_device,
+                          output_tensor,
+                          slice_output_tensor));
+
+            VLOG(1) << "Retval " << i << " shape " 
+                    << slice_output_tensor.shape() << " acutal";
+            ctx->set_output(i, slice_output_tensor);
+          } else {
+            // Not use xla auto padding
+            Tensor output_tensor = XlaTensorBuffer::MakeTensor(
+                ctx->expected_output_dtype(i), shape, buffer, allocator);
+            output.set_buffer(se::OwningDeviceMemory(), {output_num});
+            ctx->set_output(i, output_tensor);
+          }
         }
         ++output_num;
       }
@@ -435,8 +610,19 @@ Status XlaComputationLaunchContext::PopulateOutputs(
 Status XlaComputationLaunchContext::BuildXlaCompilerArguments(
     const std::map<int, Tensor>& constant_args,
     const std::map<int, OptionalTensor>& variable_args, OpKernelContext* ctx,
-    std::vector<XlaCompiler::Argument>* args) {
+    std::vector<XlaCompiler::Argument>* args,
+    std::shared_ptr<InputsShapeInfo> inputs_shape_info,
+    XlaCompilationCache* cache){
   args->resize(ctx->num_inputs());
+  // Find cached input shapes to do input padding and xla inference
+  if (cache != nullptr && inputs_shape_info != nullptr){
+    Status s = cache->GetPaddingPtr()->FillAndFindCacheShape(
+        constant_args, variable_args, ctx, args, inputs_shape_info);
+    if (! s.ok() ) return s;
+    if (inputs_shape_info->out_executable != nullptr) {
+      return Status::OK();
+    }
+  }
 
   for (int64 input_num = 0; input_num < ctx->num_inputs(); ++input_num) {
     XlaCompiler::Argument& arg = (*args)[input_num];
@@ -452,14 +638,16 @@ Status XlaComputationLaunchContext::BuildXlaCompilerArguments(
       // Handles the non-constant arguments.
       const Tensor& input = ctx->input(input_num);
       TF_RET_CHECK(input.dtype() != DT_RESOURCE);
+      arg.shape = inputs_shape_info ? 
+          inputs_shape_info->input_shapes[input_num] : input.shape();
+      arg.type = input.dtype();
+
       if (input.NumElements() > 0) {
         arg.kind = XlaCompiler::Argument::kParameter;
       } else {
         arg.kind = XlaCompiler::Argument::kConstant;
         arg.constant_value = input;
       }
-      arg.type = input.dtype();
-      arg.shape = input.shape();
     } else {
       // Handles resource variables.
       const Tensor& input = ctx->input(input_num);

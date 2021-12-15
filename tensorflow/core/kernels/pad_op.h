@@ -20,9 +20,18 @@ limitations under the License.
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/tensor_types.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
 
 namespace tensorflow {
 namespace functor {
+
+Status DoPadding(OpKernelContext* context, 
+               const Tensor& in0, 
+               const Tensor& in1,
+               Tensor& output,
+               bool is_cpu_device);
+
 
 // Functor used by PadOp to do the computations.
 template <typename Device, typename T, typename Tpadding, int Dims>

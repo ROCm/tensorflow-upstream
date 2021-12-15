@@ -320,7 +320,6 @@ static StatusOr<bool> RunOnComputation(HloComputation* computation,
 
 StatusOr<bool> GemmAlgorithmPicker::Run(HloModule* module) {
   XLA_SCOPED_LOGGING_TIMER("GemmAlgorithmPicker");
-
   if (module->config().debug_options().xla_gpu_disable_autotune()) {
     VLOG(2) << "GEMM auto-tuning disabled, GemmAlgorithmPicker returning early";
     return false;

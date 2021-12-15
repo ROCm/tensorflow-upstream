@@ -37,7 +37,12 @@ limitations under the License.
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
+#if GOOGLE_CUDA
 typedef Eigen::GpuDevice GPUDevice;
+#else
+typedef Eigen::ThreadPoolDevice GPUDevice;
+#endif // GOOGLE_CUDA
+
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
@@ -140,6 +145,93 @@ class PadOp : public OpKernel {
     }
   }
 
+  static void DoPad(OpKernelContext* context, 
+                    const Tensor& in0, const Tensor& in1,
+                    Tensor& output) {
+    const int dims = in0.dims();
+    static const int kMinDims = 0;
+    static const int kMaxDims = 6;
+    OP_REQUIRES(context, kMinDims <= dims && dims <= kMaxDims,
+                errors::Unimplemented("inputs rank not in [", kMinDims, ",",
+                                      kMaxDims, "]: ", dims));
+    OP_REQUIRES(
+        context,
+        TensorShapeUtils::IsMatrix(in1.shape()) && in1.dim_size(1) == 2,
+        errors::InvalidArgument("paddings must be a matrix with 2 columns: ",
+                                in1.shape().DebugString()));
+    const int fixed_dims =
+        (dims == 0 && in1.dim_size(0) == 1) ? 1 : dims;
+    OP_REQUIRES(
+        context, fixed_dims == in1.dim_size(0),
+        errors::InvalidArgument(
+            "The first dimension of paddings must be the rank of inputs",
+            in1.shape().DebugString(), " ", in0.shape().DebugString()));
+
+    T pad_value = T();
+    /*if (context->num_inputs() == 3) {
+      const Tensor& constant_values = context->input(2);
+      OP_REQUIRES(
+          context, TensorShapeUtils::IsScalar(constant_values.shape()),
+          errors::InvalidArgument("constant_values must be a scalar. Found: ",
+                                  constant_values.shape().DebugString()));
+      pad_value = context->input(2).scalar<T>()();
+    }*/
+
+    // Compute the shape of the output tensor, and allocate it.
+    TensorShape output_shape;
+    typename TTypes<Tpadding>::ConstMatrix paddings = in1.matrix<Tpadding>();
+    for (int d = 0; d < fixed_dims; ++d) {
+      const Tpadding before_d =
+          paddings(d, 0);                     // Pad before existing elements.
+      const Tpadding after_d = paddings(d, 1); // Pad after existing elements.
+      OP_REQUIRES(context, before_d >= 0 && after_d >= 0,
+                  errors::InvalidArgument("Paddings must be non-negative: ",
+                                          before_d, " ", after_d));
+      const int64 size_d =
+          (d == in0.dims()) ? 1 : in0.dim_size(d);
+      output_shape.AddDim(before_d + size_d + after_d);
+    }
+    // If there is no padding to be done, forward the input to output.
+    if (output_shape.num_elements() == in0.NumElements()) {
+      // When num_elements == 0, shape may have changed.
+      CHECK(output.CopyFrom(in0, output_shape));
+      return;
+    }
+
+    TensorShape collapsed_input_shape;
+    TensorShape collapsed_output_shape;
+    Tensor collapsed_paddings;
+    if (fixed_dims > 1 &&
+        CollapseAdjacentNonPaddedDimensions(
+            in0.shape(), in1, output_shape, &collapsed_input_shape,
+            &collapsed_paddings, &collapsed_output_shape)) {
+      Tensor collapsed_input;
+      CHECK(collapsed_input.CopyFrom(in0, collapsed_input_shape));
+      Tensor collapsed_output;
+      AllocatorAttributes alloc_attrs;
+      alloc_attrs.set_on_host(context->input_memory_type(0) == HOST_MEMORY);
+      OP_REQUIRES_OK(context,
+                     context->allocate_temp(collapsed_input.dtype(),
+                                            collapsed_output_shape,
+                                            &collapsed_output, alloc_attrs));
+      const Tensor& collapsed_paddings_ref = collapsed_paddings;
+      typename TTypes<Tpadding>::ConstMatrix collapsed_paddings_matrix =
+          collapsed_paddings_ref.matrix<Tpadding>();
+
+      OperateWithVariableRank(context, collapsed_input_shape.dims(),
+                              collapsed_input, collapsed_paddings_matrix,
+                              pad_value, &collapsed_output);
+
+      CHECK(output.CopyFrom(collapsed_output, output_shape));
+    } else {
+      Tensor out = Tensor(context->device()->GetAllocator({}), 
+                          in0.dtype(), output_shape);
+      OperateWithVariableRank(context, fixed_dims, in0, paddings, pad_value,
+                              &out);
+      CHECK(output.CopyFrom(out, output_shape));
+    }
+  }
+
  private:
   // Collapses adjacent dimensions that are not padded to one dimension for
   // speed. Returns true if any two dimensions are collapsed. For example,
@@ -209,7 +301,7 @@ class PadOp : public OpKernel {
     return collapsed;
   }
 
-  void OperateWithVariableRank(OpKernelContext* context, int fixed_dims,
+  static void OperateWithVariableRank(OpKernelContext* context, int fixed_dims,
                                const Tensor& input,
                                typename TTypes<Tpadding>::ConstMatrix paddings,
                                T pad_value, Tensor* output) {
@@ -246,7 +338,7 @@ class PadOp : public OpKernel {
   }
 
   template <int Dims>
-  void Operate(OpKernelContext* context,
+  static void Operate(OpKernelContext* context,
                typename TTypes<T, Dims>::ConstTensor input,
                typename TTypes<Tpadding>::ConstMatrix paddings, T pad_value,
                Tensor* output) {
@@ -261,6 +353,65 @@ class PadOp : public OpKernel {
             paddings_array, pad_value);
   }
 };
+
+Status ChangeTensorType(const Tensor& input, Tensor& output) {
+  if (input.dtype() == DT_HALF ||
+      input.dtype() == DT_FLOAT ||
+      input.dtype() == DT_DOUBLE) {
+    output = input;
+    return Status::OK();
+  }
+  if (DataTypeSize(input.dtype()) == DataTypeSize(DT_HALF)) {
+    return output.BitcastFrom(input, DT_HALF, input.shape());
+  } else if (DataTypeSize(input.dtype()) == DataTypeSize(DT_FLOAT)) {
+    return output.BitcastFrom(input, DT_FLOAT, input.shape());
+  } else if (DataTypeSize(input.dtype()) == DataTypeSize(DT_DOUBLE)) {
+    return output.BitcastFrom(input, DT_DOUBLE, input.shape());
+  }
+  return errors::Unimplemented("Unsupport Xla Auto Padding data type ", input.dtype());
+}
+
+Status functor::DoPadding(OpKernelContext* context, 
+                        const Tensor& in0, 
+                        const Tensor& in1,
+                        Tensor& output,
+                        bool is_cpu_device) {
+  // Beaucse cuda slice unsuport uint32, uint64 format
+  // So we must change input to float or double
+  Tensor input_ref = in0;
+  ChangeTensorType(in0, input_ref);
+  const Tensor& const_input_ref = input_ref;
+
+  Tensor output_ref(const_input_ref.dtype(), output.shape());
+  switch(const_input_ref.dtype()) {
+    case DT_FLOAT:
+      if (is_cpu_device) {
+        PadOp<CPUDevice, float, int32>::DoPad(context, const_input_ref, in1, output_ref);
+      } else {
+        PadOp<GPUDevice, float, int32>::DoPad(context, const_input_ref, in1, output_ref);
+
+      }
+      break;
+    case DT_HALF:
+      if (is_cpu_device) {
+        PadOp<CPUDevice, Eigen::half, int32>::DoPad(context, const_input_ref, in1, output_ref);
+      } else {
+        PadOp<GPUDevice, Eigen::half, int32>::DoPad(context, const_input_ref, in1, output_ref);
+      }
+      break;
+    case DT_DOUBLE:
+      if (is_cpu_device) {
+        PadOp<CPUDevice, double, int32>::DoPad(context, const_input_ref, in1, output_ref);
+      } else {
+        PadOp<GPUDevice, double, int32>::DoPad(context, const_input_ref, in1, output_ref);
+      }
+      break;
+    default:
+      return errors::Unimplemented("Unsupport Xla Auto Padding data type ", in0.dtype());
+
+  }
+  return output.BitcastFrom(output_ref, in0.dtype(), output_ref.shape());
+}
 
 #define REGISTER_KERNEL(type)                                     \
   REGISTER_KERNEL_BUILDER(Name("Pad")                             \

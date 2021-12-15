@@ -45,7 +45,7 @@ class XlaTensor {
   // which case the returned value is shaped_buffer()->root_buffer(), or a
   // normal Tensor in which case the returned value is
   // {tensor.tensor_data().data(), tensor.tensor_data().size}.
-  static se::DeviceMemoryBase DeviceMemoryFromTensor(const Tensor& tensor);
+  static se::DeviceMemoryBase DeviceMemoryFromTensor(const Tensor& tensor, const xla::Shape& padded_shape);
 
   // Assign the internal ShapedBuffer to new memory for the given dtype and
   // shape. If a ShapedBuffer exists already (has_shaped_buffer() == true), it

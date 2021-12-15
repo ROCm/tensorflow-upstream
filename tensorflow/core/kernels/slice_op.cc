@@ -55,7 +55,11 @@ gtl::InlinedVector<int64, 4> IntTensorToInt64Vec(const Tensor& tensor) {
 }  // namespace
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
+#if GOOGLE_CUDA
 typedef Eigen::GpuDevice GPUDevice;
+#else
+typedef Eigen::ThreadPoolDevice GPUDevice;
+#endif // GOOGLE_CUDA
 #ifdef TENSORFLOW_USE_SYCL
 typedef Eigen::SyclDevice SYCLDevice;
 #endif  // TENSORFLOW_USE_SYCL
@@ -267,6 +271,7 @@ TF_CALL_POD_STRING_TYPES(REGISTER_SLICE);
 TF_CALL_QUANTIZED_TYPES(REGISTER_SLICE);
 #undef REGISTER_SLICE
 
+
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 // Forward declarations of the functor specializations for GPU.
 namespace functor {
@@ -299,6 +304,10 @@ DECLARE_FOR_N(int32);
 
 #undef DECLARE_FOR_N
 #undef DECLARE_GPU_SPEC
+
+
+
+
 }  // namespace functor
 
 #define REGISTER_GPU(type)                               \
@@ -332,6 +341,95 @@ REGISTER_KERNEL_BUILDER(Name("Slice")
 #undef REGISTER_GPU
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+namespace functor {
+
+Status ChangeTensorType(const Tensor& input, Tensor& output) {
+  if (input.dtype() == DT_HALF || 
+      input.dtype() == DT_FLOAT ||
+      input.dtype() == DT_DOUBLE) {
+    output = input;
+    return Status::OK();
+  }
+  if (DataTypeSize(input.dtype()) == DataTypeSize(DT_HALF)) {
+    return output.BitcastFrom(input, DT_HALF, input.shape());
+  } else if (DataTypeSize(input.dtype()) == DataTypeSize(DT_FLOAT)) {
+    return output.BitcastFrom(input, DT_FLOAT, input.shape());
+  } else if (DataTypeSize(input.dtype()) == DataTypeSize(DT_DOUBLE)) {
+    return output.BitcastFrom(input, DT_DOUBLE, input.shape());
+  }
+  return errors::Unimplemented("Unsupport Xla Auto Padding data type ", input.dtype());
+}
+
+Status DoSlice(OpKernelContext* context,
+                const Tensor& input,
+                const std::vector<int64>& begin,
+                const std::vector<int64>& size,
+                Tensor& result,
+                bool is_cpu_device) {
+  int input_dims = input.dims();
+  
+  // Beaucse cuda slice unsuport uint32, uint64 format
+  // So we must change input to float or double
+  Tensor input_ref = input;
+  ChangeTensorType(input, input_ref);
+  const Tensor& const_input_ref = input_ref;
+  
+  Tensor output_ref(const_input_ref.dtype(), result.shape());
+#define RUN_SLICE(DEVICE, NDIM, T)                                 \ 
+    functor::Slice<DEVICE, T, NDIM>()(                             \
+      context->eigen_device<DEVICE>(), output_ref.tensor<T, NDIM>(),   \
+      const_input_ref.tensor<T, NDIM>(), indices, sizes);            
+
+
+#define HANDLE_DIM(NDIM)                                           \
+  if (input_dims == NDIM) {                                        \
+    Eigen::DSizes<Eigen::DenseIndex, NDIM> indices;                \
+    Eigen::DSizes<Eigen::DenseIndex, NDIM> sizes;                  \
+    for (int i = 0; i < NDIM; ++i) {                               \
+      indices[i] = begin[i];                                       \
+      sizes[i] = size[i];                                          \
+    }                                                              \ 
+    switch(const_input_ref.dtype()) {                              \
+     case DT_HALF:                                                 \
+       if (is_cpu_device) {                                        \
+         RUN_SLICE(CPUDevice, NDIM, Eigen::half);                  \
+       } else {                                                    \
+         RUN_SLICE(GPUDevice, NDIM, Eigen::half);                  \
+       }                                                           \
+       break;                                                      \
+     case DT_FLOAT:                                                \
+       if (is_cpu_device) {                                        \
+         RUN_SLICE(CPUDevice, NDIM, float);                        \
+       } else {                                                    \
+         RUN_SLICE(GPUDevice, NDIM, float);                        \
+       }                                                           \
+       break;                                                      \
+     case DT_DOUBLE:                                               \
+       if (is_cpu_device) {                                        \
+         RUN_SLICE(CPUDevice, NDIM, double);                       \
+       } else {                                                    \
+         RUN_SLICE(GPUDevice, NDIM, double);                       \
+       }                                                           \
+       break;                                                      \
+     default:                                                      \
+       return errors::Unimplemented("Unsupport Xla Auto Padding data type ", input.dtype()); \
+    }                                                                               \
+    return result.BitcastFrom(output_ref, input.dtype(), output_ref.shape());       \
+  }
+
+  HANDLE_DIM(2);
+  HANDLE_DIM(3);
+  HANDLE_DIM(4);
+  HANDLE_DIM(5);
+  HANDLE_DIM(6);
+  HANDLE_DIM(7);
+  HANDLE_DIM(1);
+  return errors::Unimplemented("Tensor Dim must be smaller than 7, bug got ", input_dims); 
+#undef RUN_SLICE
+#undef HANDLE_DIM
+}
+} // functor 
 
 #ifdef TENSORFLOW_USE_SYCL
 // Forward declarations of the functor specializations for SYCL.

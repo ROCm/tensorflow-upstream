@@ -631,6 +631,8 @@ class Tensor {
     TF_CHECK_OK(BitcastFrom(other, dtype, shape));
   }
 
+  bool SameAs(const Tensor& other) const;
+
  private:
   // Returns true if the refcount on buf_ and any possible underlying root
   // buffer is one.

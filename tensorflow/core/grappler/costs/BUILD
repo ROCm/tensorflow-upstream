@@ -39,7 +39,7 @@ tf_pyclif_proto_library(
 cc_library(
     name = "graph_properties",
     srcs = ["graph_properties.cc"],
-    hdrs = ["graph_properties.h"],
+    hdrs = ["graph_properties.h", "context_index_pool.h"],
     visibility = ["//visibility:public"],
     deps = [
         ":utils",
@@ -54,6 +54,7 @@ cc_library(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/grappler:grappler_item",
         "//tensorflow/core/grappler:utils",
+        "//tensorflow/core/grappler/costs:xla_padding_rule",
         "//tensorflow/core/grappler/clusters:cluster",
         "//tensorflow/core/grappler/optimizers:evaluation_utils",
     ] + tf_protos_grappler(),
@@ -198,6 +199,44 @@ cc_library(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/grappler:devices",
         "//tensorflow/core/grappler/clusters:cluster",
+    ],
+)
+
+cc_library(
+    name = "xla_padding_rule",
+    srcs = ["xla_padding_rule.cc"],
+    hdrs = ["xla_padding_rule.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/grappler:devices",
+        "//tensorflow/core/grappler/clusters:cluster",
+    ],
+)
+
+tf_cc_test(
+    name = "xla_padding_rule_test",
+    srcs = ["xla_padding_rule_test.cc"],
+    args = ["--heap_check=local"],  # The GPU tracer leaks memory
+    data = [":graph_properties_testdata"],
+    deps = [
+        ":graph_properties",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:scope",
+        "//tensorflow/cc:function_ops",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_proto_parsing",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensor_testutil",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core/grappler:grappler_item",
+        "//tensorflow/core/grappler/clusters:single_machine",
+        "//tensorflow/core/grappler/inputs:trivial_test_graph_input_yielder",
+        "//tensorflow/core/grappler/inputs:utils",
     ],
 )
 

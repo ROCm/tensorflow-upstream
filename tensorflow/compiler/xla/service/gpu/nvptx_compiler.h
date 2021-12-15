@@ -71,6 +71,10 @@ class NVPTXCompiler : public GpuCompiler {
       se::StreamExecutor* stream_exec, const string& ptx, int cc_major,
       int cc_minor, const HloModuleConfig& hlo_module_config);
 
+  std::vector<uint8> CompilePtx(
+      se::StreamExecutor* stream_exec, const string& ptx, int cc_major,
+      int cc_minor, const HloModuleConfig& hlo_module_config);
+
   // The compilation_cache_ map is a cache from {ptx string, cc_major, cc_minor}
   // -> cubin so we don't recompile the same ptx twice.  This is important for
   // some interactive workflows.  (We also cache at the HLO level, but sometimes

@@ -269,6 +269,47 @@ void DumpToFileInDir(const HloModule& module, string_view suffix,
                       CanonicalDebugOptions(module.config().debug_options()));
 }
 
+void DumpPtxToFileInDir(string dir, string filename,
+                        string_view contents) {
+  tensorflow::Env* env = tensorflow::Env::Default();
+  if (!env->IsDirectory(dir).ok()) {
+    auto status = env->RecursivelyCreateDir(dir);
+    if (!status.ok() && !env->IsDirectory(dir).ok()) {
+      LOG(ERROR) << "Could not create directory " << dir
+                 << " for dumping ptx: " << status;
+      return;
+    }
+  }
+  string file_path =
+      tensorflow::io::JoinPath(dir, SanitizeFileName(filename));
+  auto status = tensorflow::WriteStringToFile(env, file_path, contents);
+  if (!status.ok()) {
+    LOG(ERROR) << "Could not write ptx to " << file_path << ": "
+               << status;
+  }
+}
+
+void DumpCubinToFileInDir(string dir, string filename,
+                          std::vector<uint8> cubin) {
+  tensorflow::Env* env = tensorflow::Env::Default();
+  if (!env->IsDirectory(dir).ok()) {
+    auto status = env->RecursivelyCreateDir(dir);
+    if (!status.ok() && !env->IsDirectory(dir).ok()) {
+      LOG(ERROR) << "Could not create directory " << dir
+                 << " for dumping CUBIN: " << status;
+      return;
+    }
+  }
+  string file_path =
+      tensorflow::io::JoinPath(dir, SanitizeFileName(filename));
+  string cubin_string(cubin.begin(), cubin.end());
+  auto status = tensorflow::WriteStringToFile(env, file_path, cubin_string);
+  if (!status.ok()) {
+    LOG(ERROR) << "Could not write CUBIN to " << file_path << ": "
+               << status;
+  }
+}
+
 void DumpToFileInDirOrStdout(const HloModule& module, string_view suffix,
                              string_view contents) {
   DumpToFileInDirOrStdoutImpl(

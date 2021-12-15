@@ -44,6 +44,8 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor_no_cuda.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/core/util/stream_executor_util.h"
+#include "tensorflow/core/grappler/grappler_item.h"
+#include "absl/synchronization/notification.h"
 
 // OP_REQUIRES_OK_RETURN is the same as OP_REQUIRES_OK except that
 // in error case, it returns RET instead of void.
@@ -106,8 +108,10 @@ class XlaExecutableClosure {
       xla::LocalClient* client, xla::LocalExecutable* executable,
       const XlaCompiler::CompilationResult* compilation_result,
       std::map<int, OptionalTensor> resource_var_snapshots,
-      int num_constant_args)
+      int num_constant_args,
+      std::shared_ptr<InputsShapeInfo> inputs_shape_info)
       : client_(client),
+        inputs_shape_info_(inputs_shape_info),
         executable_(executable),
         compilation_result_(compilation_result),
         resource_var_snapshots_(std::move(resource_var_snapshots)),
@@ -116,6 +120,7 @@ class XlaExecutableClosure {
   XlaExecutableClosure(XlaExecutableClosure&&) = default;
   XlaExecutableClosure& operator=(XlaExecutableClosure&&) = default;
 
+  std::shared_ptr<InputsShapeInfo> inputs_shape_info() {return inputs_shape_info_;}
   xla::LocalClient* client() const { return client_; }
   xla::LocalExecutable* executable() const { return executable_; }
   const XlaCompiler::CompilationResult* compilation_result() const {
@@ -127,6 +132,7 @@ class XlaExecutableClosure {
   int num_constant_args() const { return num_constant_args_; }
 
  private:
+  std::shared_ptr<InputsShapeInfo> inputs_shape_info_;
   xla::LocalClient* client_;
   xla::LocalExecutable* executable_;
   const XlaCompiler::CompilationResult* compilation_result_;
@@ -214,11 +220,13 @@ XlaLocalLaunchBase::XlaLocalLaunchBase(OpKernelConstruction* ctx,
 
 static Status BuildCompilationCache(OpKernelContext* ctx,
                                     const XlaPlatformInfo& platform_info,
-                                    XlaCompilationCache** cache) {
+                                    XlaCompilationCache** cache,
+                                    std::string name) {
   if (platform_info.xla_device_metadata()) {
     *cache = new XlaCompilationCache(
         platform_info.xla_device_metadata()->client(),
-        platform_info.xla_device_metadata()->jit_device_type());
+        platform_info.xla_device_metadata()->jit_device_type(),
+        name);
     return Status::OK();
   }
 
@@ -264,7 +272,8 @@ static Status BuildCompilationCache(OpKernelContext* ctx,
                                    platform_info.device_type().type());
   }
   *cache = new XlaCompilationCache(
-      client.ValueOrDie(), DeviceType(registration->compilation_device_name));
+      client.ValueOrDie(), DeviceType(registration->compilation_device_name),
+      name);
   return Status::OK();
 }
 
@@ -274,7 +283,8 @@ static Status CompileToLocalExecutable(
     absl::Span<const int> constants, bool lazy, xla::LocalClient** client,
     std::map<int, OptionalTensor>* variables,
     const XlaCompiler::CompilationResult** kernel,
-    xla::LocalExecutable** executable) {
+    xla::LocalExecutable** executable,
+    std::shared_ptr<InputsShapeInfo> inputs_shape_info=nullptr) {
   // We store information about the JIT-compiled XLA computation
   // in the ResourceMgr.
   ResourceMgr* rm = ctx->resource_manager();
@@ -283,10 +293,13 @@ static Status CompileToLocalExecutable(
   }
 
   XlaCompilationCache* cache;
+  // Each cluster has its own XlaCompilationCache, and each graph has its own rm.
+  // Therefore, even if two clusters in two graphs has the same name,
+  // they will have different XlaCompilationCache
   TF_RETURN_IF_ERROR(rm->LookupOrCreate<XlaCompilationCache>(
-      rm->default_container(), "xla_cache", &cache,
+      rm->default_container(), "xla_cache_" + function.name(), &cache,
       [&](XlaCompilationCache** cache) {
-        return BuildCompilationCache(ctx, platform_info, cache);
+        return BuildCompilationCache(ctx, platform_info, cache, function.name());
       }));
   // Hold the reference to the JIT during evaluation. (We could probably
   // free it sooner because the ResourceMgr will retain a reference, but
@@ -330,13 +343,23 @@ static Status CompileToLocalExecutable(
   // rather than a one-element tuple.
   compile_options.always_return_tuple = false;
 
+  // If not find xla cache, then use tf op and compile xla in backend thread
   std::vector<XlaCompiler::Argument> args;
-  TF_RETURN_IF_ERROR(XlaComputationLaunchContext::BuildXlaCompilerArguments(
-      constant_args, *variables, ctx, &args));
+  Status s = XlaComputationLaunchContext::BuildXlaCompilerArguments(
+      constant_args, *variables, ctx, &args, inputs_shape_info, cache);
+  if (!s.ok()) return s;
+  if (inputs_shape_info != nullptr &&
+      inputs_shape_info->out_executable != nullptr) {
+    *kernel = inputs_shape_info->out_compilation_result;
+    *executable = inputs_shape_info->out_executable;
+    VLOG(1) << "Hit cache, not compile " << inputs_shape_info->DebugString();
+    return Status::OK();
+  }
+ 
   return cache->Compile(options, function, args, compile_options,
-                        lazy ? XlaCompilationCache::CompileMode::kLazy
-                             : XlaCompilationCache::CompileMode::kStrict,
-                        kernel, executable);
+                        lazy ? CompileMode::kLazy
+                             : CompileMode::kStrict,
+                        kernel, executable, inputs_shape_info);
 }
 
 void XlaLocalLaunchBase::Compute(OpKernelContext* ctx) {
@@ -374,8 +397,10 @@ void XlaLocalLaunchBase::Compute(OpKernelContext* ctx) {
       client, allocator,
       /*allocate_xla_tensors=*/platform_info_.is_on_xla_device(),
       platform_info_.UseMultipleStreams());
+  std::vector<std::shared_ptr<Tensor>> tmp_inputs;
   launch_context.PopulateInputs(ctx, kernel, variables,
-                                /*missing_ctx_input_prefix=*/0);
+                                /*missing_ctx_input_prefix=*/0,
+                                nullptr, tmp_inputs);
 
   // Execute the computation.
   VLOG(2) << "Executing computation.";
@@ -459,6 +484,60 @@ bool MustCompileAttr(OpKernelConstruction* ctx) {
                         ctx->GetAttr("must_compile", &must_compile));
   return must_compile;
 }
+
+bool EnableXlaPaddingAttr(OpKernelConstruction* ctx) {
+  bool enable_xla_auto_padding;
+  OP_REQUIRES_OK_RETURN(ctx, false,
+                        ctx->GetAttr("enable_xla_auto_padding", &enable_xla_auto_padding));
+  return enable_xla_auto_padding;
+}
+
+std::vector<std::string> split(const std::string &str, const std::string &pattern)
+{
+    std::vector<std::string> res;
+    if(str == "")
+        return res;
+    std::string strs = str + pattern;
+    size_t pos = strs.find(pattern);
+
+    while(pos != strs.npos)
+    {
+        std::string temp = strs.substr(0, pos);
+        res.push_back(temp);
+        strs = strs.substr(pos+1, strs.size());
+        pos = strs.find(pattern);
+    }
+    return res;
+}
+
+std::vector<std::vector<int>> EnableXlaPaddingShapeAttr(OpKernelConstruction* ctx) {
+  std::string auto_padding_shape;
+  OP_REQUIRES_OK_RETURN(ctx, {{}},
+                        ctx->GetAttr("auto_padding_shape", &auto_padding_shape));
+
+  // auto_padding_shape is formatted as 
+  // 1500,20000,100;20000,30000,1000
+  // min,max,interval;min,max,interval;...
+  std::vector<std::vector<int>> results;
+  auto vecs = split(auto_padding_shape, ";");  
+  for (auto vec: vecs) {
+    auto strs = split(vec, ",");
+    if (strs.size() != 3) continue;
+    
+    int min = atoi(strs[0].c_str());
+    int max = atoi(strs[1].c_str());
+    int interval = atoi(strs[2].c_str());
+    if (min >= max || 
+        interval >= max - min ||
+        interval <= 0) {
+      LOG(WARNING) << "auto padding shape set error: " << vec;
+      continue;
+    }
+    results.push_back({min, max, interval});
+  }
+
+  return results;
+}
 }  // namespace
 
 XlaLocalLaunchOp::XlaLocalLaunchOp(OpKernelConstruction* ctx)
@@ -475,6 +554,8 @@ XlaCompileOp::XlaCompileOp(OpKernelConstruction* ctx)
       resources_(ResourcesVector(ctx)),
       function_(FunctionAttr(ctx)),
       platform_info_(PlatformInfoFromContext(ctx)),
+      enable_xla_auto_padding_(EnableXlaPaddingAttr(ctx)),
+      auto_padding_shape_(EnableXlaPaddingShapeAttr(ctx)),
       must_compile_(MustCompileAttr(ctx)) {}
 
 void XlaCompileOp::Compute(OpKernelContext* ctx) {
@@ -482,7 +563,7 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
           << (must_compile_ ? "(must-compile)" : "");
   xla::LocalClient* client;
   const XlaCompiler::CompilationResult* kernel;
-  xla::LocalExecutable* executable;
+  xla::LocalExecutable* executable = nullptr;
   std::map<int, OptionalTensor> variables;
 
   bool cannot_compile_cluster;
@@ -491,13 +572,19 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
     cannot_compile_cluster = cannot_compile_cluster_;
   }
 
+  std::shared_ptr<InputsShapeInfo> inputs_shape_info = 
+     enable_xla_auto_padding_ ? std::make_shared<InputsShapeInfo>() : nullptr;
+  if (inputs_shape_info) {
+    inputs_shape_info->auto_padding_shape = auto_padding_shape_;
+  }
   if (GetXlaOpsCommonFlags().tf_xla_always_defer_compilation ||
       cannot_compile_cluster) {
     executable = nullptr;
   } else {
     Status status = CompileToLocalExecutable(
         ctx, function_, platform_info_, resources_, constants_,
-        /*lazy=*/!must_compile_, &client, &variables, &kernel, &executable);
+        /*lazy=*/!must_compile_, &client, &variables, &kernel, &executable, 
+        inputs_shape_info);
     if (must_compile_ || status.code() != error::UNIMPLEMENTED) {
       OP_REQUIRES_OK(ctx, status);
     }
@@ -514,14 +601,22 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
       cannot_compile_cluster_ = true;
     }
   }
-
+  // Never Compile cluster again
   AllocatorAttributes host_alloc_attrs;
   host_alloc_attrs.set_gpu_compatible(true);
   host_alloc_attrs.set_on_host(true);
   Allocator* cpu_allocator = ctx->device()->GetAllocator(host_alloc_attrs);
+  
+  if (VLOG_IS_ON(1)) {
+    for (const auto& input : inputs_shape_info->input_tensors) {
+      VLOG(1) << input.shape().DebugString() << " " << std::this_thread::get_id();
+    }
+  }
 
-  if (!executable) {
-    DCHECK(!must_compile_);
+  if (executable == nullptr) {
+    if (inputs_shape_info) {
+      LOG(WARNING) << "Use TF  " << def().name() << " " << inputs_shape_info->uuid();
+    }
     Tensor compilation_key(cpu_allocator, DT_STRING, TensorShape({}));
 
     Tensor compilation_successful(cpu_allocator, DT_BOOL, TensorShape({}));
@@ -537,8 +632,8 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
   // variables.
   XlaExecutableClosureStore::KeyT key =
       XlaExecutableClosureStore::Global()->Produce(XlaExecutableClosure(
-          client, executable, kernel, std::move(variables), constants_.size()));
-
+          client, executable, kernel, std::move(variables), constants_.size(), 
+          inputs_shape_info));
   Tensor compilation_key(cpu_allocator, DT_STRING, TensorShape({}));
   compilation_key.flat<tstring>()(0) = key;
 
@@ -550,7 +645,38 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
 }
 
 XlaRunOp::XlaRunOp(OpKernelConstruction* ctx)
-    : OpKernel(ctx), platform_info_(PlatformInfoFromContext(ctx)) {}
+    : OpKernel(ctx), platform_info_(PlatformInfoFromContext(ctx)) {
+  name_ = split(def().name(), "/")[0];
+  shape_infer_thread_pool_ = std::make_shared<thread::ThreadPool>(
+          Env::Default(), ThreadOptions(), strings::StrCat("xla_shape_inference"),
+          1, /*low_latency_hint*/true,
+          /*allocator=*/nullptr);
+}
+
+void XlaRunOp::InferOutputShape(OpKernelContext* ctx,
+    const XlaCompiler::CompilationResult* compile_result,
+    std::shared_ptr<InputsShapeInfo> inputs_shape_info) {
+  VLOG(1) << "InferInputShape " << inputs_shape_info->DebugString();
+  std::shared_ptr<grappler::GraphProperties> 
+     graph_properties = inputs_shape_info->graph_properties;
+  CHECK(graph_properties != nullptr);
+
+  auto s = graph_properties->InferStaticallyFastMode(
+         inputs_shape_info->input_tensors,
+         inputs_shape_info->inferred_shape_protos);
+  OP_REQUIRES(ctx, s.ok(),
+              errors::InvalidArgument("xla auto padding shape inference error, InferStaticallyFastMode fail"));
+  for (const auto& shape_proto: inputs_shape_info->inferred_shape_protos) {
+    for (auto d: shape_proto.dim()) {
+      OP_REQUIRES(ctx, d.size() > 0,
+                  errors::InvalidArgument("xla auto padding shape inference error, dim size=0"));
+    }
+  }
+  // save output shape to cache
+  SetCachedInferShapes(inputs_shape_info->uuid(), inputs_shape_info->inferred_shape_protos);
+  OP_REQUIRES(ctx, inputs_shape_info->inferred_shape_protos.size() > 0,
+              errors::InvalidArgument("xla auto padding shape inference error, outputs is empty"));
+}
 
 void XlaRunOp::Compute(OpKernelContext* ctx) {
   VLOG(3) << "XlaRunOp " << def().name();
@@ -560,6 +686,21 @@ void XlaRunOp::Compute(OpKernelContext* ctx) {
   XlaExecutableClosure closure =
       XlaExecutableClosureStore::Global()->Consume(key);
 
+  //New thread to infer xla output shapes;
+  auto inputs_shape_info = closure.inputs_shape_info();
+  std::shared_ptr<absl::Notification> shape_inference_done = nullptr;
+  if (inputs_shape_info) {
+    std::string uuid = inputs_shape_info->uuid();
+    if (!GetCachedInferShapes(inputs_shape_info->uuid(), 
+           inputs_shape_info->inferred_shape_protos)) {
+      // If not get output shape from cache, then schedule infer task
+      shape_inference_done = std::make_shared<absl::Notification>();
+      shape_infer_thread_pool_->Schedule([&]() {
+        InferOutputShape(ctx, closure.compilation_result(), inputs_shape_info);
+        shape_inference_done->Notify();
+      });
+    }
+  }
   absl::optional<se::TfAllocatorAdapter> tf_allocator_adapter;
   se::DeviceMemoryAllocator* allocator =
       GetAllocator(&tf_allocator_adapter, ctx, platform_info_);
@@ -571,6 +712,7 @@ void XlaRunOp::Compute(OpKernelContext* ctx) {
   // We're missing the must-be-constant inputs, tell `PopulateInputs`
   // about this.  We don't actually need these inputs because they've
   // already been baked into the compiled kernel.
+  std::vector<std::shared_ptr<Tensor>> tmp_inputs;
   {
     tensorflow::profiler::TraceMe hlo_module_activity(
         [&] {
@@ -580,11 +722,13 @@ void XlaRunOp::Compute(OpKernelContext* ctx) {
         },
         tensorflow::profiler::TraceMeLevel::kInfo);
 
-    launch_context.PopulateInputs(
-        ctx, closure.compilation_result(), closure.resource_var_snapshots(),
-        /*missing_ctx_input_prefix=*/closure.num_constant_args());
+  OP_REQUIRES_OK(
+      ctx,
+      launch_context.PopulateInputs(
+          ctx, closure.compilation_result(), closure.resource_var_snapshots(),
+          /*missing_ctx_input_prefix=*/closure.num_constant_args(),
+          inputs_shape_info, tmp_inputs));
   }
-
   se::Stream* stream =
       ctx->op_device_context() ? ctx->op_device_context()->stream() : nullptr;
   xla::ExecutableRunOptions run_options;
@@ -592,21 +736,6 @@ void XlaRunOp::Compute(OpKernelContext* ctx) {
   run_options.set_allocator(allocator);
   run_options.set_intra_op_thread_pool(&ctx->eigen_cpu_device());
   run_options.set_rng_seed(GetXLARandomSeed());
-  xla::ThenExecuteFunction then_execute;
-  if (ctx->op_device_context()) {
-    then_execute = [&](se::Stream* stream, std::function<void()> fn) {
-      Status status = ctx->op_device_context()->ThenExecute(
-          static_cast<Device*>(ctx->device()), stream, std::move(fn));
-      if (!status.ok()) {
-        // This should never happen.
-        LOG(ERROR) << "ThenExecute failed " << status;
-      }
-    };
-    run_options.set_then_execute_function(&then_execute);
-  }
-  Env* env = Env::Default();
-  auto start_time = env->NowMicros();
-
   xla::StatusOr<xla::ScopedShapedBuffer> run_result;
   if (!stream || platform_info_.platform_id() == se::host::kHostPlatformId) {
     run_result =
@@ -617,20 +746,32 @@ void XlaRunOp::Compute(OpKernelContext* ctx) {
   }
   OP_REQUIRES(ctx, run_result.ok(), run_result.status());
 
-  auto elapsed = env->NowMicros() - start_time;
-  VLOG(2) << "Elapsed time in computation: " << elapsed << "us";
+  if (inputs_shape_info && shape_inference_done) {
+    auto start = Env::Default()->NowMicros();
+    shape_inference_done->WaitForNotification();
+    if (inputs_shape_info->inferred_shape_protos.empty()) {
+      ctx->SetStatus(tensorflow::errors::Unimplemented("xla auto padding shape inference error"));
+      return;
+    }
+    auto delay = Env::Default()->NowMicros() - start;
+    if (delay > 5000) {
+      LOG(WARNING) << def().name() << " shape inference too slow " << delay << " us";
+    }
+  }
 
   tensorflow::profiler::TraceMe hlo_module_activity(
       [&] {
         return absl::StrCat("Populate Outputs (", ctx->num_outputs(), ")");
       },
       tensorflow::profiler::TraceMeLevel::kInfo);
-
+      
   OP_REQUIRES_OK(
       ctx,
       launch_context.PopulateOutputs(
-          ctx, closure.compilation_result(), run_result.ConsumeValueOrDie(),
-          /*missing_ctx_input_prefix=*/closure.num_constant_args()));
+          ctx, closure.compilation_result(), 
+          run_result.ConsumeValueOrDie(),
+          /*missing_ctx_input_prefix=*/closure.num_constant_args(),
+          inputs_shape_info));
 }
 
 REGISTER_KERNEL_BUILDER(Name("XlaLaunch").Device(DEVICE_CPU), XlaLocalLaunchOp);

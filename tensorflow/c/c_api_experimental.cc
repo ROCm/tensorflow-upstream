@@ -65,7 +65,7 @@ void TF_EnableXLACompilation(TF_SessionOptions* options, unsigned char enable) {
     tensorflow::MarkForCompilationPassFlags* flags =
         tensorflow::GetMarkForCompilationPassFlags();
     flags->tf_xla_cpu_global_jit = true;
-    flags->tf_xla_min_cluster_size = 1;
+    // flags->tf_xla_min_cluster_size = 1;
   } else {
     optimizer_options->set_global_jit_level(tensorflow::OptimizerOptions::OFF);
   }
@@ -114,7 +114,7 @@ TF_Buffer* TF_CreateConfig(unsigned char enable_xla_compilation,
     tensorflow::MarkForCompilationPassFlags* flags =
         tensorflow::GetMarkForCompilationPassFlags();
     flags->tf_xla_cpu_global_jit = true;
-    flags->tf_xla_min_cluster_size = 1;
+    //flags->tf_xla_min_cluster_size = 1;
   } else {
     optimizer_options->set_global_jit_level(tensorflow::OptimizerOptions::OFF);
   }

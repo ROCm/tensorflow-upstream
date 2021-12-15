@@ -456,6 +456,7 @@ message ConfigProto {
   // enabled, this field is ignored and sessions are always isolated.
   bool isolate_session_state = 15;
 
+  string auto_padding_shape = 160;
   // Everything inside Experimental is subject to change and is not subject
   // to API stability guarantees in
   // https://www.tensorflow.org/guide/version_compat.
@@ -543,7 +544,14 @@ message ConfigProto {
   };
 
   Experimental experimental = 16;
-
+  bool run_graph_mode = 100;
+  bool force_run_in_caller_thread = 110;
+  bool enable_graph_opt_place = 111;
+  
+  // if enable_xla_auto_padding, we will add pad and slice for every cluster
+  // so that xla behaives like dynamic padding
+  bool enable_xla_auto_padding = 112;
+  int32 xla_padding_type = 113;
   // Next: 17
 }
 
@@ -636,6 +644,12 @@ message RunMetadata {
   // level idea of what the built graph looks like (since the various graph
   // optimization passes might change the structure of the graph significantly).
   repeated FunctionGraphs function_graphs = 4;
+  //[PROF-STATS]
+  message ProfStats {
+    uint64 flops = 1;
+    uint64 tao_op_calls = 2;
+  }
+  ProfStats prof_stats = 5;
 }
 
 // Defines a connection between two tensors in a `GraphDef`.

@@ -25,6 +25,8 @@ limitations under the License.
 
 namespace tensorflow {
 
+const char* const kXlaDisableByPadding = "_xla_padding_disable";
+
 // The attribute that marks nodes to be grouped into functions by the
 // encapsulate subgraphs pass.
 extern const char* const kXlaClusterAttr;

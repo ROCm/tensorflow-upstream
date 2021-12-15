@@ -35,6 +35,7 @@ cc_library(
         "//tensorflow/stream_executor:tf_allocator_adapter",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/synchronization",
     ],
     alwayslink = 1,
 )

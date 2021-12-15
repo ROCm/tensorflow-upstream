@@ -47,6 +47,7 @@ using shape_inference::InferenceContext;
 using shape_inference::ShapeAndType;
 using shape_inference::ShapeHandle;
 using TensorVector = gtl::InlinedVector<TensorValue, 4>;
+using namespace xla_padding_rule;
 
 template <typename Handle>
 struct HashHandle {
@@ -549,13 +550,33 @@ class SymbolicShapeRefiner {
   explicit SymbolicShapeRefiner(
       const GraphView& graph,
       const std::unordered_map<string, std::unordered_set<int>>& fed_ports,
-      const bool aggressive_shape_inference)
+      const bool aggressive_shape_inference,
+      const std::vector<std::pair<string, Tensor>> feed,
+      const std::vector<std::string> fetch,
+      int infer_count)
       : graph_(graph),
         function_library_(OpRegistry::Global(), graph.graph()->library()),
         fed_ports_(fed_ports),
+        fetch_(fetch),
+        infer_count_(infer_count),
         aggressive_shape_inference_(aggressive_shape_inference) {
     graph_def_version_ = graph.graph()->versions().producer();
-    node_to_context_.reserve(graph.graph()->node_size());
+    node_to_contexts_.resize(infer_count);
+    input_signatures_.resize(infer_count);
+    for (int i = 0; i < infer_count; i++) {
+      node_to_contexts_[i].reserve(graph.graph()->node_size());
+    }
+    VLOG(1) << "#### Feed node size " << feed.size();
+    for (int i = 0; i < feed.size(); i++) {
+      string node_name = feed[i].first;
+      feed_[node_name] = std::make_pair(i, feed[i].second);
+      VLOG(1) << "#### Feed name " << i << " " << node_name;
+    }
+    VLOG(1) << "#### Fetch node size " << fetch.size();
+    for (int i = 0; i < fetch.size(); i++) {
+      VLOG(1) << "#### Fetch node is " << fetch[i];
+    }
+    xla_padding_rule_ = std::make_shared<XlaPaddingRule>();
   }
 
   const GraphView& graph() const { return graph_; }
@@ -572,19 +593,34 @@ class SymbolicShapeRefiner {
 
     // Output shapes incompatible between annotation and shape inference.
     bool shape_incompatible = false;
+    bool shape_unchange = false;
   };
 
-  NodeContext* GetNodeContext(const NodeDef* node) {
-    auto it = node_to_context_.find(node);
-    if (it == node_to_context_.end()) {
+  // If this node is the src of ret node,
+  // then set node_to_retval_maps_ the val of ret node index
+  // For example: cast_0 -> cast_0_retval_RetVal
+  // and cast_0_retval_RetVal`s index is 1
+  // then set output_index=1
+  // One src node may have multi outpurt port
+  // and one output port can to mulit Ret Node
+  // key: src_name
+  // key: src_output_port
+  // value: [Ret1 index, Ret2 index ...]
+  std::map<string, std::map<int, std::vector<int>>> node_to_retval_maps_;
+
+  NodeContext* GetNodeContext(const NodeDef* node, int idx) {
+    CHECK(idx <= infer_count_);
+    auto it = node_to_contexts_[idx].find(node);
+    if (it == node_to_contexts_[idx].end()) {
       return nullptr;
     }
     return &it->second;
   }
 
-  InferenceContext* GetContext(const NodeDef* node) {
-    auto it = node_to_context_.find(node);
-    if (it == node_to_context_.end()) {
+  InferenceContext* GetContext(const NodeDef* node, int idx) {
+    CHECK(idx <= infer_count_);
+    auto it = node_to_contexts_[idx].find(node);
+    if (it == node_to_contexts_[idx].end()) {
       return nullptr;
     }
     return it->second.inference_context.get();
@@ -599,7 +635,7 @@ class SymbolicShapeRefiner {
   //
   // In the event of an error, UpdateNode will simply set `function_node`'s
   // output shape to be Unknown.
-  Status UpdateFunction(const NodeDef* function_node) {
+  Status UpdateFunction(const NodeDef* function_node, int ctx_idx) {
     auto it = fun_to_grappler_function_item_.find(function_node->op());
     if (it == fun_to_grappler_function_item_.end()) {
       return errors::InvalidArgument(
@@ -613,10 +649,10 @@ class SymbolicShapeRefiner {
       VLOG(3) << "Skip failed to instantiate function call: function_name="
               << function_node->op();
 
-      auto* ctx = GetNodeContext(function_node);
+      auto* ctx = GetNodeContext(function_node, ctx_idx);
       auto* ic = ctx->inference_context.get();
       for (int i = 0; i < ic->num_outputs(); ++i) {
-        TF_RETURN_IF_ERROR(SetUnknownShape(function_node, i));
+        TF_RETURN_IF_ERROR(SetUnknownShape(function_node, i, ctx_idx));
       }
 
       return Status::OK();
@@ -645,7 +681,7 @@ class SymbolicShapeRefiner {
                                           " was not found in the graph.");
       }
 
-      InferenceContext* input_ic = GetContext(input_node);
+      InferenceContext* input_ic = GetContext(input_node, ctx_idx);
       if (input_ic == nullptr) {
         return errors::FailedPrecondition(
             "Inference context has not been created for ", input_tensor.node());
@@ -675,7 +711,7 @@ class SymbolicShapeRefiner {
 
     // Replace input nodes with Consts, if values are known. Note that
     // we don't check exceptions here as it's done in the above loop.
-    auto* ctx = GetNodeContext(function_node);
+    auto* ctx = GetNodeContext(function_node, ctx_idx);
     auto* ic = ctx->inference_context.get();
     for (int i = grappler_function_item.inputs().size() - 1; i >= 0; --i) {
       const string& input = function_node->input(i);
@@ -761,28 +797,181 @@ class SymbolicShapeRefiner {
     return Status::OK();
   }
 
+  const Tensor* GetFeedTensor(const std::vector<Tensor>& feed_tensors,
+      std::string node_name) const {
+    auto iter = feed_.find(node_name);
+    if (iter == feed_.end()) return nullptr;
+    
+    int input_index = iter->second.first;
+    if (feed_tensors.size() > input_index) {
+      return &feed_tensors[input_index];
+    } else {
+      return &iter->second.second;
+    }
+  } 
+
+  bool SetArgNodeOutputShape(const NodeDef* node, 
+      const std::vector<Tensor>& feed_tensors, 
+      InferenceContext* ic) {
+    const Tensor* tensor = GetFeedTensor(feed_tensors, node->name());
+    if (tensor == nullptr) {
+      return false;
+    }
+
+    std::vector<DimensionHandle> dims;
+    for (int i = 0; i < tensor->shape().dims(); i++) {
+      int64 size = tensor->shape().dim_size(i);
+      dims.push_back(size < 0 ? ic->UnknownDim() : ic->MakeDim(size));
+    }
+    ic->set_output(0, ic->MakeShape(dims)); 
+    VLOG(1) << "Set arg node " << node->name() << ic->DebugString(ic->output(0));
+    return true;
+  }
+
+  bool SetConstNodeOutputShape(const NodeDef* node,
+      NodeContext* c) {
+    if (!IsConstant(*node)) return false;
+
+    InferenceContext* ic = c->inference_context.get();
+    auto iter = const_tensors_map_.find(node->name());
+    if (iter != const_tensors_map_.end()) {
+      const TensorShape& shape = iter->second.shape();
+      std::vector<DimensionHandle> dims;
+      for (int i = 0; i < shape.dims(); i++) {
+        int64 size = shape.dim_size(i);
+        dims.push_back(size < 0 ? ic->UnknownDim() : ic->MakeDim(size));
+      }
+      ic->set_output(0, ic->MakeShape(dims));
+    }
+
+    MaybeUpdateNodeContextOutput(*node, false, c);
+    VLOG(1) << "Set const node " << node->name() << " " << ic->DebugString(ic->output(0));
+    return true;
+  }
+
+  bool PopulateOutputShapes(const NodeDef* node,
+      NodeContext* ctx,
+      std::vector<TensorShapeProto>& output_shapes) {
+    // Populate Cluster inferenced output shapes
+    // If node output is src of retval node,
+    // then populate retval shape
+
+    InferenceContext* ic = ctx->inference_context.get();
+    if (ic->num_outputs() <= 0) return true;
+    std::string node_name = GetNodeName(node);
+
+    // If the output of this node, is not connect to Ret Node, return
+    if (node_to_retval_maps_.find(node->name()) == node_to_retval_maps_.end()) return true;
+
+    for(auto iter = node_to_retval_maps_[node->name()].begin(); 
+             iter != node_to_retval_maps_[node->name()].end(); iter++) {
+      int src_output = iter->first;
+      const std::vector<int>& cluster_ret_indexs = iter->second;
+
+      CHECK(ic->output(src_output).Handle()) << node_name << " has output shape unknown";;
+      TensorShapeProto proto;
+      ic->ShapeHandleToProto(ic->output(src_output), &proto);
+
+      for (int index: cluster_ret_indexs) {
+        CHECK(index < output_shapes.size()) << node_name << " set cluster output " << index
+            << " beyond ret total num " << output_shapes.size();
+        output_shapes[index] = proto;
+        VLOG(1) << node_name << " Fill output " << index << "/" << output_shapes.size() << " " << proto.DebugString();
+      }
+    }
+    return true;
+  }
+
+  Status FillCtxInputTensors(
+      const std::vector<Tensor>& feed_tensors,
+      NodeContext* ctx,
+      const std::vector<std::string>& src_names,
+      const std::vector<bool>& src_is_const,
+      std::vector<Tensor>& tensor_values) {
+    /// Set input tensors to InferenceContext as following:
+
+    InferenceContext* ic = ctx->inference_context.get();
+    std::vector<const Tensor*> input_tensors(ic->num_inputs(), nullptr);
+    for (int dst_input = 0; dst_input < ic->num_inputs(); ++dst_input) {
+      const std::string& src_name = src_names[dst_input];
+      // 1. For Arg input, try to get From External inputs
+      const Tensor* feed_tensor = GetFeedTensor(feed_tensors, src_name);
+      if (feed_tensor != nullptr) {
+        input_tensors[dst_input] = feed_tensor;
+        continue;
+      }
+
+      // 2. For const input, try to get from cache.
+      // If not in cache, then parse from input proto
+      if (src_is_const[dst_input]) {
+        auto iter = const_tensors_map_.find(src_name);
+        if (iter != const_tensors_map_.end()) {
+          input_tensors[dst_input] = &(iter->second);
+          continue;
+        }
+      }
+
+      // 3. Neither arg node nor const not cache, parse From input proto
+      //    Only parse const of int32 and int64,
+      //    because float32 type is not useful for shape inference
+      //
+      const TensorProto* tensor_proto = ctx->input_tensor_protos[dst_input];
+      if (tensor_proto == nullptr) continue;
+      
+      if (!src_is_const[dst_input] && 
+          tensor_proto->dtype() != DT_INT32 && 
+          tensor_proto->dtype() != DT_INT64) {
+        continue;
+      }
+
+      tensor_values[dst_input].FromProto(*tensor_proto);
+      input_tensors[dst_input] = &tensor_values[dst_input];
+
+      // Cache node value if const inputs, since const input does not change
+      if (src_is_const[dst_input]) {
+        const_tensors_map_[src_name] = tensor_values[dst_input];
+      }
+    }
+    ic->set_input_tensors(input_tensors);
+    return Status::OK();
+  }
+
   // Prepares input shapes/values/handles, then runs shape inference, and
   // finally sets output shapes/values/handles.
-  Status UpdateNode(const NodeDef* node, bool* refined) {
-    NodeContext* ctx = GetNodeContext(node);
+  Status UpdateNode(const NodeDef* node, bool* refined, int ctx_idx, 
+      const std::vector<Tensor>& feed_tensors={}) {
+    VLOG(1) << "UpdateNode " << node->name() << "(" << node->op() << ")";
+    NodeContext* ctx = GetNodeContext(node, ctx_idx);
     if (ctx == nullptr) {
       TF_RETURN_IF_ERROR(AddNode(node));
-      ctx = CHECK_NOTNULL(GetNodeContext(node));
+      ctx = CHECK_NOTNULL(GetNodeContext(node, ctx_idx));
       *refined = true;
     }
 
     // Check if the shapes of the nodes in the fan-in of this node have changed,
     // and if they have, update the node input shapes.
     InferenceContext* ic = ctx->inference_context.get();
+
+    // Set the arg and const InferenceContext
+    std::vector<TensorShapeProto> nouse;
+    if(SetArgNodeOutputShape(node, feed_tensors, ic)) {
+      PopulateOutputShapes(node, ctx, nouse);
+    }
+
     std::vector<ShapeHandle> input_tensors_as_shapes(ic->num_inputs());
     ctx->input_tensor_protos.resize(ic->num_inputs(), nullptr);
 
+    std::vector<std::string> src_names;
+    std::vector<bool> src_is_const;
     for (int dst_input = 0; dst_input < ic->num_inputs(); ++dst_input) {
       const GraphView::InputPort port(node, dst_input);
       const GraphView::OutputPort fanin = graph_.GetRegularFanin(port);
       int src_output = fanin.port_id;
       const NodeDef* src = fanin.node;
-      NodeContext* src_ctx = GetNodeContext(src);
+      src_names.push_back(src->name());
+      src_is_const.push_back(IsConstant(*src));
+
+      NodeContext* src_ctx = GetNodeContext(src, ctx_idx);
       if (src_ctx == nullptr) {
         return errors::FailedPrecondition(
             "Input ", dst_input, " for '", node->name(),
@@ -796,6 +985,19 @@ class SymbolicShapeRefiner {
                                   src_ic->num_outputs());
       }
 
+      for (int i = 0; i < fetch_.size(); i++) {
+        if (fetch_[i] == node->name()) {
+          auto iter = node_to_retval_maps_.find(src->name());
+          if (iter == node_to_retval_maps_.end()) {
+            node_to_retval_maps_[src->name()][src_output] = {i};
+          } else {
+            node_to_retval_maps_[src->name()][src_output].push_back(i);
+          }
+          VLOG(1) << src->name() << "(" << src->op()<<  "):" <<  src_output 
+                  << " connect to output " << i << "/" << fetch_.size()
+                  << " name:" << node->name();
+        }
+      }
       // Propagate input node's NodeContext info to the current node's
       // NodeContext:
       // output_tensor_protos to input_tensor_protos and input_tensors, and
@@ -895,7 +1097,7 @@ class SymbolicShapeRefiner {
       // true, as the updates to the call node will have changed, even if it's
       // the same function being called twice with the same input shapes.
       // Example: simple_function.pbtxt
-      auto s = UpdateFunction(node);
+      auto s = UpdateFunction(node, ctx_idx);
       if (s.ok()) {
         return Status::OK();
       } else {
@@ -906,25 +1108,108 @@ class SymbolicShapeRefiner {
     }
 
     //  Construct Tensors for constant inputs used by shape functions.
+    std::vector<Tensor> notused(ic->num_inputs());
+    FillCtxInputTensors(feed_tensors, ctx, src_names, src_is_const, notused);
+
+    // We should set the const output shapeHandle, because it is null
+    // const
+    for (int dst_input = 0; dst_input < ic->num_inputs(); ++dst_input) {
+      if (!src_is_const[dst_input]) continue;
+
+      const GraphView::InputPort port(node, dst_input);
+      const GraphView::OutputPort fanin = graph_.GetRegularFanin(port);
+      const NodeDef* src = fanin.node;
+
+      NodeContext* src_ctx = GetNodeContext(src, ctx_idx);
+      SetConstNodeOutputShape(src, src_ctx);
+    }
+    return InferShapes(*node, ctx, false);
+  }
+
+  string DebugString(const gtl::ArraySlice<int> arrays) {
+    std::vector<string> vals;
+    for (auto d : arrays) vals.push_back(std::to_string(d));
+    return strings::StrCat("[", absl::StrJoin(vals, ","), "]");
+  }
+
+  inline string GetNodeName(const NodeDef* node) {
+    return node->name() + "(" + node->op() + ")";
+  }
+
+
+  // Prepares input shapes/values/handles, then runs shape inference, and
+  // finally sets output shapes/values/handles.
+  Status UpdateNodeFastMode(const NodeDef* node,
+      const std::vector<Tensor>& feed_tensors,
+      std::vector<TensorShapeProto>& output_shapes,
+      int ctx_idx) {
+    NodeContext* ctx = GetNodeContext(node, ctx_idx);
+    CHECK(ctx != nullptr); 
+    // Check if the shapes of the nodes in the fan-in of this node have changed,
+    // and if they have, update the node input shapes.
+    InferenceContext* ic = ctx->inference_context.get();
+    ic->Clear();
+
+    //For Arg node, we set ic->outputs and dont need to Update    
+    if(SetArgNodeOutputShape(node, feed_tensors, ic)) {
+      PopulateOutputShapes(node, ctx, output_shapes);
+      return Status::OK();
+    }
+    if (SetConstNodeOutputShape(node, ctx)) {
+      PopulateOutputShapes(node, ctx, output_shapes);
+      return Status::OK();
+    }
+    
+    std::vector<std::string> src_names(ic->num_inputs());
+    std::vector<bool> src_is_const(ic->num_inputs());
+
+    std::vector<ShapeHandle> input_tensors_as_shapes(ic->num_inputs());
+    ctx->input_tensor_protos.resize(ic->num_inputs(), nullptr);
+    //  Construct Tensors for constant inputs used by shape functions.
     std::vector<Tensor> const_values(ic->num_inputs());
     std::vector<const Tensor*> input_tensors(ic->num_inputs(), nullptr);
     for (int dst_input = 0; dst_input < ic->num_inputs(); ++dst_input) {
-      const TensorProto* tensor_proto = ctx->input_tensor_protos[dst_input];
-      if (tensor_proto != nullptr &&
-          const_values[dst_input].FromProto(*tensor_proto)) {
-        input_tensors[dst_input] = &const_values[dst_input];
+      const GraphView::InputPort port(node, dst_input);
+      const GraphView::OutputPort fanin = graph_.GetRegularFanin(port);
+      int src_output = fanin.port_id;
+      const NodeDef* src = fanin.node;
+      // yuxing
+      src_names[dst_input] = src->name();
+      src_is_const[dst_input] = IsConstant(*src);
+
+      NodeContext* src_ctx = GetNodeContext(src, ctx_idx);
+      if (src_ctx == nullptr) {
+        return errors::FailedPrecondition(
+            "Input ", dst_input, " for '", node->name(),
+            "' was not previously added to SymbolicShapeRefiner.");
+      }
+
+      InferenceContext* src_ic = src_ctx->inference_context.get();
+      if (src_output >= src_ic->num_outputs()) {
+        return errors::OutOfRange("src_output = ", src_output,
+                                  ", but num_outputs is only ",
+                                  src_ic->num_outputs());
+      }
+      ic->SetInput(dst_input, src_ic->output(src_output));
+      if (src_ctx->output_tensors_as_shapes.size() > src_output) {
+        input_tensors_as_shapes[dst_input] =
+            src_ctx->output_tensors_as_shapes[src_output];
       }
     }
-    ic->set_input_tensors(input_tensors);
+    ic->set_input_tensors_as_shapes(input_tensors_as_shapes);
 
-    // Update the shapes of the outputs.
-    return InferShapes(*node, ctx);
+    //  Construct Tensors for constant inputs used by shape functions.
+    std::vector<Tensor> notused(ic->num_inputs());
+    FillCtxInputTensors(feed_tensors, ctx, src_names, src_is_const, notused);
+    auto ret = InferShapes(*node, ctx, true);
+    PopulateOutputShapes(node, ctx, output_shapes);
+    return ret;
   }
 
-  Status SetUnknownShape(const NodeDef* node, int output_port) {
+  Status SetUnknownShape(const NodeDef* node, int output_port, int ctx_idx) {
     shape_inference::ShapeHandle shape =
-        GetUnknownOutputShape(node, output_port);
-    InferenceContext* ctx = GetContext(node);
+        GetUnknownOutputShape(node, output_port, ctx_idx);
+    InferenceContext* ctx = GetContext(node, ctx_idx);
     if (ctx == nullptr) {
       return errors::InvalidArgument("Missing context");
     }
@@ -964,22 +1249,22 @@ class SymbolicShapeRefiner {
 
   // 'port_index' as the union of shape1 and shape2.
   ShapeHandle OutputAsUnion(const NodeDef* node, int port_index,
-                            ShapeHandle shape1, ShapeHandle shape2) {
+                            ShapeHandle shape1, ShapeHandle shape2, int ctx_idx) {
     if (shape1.SameHandle(shape2)) {
       return shape1;
     }
-    InferenceContext* ctx = GetContext(node);
+    InferenceContext* ctx = GetContext(node, ctx_idx);
     ShapeHandle relaxed = shape1;
     const int rank = ctx->Rank(shape1);
     if (!ctx->RankKnown(shape2) || ctx->Rank(shape2) != rank) {
-      relaxed = GetUnknownOutputShape(node, port_index);
+      relaxed = GetUnknownOutputShape(node, port_index, ctx_idx);
     } else {
       for (int d = 0; d < rank; ++d) {
         if (!ctx->Dim(shape1, d).SameHandle(ctx->Dim(shape2, d))) {
           int64 val1 = ctx->Value(ctx->Dim(shape1, d));
           int64 val2 = ctx->Value(ctx->Dim(shape2, d));
           if (val1 != val2 || (val1 < 0 && val2 < 0)) {
-            DimensionHandle new_dim = GetUnknownOutputDim(node, port_index, d);
+            DimensionHandle new_dim = GetUnknownOutputDim(node, port_index, d, ctx_idx);
             TF_CHECK_OK(ctx->ReplaceDim(relaxed, d, new_dim, &relaxed));
           }
         }
@@ -1135,46 +1420,49 @@ class SymbolicShapeRefiner {
   }
 
   Status AddNode(const NodeDef* node) {
-    NodeContext& node_ctx = node_to_context_[node];
-    TF_RETURN_IF_ERROR(function_library_.LookUp(node->op(), &node_ctx.op_data));
+    for (int i = 0; i < infer_count_; i++) {
+      NodeContext& node_ctx = node_to_contexts_[i][node];
+      TF_RETURN_IF_ERROR(function_library_.LookUp(node->op(), &node_ctx.op_data));
 
-    if (node_ctx.op_data->is_function_op) {
-      TF_RETURN_IF_ERROR(AddFunction(node));
+      if (node_ctx.op_data->is_function_op) {
+        TF_RETURN_IF_ERROR(AddFunction(node));
+      }
+
+      TF_RETURN_IF_ERROR(InOutTypesForNode(*node, node_ctx.op_data->op_def,
+                                           &node_ctx.input_types,
+                                           &node_ctx.output_types));
+
+      // Create the inference context for this node.
+      const int num_inputs = node_ctx.input_types.size();
+      std::vector<ShapeHandle> input_shapes(num_inputs);
+      std::vector<std::unique_ptr<std::vector<ShapeAndType>>>
+          input_handle_shapes_and_types(num_inputs);
+      std::vector<const Tensor*> input_tensors(num_inputs, nullptr);
+      std::vector<ShapeHandle> input_tensors_as_shapes;
+
+      node_ctx.inference_context.reset(new InferenceContext(
+          graph_def_version_, node, node_ctx.op_data->op_def, input_shapes,
+          input_tensors, input_tensors_as_shapes,
+          std::move(input_handle_shapes_and_types)));
+      const Status s = node_ctx.inference_context->construction_status();
+      if (!s.ok()) {
+        node_ctx.inference_context.reset(nullptr);
+        return s;
+      }
     }
-
-    TF_RETURN_IF_ERROR(InOutTypesForNode(*node, node_ctx.op_data->op_def,
-                                         &node_ctx.input_types,
-                                         &node_ctx.output_types));
-
-    // Create the inference context for this node.
-    const int num_inputs = node_ctx.input_types.size();
-    std::vector<ShapeHandle> input_shapes(num_inputs);
-    std::vector<std::unique_ptr<std::vector<ShapeAndType>>>
-        input_handle_shapes_and_types(num_inputs);
-    std::vector<const Tensor*> input_tensors(num_inputs, nullptr);
-    std::vector<ShapeHandle> input_tensors_as_shapes;
-
-    node_ctx.inference_context.reset(new InferenceContext(
-        graph_def_version_, node, node_ctx.op_data->op_def, input_shapes,
-        input_tensors, input_tensors_as_shapes,
-        std::move(input_handle_shapes_and_types)));
-    const Status s = node_ctx.inference_context->construction_status();
-    if (!s.ok()) {
-      node_ctx.inference_context.reset(nullptr);
-    }
-    return s;
+    return Status::OK();
   }
 
  private:
   // Return the one ShapeHandle used to denote a fully unknown shape for a node
   // output.
-  ShapeHandle GetUnknownOutputShape(const NodeDef* node, int index) {
+  ShapeHandle GetUnknownOutputShape(const NodeDef* node, int index, int ctx_idx) {
     ShapeId id{node, index};
     auto it = unknown_shapes_.find(id);
     if (it != unknown_shapes_.end()) {
       return it->second;
     }
-    InferenceContext* c = GetContext(node);
+    InferenceContext* c = GetContext(node, ctx_idx);
     ShapeHandle shp = c->UnknownShape();
     unknown_shapes_[id] = shp;
     return shp;
@@ -1182,13 +1470,13 @@ class SymbolicShapeRefiner {
   // Return the one ShapeHandle used to denote a fully unknown dimension for a
   // node output.
   DimensionHandle GetUnknownOutputDim(const NodeDef* node, int index,
-                                      int dim_id) {
+                                      int dim_id, int ctx_idx) {
     DimId id{node, index, dim_id};
     auto it = unknown_dims_.find(id);
     if (it != unknown_dims_.end()) {
       return it->second;
     }
-    InferenceContext* c = GetContext(node);
+    InferenceContext* c = GetContext(node, ctx_idx);
     DimensionHandle dim = c->UnknownDim();
     unknown_dims_[id] = dim;
     return dim;
@@ -1661,10 +1949,19 @@ class SymbolicShapeRefiner {
     return Status::OK();
   }
 
-  Status InferShapes(const NodeDef& node, NodeContext* c) {
+  Status InferShapes(const NodeDef& node, NodeContext* c, bool is_fast_mode) {
     // Infer the shapes of output tensors.
-    if (!c->op_data || c->op_data->shape_inference_fn == nullptr ||
-        !c->inference_context->Run(c->op_data->shape_inference_fn).ok()) {
+    // node is arg node and its output shape has known, do not need shape inference;
+    auto ic = c->inference_context.get();
+    //for (int i = 0; i < ic->num_inputs(); i++) {
+    //  VLOG(0) << node.name() << " input shape " << ic->DebugString(ic->input(i));
+    //}
+
+    bool arg_shape_known = (node.op() == "_Arg" && 
+        InferenceContext::RankKnown(c->inference_context->output(0)));
+    if (!arg_shape_known && 
+        (!c->op_data || c->op_data->shape_inference_fn == nullptr ||
+        !ic->Run(c->op_data->shape_inference_fn).ok())) {
       // Annotate outputs with unknown shapes. Update output shapes with
       // annotated information later on if available.
       // Note that shape inference function may return an error, but we ignore
@@ -1672,16 +1969,16 @@ class SymbolicShapeRefiner {
       TF_RETURN_IF_ERROR(
           c->inference_context->Run(shape_inference::UnknownShape));
     }
+    //for (int i = 0; i < ic->num_outputs(); i++) {
+    //  VLOG(0) << node.name() << " output shape" << ic->DebugString(ic->output(i));
+    //}
+    xla_padding_rule_->CheckNodeIsPaddingValid(node, 
+        c->inference_context.get(), 
+        is_fast_mode);
     Status status = Status::OK();
+
     auto it = fed_ports_.find(node.name());
     const bool is_fed = it != fed_ports_.end();
-    if (is_fed) {
-      // It is possible to feed node output ports with tensors of any shape: as
-      // a result, the shape of a fed port is completely unknown.
-      for (const int output_port : it->second) {
-        status.Update(SetUnknownShape(&node, output_port));
-      }
-    }
 
     // Update NodeContext output fields after shape inference function runs.
     status.Update(MaybeUpdateNodeContextOutput(node, is_fed, c));
@@ -1776,9 +2073,17 @@ class SymbolicShapeRefiner {
     return false;
   }
 
-  const GraphView& graph_;
+  // name to const input tensors
+  std::map<std::string, Tensor> const_tensors_map_;
+  const GraphView&  graph_;
+  const std::vector<std::string> fetch_;
+
   int graph_def_version_;
-  std::unordered_map<const NodeDef*, NodeContext> node_to_context_;
+  int infer_count_;
+  //std::unordered_map<const NodeDef*, NodeContext> node_to_context_;
+  std::vector<std::unordered_map<const NodeDef*, NodeContext>> node_to_contexts_;
+  // input signatures
+  std::vector<std::string> input_signatures_;
   std::unordered_map<ShapeId, ShapeHandle, HashShapeId> unknown_shapes_;
   std::unordered_map<DimId, DimensionHandle, HashDimId> unknown_dims_;
   // Store function instantiations only for valid function. If function
@@ -1787,6 +2092,9 @@ class SymbolicShapeRefiner {
       fun_to_grappler_function_item_;
   FunctionLibraryDefinition function_library_;
   const std::unordered_map<string, std::unordered_set<int>>& fed_ports_;
+  // key: input_name
+  // value: input_index, input tensor
+  std::map<string, std::pair<int, Tensor>> feed_;
   // Store TensorProtos for tensor value propagation. Note that we use list, not
   // vector, as we use pointers to the TensorProtos in this container. Vector
   // may resize and copy the objects into a new buffer, then the existing
@@ -1796,6 +2104,8 @@ class SymbolicShapeRefiner {
   // For more aggressive shape and value inference.
   bool aggressive_shape_inference_;
   ResourceMgr resource_mgr_;
+public:
+  std::shared_ptr<XlaPaddingRule> xla_padding_rule_ = nullptr;
 };
 
 // Keep track of shapes and dimensions in a graph.
@@ -1841,7 +2151,7 @@ class SymbolicShapeManager {
       }
     }
   }
-
+  
  private:
   DisjointSet<shape_inference::ShapeHandle> shapes_;
   DisjointSet<shape_inference::DimensionHandle> dims_;
@@ -1850,7 +2160,8 @@ class SymbolicShapeManager {
 Status GraphProperties::RelaxEnqueueShapesAndMergeTypes(
     SymbolicShapeRefiner* shape_refiner, const NodeDef* qnode,
     const std::vector<ShapeAndType>& shapes_and_types,
-    std::vector<ShapeAndType>* queue_shapes_and_types) {
+    std::vector<ShapeAndType>* queue_shapes_and_types,
+    int ctx_idx) {
   if (shapes_and_types.size() != queue_shapes_and_types->size()) {
     return errors::InvalidArgument(
         "Enqueue nodes mixed number of tensors: ", shapes_and_types.size(),
@@ -1865,7 +2176,7 @@ Status GraphProperties::RelaxEnqueueShapesAndMergeTypes(
                                      DataTypeString(b.dtype));
     }
 
-    b.shape = shape_refiner->OutputAsUnion(qnode, i, a.shape, b.shape);
+    b.shape = shape_refiner->OutputAsUnion(qnode, i, a.shape, b.shape, ctx_idx);
   }
   return Status::OK();
 }
@@ -1874,12 +2185,13 @@ Status GraphProperties::RelaxEnqueueShapesAndMergeTypes(
 // input shapes.
 Status GraphProperties::UpdateMerge(SymbolicShapeRefiner* shape_refiner,
                                     const NodeDef* node,
-                                    bool* new_shapes) const {
-  InferenceContext* ic = shape_refiner->GetContext(node);
+                                    bool* new_shapes,
+                                    int ctx_idx) const {
+  InferenceContext* ic = shape_refiner->GetContext(node, ctx_idx);
   if (!ic) {
     // Now we can run shape inference
     TF_RETURN_IF_ERROR(shape_refiner->AddNode(node));
-    ic = CHECK_NOTNULL(shape_refiner->GetContext(node));
+    ic = CHECK_NOTNULL(shape_refiner->GetContext(node, ctx_idx));
     *new_shapes = true;
 
     // Infer the shape of the second output once and for all since it never
@@ -1893,7 +2205,7 @@ Status GraphProperties::UpdateMerge(SymbolicShapeRefiner* shape_refiner,
   bool out_initialized = false;
   for (const GraphView::Edge fanin : shape_refiner->graph().GetFaninEdges(
            *node, /*include_controlling_edges=*/false)) {
-    InferenceContext* src_ic = shape_refiner->GetContext(fanin.src.node);
+    InferenceContext* src_ic = shape_refiner->GetContext(fanin.src.node, ctx_idx);
     if (!src_ic) {
       // Handling a loop for the first time, the back edge won't have any shape
       // info.
@@ -1911,7 +2223,7 @@ Status GraphProperties::UpdateMerge(SymbolicShapeRefiner* shape_refiner,
       out_handle = input_handle;
     } else {
       // Note here only out, not out_handle, is modified.
-      out = shape_refiner->OutputAsUnion(node, 0, input, out);
+      out = shape_refiner->OutputAsUnion(node, 0, input, out, ctx_idx);
     }
   }
 
@@ -1926,17 +2238,17 @@ Status GraphProperties::UpdateMerge(SymbolicShapeRefiner* shape_refiner,
 
 // Manually propagate the input shape for Enter nodes.
 Status GraphProperties::UpdateEnter(SymbolicShapeRefiner* shape_refiner,
-                                    const NodeDef* node, bool* new_shapes) {
-  InferenceContext* ic = shape_refiner->GetContext(node);
+                                    const NodeDef* node, bool* new_shapes, int ctx_idx) {
+  InferenceContext* ic = shape_refiner->GetContext(node, ctx_idx);
   if (!ic) {
-    TF_RETURN_IF_ERROR(shape_refiner->UpdateNode(node, new_shapes));
-    ic = shape_refiner->GetContext(node);
+    TF_RETURN_IF_ERROR(shape_refiner->UpdateNode(node, new_shapes, ctx_idx));
+    ic = shape_refiner->GetContext(node, ctx_idx);
   }
 
   GraphView::InputPort port(node, 0);
   GraphView::OutputPort fanin = shape_refiner->graph().GetRegularFanin(port);
 
-  InferenceContext* src_ic = shape_refiner->GetContext(fanin.node);
+  InferenceContext* src_ic = shape_refiner->GetContext(fanin.node, ctx_idx);
   ShapeHandle input = src_ic->output(fanin.port_id);
   if (!ic->output(0).SameHandle(input)) {
     ic->SetInput(0, input);
@@ -1954,27 +2266,35 @@ Status GraphProperties::UpdateEnter(SymbolicShapeRefiner* shape_refiner,
 
 Status GraphProperties::UpdateShapes(
     SymbolicShapeRefiner* shape_refiner,
-    const std::unordered_map<const NodeDef*, const NodeDef*>& resource_handles,
-    const NodeDef* n, bool* new_shapes) const {
+    const std::unordered_map<const NodeDef*, 
+    const NodeDef*>& resource_handles,
+    const NodeDef* n, bool* new_shapes, 
+    const std::vector<Tensor>& feed_tensors,
+    std::vector<TensorShapeProto>& output_shapes, 
+    bool is_fast_mode, int ctx_idx) const {
   if (IsEnter(*n)) {
     // The Enter shape function always forwards an UnknownShape, so do the right
     // thing here.
-    TF_RETURN_IF_ERROR(UpdateEnter(shape_refiner, n, new_shapes));
+    TF_RETURN_IF_ERROR(UpdateEnter(shape_refiner, n, new_shapes, ctx_idx));
   } else if (IsMerge(*n)) {
     // Properly handle merge nodes.
-    TF_RETURN_IF_ERROR(UpdateMerge(shape_refiner, n, new_shapes));
+    TF_RETURN_IF_ERROR(UpdateMerge(shape_refiner, n, new_shapes, ctx_idx));
   } else if (IsEnqueue(*n)) {
     // Make sure the shapes of enqueued tensors are propagated to the queue
     // itself.
     TF_RETURN_IF_ERROR(
-        UpdateEnqueue(n, resource_handles, shape_refiner, new_shapes));
+        UpdateEnqueue(n, resource_handles, shape_refiner, new_shapes, ctx_idx));
   } else if (IsQueue(*n)) {
     // Set shapes and types of Queue ops, if needed.
-    TF_RETURN_IF_ERROR(UpdateQueue(n, shape_refiner, new_shapes));
+    TF_RETURN_IF_ERROR(UpdateQueue(n, shape_refiner, new_shapes, ctx_idx));
   } else {
     // Rely on regular TF shape refinement for all the other nodes.
     // UpdateNode calls UpdateFunction if a function node is detected.
-    TF_RETURN_IF_ERROR(shape_refiner->UpdateNode(n, new_shapes));
+    if (is_fast_mode) {
+      TF_RETURN_IF_ERROR(shape_refiner->UpdateNodeFastMode(n, feed_tensors, output_shapes, ctx_idx));
+    } else {
+      TF_RETURN_IF_ERROR(shape_refiner->UpdateNode(n, new_shapes, ctx_idx, feed_tensors));
+    }
   }
 
   return Status::OK();
@@ -1982,33 +2302,39 @@ Status GraphProperties::UpdateShapes(
 
 // Propagates the shapes in the transitive fan-out of <new_shapes>.
 Status GraphProperties::PropagateShapes(
-    SymbolicShapeRefiner* shape_refiner, TopoQueue* new_shapes,
-    const std::unordered_map<const NodeDef*, const NodeDef*>& resource_handles,
-    int num_loops) const {
+     std::shared_ptr<SymbolicShapeRefiner> shape_refiner, TopoQueue* new_shapes,
+    const std::vector<Tensor>& feed_tensors,
+    int num_loops, int ctx_idx) {
   // Limit the number of iterations to prevent infinite loops in the presence of
   // incorrect shape functions. The algorithm should converge in at most
   // num_nested_loops^2 * max_rank. We approximate max_rank with the constant 4.
   // The same applies to resources.
   VLOG(1) << "Propagating " << new_shapes->size() << " new shapes through "
-          << num_loops << " loops and " << resource_handles.size()
+          << num_loops << " loops and " << resource_handles_.size()
           << " resources" << std::endl;
 
-  const int64 max_loop_length = item_.graph.node_size();
+  const int64 max_loop_length = graph_.node_size();
   const int64 max_rank = 4;
   const int64 max_loop_iterations =
       max_rank * max_loop_length * std::max<int64>(1, num_loops * num_loops);
-  const int64 num_queues = resource_handles.size();
+  const int64 num_queues = resource_handles_.size();
   const int64 max_resource_iterations = num_queues * num_queues * max_rank;
 
   int64 num_resource_iterations = 0;
+  topo_order_nodes_.clear();
   do {
     int64 num_loop_iterations = 0;
     while (!new_shapes->empty() &&
            num_loop_iterations++ < max_loop_iterations) {
       const NodeDef* n = new_shapes->pop();
+      if (std::find(fetch_.begin(), fetch_.end(), n->name()) == fetch_.end()) {
+        topo_order_nodes_.push_back(n);
+      }
+      std::vector<TensorShapeProto> nouse;
       bool updated = false;
       TF_RETURN_IF_ERROR(
-          UpdateShapes(shape_refiner, resource_handles, n, &updated));
+          UpdateShapes(shape_refiner.get(), resource_handles_, n, &updated, 
+                      feed_tensors, nouse, false, ctx_idx));
       if (updated) {
         for (const auto& fanout : shape_refiner->graph().GetFanouts(
                  *n, /*include_controlled_nodes=*/false)) {
@@ -2016,8 +2342,8 @@ Status GraphProperties::PropagateShapes(
         }
         // Make sure the corresponding queue nodes are (re)processed.
         if (IsEnqueue(*n)) {
-          auto it = resource_handles.find(n);
-          if (it != resource_handles.end()) {
+          auto it = resource_handles_.find(n);
+          if (it != resource_handles_.end()) {
             new_shapes->push(it->second);
           }
         }
@@ -2033,20 +2359,34 @@ Status GraphProperties::PropagateShapes(
   return Status::OK();
 }
 
+// Propagates the shapes in the transitive fan-out of <new_shapes>.
+Status GraphProperties::PropagateShapesFastMode(
+    const std::vector<Tensor>& feed_tensors,
+    std::vector<TensorShapeProto>& output_shapes,
+    int ctx_idx) const {
+  for(const NodeDef* n: topo_order_nodes_) {
+    bool updated = false;
+    TF_RETURN_IF_ERROR(
+          UpdateShapes(refiner_.get(), resource_handles_, n, &updated, 
+                       feed_tensors, output_shapes, true, ctx_idx));
+  }
+  return Status::OK();
+}
+
 Status GraphProperties::UpdateQueue(const NodeDef* queue_node,
                                     SymbolicShapeRefiner* shape_refiner,
-                                    bool* new_shapes) {
-  auto* ctx = shape_refiner->GetNodeContext(queue_node);
+                                    bool* new_shapes, int ctx_idx) {
+  auto* ctx = shape_refiner->GetNodeContext(queue_node, ctx_idx);
   if (!ctx) {
     TF_RETURN_IF_ERROR(shape_refiner->AddNode(queue_node));
-    ctx = CHECK_NOTNULL(shape_refiner->GetNodeContext(queue_node));
+    ctx = CHECK_NOTNULL(shape_refiner->GetNodeContext(queue_node, ctx_idx));
   }
   auto* ic = ctx->inference_context.get();
 
   auto* outputs = ic->output_handle_shapes_and_types(0);
   if (outputs) {
     // Shapes and types are already set, presumably by Enqueue ops.
-    return shape_refiner->UpdateNode(queue_node, new_shapes);
+    return shape_refiner->UpdateNode(queue_node, new_shapes, ctx_idx);
   }
 
   if (queue_node->attr().count("shapes") <= 0 ||
@@ -2054,7 +2394,7 @@ Status GraphProperties::UpdateQueue(const NodeDef* queue_node,
       queue_node->attr().at("shapes").list().shape_size() !=
           queue_node->attr().at("component_types").list().type_size()) {
     // Errors in shapes and component_types attr.
-    return shape_refiner->UpdateNode(queue_node, new_shapes);
+    return shape_refiner->UpdateNode(queue_node, new_shapes, ctx_idx);
   }
 
   // Extract types and shapes from Queue attr.
@@ -2077,17 +2417,17 @@ Status GraphProperties::UpdateQueue(const NodeDef* queue_node,
   // new_shapes and ignore it from UpdateNoe().
   *new_shapes = true;
   bool dummy_new_shapes = false;
-  return shape_refiner->UpdateNode(queue_node, &dummy_new_shapes);
+  return shape_refiner->UpdateNode(queue_node, &dummy_new_shapes, ctx_idx);
 }
 
 Status GraphProperties::UpdateEnqueue(
     const NodeDef* enqueue_node,
-    const std::unordered_map<const NodeDef*, const NodeDef*>& resource_handles,
-    SymbolicShapeRefiner* shape_refiner, bool* new_shapes) {
-  auto ctx = shape_refiner->GetNodeContext(enqueue_node);
+    std::unordered_map<const NodeDef*, const NodeDef*> resource_handles,
+    SymbolicShapeRefiner* shape_refiner, bool* new_shapes, int ctx_idx) {
+  auto ctx = shape_refiner->GetNodeContext(enqueue_node, ctx_idx);
   if (!ctx) {
     TF_RETURN_IF_ERROR(shape_refiner->AddNode(enqueue_node));
-    ctx = CHECK_NOTNULL(shape_refiner->GetNodeContext(enqueue_node));
+    ctx = CHECK_NOTNULL(shape_refiner->GetNodeContext(enqueue_node, ctx_idx));
   }
 
   auto it = resource_handles.find(enqueue_node);
@@ -2096,7 +2436,7 @@ Status GraphProperties::UpdateEnqueue(
     return Status::OK();
   }
   const NodeDef* qnode = it->second;
-  auto qctx = shape_refiner->GetContext(qnode);
+  auto qctx = shape_refiner->GetContext(qnode, ctx_idx);
   if (!qctx) {
     return Status::OK();
   }
@@ -2107,7 +2447,7 @@ Status GraphProperties::UpdateEnqueue(
   for (int i = 1; i < ctx->input_types.size(); ++i) {
     GraphView::InputPort inp(enqueue_node, i);
     GraphView::OutputPort fanin = shape_refiner->graph().GetRegularFanin(inp);
-    InferenceContext* in = shape_refiner->GetContext(fanin.node);
+    InferenceContext* in = shape_refiner->GetContext(fanin.node, ctx_idx);
     ShapeHandle input = in->output(fanin.port_id);
     ctx->inference_context->SetInput(i, input);
     shapes_and_types.push_back({input, ctx->input_types[i]});
@@ -2118,7 +2458,7 @@ Status GraphProperties::UpdateEnqueue(
     *new_shapes = true;
   } else {
     TF_RETURN_IF_ERROR(RelaxEnqueueShapesAndMergeTypes(
-        shape_refiner, qnode, *queue_handle_data, &shapes_and_types));
+        shape_refiner, qnode, *queue_handle_data, &shapes_and_types, ctx_idx));
     *new_shapes |= !shape_refiner->EquivalentShapesAndTypes(*queue_handle_data,
                                                             shapes_and_types);
     qctx->set_output_handle_shapes_and_types(0, shapes_and_types);
@@ -2127,21 +2467,44 @@ Status GraphProperties::UpdateEnqueue(
   return Status::OK();
 }
 
+PaddingState GraphProperties::GetXlaPaddingState(const std::string& inputs_signature) const {
+  if (!refiner_ || ! refiner_->xla_padding_rule_) return PaddingState::UNKNOWN;
+  return refiner_->xla_padding_rule_->GetGraphPaddingValid(inputs_signature);
+}
+
+void GraphProperties::SetXlaPaddingState(const std::string& inputs_signature, PaddingState state) {
+  if (!refiner_ || ! refiner_->xla_padding_rule_) return;
+  refiner_->xla_padding_rule_->SetGraphPaddingValid(inputs_signature, state);
+}
+
+void GraphProperties::ForceRestPaddingState() {
+  if (!refiner_ || ! refiner_->xla_padding_rule_) return;
+  refiner_->xla_padding_rule_->ForceRestPaddingValid();
+}
+
 Status GraphProperties::InferStatically(bool assume_valid_feeds,
                                         bool aggressive_shape_inference,
                                         bool include_input_tensor_values,
-                                        bool include_output_tensor_values) {
-  FunctionLibraryDefinition function_library(OpRegistry::Global(),
-                                             item_.graph.library());
-  std::unordered_map<string, std::unordered_set<int>> fed_ports;
+                                        bool include_output_tensor_values,
+                                        const std::vector<Tensor>& feed_tensors,
+                                        int infer_count) {
+  VLOG(1) << "InferStatically";
+  infer_count_ = infer_count;
+  num_loops_ = 0;
   if (!assume_valid_feeds) {
     for (const auto& feed : item_.feed) {
       SafeTensorId tensor_id = ParseTensorName(feed.first);
-      fed_ports[tensor_id.node()].insert(tensor_id.index());
+      fed_ports_[tensor_id.node()].insert(tensor_id.index());
     }
   }
+  if (context_index_pool_ == nullptr) {
+    context_index_pool_ = std::make_shared<ContextIndexPool>(infer_count);
+  }
 
-  GraphView graph_view(&item_.graph);
+  auto index_wrapper = ContextIndexWrapper(context_index_pool_);
+  int ctx_idx =  index_wrapper.acquire();
+
+  graph_view_ = absl::make_unique<GraphView>(&graph_);
 
   // List the resources and the nodes using them. Also collect the Merge nodes,
   // fed nodes, and primary inputs.
@@ -2150,17 +2513,14 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
                                std::unordered_set<const NodeDef*>>>
       resources;
   std::unordered_set<const NodeDef*> merge_nodes;
-  std::unordered_set<const NodeDef*> fed_nodes;
-  std::unordered_set<const NodeDef*> primary_inputs;
-  int num_loops = 0;
-  for (const NodeDef& node : item_.graph.node()) {
+  for (const NodeDef& node : graph_.node()) {
     if (IsQueue(node)) {
       for (const GraphView::InputPort& fanout :
-           graph_view.GetFanouts(node, false)) {
+           graph_view_->GetFanouts(node, false)) {
         if (IsEnter(*fanout.node)) {
           const NodeDef& enter = *fanout.node;
           for (const GraphView::InputPort& fanout :
-               graph_view.GetFanouts(enter, false)) {
+               graph_view_->GetFanouts(enter, false)) {
             if (IsEnqueue(*fanout.node)) {
               resources[&node].first.insert(fanout.node);
             } else if (IsDequeue(*fanout.node)) {
@@ -2176,23 +2536,22 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
         }
       }
     }
-    if (!HasRegularInputs(node)) {
-      primary_inputs.insert(&node);
+    if (NumNonControlInputs(node) == 0) {
+      primary_inputs_.insert(&node);
     } else if (IsMerge(node)) {
       merge_nodes.insert(&node);
     } else if (IsNextIteration(node)) {
-      ++num_loops;
+      ++num_loops_;
     }
-    if (fed_ports.find(node.name()) != fed_ports.end()) {
-      fed_nodes.insert(&node);
+    if (fed_ports_.find(node.name()) != fed_ports_.end()) {
+      fed_nodes_.insert(&node);
     }
   }
 
-  std::unordered_map<const NodeDef*, const NodeDef*> resource_handles;
   std::vector<TopologicalDependency> extra_deps;
   for (const auto& resource : resources) {
     for (const NodeDef* src : resource.second.first) {
-      resource_handles[src] = resource.first;
+      resource_handles_[src] = resource.first;
       for (const NodeDef* dst : resource.second.second) {
         // Add control edges from enqueue to dequeue nodes to ensure they are
         // processed in their logical order.
@@ -2201,8 +2560,7 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
     }
   }
 
-  std::vector<const NodeDef*> topo_order;
-  Status s = ComputeTopologicalOrder(item_.graph, extra_deps, &topo_order);
+  Status s = ComputeTopologicalOrder(graph_, extra_deps, &topo_order_);
   if (!s.ok()) {
     if (extra_deps.empty()) {
       return s;
@@ -2211,39 +2569,41 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
       // order. This will make the shape inference less precise but since this
       // isn't common it's not worth to figure out where to break the loop and
       // do a proper relaxation.
-      TF_RETURN_IF_ERROR(ComputeTopologicalOrder(item_.graph, &topo_order));
+      TF_RETURN_IF_ERROR(ComputeTopologicalOrder(graph_, &topo_order_));
     }
   }
 
   // Heap-allocate SymbolicShapeRefiner in order to not consume a large amount
   // of stack space.
-  auto refiner = absl::make_unique<SymbolicShapeRefiner>(
-      graph_view, fed_ports, aggressive_shape_inference);
+  refiner_ = std::make_shared<SymbolicShapeRefiner>(
+      *graph_view_, fed_ports_, aggressive_shape_inference, 
+      item_.feed, item_.fetch, infer_count);
+  // Only run once, over
 
-  TopoQueue new_shapes(topo_order);
+  TopoQueue new_shapes(topo_order_);
   // Also seed the propagation of shapes in the fanout of primary inputs.
-  for (const NodeDef* node : primary_inputs) {
+  for (const NodeDef* node : primary_inputs_) {
     new_shapes.push(node);
   }
   // Also seed the propagation of shapes in the fanout of fed nodes.
-  for (const NodeDef* node : fed_nodes) {
+  for (const NodeDef* node : fed_nodes_) {
     new_shapes.push(node);
   }
+
   // Propagate shapes normally.
   TF_RETURN_IF_ERROR(
-      PropagateShapes(refiner.get(), &new_shapes, resource_handles, num_loops));
-
+      PropagateShapes(refiner_, &new_shapes, feed_tensors, num_loops_, 0));
   // Track shapes globally across the graph.
   std::unique_ptr<SymbolicShapeManager> shape_manager =
       absl::make_unique<SymbolicShapeManager>();
   bool found_error = false;
-  for (const NodeDef& node : item_.graph.node()) {
-    auto node_ctx = refiner->GetContext(&node);
+  for (const NodeDef& node : graph_.node()) {
+    auto node_ctx = refiner_->GetContext(&node, 0);
     if (!node_ctx) {
       continue;
     }
     // Skip any information that comes from fed nodes.
-    if (fed_ports.find(node.name()) != fed_ports.end()) {
+    if (fed_ports_.find(node.name()) != fed_ports_.end()) {
       VLOG(2) << "Skipping feed node shape: " << node.name();
       continue;
     }
@@ -2267,10 +2627,12 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
       break;
     }
   }
-
-  for (const NodeDef& node : item_.graph.node()) {
-    VLOG(3) << "Filling in graph properties for node: " << node.name();
-    auto ctx = refiner->GetNodeContext(&node);
+  
+  input_properties_.clear();
+  output_properties_.clear();
+  for (const NodeDef& node : graph_.node()) {
+    VLOG(1) << "Filling in graph properties for node: " << node.name();
+    auto ctx = refiner_->GetNodeContext(&node, ctx_idx);
     if (!ctx) {
       continue;
     }
@@ -2280,7 +2642,6 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
     // Fill input properties.
     {
       auto& input_properties = input_properties_[node.name()];
-
       // Should always be empty, node names in graph are supposed to be unique.
       CHECK_EQ(input_properties.size(), 0);
 
@@ -2289,8 +2650,10 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
       for (int i = 0; i < ic->num_inputs(); ++i) {
         shape_manager->AsTensorProperties(ic->input(i), ctx->input_types[i],
                                           &input_properties[i]);
+        auto shape_proto = input_properties[i].shape();
+        VLOG(1) << node.name() << " input:" << i << " " << shape_proto.DebugString();
         input.port_id = i;
-        GraphView::OutputPort fanin = graph_view.GetRegularFanin(input);
+        GraphView::OutputPort fanin = graph_view_->GetRegularFanin(input);
         if (include_input_tensor_values) {
           // Export tensor value to input_properties.value.
           if (IsConstant(*fanin.node)) {
@@ -2315,9 +2678,9 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
     // Fill output properties.
     {
       auto& output_properties = output_properties_[node.name()];
-
+      
       // Should always be empty, node names in graph are supposed to be unique.
-      CHECK_EQ(output_properties.size(), 0);
+      CHECK_EQ(output_properties.size(), ctx_idx);
 
       output_properties.resize(ic->num_outputs());
       for (int i = 0; i < ic->num_outputs(); ++i) {
@@ -2354,9 +2717,21 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
                  << " nodes have incompatible output shapes.";
 
   // Help trace the unknown dimensions to their origins.
-  VerboseLogUnknownDimensionSources(item_.graph, input_properties_,
+  VerboseLogUnknownDimensionSources(graph_, input_properties_,
                                     output_properties_);
 
+  return Status::OK();
+}
+
+Status GraphProperties::InferStaticallyFastMode(
+         const std::vector<Tensor>& feed_tensors,
+         std::vector<TensorShapeProto>& output_shapes) {
+  output_shapes.clear();
+  output_shapes.resize(fetch_.size());
+  auto index_wrapper = ContextIndexWrapper(context_index_pool_);
+  int ctx_idx =  index_wrapper.acquire();
+  TF_RETURN_IF_ERROR(
+      PropagateShapesFastMode(feed_tensors, output_shapes, ctx_idx));
   return Status::OK();
 }
 
@@ -2366,13 +2741,13 @@ Status GraphProperties::InferDynamically(Cluster* cluster) {
   // Runs the model once to collect the shapes in the cost model.
   RunMetadata metadata;
   TF_RETURN_IF_ERROR(
-      cluster->Run(item_.graph, item_.feed, item_.fetch, &metadata));
+      cluster->Run(graph_, item_.feed, item_.fetch, &metadata));
 
   return InferFromCostGraph(metadata.cost_graph());
 }
 
 Status GraphProperties::AnnotateOutputShapes(GraphDef* output_graph_def) const {
-  *output_graph_def = item_.graph;
+  *output_graph_def = graph_;
   for (int i = 0; i < output_graph_def->node_size(); i++) {
     auto node = output_graph_def->mutable_node(i);
     AttrValue attr_output_shape;
@@ -2404,7 +2779,7 @@ Status GraphProperties::InferFromCostGraph(const CostGraphDef& cost_graph) {
     output_properties_[node.name()] = output_properties;
   }
 
-  for (const auto& node : item_.graph.node()) {
+  for (const auto& node : graph_.node()) {
     // Skip the nodes that are not in the cost graph: these are nodes that
     // aren't run, because they aren't in the intersection of transitive fan-in
     // of a fetch node and the transitive fan-out of an input, or nodes that
