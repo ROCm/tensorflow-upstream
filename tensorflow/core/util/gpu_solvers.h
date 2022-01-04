@@ -538,6 +538,7 @@ class GpuSolver {
 #else  // TENSORFLOW_USE_ROCM
   hipStream_t hip_stream_;
   rocblas_handle rocm_blas_handle_;
+  hipsolverHandle_t hipsolver_handle_;
 #endif
 
   std::vector<TensorReference> scratch_tensor_refs_;

@@ -63,6 +63,8 @@ namespace wrap {
 
 // clang-format off
 #define FOREACH_HIPSOLVER_API(__macro)       \
+  __macro(hipsolverCreate)                   \
+  __macro(hipsolverDestroy)                  \
   __macro(hipsolverCgetrf)                   \
   __macro(hipsolverCgetrf_bufferSize)        \
   __macro(hipsolverDgetrf)                   \
