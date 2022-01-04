@@ -107,7 +107,7 @@ LINALG_DEPS = [
     "//tensorflow/core/kernels:transpose_functor",
 ] + if_cuda_or_rocm([
     ":eye_functor",
-]) + if_cuda([    
+]) + if_cuda([
     "//tensorflow/core/util:cuda_solvers",
 ]) + if_rocm([
     "//tensorflow/core/util:rocm_solvers",
@@ -172,7 +172,7 @@ tf_kernel_library(
 tf_kernel_library(
     name = "self_adjoint_eig_v2_op",
     prefix = "self_adjoint_eig_v2_op",
-    deps = LINALG_DEPS + ["//tensorflow/core:lib_internal"] + if_cuda([
+    deps = LINALG_DEPS + ["//tensorflow/core:lib_internal"] + if_cuda_or_rocm([
         "//tensorflow/core/kernels:cwise_op",
     ]),
 )
@@ -180,7 +180,7 @@ tf_kernel_library(
 tf_kernel_library(
     name = "eig_op",
     prefix = "eig_op",
-    deps = LINALG_DEPS + ["//tensorflow/core:lib_internal"] + if_cuda([
+    deps = LINALG_DEPS + ["//tensorflow/core:lib_internal"] + if_cuda_or_rocm([
         "//tensorflow/core/kernels:cwise_op",
     ]),
 )

@@ -226,6 +226,14 @@ REGISTER_OP("ComplexAbs")
           "complex64, complex128}")                                        \
       .SetShapeFn(shape_inference::UnchangedShape)
 
+#define UNARY_UNSIGNED()                                                   \
+  Input("x: T")                                                            \
+      .Output("y: T")                                                      \
+      .Attr(                                                               \
+          "T: {bfloat16, half, float, double, int8, int16, int32, int64, " \
+          "uint8, uint16, uint32, uint64, complex64, complex128}")         \
+      .SetShapeFn(shape_inference::UnchangedShape)
+
 #define UNARY_REAL()                              \
   Input("x: T")                                   \
       .Output("y: T")                             \
@@ -255,7 +263,7 @@ REGISTER_OP("Reciprocal").UNARY();
 
 REGISTER_OP("ReciprocalGrad").UNARY_GRADIENT_COMPLEX();
 
-REGISTER_OP("Square").UNARY();
+REGISTER_OP("Square").UNARY_UNSIGNED();
 
 REGISTER_OP("Sqrt").UNARY_COMPLEX();
 
@@ -1608,6 +1616,13 @@ Status RangeSize(const Tensor* start_t, const Tensor* limit_t,
                       Eigen::numext::abs(delta))
                    : (Eigen::numext::ceil(
                          Eigen::numext::abs((limit - start) / delta))));
+
+  // Undefined behaviour if size will not fit into int64_t
+  if (size > std::numeric_limits<int64_t>::max()) {
+    return errors::InvalidArgument("Requires ((limit - start) / delta) <= ",
+                                   std::numeric_limits<int64_t>::max());
+  }
+
   c->set_output(0, c->Vector(static_cast<int64_t>(size)));
   return Status::OK();
 }
@@ -1818,6 +1833,11 @@ REGISTER_OP("Bincount")
         return Status::OK();
       }
 
+      if (size_tensor->dims() != 0) {
+        return errors::InvalidArgument("Shape must be rank 0 but is rank ",
+                                       size_tensor->dims());
+      }
+
       // Return `[size]` shape if size is known.
       int32_t size_val = size_tensor->scalar<int32>()();
       if (size_val < 0) {
@@ -1848,6 +1868,10 @@ REGISTER_OP("DenseBincount")
         // Return unknown shape if size is not known.
         c->set_output(0, c->UnknownShape());
         return Status::OK();
+      }
+      if (size_tensor->dims() != 0) {
+        return errors::InvalidArgument("Shape must be rank 0 but is rank ",
+                                       size_tensor->dims());
       }
 
       int64_t size_val;
@@ -1889,6 +1913,10 @@ REGISTER_OP("SparseBincount")
         // Return unknown shape if size is not known.
         c->set_output(0, c->UnknownShape());
         return Status::OK();
+      }
+      if (size_tensor->dims() != 0) {
+        return errors::InvalidArgument("Shape must be rank 0 but is rank ",
+                                       size_tensor->dims());
       }
 
       int64_t size_val;

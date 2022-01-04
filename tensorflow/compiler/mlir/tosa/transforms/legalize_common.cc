@@ -814,7 +814,7 @@ llvm::Optional<Value> convertSpaceToBatchNDOp(PatternRewriter& rewriter,
     int32_t block_shape_val =
         rewriter
             .getI32IntegerAttr(
-                block_shape_elems.getValue<IntegerAttr>(i).getInt())
+                block_shape_elems.getValues<IntegerAttr>()[i].getInt())
             .getInt();
     a2_shape[1 + i * 2 + 0] = padded_shape[1 + i] / block_shape_val;
     a2_shape[1 + i * 2 + 1] = block_shape_val;
@@ -883,7 +883,7 @@ llvm::Optional<Value> convertSpaceToBatchNDOp(PatternRewriter& rewriter,
     int32_t block_shape_val =
         rewriter
             .getI32IntegerAttr(
-                block_shape_elems.getValue<IntegerAttr>(i).getInt())
+                block_shape_elems.getValues<IntegerAttr>()[i].getInt())
             .getInt();
     a4_reshape_shape[i + 1] = padded_shape[i + 1] / block_shape_val;
   }
@@ -1007,7 +1007,7 @@ llvm::Optional<Value> convertBatchToSpaceNDOp(PatternRewriter& rewriter,
     int block_shape_val =
         rewriter
             .getI32IntegerAttr(
-                block_shape_elems.getValue<IntegerAttr>(i).getInt())
+                block_shape_elems.getValues<IntegerAttr>()[i].getInt())
             .getInt();
     block_num_elems *= block_shape_val;
     block_shape[i] = block_shape_val;
@@ -1166,7 +1166,7 @@ llvm::Optional<Value> convertExpandDimsOp(PatternRewriter& rewriter,
     op->emitOpError("ExpandDims: expected single dimension to expand");
     return llvm::None;
   }
-  int32_t dim = dim_elem.getValue<IntegerAttr>({0}).getInt();
+  int32_t dim = dim_elem.getValues<IntegerAttr>()[0].getInt();
   int32_t input_size = input_shape.size();
   SmallVector<int64_t> reshape_dims;
   if (dim >= input_size) {  // add dim at end of tensor
@@ -2251,6 +2251,9 @@ llvm::Optional<Value> convertStridedSliceOp(
     a1_begin[i] = begin[i];
     a1_size[i] = end[i] - begin[i];
 
+    // Shrink axis mask means we know the size is 1.
+    if (shrink_axis_mask & (1 << i)) a1_size[i] = 1;
+
     a2_shape[i * 2 + 0] = a1_size[i] / abs(strides[i]);
     a2_shape[i * 2 + 1] = abs(strides[i]);
 
@@ -2507,7 +2510,7 @@ llvm::Optional<Value> convertReduceOpCommon(
     }
 
     for (int i = 0; i < axes_elems.getNumElements(); i++) {
-      int64_t axis_val = axes_elems.getValue<IntegerAttr>(i).getInt();
+      int64_t axis_val = axes_elems.getValues<IntegerAttr>()[i].getInt();
       if (axis_val < 0) axis_val += input_rank;
       auto axis_attr = rewriter.getI64IntegerAttr(axis_val);
 
@@ -2702,7 +2705,7 @@ llvm::Optional<Value> convertReduceMeanOp(
   int64_t input_rank = input_type.getRank();
   int64_t num_elems_on_reduced_axis = 1;
   for (int i = 0; i < axes_elems.getNumElements(); i++) {
-    int64_t axis_val = axes_elems.getValue<IntegerAttr>(i).getInt();
+    int64_t axis_val = axes_elems.getValues<IntegerAttr>()[i].getInt();
     if (axis_val < 0) axis_val += input_rank;
     num_elems_on_reduced_axis *= input_type.getShape()[axis_val];
   }

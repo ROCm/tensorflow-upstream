@@ -1,4 +1,4 @@
-/* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -83,7 +83,7 @@ namespace wrap {
   __macro(rocsolver_dgetri_batched)         \
   __macro(rocsolver_sgetri_batched)         \
   __macro(rocsolver_zgetri_batched)         \
-  __macro(rocsolver_cpotrf)         	      \
+  __macro(rocsolver_cpotrf)         	    \
   __macro(rocsolver_dpotrf)                 \
   __macro(rocsolver_spotrf)                 \
   __macro(rocsolver_zpotrf)                 \
@@ -96,9 +96,11 @@ namespace wrap {
   __macro(rocsolver_sgeqrf)                 \
   __macro(rocsolver_zgeqrf)                 \
   __macro(rocsolver_cunmqr)                 \
-  __macro(rocsolver_zunmqr)                \
-  __macro(rocsolver_cungqr)                \
-  __macro(rocsolver_zungqr)                
+  __macro(rocsolver_zunmqr)                 \
+  __macro(rocsolver_cungqr)                 \
+  __macro(rocsolver_zungqr)                 \
+  __macro(rocsolver_cheevd)                 \
+  __macro(rocsolver_zheevd)
 // clang-format on
 
 FOREACH_ROCSOLVER_API(ROCSOLVER_API_WRAPPER)
