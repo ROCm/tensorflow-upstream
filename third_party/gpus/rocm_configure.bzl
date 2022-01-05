@@ -338,6 +338,7 @@ def _find_libs(repository_ctx, rocm_config, hipfft_or_rocfft, bash_bin):
             ("hipsparse", rocm_config.rocm_toolkit_path + "/hipsparse"),
             ("roctracer64", rocm_config.rocm_toolkit_path + "/roctracer"),
             ("rocsolver", rocm_config.rocm_toolkit_path + "/rocsolver"),
+            ("hipsolver", rocm_config.rocm_toolkit_path + "/hipsolver"),
         ]
     ]
 
@@ -467,6 +468,7 @@ def _create_dummy_repository(repository_ctx):
             "%{hipsparse_lib}": _lib_name("hipsparse"),
             "%{roctracer_lib}": _lib_name("roctracer64"),
             "%{rocsolver_lib}": _lib_name("rocsolver"),
+            "%{hipsolver_lib}": _lib_name("hipsolver"),
             "%{copy_rules}": "",
             "%{rocm_headers}": "",
         },
@@ -600,6 +602,12 @@ def _create_local_rocm_repository(repository_ctx):
             src_dir = rocm_toolkit_path + "/rocsolver/include",
             out_dir = "rocm/include/rocsolver",
         ),
+        make_copy_dir_rule(
+            repository_ctx,
+            name = "hipsolver-include",
+            src_dir = rocm_toolkit_path + "/hipsolver/include",
+            out_dir = "rocm/include/hipsolver",
+        ),
     ]
 
     # explicitly copy (into the local_config_rocm repo) the $ROCM_PATH/hiprand/include and
@@ -687,6 +695,7 @@ def _create_local_rocm_repository(repository_ctx):
             "%{miopen_lib}": rocm_libs["MIOpen"].file_name,
             "%{rccl_lib}": rocm_libs["rccl"].file_name,
             "%{hipsparse_lib}": rocm_libs["hipsparse"].file_name,
+            "%{hipsolver_lib}": rocm_libs["hipsolver"].file_name,
             "%{roctracer_lib}": rocm_libs["roctracer64"].file_name,
             "%{rocsolver_lib}": rocm_libs["rocsolver"].file_name,
             "%{copy_rules}": "\n".join(copy_rules),
@@ -698,7 +707,8 @@ def _create_local_rocm_repository(repository_ctx):
                                 hiprand_include +
                                 rocrand_include +
                                 '":hipsparse-include",\n' +
-                                '":rocsolver-include"'),
+                                '":rocsolver-include",\n' + 
+                                '":hipsolver-include"'),
         },
     )
 

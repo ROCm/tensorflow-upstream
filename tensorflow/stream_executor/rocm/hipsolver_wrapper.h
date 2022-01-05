@@ -14,21 +14,13 @@ limitations under the License.
 ==============================================================================*/
 
 // This file wraps hipsolver API calls with dso loader so that we don't need to
-<<<<<<< HEAD
-// have explicit linking to libhipsolver. All TF hipsarse API usage should route
-=======
 // have explicit linking to libhipsolver. All TF hipsolver API usage should route
->>>>>>> a7a16ee4f4ee732364644aeb983dab6978ae6d03
 // through this wrapper.
 
 #ifndef TENSORFLOW_STREAM_EXECUTOR_ROCM_HIPSOLVER_WRAPPER_H_
 #define TENSORFLOW_STREAM_EXECUTOR_ROCM_HIPSOLVER_WRAPPER_H_
 
-<<<<<<< HEAD
-#include "rocm/include/hipsolver/hipsolver.h"
-=======
 #include "rocm/include/hipsolver.h"
->>>>>>> a7a16ee4f4ee732364644aeb983dab6978ae6d03
 #include "tensorflow/stream_executor/lib/env.h"
 #include "tensorflow/stream_executor/platform/dso_loader.h"
 #include "tensorflow/stream_executor/platform/port.h"
@@ -57,7 +49,7 @@ namespace wrap {
       static const char* kName = TO_STR(api_name);                            \
       void* f;                                                                \
       auto s = stream_executor::port::Env::Default()->GetSymbolFromLibrary(   \
-          stream_executor::internal::CachedDsoLoader::GetRocsolverDsoHandle() \
+          stream_executor::internal::CachedDsoLoader::GetHipsolverDsoHandle() \
               .ValueOrDie(),                                                  \
           kName, &f);                                                         \
       CHECK(s.ok()) << "could not find " << kName                             \
@@ -71,11 +63,8 @@ namespace wrap {
 
 // clang-format off
 #define FOREACH_HIPSOLVER_API(__macro)       \
-<<<<<<< HEAD
-=======
   __macro(hipsolverCreate)                   \
   __macro(hipsolverDestroy)                  \
->>>>>>> a7a16ee4f4ee732364644aeb983dab6978ae6d03
   __macro(hipsolverCgetrf)                   \
   __macro(hipsolverCgetrf_bufferSize)        \
   __macro(hipsolverDgetrf)                   \
@@ -92,7 +81,7 @@ namespace wrap {
   __macro(hipsolverSgetrs_bufferSize)        \
   __macro(hipsolverZgetrs)                   \
   __macro(hipsolverZgetrs_bufferSize)        \
-  __macro(hipsolverCpotrf)         	         \
+  __macro(hipsolverCpotrf)                   \
   __macro(hipsolverCpotrf_bufferSize)        \
   __macro(hipsolverDpotrf)                   \
   __macro(hipsolverDpotrf_bufferSize)        \
@@ -123,7 +112,11 @@ namespace wrap {
   __macro(hipsolverCungqr)                   \
   __macro(hipsolverCungqr_bufferSize)        \
   __macro(hipsolverZungqr)                   \
-  __macro(hipsolverZungqr_bufferSize)
+  __macro(hipsolverZungqr_bufferSize)        \
+  __macro(hipsolverCheevd)                   \
+  __macro(hipsolverCheevd_bufferSize)        \
+  __macro(hipsolverZheevd)                   \
+  __macro(hipsolverZheevd_bufferSize)
 // clang-format on
 
 FOREACH_HIPSOLVER_API(HIPSOLVER_API_WRAPPER)

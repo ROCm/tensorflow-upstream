@@ -244,255 +244,156 @@ void GpuSolver::CheckLapackInfoAndDeleteSolverAsync(
   wrap::hipsolver##hip_prefix##method##_bufferSize
 
 
-template<typename Scalar, typename SolverFnT>
-static inline Status GetrfBufferSizeImpl(GpuExecutor* gpu_executor, 
-                     SolverFnT Op, hipsolverHandle_t handle,
-                     int m, int n, Scalar* A, int lda, int* lwork)
-{
-    mutex_lock lock(handle_map_mutex);
-    ScopedActivateExecutorContext sac{gpu_executor};
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(
-        handle, m, n, AsHipComplex(A), lda, lwork));
-    return Status::OK();
-}
-
-template<typename Scalar, typename SolverFnT>
-static inline Status GetrfImpl(GpuExecutor* gpu_executor, SolverFnT Op, 
-    hipsolverHandle_t handle, int m, int n, Scalar* A, int lda, Scalar* work,
-    int lwork, int* dev_pivots, int* dev_lapack_info) {
-    mutex_lock lock(handle_map_mutex);
-    ScopedActivateExecutorContext sac{gpu_executor};
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(
-        handle, m, n, AsHipComplex(A), lda, work, lwork, 
-        dev_pivots, dev_lapack_info));
-    return Status::OK();
-}
-
-#define GETRF_INSTANCE(Scalar, type_prefix)                                    \
-  template <>                                                                  \
-  Status GpuSolver::Getrf<Scalar>(int m, int n, Scalar* A, int lda,            \
-                                  int* dev_pivots, int* dev_lapack_info) {     \
-    GpuExecutor* gpu_executor = static_cast<GpuExecutor*>(                     \
-        context_->op_device_context()->stream()->parent()->implementation());  \
-    mutex_lock lock(handle_map_mutex);                                         \
-    Scalar* work;                                                              \
-    int lwork = 0;                                                             \
-    GetrfBufferSizeImpl(gpu_executor, BUFSIZE_FN(getrf, type_prefix),          \
-		    hipsolver_handle_, m,  n, A, lda, &lwork);                 \
-    return GetrfImpl(gpu_executor, HIPSOLVER_FN(getrf, type_prefix),           \
-		     hipsolver_handle_, m, n, A, lda, work, lwork, dev_pivots, \
-                     dev_lapack_info);                                         \
+#define GETRF_INSTANCE(Scalar, type_prefix)                                               \
+  template <>                                                                             \
+  Status GpuSolver::Getrf<Scalar>(int m, int n, Scalar* A, int lda,                       \
+                                  int* dev_pivots, int* dev_lapack_info) {                \
+    mutex_lock lock(handle_map_mutex);                                                    \
+    int lwork;                                                                            \
+    TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(getrf, type_prefix)                             \
+        (hipsolver_handle_, m, n, AsHipComplex(A), lda, &lwork));                         \
+    auto dev_work =                                                                       \
+        this->GetScratchSpace<Scalar>(lwork, "", /*on_host*/ false);                      \
+    TF_RETURN_IF_ROCBLAS_ERROR(HIPSOLVER_FN(getrf, type_prefix)(                          \
+        hipsolver_handle_, m, n, AsHipComplex(A), lda,                                    \
+        AsHipComplex(dev_work.mutable_data()), lwork,                                     \
+        dev_pivots, dev_lapack_info));                                                    \
+    return Status::OK();                                                                  \
   }
 
 TF_CALL_LAPACK_TYPES(GETRF_INSTANCE);
-
-template<typename Scalar, typename SolverFnT>
-static inline Status GeqrfBufferSizeImpl(SolverFnT Op, hipsolverHandle_t handle,
-    int m, int n, Scalar* A, int lda, int* lwork)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(
-        handle, m, n, AsHipComplex(A), lda, lwork));
-    return Status::OK();
-}
-
-template<typename Scalar, typename SolverFnT>
-static inline Status GeqrfImpl(SolverFnT Op, hipsolverHandle_t handle, 
-    int m, int n, Scalar* A, int lda, Scalar* tau, Scalar* work, int lwork, 
-    int* devInfo)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(handle, m, n,
-        AsHipComplex(A), lda, AsHipComplex(tau),
-        AsHipComplex(work), lwork, devInfo));
-    return Status::OK();
-}
 
 #define GEQRF_INSTANCE(Scalar, type_prefix)                                      \
   template <>                                                                    \
   Status GpuSolver::Geqrf(int m, int n, Scalar* dev_A, int lda, Scalar* dev_tau, \
                 int* dev_lapack_info){                                           \
     mutex_lock lock(handle_map_mutex);                                           \
-    Scalar* work;                                                                \
-    int lwork = 0;                                                               \
-    GeqrfBufferSizeImpl(BUFSIZE_FN(geqrf, type_prefix), hipsolver_handle_, m, n, \
-                        dev_A, lda, &lwork);                                     \
-    return GeqrfImpl(HIPSOLVER_FN(geqrf, type_prefix), hipsolver_handle_, m, n,  \
-                     dev_A, lda, dev_tau, work, lwork, dev_lapack_info);         \
+    int lwork;                                                                   \
+    TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(geqrf, type_prefix)(                   \
+         hipsolver_handle_, m, n, AsHipComplex(dev_A), lda, &lwork));            \
+    auto dev_work =                                                              \
+        this->GetScratchSpace<Scalar>(lwork, "", /*on_host*/ false);             \
+    TF_RETURN_IF_ROCBLAS_ERROR(HIPSOLVER_FN(geqrf, type_prefix)(                 \
+                    hipsolver_handle_, m, n,                                     \
+                    AsHipComplex(dev_A), lda, AsHipComplex(dev_tau),             \
+                    AsHipComplex(dev_work.mutable_data()),                       \
+                    lwork, dev_lapack_info));                                    \
+    return Status::OK();                                                         \
   }
 
 TF_CALL_LAPACK_TYPES(GEQRF_INSTANCE);
 
-template<typename Scalar, typename SolverFnT>
-static inline Status UnmqrBufferSizeImpl(SolverFnT Op, hipsolverHandle handle,
-    hipsolverSideMode_t side, hipsolverOperation_t trans, int m, int n, int k,
-    Scalar* A, int lda, Scalar* tau, Scalar* C, int ldc, int* lwork)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(handle, side, trans, m, n, k, AsHipComplex(A),
-                                  lda, AsHipComplex(tau), AsHipComplex(C), ldc,
-                                  lwork));
-    return Status::OK();
+#define UNMQR_INSTANCE(Scalar, type_prefix)                                          \
+  template <>                                                                        \
+  Status GpuSolver::Unmqr(hipsolverSideMode_t side, hipsolverOperation_t trans,      \
+               int m, int n, int k, const Scalar* dev_a, int lda,                    \
+               const Scalar* dev_tau, Scalar* dev_c, int ldc, int* dev_lapack_info){ \
+      mutex_lock lock(handle_map_mutex);                                             \
+      using HipScalar = typename HipComplexT<Scalar>::type;                          \
+      ScratchSpace<uint8> dev_a_copy =                                               \
+        this->GetScratchSpace<uint8>(sizeof(Scalar*) * m*k, "",                      \
+        /*on host */ false);                                                         \
+      if (!CopyHostToDevice(context_, dev_a_copy.mutable_data(), dev_a,              \
+                          dev_a_copy.bytes())) {                                     \
+      return errors::Internal("Unmqr: Failed to copy ptrs to device");               \
+      }                                                                              \
+      ScratchSpace<uint8> dev_tau_copy =                                             \
+        this->GetScratchSpace<uint8>(sizeof(Scalar*) *k*n, "",                       \
+        /*on host */ false);                                                         \
+      if (!CopyHostToDevice(context_, dev_tau_copy.mutable_data(), dev_tau,          \
+                          dev_tau_copy.bytes())) {                                   \
+      return errors::Internal("Unmqr: Failed to copy ptrs to device");               \
+      }                                                                              \
+      int lwork;                                                                     \
+      TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(unmqr, type_prefix)(                     \
+           hipsolver_handle_, side, trans, m, n, k,                                  \
+           reinterpret_cast<HipScalar*>(dev_a_copy.mutable_data()), lda,             \
+           reinterpret_cast<HipScalar*>(dev_tau_copy.mutable_data()),                \
+           AsHipComplex(dev_c), ldc, &lwork));                                       \
+      auto dev_work =                                                                \
+          this->GetScratchSpace<Scalar>(lwork, "", /*on_host*/ false);               \
+      TF_RETURN_IF_ROCBLAS_ERROR(HIPSOLVER_FN(unmqr, type_prefix)(                   \
+                       hipsolver_handle_, side, trans, m, n, k,                      \
+                       reinterpret_cast<HipScalar*>(dev_a_copy.mutable_data()), lda, \
+                       reinterpret_cast<HipScalar*>(dev_tau_copy.mutable_data()),    \
+                       AsHipComplex(dev_c), ldc,                                     \
+                       AsHipComplex(dev_work.mutable_data()), lwork,                 \
+                       dev_lapack_info));                                            \
+    return Status::OK();                                                             \
 }
 
-template<typename Scalar, typename SolverFnT>
-static inline Status UnmqrImpl(SolverFnT Op, hipsolverHandle handle,
-    hipsolverSideMode_t side, hipsolverOperation_t trans, int m, int n,
-    int k, Scalar* A, int lda, Scalar* tau, Scalar* C, int ldc, Scalar* work,
-    int lwork, int* devInfo)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(handle,side, trans, m, n, k, 
-        AsHipComplex(A), lda, AsHipComplex(tau), AsHipComplex(C),
-        ldc, AsHipComplex(work), lwork, devInfo));
-    return Status::OK();
-}
+TF_CALL_LAPACK_TYPES_NO_REAL(UNMQR_INSTANCE);
 
-
-#define UMMQR_INSTANCE(Scalar, type_prefix)                                         \
-  template <>                                                                       \
-  Status GpuSolver::Unmqr(rocblas_side side, rocblas_operation trans, int m, int n, \
-               int k, const Scalar* dev_a, int lda, const Scalar* dev_tau,          \
-               Scalar* dev_c, int ldc, int* dev_lapack_info){                       \
-      mutex_lock lock(handle_map_mutex);                                            \
-      ScratchSpace<uint8> dev_a_copy =                                              \
-        this->GetScratchSpace<uint8>(sizeof(Scalar*) * m*k, "",                     \
-        /*on host */ false);                                                        \
-      if (!CopyHostToDevice(context_, dev_a_copy.mutable_data(), dev_a,             \
-                          dev_a_copy.bytes())) {                                    \
-      return errors::Internal("Unmqr: Failed to copy ptrs to device");              \
-      }                                                                             \
-      ScratchSpace<uint8> dev_tau_copy =                                            \
-        this->GetScratchSpace<uint8>(sizeof(Scalar*) *k*n, "",                      \
-        /*on host */ false);                                                        \
-      if (!CopyHostToDevice(context_, dev_tau_copy.mutable_data(), dev_tau,         \
-                          dev_tau_copy.bytes())) {                                  \
-      return errors::Internal("Unmqr: Failed to copy ptrs to device");              \
-      }                                                                             \
-      int lwork = 0;                                                                \
-      Scalar* work;                                                                 \
-      UnmqrBufferSizeImpl(BUFSIZE_FN(unmqr, type_prefix), hipsolver_handle_, side,  \
-                          trans, m, n, k, dev_a_copy.mutable_data(), lda,           \
-                          dev_tau_copy.mutable_data(), dev_c, ldc, &lwork);         \
-      return UnmqrImpl(HIPSOLVER_FN(unmqr, type_prefix), hipsolver_handle_, side,   \
-                       trans, m, n, k, dev_a_copy.mutable_data(), lda,              \
-                       dev_tau_copy.mutable_data(), dev_c, ldc, work, lwork,        \
-                       dev_lapack_info);                                            \
-}
-
-TF_CALL_LAPACK_TYPES_NO_REAL(UMMQR_INSTANCE);
-
-template<typename Scalar, typename SolverFnT>
-static inline Status UngqrBufferSizeImpl(SolverFnT Op, hipsolverHandle handle,
-    int m, int n, int k, Scalar* A, int lda, Scalar* tau, int* lwork)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(handle, m, n, k, AsHipComplex(A),
-                                  lda, AsHipComplex(tau), lwork));
-    return Status::OK();
-}
-
-template<typename Scalar, typename SolverFnT>
-static inline Status UngqrImpl(SolverFnT Op, hipsolverHandle handle,
-    int m, int n, int k, Scalar* A, int lda, Scalar* tau, Scalar* work,
-    int lwork, int* devInfo)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(handle, m, n, k, AsHipComplex(A), lda, 
-                                  AsHipComplex(tau), AsHipComplex(work), 
-                                  lwork, devInfo));
-    return Status::OK();
-}
-
-#define UNGQR_INSTANCE(Scalar, type_prefix)                                      \
-  template <>                                                                    \
-  Status GpuSolver::Ungqr(int m, int n, int k, Scalar* dev_a, int lda,           \
-               const Scalar* dev_tau, int* dev_lapack_info){                     \
-      mutex_lock lock(handle_map_mutex);                                         \
-      using ROCmScalar = typename ROCmComplexT<Scalar>::type;                    \
-      ScratchSpace<uint8> dev_tau_copy =                                         \
-        this->GetScratchSpace<uint8>(sizeof(ROCmScalar*) *k*n, "",               \
-        /*on host */ false);                                                     \
-      if (!CopyHostToDevice(context_, dev_tau_copy.mutable_data(), dev_tau,      \
-                          dev_tau_copy.bytes())) {                               \
-      return errors::Internal("Ungqr: Failed to copy ptrs to device");           \
-      }                                                                          \
-      int lwork = 0;                                                             \
-      Scalar* work;                                                              \
-      UngqrBufferSizeImpl(BUFSIZE_FN(ungqr, type_prefix), hipsolver_handle_, m,  \
-                n, k, dev_a, lda, dev_tau_copy.mutable_data(), &lwork);          \
-      return  UngqrImpl(HIPSOLVER_FN(ungqr, type_prefix), hipsolver_handle_, m,  \
-                        n, k, dev_a, lda, dev_tau_copy.mutable_data(), work,     \
-                        lwork, dev_lapack_info);                                 \
+#define UNGQR_INSTANCE(Scalar, type_prefix)                                        \
+  template <>                                                                      \
+  Status GpuSolver::Ungqr(int m, int n, int k, Scalar* dev_a, int lda,             \
+               const Scalar* dev_tau, int* dev_lapack_info){                       \
+      mutex_lock lock(handle_map_mutex);                                           \
+      using HipScalar = typename HipComplexT<Scalar>::type;                        \
+      ScratchSpace<uint8> dev_tau_copy =                                           \
+        this->GetScratchSpace<uint8>(sizeof(HipScalar*) *k*n, "",                  \
+        /*on host */ false);                                                       \
+      if (!CopyHostToDevice(context_, dev_tau_copy.mutable_data(), dev_tau,        \
+                          dev_tau_copy.bytes())) {                                 \
+      return errors::Internal("Ungqr: Failed to copy ptrs to device");             \
+      }                                                                            \
+      int lwork;                                                                   \
+      TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(ungqr, type_prefix)(                   \
+           hipsolver_handle_, m, n, k,                                             \
+           AsHipComplex(dev_a), lda,                                               \
+           reinterpret_cast<HipScalar*>(dev_tau_copy.mutable_data()),              \
+           &lwork));                                                               \
+      auto dev_work =                                                              \
+          this->GetScratchSpace<Scalar>(lwork, "", /*on_host*/ false);             \
+      TF_RETURN_IF_ROCBLAS_ERROR(HIPSOLVER_FN(ungqr, type_prefix)(                 \
+                        hipsolver_handle_, m, n, k, AsHipComplex(dev_a), lda,      \
+                        reinterpret_cast<HipScalar*>(dev_tau_copy.mutable_data()), \
+                        AsHipComplex(dev_work.mutable_data()), lwork,              \
+                        dev_lapack_info));                                         \
+      return Status::OK();                                                         \
 }
 
 TF_CALL_LAPACK_TYPES_NO_REAL(UNGQR_INSTANCE);
 
-template<typename Scalar, typename SolverFnT>
-static inline Status PotrfBufferSizeImpl(SolverFnT Op, hipsolverHandle_t handle,
-    hipsolverFillMode_t uplo, int n, Scalar* A, int lda, int* lwork)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(handle, uplo, AsHipComplex(A),
-                                  lda, lwork));
-    return Status::OK();
-}
-
-template<typename Scalar, typename SolverFnT>
-static inline Status PotrfImpl(SolverFnT Op, hipsolverHandle_t handle,
-    hipsolverFillMode_t uplo, int n, Scalar* A, int lda, Scalar* work,
-    int lwork, int* devInfo)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(handle, uplo, AsHipComplex(A),
-                                  lda, AsHipComplex(work), lwork,
-                                  devInfo));
-    return Status::OK();
-}
-
 #define POTRF_INSTANCE(Scalar, type_prefix)                                   \
   template <>                                                                 \
-  Status GpuSolver::Potrf<Scalar>(rocblas_fill uplo, int n, Scalar* dev_A,    \
-  int lda, int* dev_lapack_info) {                                            \
+  Status GpuSolver::Potrf<Scalar>(hipsolverFillMode_t uplo, int n,            \
+  Scalar* dev_A, int lda, int* dev_lapack_info) {                             \
     mutex_lock lock(handle_map_mutex);                                        \
     using ROCmScalar = typename ROCmComplexT<Scalar>::type;                   \
-    int lwork = 0;                                                            \
-    Scalar* work;                                                             \
-    PotrfBufferSizeImpl(BUFSIZE_FN(potrf, type_prefix), hipsolver_handle_,    \
-                        uplo, n, dev_A, lda, &lwork);                         \
-    return PotrfImpl(HIPSOLVER_FN(potrf, type_prefix), hipsolver_handle_,     \
-                     uplo, n, dev_A, lda, work, lwork, dev_lapack_info);      \
+    int lwork;                                                                \
+    TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(potrf, type_prefix)(                \
+                        hipsolver_handle_, uplo, n,                           \
+                        AsHipComplex(dev_A), lda, &lwork));                   \
+    auto dev_work =                                                           \
+          this->GetScratchSpace<Scalar>(lwork, "", /*on_host*/ false);        \
+    TF_RETURN_IF_ROCBLAS_ERROR(HIPSOLVER_FN(potrf, type_prefix)(              \
+                     hipsolver_handle_,uplo, n, AsHipComplex(dev_A), lda,     \
+                     AsHipComplex(dev_work.mutable_data()), lwork,            \
+                     dev_lapack_info));                                       \
+    return Status::OK();                                                      \
   }
 
 TF_CALL_LAPACK_TYPES(POTRF_INSTANCE);
 
-template<typename Scalar, typename SolverFnT>
-static inline Status GetrsBufferSizeImpl(SolverFnT Op, hipsolverHandle_t handle,
-    hipsolverOperation_t trans, int n, int nrhs, Scalar* A, int lda,
-    int* devIpiv, Scalar* B, int ldb, int* lwork)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(
-        handle, trans, n, nrhs, AsHipComplex(A),lda, devIpiv, 
-        AsHipComplex(B), ldb, lwork));
-    return Status::OK(); 
-}
-
-template<typename Scalar, typename SolverFnT>
-static inline Status GetrsImpl(SolverFnT Op, hipsolverHandle_t handle,
-    hipsolverOperation_t trans, int n, int nrhs, Scalar* A, int lda, int* devIpiv,
-    Scalar* B, int ldb, Scalar* work, int lwork, int* devInfo)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(
-        handle, trans, n, nrhs, AsHipComplex(A), lda, devIpiv,
-        AsHipComplex(B), ldb, AsHipComplex(work), lwork, devInfo));
-    return Status::OK();
-}
-
 #define GETRS_INSTANCE(Scalar, type_prefix)                                   \
   template <>                                                                 \
-  Status GpuSolver::Getrs<Scalar>(rocblas_operation trans, int n, int nrhs,   \
-                                  Scalar* A, int lda, const int* dev_pivots,  \
+  Status GpuSolver::Getrs<Scalar>(hipsolverOperation_t trans, int n, int nrhs,\
+                                  Scalar* A, int lda, int* dev_pivots,        \
                                   Scalar* B, int ldb, int* dev_lapack_info) { \
     mutex_lock lock(handle_map_mutex);                                        \
-    Scalar* work;                                                             \
-    int lwork = 0;                                                            \
-    GetrsBufferSizeImpl(BUFSIZE_FN(getrs, type_prefix), hipsolver_handle_,    \
-                        trans, n, nrhs, A, lda, dev_pivots, B, ldb, &lwork);  \
-    return GetrsImpl(HIPSOLVER_FN(getrs, type_prefix), hipsolver_handle_,     \
-                     trans, n, nrhs, A, lda, dev_pivots, B, ldb, work, lwork, \
-                     dev_lapack_info);                                        \
+    int lwork;                                                                \
+    TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(getrs, type_prefix)(                \
+                        hipsolver_handle_, trans, n, nrhs, AsHipComplex(A),   \
+                        lda, dev_pivots, AsHipComplex(B), ldb, &lwork));      \
+    auto dev_work =                                                           \
+          this->GetScratchSpace<Scalar>(lwork, "", /*on_host*/ false);        \
+    TF_RETURN_IF_ROCBLAS_ERROR(HIPSOLVER_FN(getrs, type_prefix)(              \
+                     hipsolver_handle_, trans, n, nrhs, AsHipComplex(A),      \
+                     lda, dev_pivots, AsHipComplex(B), ldb,                   \
+                     AsHipComplex(dev_work.mutable_data()), lwork,            \
+                     dev_lapack_info));                                       \
+    return Status::OK();                                                      \
   }
 
 TF_CALL_LAPACK_TYPES(GETRS_INSTANCE);
@@ -546,7 +447,7 @@ TF_CALL_ROCSOLV_TYPES(GETRF_BATCHED_INSTANCE);
                           pivots.bytes())) {                                       \
       return errors::Internal("GetriBatched: Failed to copy ptrs to device");      \
     }                                                                              \
-    TF_RETURN_IF_ROCBLAS_ERROR(ROCSOLVER_FN(getri_batched, type_prefix)(              \
+    TF_RETURN_IF_ROCBLAS_ERROR(ROCSOLVER_FN(getri_batched, type_prefix)(           \
         rocm_blas_handle_, n,                                                      \
         reinterpret_cast<ROCmScalar**>(dev_a.mutable_data()), lda,                 \
         reinterpret_cast<int*>(pivots.mutable_data()),                             \
@@ -556,48 +457,33 @@ TF_CALL_ROCSOLV_TYPES(GETRF_BATCHED_INSTANCE);
 
 TF_CALL_ROCSOLV_TYPES(GETRI_BATCHED_INSTANCE);
 
-template<typename Scalar, typename SolverFnT>
-static inline Status PotrfBatchedBufferSizeImpl(SolverFnT Op, hipsolverHandle_t handle,
-    hipsolverFillMode_t uplo, int n, Scalar* A[], int lda, int* lwork, int batch_count)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(handle, uplo, AsHipComplex(A),
-                                  lda, lwork, batch_count));
-    return Status::OK();
-}
-
-template<typename Scalar, typename SolverFnT>
-static inline Status PotrfBatchedImpl(SolverFnT Op, hipsolverHandle_t handle,
-    hipsolverFillMode_t uplo, int n, Scalar* A[], int lda, Scalar* work,
-    int lwork, int* devInfo, int batch_count)
-{
-    TF_RETURN_IF_ROCBLAS_ERROR(Op(handle, uplo, AsHipComplex(A),
-                                  lda, AsHipComplex(work), lwork,
-                                  devInfo, batch_count));
-    return Status::OK();
-}
-
 #define POTRF_BATCHED_INSTANCE(Scalar, type_prefix)                              \
   template <>                                                                    \
   Status GpuSolver::PotrfBatched<Scalar>(                                        \
-      rocblas_fill uplo, int n, const Scalar* const host_a_dev_ptrs[],           \
+      hipsolverFillMode_t uplo, int n, const Scalar* const host_a_dev_ptrs[],    \
       int lda, DeviceLapackInfo* dev_lapack_info, int batch_size) {              \
     rocblas_stride stride = n;                                                   \
     mutex_lock lock(handle_map_mutex);                                           \
-    using ROCmScalar = typename ROCmComplexT<Scalar>::type;                      \
+    using HipScalar = typename HipComplexT<Scalar>::type;                        \
     ScratchSpace<uint8> dev_a = this->GetScratchSpace<uint8>(                    \
-        sizeof(ROCmScalar*) * batch_size, "", /*on host */ false);               \
+        sizeof(HipScalar*) * batch_size, "", /*on host */ false);                \
     if (!CopyHostToDevice(context_, dev_a.mutable_data(), host_a_dev_ptrs,       \
                           dev_a.bytes())) {                                      \
       return errors::Internal("PotrfBatched: Failed to copy ptrs to device");    \
     }                                                                            \
-    int lwork = 0;                                                               \
-    Scalar* work;                                                                \
-    PotrfBatchedBufferSizeImpl(BUFSIZE_FN(potrfBatched, type_prefix),            \
-                               hipsolver_handle_, uplo, n, dev_a.mutable_data(), \
-                               lda, &lwork, batch_size);                         \
-    return PotrfBatchedImpl(HIPSOLVER_FN(potrfBatched, type_prefix),             \
-                            hipsolver_handle_, uplo, n, dev_a.mutable_data(),    \
-                            lda, work, lwork, dev_lapack_info, batch_size);      \
+    int lwork;                                                                   \
+    TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(potrfBatched, type_prefix)(            \
+                            hipsolver_handle_, uplo, n,                          \
+                            reinterpret_cast<HipScalar**>(dev_a.mutable_data()), \
+                            lda, &lwork, batch_size));                           \
+    auto dev_work =                                                              \
+          this->GetScratchSpace<Scalar>(lwork, "", /*on_host*/ false);           \
+    TF_RETURN_IF_ROCBLAS_ERROR(HIPSOLVER_FN(potrfBatched, type_prefix)(          \
+                            hipsolver_handle_, uplo, n,                          \
+                            reinterpret_cast<HipScalar**>(dev_a.mutable_data()), \
+                            lda, AsHipComplex(dev_work.mutable_data()), lwork,   \
+                            dev_lapack_info->mutable_data(), batch_size));       \
+    return Status::OK();                                                         \
   }
 
 TF_CALL_LAPACK_TYPES(POTRF_BATCHED_INSTANCE);
@@ -634,58 +520,25 @@ TF_CALL_ROCSOLV_TYPES(GETRS_BATCHED_INSTANCE);
 #define HEEVD_INSTANCE(Scalar, type_prefix)                                   \
   template <>                                                                 \
   Status GpuSolver::Heevd<Scalar>(                                            \
-      rocblas_evect jobz, rocblas_fill uplo, int n, Scalar* dev_A, int lda,   \
+      hipsolverEigMode_t jobz, hipsolverFillMode_t uplo,                      \
+      int n, Scalar* dev_A, int lda,                                          \
       typename Eigen::NumTraits<Scalar>::Real* dev_W, int* dev_lapack_info) { \
     mutex_lock lock(handle_map_mutex);                                        \
-    using ROCmScalar = typename ROCmComplexT<Scalar>::type;                   \
     using EigenScalar = typename Eigen::NumTraits<Scalar>::Real;              \
-    ScratchSpace<uint8> dev_workspace = this->GetScratchSpace<uint8>(         \
-        sizeof(EigenScalar*) * n, "", /*on host */ false);                    \
-    TF_RETURN_IF_ROCBLAS_ERROR(SOLVER_FN(heevd, type_prefix)(                 \
-        rocm_blas_handle_, jobz, uplo, n,                                     \
-        reinterpret_cast<ROCmScalar*>(dev_A), lda, dev_W,                     \
-        reinterpret_cast<EigenScalar*>(dev_workspace.mutable_data()),         \
-        dev_lapack_info));                                                    \
+    int lwork;                                                                \
+    TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(heevd, type_prefix)(                \
+        hipsolver_handle_, jobz, uplo, n, AsHipComplex(dev_A), lda, dev_W,    \
+        &lwork));                                                             \
+    auto dev_workspace =                                                      \
+        this->GetScratchSpace<Scalar>(lwork, "", /*on host */ false);         \
+    TF_RETURN_IF_ROCBLAS_ERROR(HIPSOLVER_FN(heevd, type_prefix)(              \
+        hipsolver_handle_, jobz, uplo, n,                                     \
+        AsHipComplex(dev_A), lda, dev_W,                                      \
+        AsHipComplex(dev_workspace.mutable_data()), lwork, dev_lapack_info)); \
     return Status::OK();                                                      \
   }
 
 TF_CALL_LAPACK_TYPES_NO_REAL(HEEVD_INSTANCE);
-#define GETRI_BATCHED_INSTANCE(Scalar, type_prefix)                           \
-  template <>                                                                 \
-  Status GpuSolver::GetriBatched<Scalar>(                                     \
-      int n, const Scalar* const host_a_dev_ptrs[], int lda,                  \
-      const int* dev_pivots, const Scalar* const host_a_inverse_dev_ptrs[],   \
-      int ldainv, DeviceLapackInfo* dev_lapack_info, int batch_size) {        \
-    mutex_lock lock(handle_map_mutex);                                        \
-    rocblas_stride stride = n;                                                \
-    using ROCmScalar = typename ROCmComplexT<Scalar>::type;                   \
-    ScratchSpace<uint8> dev_a = this->GetScratchSpace<uint8>(                 \
-        sizeof(ROCmScalar*) * batch_size, "", /*on host */ false);            \
-    if (!CopyHostToDevice(context_, dev_a.mutable_data(), host_a_dev_ptrs,    \
-                          dev_a.bytes())) {                                   \
-      return errors::Internal("GetriBatched: Failed to copy ptrs to device"); \
-    }                                                                         \
-    ScratchSpace<uint8> dev_a_inverse = this->GetScratchSpace<uint8>(         \
-        sizeof(ROCmScalar*) * batch_size, "", /*on host */ false);            \
-    if (!CopyHostToDevice(context_, dev_a_inverse.mutable_data(),             \
-                          host_a_inverse_dev_ptrs, dev_a_inverse.bytes())) {  \
-      return errors::Internal("GetriBatched: Failed to copy ptrs to device"); \
-    }                                                                         \
-    ScratchSpace<uint8> pivots = this->GetScratchSpace<uint8>(                \
-        sizeof(ROCmScalar*) * batch_size, "", /*on host */ false);            \
-    if (!CopyHostToDevice(context_, pivots.mutable_data(), dev_pivots,        \
-                          pivots.bytes())) {                                  \
-      return errors::Internal("GetriBatched: Failed to copy ptrs to device"); \
-    }                                                                         \
-    TF_RETURN_IF_ROCBLAS_ERROR(SOLVER_FN(getri_batched, type_prefix)(         \
-        rocm_blas_handle_, n,                                                 \
-        reinterpret_cast<ROCmScalar**>(dev_a.mutable_data()), lda,            \
-        reinterpret_cast<int*>(pivots.mutable_data()), stride,                \
-        dev_lapack_info->mutable_data(), batch_size));                        \
-    return Status::OK();                                                      \
-  }
-
-TF_CALL_LAPACK_TYPES(GETRI_BATCHED_INSTANCE);
 
 // Allocates a temporary tensor. The GpuSolver object maintains a
 // TensorReference to the underlying Tensor to prevent it from being deallocated

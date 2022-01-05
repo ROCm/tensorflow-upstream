@@ -280,9 +280,12 @@ class MatrixSolveOpGpu : public AsyncOpKernel {
     }
 #if GOOGLE_CUDA
     auto op_t = adjoint_ ? CUBLAS_OP_C : CUBLAS_OP_T;
+    auto opbatch_t = op_t;
 #else  // TENSORFLOW_USE_ROCM
-    auto op_t = adjoint_ ? rocblas_operation_conjugate_transpose
-                         : rocblas_operation_transpose;
+    auto op_t = adjoint_ ? HIPSOLVER_OP_C : HIPSOLVER_OP_T;
+    // GetrsBatched doesn't have a hipsolver analog yet.
+    auto opbatch_t = adjoint_ ? rocblas_operation_conjugate_transpose 
+                              : rocblas_operation_transpose;
 #endif
 
     // 3. Solve op(A) X = B (in column major form).
@@ -321,7 +324,7 @@ class MatrixSolveOpGpu : public AsyncOpKernel {
       int host_info = 0;
       OP_REQUIRES_OK_ASYNC(
           context,
-          solver->GetrsBatched(op_t, n, nrhs, input_copy_ptrs_base, n,
+          solver->GetrsBatched(opbatch_t, n, nrhs, input_copy_ptrs_base, n,
                                pivots_mat.data(), transposed_rhs_ptrs_base, n,
                                &host_info, batch_size),
           done);

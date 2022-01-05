@@ -273,10 +273,11 @@ class GpuSolver {
 
   // Uses LU factorization to solve A * X = B.
   template <typename Scalar>
-  Status Getrs(const rocblas_operation trans, int n, int nrhs, Scalar* A,
-               int lda, const int* dev_pivots, Scalar* B, int ldb,
+  Status Getrs(const hipsolverOperation_t trans, int n, int nrhs, Scalar* A,
+               int lda, int* dev_pivots, Scalar* B, int ldb,
                int* dev_lapack_info);
 
+//Batched not on HipSolver Yet
   template <typename Scalar>
   Status GetrfBatched(int n, Scalar** dev_A, int lda, int* dev_pivots,
                       DeviceLapackInfo* info, const int batch_count);
@@ -288,7 +289,7 @@ class GpuSolver {
 
   // Computes the Cholesky factorization A = L * L^H for a single matrix.
   template <typename Scalar>
-  Status Potrf(rocblas_fill uplo, int n, Scalar* dev_A, int lda,
+  Status Potrf(hipsolverFillMode_t uplo, int n, Scalar* dev_A, int lda,
                int* dev_lapack_info);
   // Computes matrix inverses for a batch of small matrices. Uses the outputs
   // from GetrfBatched.
@@ -310,7 +311,7 @@ class GpuSolver {
   // Computes the Cholesky factorization A = L * L^H for a batch of small
   // matrices.
   template <typename Scalar>
-  Status PotrfBatched(rocblas_fill uplo, int n,
+  Status PotrfBatched(hipsolverFillMode_t uplo, int n,
                       const Scalar* const host_a_dev_ptrs[], int lda,
                       DeviceLapackInfo* dev_lapack_info, int batch_size);
 
@@ -338,7 +339,7 @@ class GpuSolver {
   // The Householder matrix Q is represented by the output from Geqrf in dev_a
   // and dev_tau.
   template <typename Scalar>
-  Status Unmqr(rocblas_side side, rocblas_operation trans, int m, int n, int k,
+  Status Unmqr(hipsolverSideMode_t side, hipsolverOperation_t trans, int m, int n, int k,
                const Scalar* dev_a, int lda, const Scalar* dev_tau,
                Scalar* dev_c, int ldc, int* dev_lapack_info);
 
@@ -352,7 +353,7 @@ class GpuSolver {
   
   // Hermitian (Symmetric) Eigen decomposition.
   template <typename Scalar>
-  Status Heevd(rocblas_evect jobz, rocblas_fill uplo, int n,
+  Status Heevd(hipsolverEigMode_t jobz, hipsolverFillMode_t uplo, int n,
                Scalar* dev_A, int lda,
                typename Eigen::NumTraits<Scalar>::Real* dev_W,
                int* dev_lapack_info);

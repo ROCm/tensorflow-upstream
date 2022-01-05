@@ -98,7 +98,7 @@ class CholeskyOpGpu : public AsyncOpKernel {
 #if GOOGLE_CUDA
     cublasFillMode_t fill = CUBLAS_FILL_MODE_UPPER;
 #elif TENSORFLOW_USE_ROCM
-    rocblas_fill fill = rocblas_fill_upper;
+    hipsolverFillMode_t fill = HIPSOLVER_FILL_MODE_UPPER;
 #endif
     // Validate inputs.
     OP_REQUIRES_ASYNC(
