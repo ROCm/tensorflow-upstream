@@ -507,10 +507,22 @@ Status IrEmitter::EmitAtomicOperationUsingCAS(const HloComputation& computation,
   // Emit code to perform the atomicCAS operation
   // (cas_old_output, success) = atomicCAS(memory_address, cas_old_output,
   //                                       cas_new_output);
-  llvm::Value* ret_value = AtomicCmpXchg(
-      atomic_memory_address, cas_old_output, cas_new_output, llvm::MaybeAlign(),
-      llvm::AtomicOrdering::SequentiallyConsistent,
-      llvm::AtomicOrdering::SequentiallyConsistent);
+  llvm::Value* ret_value = [&]() {
+    llvm::Triple target_triple = llvm::Triple(module_->getTargetTriple());
+    if (target_triple.isAMDGPU() &&
+        ir_emitter_context_->amdgpu_arch().substr(0,6)=="gfx90a") {
+      return AtomicCmpXchg(
+          atomic_memory_address, cas_old_output, cas_new_output, llvm::MaybeAlign(),
+          llvm::AtomicOrdering::SequentiallyConsistent,
+          llvm::AtomicOrdering::SequentiallyConsistent,
+          b_.getContext().getOrInsertSyncScopeID("agent"));
+    } else {
+      return AtomicCmpXchg(
+          atomic_memory_address, cas_old_output, cas_new_output, llvm::MaybeAlign(),
+          llvm::AtomicOrdering::SequentiallyConsistent,
+          llvm::AtomicOrdering::SequentiallyConsistent);
+    }
+  }();
 
   // Extract the memory value returned from atomicCAS and store it as
   // cas_old_output.
