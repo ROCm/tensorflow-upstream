@@ -664,14 +664,11 @@ void XlaRunOp::InferOutputShape(OpKernelContext* ctx,
   auto s = graph_properties->InferStaticallyFastMode(
          inputs_shape_info->input_tensors,
          inputs_shape_info->inferred_shape_protos);
-  OP_REQUIRES(ctx, s.ok(),
-              errors::InvalidArgument("xla auto padding shape inference error, InferStaticallyFastMode fail"));
-  for (const auto& shape_proto: inputs_shape_info->inferred_shape_protos) {
-    for (auto d: shape_proto.dim()) {
-      OP_REQUIRES(ctx, d.size() > 0,
-                  errors::InvalidArgument("xla auto padding shape inference error, dim size=0"));
-    }
+  inputs_shape_info->shape_infer_succ = s.ok();
+  if (!s.ok()) {
+    return;
   }
+
   // save output shape to cache
   SetCachedInferShapes(inputs_shape_info->uuid(), inputs_shape_info->inferred_shape_protos);
   OP_REQUIRES(ctx, inputs_shape_info->inferred_shape_protos.size() > 0,
@@ -749,7 +746,8 @@ void XlaRunOp::Compute(OpKernelContext* ctx) {
   if (inputs_shape_info && shape_inference_done) {
     auto start = Env::Default()->NowMicros();
     shape_inference_done->WaitForNotification();
-    if (inputs_shape_info->inferred_shape_protos.empty()) {
+    if (!inputs_shape_info->shape_infer_succ || inputs_shape_info->inferred_shape_protos.empty()) {
+      LOG(ERROR) << "xla auto padding shape inference error, return";
       ctx->SetStatus(tensorflow::errors::Unimplemented("xla auto padding shape inference error"));
       return;
     }

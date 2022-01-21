@@ -531,6 +531,8 @@ class XlaCompiler {
 // The ShapeInferCtx is used to do shape inference. by yuxing
 
 struct InputsShapeInfo{
+  // shape inference is success
+  bool shape_infer_succ = true;
   // user define xla auto padding shape regular
   std::vector<std::vector<int>> auto_padding_shape;
   // 

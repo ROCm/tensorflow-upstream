@@ -817,7 +817,6 @@ class SymbolicShapeRefiner {
     if (tensor == nullptr) {
       return false;
     }
-
     std::vector<DimensionHandle> dims;
     for (int i = 0; i < tensor->shape().dims(); i++) {
       int64 size = tensor->shape().dim_size(i);
@@ -862,7 +861,7 @@ class SymbolicShapeRefiner {
 
     // If the output of this node, is not connect to Ret Node, return
     if (node_to_retval_maps_.find(node->name()) == node_to_retval_maps_.end()) return true;
-
+    bool shape_infer_succ = true;
     for(auto iter = node_to_retval_maps_[node->name()].begin(); 
              iter != node_to_retval_maps_[node->name()].end(); iter++) {
       int src_output = iter->first;
@@ -871,6 +870,11 @@ class SymbolicShapeRefiner {
       CHECK(ic->output(src_output).Handle()) << node_name << " has output shape unknown";;
       TensorShapeProto proto;
       ic->ShapeHandleToProto(ic->output(src_output), &proto);
+      bool infer_succ = InferenceContext::RankAndDimKnown(ic->output(src_output));
+      if (!infer_succ) {
+        LOG(ERROR) << node->name() << " shape infer error " << proto.DebugString();
+      }
+      shape_infer_succ &= infer_succ;
 
       for (int index: cluster_ret_indexs) {
         CHECK(index < output_shapes.size()) << node_name << " set cluster output " << index
@@ -879,7 +883,7 @@ class SymbolicShapeRefiner {
         VLOG(1) << node_name << " Fill output " << index << "/" << output_shapes.size() << " " << proto.DebugString();
       }
     }
-    return true;
+    return shape_infer_succ;
   }
 
   Status FillCtxInputTensors(
@@ -1202,8 +1206,12 @@ class SymbolicShapeRefiner {
     std::vector<Tensor> notused(ic->num_inputs());
     FillCtxInputTensors(feed_tensors, ctx, src_names, src_is_const, notused);
     auto ret = InferShapes(*node, ctx, true);
-    PopulateOutputShapes(node, ctx, output_shapes);
-    return ret;
+    if (PopulateOutputShapes(node, ctx, output_shapes)) return Status::OK();
+    LOG(ERROR) << "Shape infer error, dump cluster inputs:"; 
+    for (auto iter = feed_.begin(); iter != feed_.end(); iter++) {
+      LOG(ERROR) << iter->first << " index " << iter->second.first << " with shape " << iter->second.second.shape().DebugString();
+    }
+    return errors::InvalidArgument("Shape Inference error");
   }
 
   Status SetUnknownShape(const NodeDef* node, int output_port, int ctx_idx) {
@@ -1954,7 +1962,7 @@ class SymbolicShapeRefiner {
     // node is arg node and its output shape has known, do not need shape inference;
     auto ic = c->inference_context.get();
     //for (int i = 0; i < ic->num_inputs(); i++) {
-    //  VLOG(0) << node.name() << " input shape " << ic->DebugString(ic->input(i));
+    //  VLOG(0) << node.name() << "(" << node.op() << ") input shape " << ic->DebugString(ic->input(i));
     //}
 
     bool arg_shape_known = (node.op() == "_Arg" && 
