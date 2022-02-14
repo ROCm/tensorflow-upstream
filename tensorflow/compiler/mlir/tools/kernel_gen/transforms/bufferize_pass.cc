@@ -23,11 +23,14 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"  // from @llvm-project
 #include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"  // from @llvm-project
+#include "mlir/Dialect/Arithmetic/Transforms/BufferizableOpInterfaceImpl.h"  // from @llvm-project
 #include "mlir/Dialect/Arithmetic/Transforms/Passes.h"  // from @llvm-project
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"  // from @llvm-project
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"  // from @llvm-project
 #include "mlir/Dialect/Bufferization/Transforms/Bufferize.h"  // from @llvm-project
 #include "mlir/Dialect/Complex/IR/Complex.h"  // from @llvm-project
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"  // from @llvm-project
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // from @llvm-project
 #include "mlir/Dialect/Linalg/IR/Linalg.h"  // from @llvm-project
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"  // from @llvm-project
 #include "mlir/Dialect/Math/IR/Math.h"  // from @llvm-project
@@ -195,7 +198,7 @@ struct TiledLoopBufferizePass
     registry.insert<memref::MemRefDialect>();
   }
 
-  void runOnFunction() override {
+  void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     auto& context = getContext();
     ConversionTarget target(context);
@@ -224,8 +227,10 @@ struct TiledLoopBufferizePass
     // Configure legality.
     auto isLegalOp = [&](Operation* op) { return converter.isLegal(op); };
     target.addDynamicallyLegalDialect<linalg::LinalgDialect>(isLegalOp);
-    target.addDynamicallyLegalOp<CallOp, vector::TransferWriteOp,
-                                 vector::TransferReadOp>(isLegalOp);
+    target
+        .addDynamicallyLegalOp<CallOp, LLVM::InlineAsmOp,
+                               vector::TransferWriteOp, vector::TransferReadOp>(
+            isLegalOp);
 
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns))))
@@ -238,8 +243,10 @@ struct FinalBufferizePass : public FinalBufferizePassBase<FinalBufferizePass> {
   void getDependentDialects(DialectRegistry& registry) const override {
     registry.insert<AffineDialect, memref::MemRefDialect, scf::SCFDialect,
                     shape::ShapeDialect, tensor::TensorDialect,
-                    tf_framework::TFFrameworkDialect, lmhlo::LmhloDialect>();
+                    tf_framework::TFFrameworkDialect, lmhlo::LmhloDialect,
+                    arith::ArithmeticDialect>();
     tensor::registerBufferizableOpInterfaceExternalModels(registry);
+    arith::registerBufferizableOpInterfaceExternalModels(registry);
   }
 
  public:
@@ -248,8 +255,8 @@ struct FinalBufferizePass : public FinalBufferizePassBase<FinalBufferizePass> {
     ConversionTarget target(context);
     target.addLegalDialect<
         arith::ArithmeticDialect, bufferization::BufferizationDialect,
-        complex::ComplexDialect, memref::MemRefDialect, StandardOpsDialect,
-        scf::SCFDialect, tensor::TensorDialect,
+        cf::ControlFlowDialect, complex::ComplexDialect, memref::MemRefDialect,
+        StandardOpsDialect, scf::SCFDialect, tensor::TensorDialect,
         tf_framework::TFFrameworkDialect, AffineDialect, shape::ShapeDialect,
         lmhlo::LmhloDialect, linalg::LinalgDialect, math::MathDialect,
         vector::VectorDialect>();
@@ -267,21 +274,21 @@ struct FinalBufferizePass : public FinalBufferizePassBase<FinalBufferizePass> {
              converter.isLegal(op->getResultTypes());
     };
     target.addDynamicallyLegalOp<ConstantOp, arith::ConstantOp,
-                                 arith::IndexCastOp, SelectOp,
+                                 arith::IndexCastOp, arith::SelectOp,
                                  tf_framework::JITExecuteOp>(typesAreLegal);
 
     RewritePatternSet patterns(&getContext());
 
     // Bufferize ops using BufferizableOpInterface. This could be switched to
     // One-Shot Bufferize in the future.
-    std::unique_ptr<bufferization::BufferizationOptions> options =
+    bufferization::BufferizationOptions options =
         bufferization::getPartialBufferizationOptions();
     // TODO(springerm): Add dialects to this filter as more and more
     // `populate...BufferizePatterns` functions will disappear with recent
     // changes to bufferization.
-    options->addToDialectFilter<arith::ArithmeticDialect, StandardOpsDialect,
-                                tensor::TensorDialect>();
-    bufferization::AlwaysCopyBufferizationState bufferizationState(*options);
+    options.addToDialectFilter<arith::ArithmeticDialect, StandardOpsDialect,
+                               tensor::TensorDialect>();
+    bufferization::AlwaysCopyBufferizationState bufferizationState(options);
     bufferization::populateBufferizationPattern(bufferizationState, patterns);
 
     linalg::populateLinalgBufferizePatterns(converter, patterns);
@@ -301,16 +308,15 @@ struct FinalBufferizePass : public FinalBufferizePassBase<FinalBufferizePass> {
 
 }  // namespace
 
-std::unique_ptr<OperationPass<ModuleOp> >
-CreateComputeOpAndFuncBufferizePass() {
+std::unique_ptr<OperationPass<ModuleOp>> CreateComputeOpAndFuncBufferizePass() {
   return std::make_unique<ComputeOpAndFuncBufferizePass>();
 }
 
-std::unique_ptr<FunctionPass> CreateTiledLoopBufferizePass() {
+std::unique_ptr<OperationPass<FuncOp>> CreateTiledLoopBufferizePass() {
   return std::make_unique<TiledLoopBufferizePass>();
 }
 
-std::unique_ptr<OperationPass<ModuleOp> > CreateFinalBufferizePass() {
+std::unique_ptr<OperationPass<ModuleOp>> CreateFinalBufferizePass() {
   return std::make_unique<FinalBufferizePass>();
 }
 

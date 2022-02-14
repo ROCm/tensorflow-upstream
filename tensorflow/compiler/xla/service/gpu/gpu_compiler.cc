@@ -87,6 +87,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/gpu_conv_algorithm_picker.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_conv_rewriter.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_executable.h"
+#include "tensorflow/compiler/xla/service/gpu/gpu_hlo_cost_analysis.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_hlo_schedule.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_layout_assignment.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_reduce_scatter_creator.h"
@@ -443,9 +444,17 @@ Status GpuCompiler::OptimizeHloModule(
       // bitcast(bitcast) with one bitcast. This leads to having to
       // linearize and then delinearize the index.
       options.set_replace_transpose_with_bitcast(false);
+<<<<<<< HEAD
 #if TENSORFLOW_USE_ROCM
       options.set_enable_conv_operand_swap(false);
 #endif
+=======
+      const se::Platform* platform = stream_exec->platform();
+      if (platform->Name() == "ROCM") {
+        // SwapConvOperands does not yet work on ROCM
+        options.set_enable_conv_operand_swap(false);
+      }
+>>>>>>> upstream/master
       pipeline.AddPass<AlgebraicSimplifier>(options);
       pipeline.AddPass<BitcastDtypesExpander>();
       // AlgebraicSimplifier may add contracting dimensions to a dot.
@@ -1194,9 +1203,10 @@ StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
       stream_exec->GetDeviceDescription().rocm_amdgpu_gcn_arch_name();
 
   if (module->config().hlo_profiling_enabled() || VLOG_IS_ON(1)) {
-    HloCostAnalysis cost_analysis(ShapeSizeBytesFunction());
-    cost_analysis.set_bytes_per_second(
+    HloCostAnalysis::Options options{ShapeSizeBytesFunction()};
+    options.set_bytes_per_second(
         stream_exec->GetDeviceDescription().memory_bandwidth());
+    GpuHloCostAnalysis cost_analysis(options);
     TF_RETURN_IF_ERROR(module->entry_computation()->Accept(&cost_analysis));
     VLOG(1) << "HLO memory read+written: "
             << tensorflow::strings::HumanReadableNumBytes(
@@ -1332,6 +1342,25 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
   for (const auto& module : modules) {
     XLA_SCOPED_LOGGING_TIMER(
         "GpuCompiler::CompileAheadOfTime - compiling one HloModule");
+
+    if (!options.run_backend_only()) {
+      uint64_t start_usecs = tensorflow::Env::Default()->NowMicros();
+      tensorflow::profiler::TraceMe activity(
+          [&] { return absl::StrCat("HLO Transforms:", module->name()); },
+          tensorflow::profiler::TraceMeLevel::kInfo);
+      TF_RETURN_IF_ERROR(OptimizeHloModule(module.get(), stream_exec,
+                                           options.device_allocator()));
+
+      TF_RETURN_IF_ERROR(PrepareHloModuleForIrEmitting(module.get()));
+
+      uint64_t end_usecs = tensorflow::Env::Default()->NowMicros();
+
+      // This won't record values for calls that error out (because if they
+      // error out we have no way of telling how far through the process we
+      // got).
+      RecordHloPassesDuration(end_usecs - start_usecs);
+    }
+
     std::string slow_compilation_msg =
         absl::StrCat("Compiling module ", module->name());
     auto slow_compile_alarm = SlowCompilationAlarm(slow_compilation_msg);
@@ -1341,9 +1370,10 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
     GpuDeviceInfo gpu_device_info = GetGpuDeviceInfo(stream_exec);
 
     if (module->config().hlo_profiling_enabled() || VLOG_IS_ON(1)) {
-      HloCostAnalysis cost_analysis(ShapeSizeBytesFunction());
-      cost_analysis.set_bytes_per_second(
+      HloCostAnalysis::Options options{ShapeSizeBytesFunction()};
+      options.set_bytes_per_second(
           stream_exec->GetDeviceDescription().memory_bandwidth());
+      GpuHloCostAnalysis cost_analysis(options);
       TF_RETURN_IF_ERROR(module->entry_computation()->Accept(&cost_analysis));
       VLOG(1) << "HLO memory read+written: "
               << tensorflow::strings::HumanReadableNumBytes(

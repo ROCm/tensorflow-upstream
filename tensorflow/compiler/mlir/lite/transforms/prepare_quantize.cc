@@ -96,7 +96,7 @@ auto* tflite_quantizer_usage_stats = tensorflow::monitoring::Counter<1>::New(
 // making the quantization rule for some operations in the quantization-aware
 // training quantization simpler.
 class PrepareQuantizePass
-    : public PassWrapper<PrepareQuantizePass, FunctionPass> {
+    : public PassWrapper<PrepareQuantizePass, OperationPass<FuncOp>> {
   void getDependentDialects(DialectRegistry& registry) const override {
     registry
         .insert<TensorFlowLiteDialect, ::mlir::quant::QuantizationDialect>();
@@ -126,7 +126,7 @@ class PrepareQuantizePass
     return "Prepare TFL dialect for quantization";
   }
 
-  void runOnFunction() override;
+  void runOnOperation() override;
 
  private:
   // Set the quantization parameters of the input nodes. These parameters are
@@ -343,10 +343,10 @@ bool PrepareQuantizePass::ContainsQuantizeOps(FuncOp func) {
 using PrepareQuantStats =
     quant::ConvertStatsToQDQs<quant::QuantizeCastOp, quant::DequantizeCastOp>;
 
-void PrepareQuantizePass::runOnFunction() {
-  FuncOp func = getFunction();
+void PrepareQuantizePass::runOnOperation() {
+  FuncOp func = getOperation();
   MLIRContext* ctx = func.getContext();
-  ConvertTFLQuantOpsToMlirQuantOps(func);
+  ScopedTFLQuantOpsToMlirQuantOpsConverter converter(func);
 
   if (quant_specs_.post_training_quantization) {
     tflite_quantizer_usage_stats->GetCell("post_training")->IncrementBy(1);
@@ -418,8 +418,6 @@ void PrepareQuantizePass::runOnFunction() {
   ApplyQuantizationParamsPropagation(
       func, is_signed, disable_per_channel || quant_specs_.disable_per_channel,
       GetOpQuantSpec, infer_tensor_range, quant_specs_.legacy_float_scale);
-
-  ConvertMlirQuantOpsToTFLQuantOps(func);
 }
 
 }  // namespace

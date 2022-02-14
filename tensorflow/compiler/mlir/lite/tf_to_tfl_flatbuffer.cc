@@ -217,8 +217,8 @@ Status ConvertTFExecutorToTFLOrFlatbuffer(
       std::make_unique<mlir::TFL::ErrorCollectorInstrumentation>(
           pass_manager.getContext()));
 
-  tensorflow::AddPreVariableFreezingTFToTFLConversionPasses(
-      saved_model_dir, toco_flags, pass_config, &pass_manager);
+  tensorflow::AddPreVariableFreezingTFToTFLConversionPasses(pass_config,
+                                                            &pass_manager);
   if (failed(pass_manager.run(module))) {
     return statusHandler.ConsumeStatus();
   }
@@ -288,8 +288,10 @@ Status ConvertTFExecutorToTFLOrFlatbuffer(
     return statusHandler.ConsumeStatus();
   }
 
+  // TODO(b/176267167): Quantize flex fallback in the MLIR pipeline
   if (quant_specs.weight_quantization &&
-      !quant_specs.RunAndRewriteDynamicRangeQuantizationPasses()) {
+      (!quant_specs.RunAndRewriteDynamicRangeQuantizationPasses() ||
+       !pass_config.emit_builtin_tflite_ops)) {
     // Apply post-training dynamic range quantization from the old TOCO
     // quantizer.Once MLIR has support for this, we can remove this if
     // statement.
@@ -300,7 +302,7 @@ Status ConvertTFExecutorToTFLOrFlatbuffer(
     *result = translated_result;
   }
 
-  if (mlir::failed(module.verify())) {
+  if (mlir::failed(module.verifyInvariants())) {
     return tensorflow::errors::Unknown("Final module is invalid");
   }
   return Status::OK();
