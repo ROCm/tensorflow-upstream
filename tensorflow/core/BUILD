@@ -1258,11 +1258,14 @@ tf_gen_op_libs(
 # And one for all user ops
 cc_library(
     name = "user_ops_op_lib",
-    srcs = glob(["user_ops/**/*.cc"]),
-    copts = tf_copts(),
+    srcs = glob(["user_ops/**/*.cc", "user_ops/**/*.h"]),
+    copts = tf_copts(allow_exceptions = True),
     linkstatic = 1,
     visibility = ["//visibility:public"],
-    deps = [":framework"],
+    deps = [
+        ":framework",
+        ":core"
+    ],
     alwayslink = 1,
 )
 
