@@ -366,6 +366,7 @@ Status DoSlice(OpKernelContext* context,
                 const std::vector<int64>& begin,
                 const std::vector<int64>& size,
                 Tensor& result,
+                Allocator* allocator,
                 bool is_cpu_device) {
   int input_dims = input.dims();
   
@@ -374,8 +375,8 @@ Status DoSlice(OpKernelContext* context,
   Tensor input_ref = input;
   ChangeTensorType(input, input_ref);
   const Tensor& const_input_ref = input_ref;
-  
-  Tensor output_ref(const_input_ref.dtype(), result.shape());
+ 
+  Tensor output_ref(allocator, const_input_ref.dtype(), result.shape());
 #define RUN_SLICE(DEVICE, NDIM, T)                                 \ 
     functor::Slice<DEVICE, T, NDIM>()(                             \
       context->eigen_device<DEVICE>(), output_ref.tensor<T, NDIM>(),   \

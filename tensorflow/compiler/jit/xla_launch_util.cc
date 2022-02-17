@@ -362,7 +362,8 @@ Status XlaComputationLaunchContext::PopulateInputs(
 Status SplitOutputTensor(OpKernelContext* ctx,
                          bool is_cpu_device,
                          const Tensor& tensor_unsliced,
-                         Tensor& tensor_sliced){
+                         Tensor& tensor_sliced,
+                         int output_idx){
   const TensorShape unsliced_shape = tensor_unsliced.shape();
   TensorShape sliced_shape = tensor_sliced.shape();
   VLOG(1) << sliced_shape << " vs " << tensor_unsliced.shape();
@@ -382,8 +383,11 @@ Status SplitOutputTensor(OpKernelContext* ctx,
     tensor_sliced = tensor_unsliced.Slice(0, sliced_shape.dim_size(0));
     return Status::OK();
   } else if (slice_dim > 0) {
+    tensorflow::AllocatorAttributes attr = ctx->output_alloc_attr(output_idx);
+    auto* allocator = ctx->get_allocator(attr);
+
     return functor::DoSlice(ctx, tensor_unsliced, begin, size, 
-                              tensor_sliced, is_cpu_device);
+                              tensor_sliced, allocator, is_cpu_device);
   } else {
     //shape are equal
     tensor_sliced = tensor_unsliced;
@@ -526,7 +530,7 @@ Status XlaComputationLaunchContext::PopulateOutputs(
                 SplitOutputTensor(ctx,
                           inputs_shape_info->is_cpu_device,
                           output_tensor,
-                          slice_output_tensor));
+                          slice_output_tensor, i));
 
             VLOG(1) << "Retval " << i << " shape " 
                     << slice_output_tensor.shape() << " acutal";
