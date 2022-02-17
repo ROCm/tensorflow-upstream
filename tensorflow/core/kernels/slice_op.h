@@ -32,6 +32,7 @@ Status DoSlice(OpKernelContext* context,
                const std::vector<int64>& begin,
                const std::vector<int64>& size,
                Tensor& output,
+               Allocator* allocator,
                bool is_cpu_device);
 
 template <typename Device, typename T, int NDIMS>

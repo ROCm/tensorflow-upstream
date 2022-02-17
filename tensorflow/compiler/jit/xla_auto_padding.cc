@@ -155,11 +155,10 @@ Status XlaAutoPadding::Compile(
 
   LOG(INFO) << name_ << " begin to compile " 
           << " " << inputs_shape_info->DebugString();
-  XlaAutoPadding::CompileImpl(
+  return XlaAutoPadding::CompileImpl(
                      options, function, unconst_args, compile_fn,
                      compile_options, compile_threshold, 
                      inputs_shape_info);
-  return Status::OK();
 }
 
 Status XlaAutoPadding::FillInputShapes(
@@ -342,7 +341,7 @@ inline Status XlaAutoPadding::ValidateCluster(
 
   const string signature = diff_flag.str();
   const auto& properties = inputs_shape_info->graph_properties; 
-  const auto state = properties->GetXlaPaddingState(signature);
+  auto state = properties->GetXlaPaddingState(signature);
 
   if (state == PaddingState::VALID) {
     return Status::OK();
@@ -351,7 +350,8 @@ inline Status XlaAutoPadding::ValidateCluster(
         inputs_shape_info->graph_properties->InferStaticallyFastMode(
             inputs_shape_info->input_tensors,
             inputs_shape_info->inferred_shape_protos));
-    //TODO Validate shape inference is correct
+    // Get pad state again
+    state = properties->GetXlaPaddingState(signature);
   }
 
   if (state == PaddingState::INVALID) {
