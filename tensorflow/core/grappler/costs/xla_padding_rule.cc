@@ -14,10 +14,10 @@ namespace {
     "Add", "AddN", "AddV2", "Mul", "Sub", "Div", "DivNoNan", "Log","Exp",
     "TruncateDiv","RealDiv","SquaredDifference",
     "Sinh", "Cosh", "Tanh", "Asinh", "Acosh", "Atanh", "Atan2", "Sin", "Cos", "Tan", "Asin", "Acos", "Atan", 
-    "Round", "Square", "Sqrt", "Rsqrt", "Sum", "Tan", "Tanh", "Abs", "Round", "Equal", "NotEqual", "ApproximateEqual",
+    "Round", "Square", "Sqrt", "Rsqrt", "Tan", "Tanh", "Abs", "Round", "Equal", "NotEqual", "ApproximateEqual",
     "ZerosLike", "OnesLike", "Greater","GreaterEqual","Less", "LessEqual","LogicalAnd","LogicalNot","LogicalOr",
     "Ceil", "Floor", "FloorDiv", "Sign", "Rint","SquareDifference", "BiasAdd", "BiasAddV1",
-    "Minimum", "Maximum", "Min","Max","Neg","Mean","Mod", "FloorMod", "TruncateMod", "Pow",
+    "Minimum", "Maximum", "Neg","Mod", "FloorMod", "TruncateMod", "Pow",
     "BitwiseAnd", "BitwiseOr", "BitwiseXor", "TruncatedNormal", 
     "Transpose", "Bucketize", "Fill", 
     "Pack", "Stack",  "ExpandDims",
@@ -169,10 +169,12 @@ namespace {
     // if concat dim is 0, then output (4, 3)
     // if concat dim is 1, then output (2, 6)
 
-    if (node.op() != "ConcatV2" && node.op() != "Concat") return false;
+    if (node.op() != "ConcatV2" && node.op() != "Concat" && 
+        node.op() != "Max" && node.op() != "Min" &&
+        node.op() != "Mean" && node.op() != "Sum") return false;
     const Tensor* concat_dim_t = ic->input_tensor(ic->num_inputs() - 1);
     const int32 concat_dim = concat_dim_t->scalar<int32>()();
-    VLOG(1) << "Concat dim " << concat_dim;
+    VLOG(1) << node.op() << " dim " << concat_dim;
     for (size_t i = 0; i < diff_dims.size(); i++) {
       const auto& input_dims = diff_dims[i];
       for (int dim: input_dims) {
