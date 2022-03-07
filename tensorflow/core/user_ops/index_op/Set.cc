@@ -96,6 +96,47 @@ REGISTER_OP("BitmapInit")
       return Status::OK();
     });
 
+REGISTER_OP("BitmapRefDifference")
+    .Input("idx_next_values: T")
+    .Input("idx_next_row_splits: int64")
+    .Input("idx_flag: Ref (int32)")
+    .Output("c_values: T")
+    .Output("c_row_splits: int64")
+    .Output("idx_flag_new: Ref (int32)")
+    .Attr("init: bool = false")
+    .Attr("T: {int32}")
+    .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
+      ShapeHandle shape;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &shape));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &shape));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 1, &shape));
+      c->set_output(0, c->MakeShape({c->UnknownDim()}));
+      c->set_output(1, c->input(1));
+      c->set_output(2, c->input(2));
+      return Status::OK();
+    });
+
+REGISTER_OP("BloomFilterDifference")
+    .Input("idx_next_values: T")
+    .Input("idx_next_row_splits: int64")
+    .Input("idx_flag: int32")
+    .Output("c_values: T")
+    .Output("c_row_splits: int64")
+    .Output("idx_flag_new: int32")
+    .Attr("bucket: int >= 0 = 0")
+    .Attr("bucket_size: int >= 1")
+    .Attr("T: {int32}")
+    .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
+      ShapeHandle shape;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &shape));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &shape));
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 1, &shape));
+      c->set_output(0, c->MakeShape({c->UnknownDim()}));
+      c->set_output(1, c->input(1));
+      c->set_output(2, c->input(2));
+      return Status::OK();
+    });
+
 template <typename T>
 class SetUnion: public OpKernel {
  public:
@@ -342,12 +383,254 @@ class BitmapInit: public OpKernel {
   };
 };
 
+template<typename T>
+class BloomFilterDifference: public OpKernel {
+ public:
+  explicit BloomFilterDifference(OpKernelConstruction* context) : OpKernel(context) 
+  {
+     OP_REQUIRES_OK(context, context->GetAttr("bucket", &_bucket));
+     OP_REQUIRES_OK(context, context->GetAttr("bucket_size", &_bucket_size));
+     init_prime_array();
+  }
+
+  void Compute(OpKernelContext* context) override {
+
+    const auto& idx_next_values = context->input(0).vec<T>();
+    const auto& idx_next_row_splits = context->input(1).vec<int64>();
+    const auto& idx_flag = context->input(2).vec<int32>();
+
+
+    int valid = ValidateRaggedTensor<T>(idx_next_values, idx_next_row_splits);
+    OP_REQUIRES(context, valid == 0,
+                errors::InvalidArgument("Invalid RaggedTensor input0 a, code: ", valid));
+
+    //handle void inputs
+    if (idx_next_row_splits.dimension(0) == 1){
+      if (VLOG_IS_ON(1)) LOG(WARNING) << this->name() << " void inputs "
+        <<idx_next_row_splits.dimension(0);
+      Tensor* t;
+      OP_REQUIRES_OK(context, context->allocate_output(0, {0}, &t));
+      OP_REQUIRES_OK(context, context->allocate_output(1, {1}, &t));
+      (t->vec<int64>())(0) = 0;
+      return;
+    }
+
+    int num_idx_flag = idx_flag.dimension(0);
+    Tensor *idx_flag_new;
+    TensorShape idx_flag_output_shape({num_idx_flag});
+    OP_REQUIRES_OK(context, context->allocate_output(2, idx_flag_output_shape, &idx_flag_new));
+    auto idx_flag_new_values = idx_flag_new->vec<int32>();
+    std::copy(idx_flag.data(), idx_flag.data()+num_idx_flag, idx_flag_new_values.data());
+
+    int num_groups = idx_next_row_splits.dimension(0) - 1;
+    int num_values = idx_next_values.dimension(0);
+
+    int max_length = 0;
+    for (int i = 1; i < num_groups+1; i++) {
+      int row_length = idx_next_row_splits(i)-idx_next_row_splits(i-1);
+      if (row_length > max_length){
+        max_length = row_length;
+      }
+    }
+
+    std::vector<std::vector<T>> idx_next_unvisited(num_groups);
+
+    for(auto& vec : idx_next_unvisited){
+      vec.reserve(max_length);
+    }
+
+    Tensor *idx_next_new_row_splits_tensor;
+    OP_REQUIRES_OK(context, context->allocate_output(1, {idx_next_row_splits.dimension(0)},
+                                                    &idx_next_new_row_splits_tensor));
+    auto idx_next_new_row_splits = idx_next_new_row_splits_tensor->vec<int64>();
+    idx_next_new_row_splits(0) = 0;
+
+    std::function<void(int64, int64)> Differ = [&](int64 begin, int64 end) {
+      for (int i = begin; i < end; ++i){
+        auto& vec = idx_next_unvisited[i];
+        for (int j = idx_next_row_splits(i); j < idx_next_row_splits(i+1); ++j) {
+          T node = idx_next_values(j);
+          std::string node_str = std::to_string(node);
+          uint64_t rawHash = ::ops_util::Fingerprint64(node_str.c_str(), node_str.size());
+          if (_bucket > 0)  rawHash = rawHash % (uint64_t) _bucket;
+          int miss  = 0;
+          for (int l = 0; l < 4; l++) {
+            int64 lower_prime = _prime_array[l];
+            uint64_t tmp_id = ((rawHash * multi_hash_multiply[l]) % lower_prime + lower_prime) % lower_prime;
+            int64 bucket_id = tmp_id % (_bucket_size * 32);
+            int flag_index = bucket_id / 32;
+            int bit_index = bucket_id % 32;
+            if (!(idx_flag_new_values(flag_index) & (1 << bit_index))){
+               miss ++; 
+               idx_flag_new_values(flag_index) = idx_flag_new_values(flag_index) | (1 << bit_index); 
+            }
+          }
+          
+          if(miss > 0) vec.push_back(node);
+        }
+      }
+    };
+    
+    Differ(0, num_groups);
+
+    for (int i = 0; i < num_groups; ++i) {
+      idx_next_new_row_splits(i+1) = idx_next_new_row_splits(i) + idx_next_unvisited[i].size();
+    }
+
+    Tensor *idx_next_new_values_tensor;
+    OP_REQUIRES_OK(context, context->allocate_output(0, {idx_next_new_row_splits(num_groups)}, &idx_next_new_values_tensor));
+    auto idx_next_new_values = idx_next_new_values_tensor->vec<T>();
+
+    std::function<void(int64, int64)> Move = [&](int64 begin, int64 end) {
+      for (int i = begin; i < end; ++i) {
+        const auto& vec = idx_next_unvisited[i];
+        std::copy(vec.begin(), vec.end(), idx_next_new_values.data()+idx_next_new_row_splits(i));
+      }
+    };
+
+    Move(0, num_groups);
+
+  };
+
+  private:
+      inline bool is_prime(const int64 &x){
+          // not fit when x equal 1
+          for (int64 i = (sqrt(x) + 1e-6); i > 1; i--) {
+              if ( (x % i) == 0)
+                  return false;
+          }
+          return true;
+      }
+
+      inline int64 find_prime_lower_than(const int64& num) {
+          int64 prime_num;
+          for (int64 n = num; n > 0; n--) {
+              if(is_prime(n)){
+                  prime_num = n;
+                  break;
+              }
+          }
+          return prime_num;
+      }
+      void init_prime_array() {
+          for (int i = 0; i < 4; i++) {
+              int64 target = multi_hash_mod_param[i] * _bucket_size * 32;
+              int64 lower_prime = find_prime_lower_than(target);
+              _prime_array[i] = lower_prime;
+          } 
+      } 
+
+ private:
+    int64 _bucket;  // first hash bucket, if first hash is farmhash
+    int64 _bucket_size; // this bucket size for the second hash
+    int64 _prime_array[4];
+};
+
+template<typename T>
+class BitmapRefDifference: public OpKernel {
+ public:
+  explicit BitmapRefDifference(OpKernelConstruction* context) : OpKernel(context){
+     OP_REQUIRES_OK(context, context->GetAttr("init", &_init));
+  } 
+
+  void Compute(OpKernelContext* context) override {
+
+    const auto& idx_next_values = context->input(0).vec<T>();
+    const auto& idx_next_row_splits = context->input(1).vec<int64>();
+    auto idx_flag = context->mutable_input(2, false).vec<int32>(); 
+    
+    if(_init){
+      std::fill(idx_flag.data(), idx_flag.data()+idx_flag.dimension(0), 0);
+    }
+
+
+    int valid = ValidateRaggedTensor<T>(idx_next_values, idx_next_row_splits);
+    OP_REQUIRES(context, valid == 0,
+                errors::InvalidArgument("Invalid RaggedTensor input0 a, code: ", valid));
+
+    //handle void inputs
+    if (idx_next_row_splits.dimension(0) == 1){
+      if (VLOG_IS_ON(1)) LOG(WARNING) << this->name() << " void inputs "
+        <<idx_next_row_splits.dimension(0);
+      Tensor* t;
+      OP_REQUIRES_OK(context, context->allocate_output(0, {0}, &t));
+      OP_REQUIRES_OK(context, context->allocate_output(1, {1}, &t));
+      (t->vec<int64>())(0) = 0;
+      return;
+    }
+
+    int num_groups = idx_next_row_splits.dimension(0) - 1;
+    int num_values = idx_next_values.dimension(0);
+
+    int max_length = 0;
+    for (int i = 1; i < num_groups+1; i++) {
+      int row_length = idx_next_row_splits(i)-idx_next_row_splits(i-1);
+      if (row_length > max_length){
+        max_length = row_length;
+      }
+    }
+
+    std::vector<std::vector<T>> idx_next_unvisited(num_groups);
+
+    for(auto& vec : idx_next_unvisited){
+      vec.reserve(max_length);
+    }
+
+    Tensor *idx_next_new_row_splits_tensor;
+    OP_REQUIRES_OK(context, context->allocate_output(1, {idx_next_row_splits.dimension(0)},
+                                                    &idx_next_new_row_splits_tensor));
+    auto idx_next_new_row_splits = idx_next_new_row_splits_tensor->vec<int64>();
+    idx_next_new_row_splits(0) = 0;
+
+    std::function<void(int64, int64)> Differ = [&](int64 begin, int64 end) {
+      for (int i = begin; i < end; ++i){
+        auto& vec = idx_next_unvisited[i];
+        for (int j = idx_next_row_splits(i); j < idx_next_row_splits(i+1); ++j) {
+          T node = idx_next_values(j);
+          int flag_index = node / 32;
+          int bit_index = node % 32;
+          if (!(idx_flag(flag_index) & (1 << bit_index))){
+            vec.push_back(node);
+            idx_flag(flag_index) = idx_flag(flag_index) | (1 << bit_index); 
+          }
+        }
+      }
+    };
+    
+    context->forward_ref_input_to_ref_output(2, 2);
+    
+    Differ(0, num_groups);
+
+    for (int i = 0; i < num_groups; ++i) {
+      idx_next_new_row_splits(i+1) = idx_next_new_row_splits(i) + idx_next_unvisited[i].size();
+    }
+
+    Tensor *idx_next_new_values_tensor;
+    OP_REQUIRES_OK(context, context->allocate_output(0, {idx_next_new_row_splits(num_groups)}, &idx_next_new_values_tensor));
+    auto idx_next_new_values = idx_next_new_values_tensor->vec<T>();
+
+    std::function<void(int64, int64)> Move = [&](int64 begin, int64 end) {
+      for (int i = begin; i < end; ++i) {
+        const auto& vec = idx_next_unvisited[i];
+        std::copy(vec.begin(), vec.end(), idx_next_new_values.data()+idx_next_new_row_splits(i));
+      }
+    };
+
+    Move(0, num_groups);
+
+  };
+ private:
+  bool _init;
+};
+
 #define REGISTER_CPU(T)                                           \
   REGISTER_KERNEL_BUILDER(Name("SetUnion").Device(DEVICE_CPU).TypeConstraint<T>("T"), SetUnion<T>); \
   REGISTER_KERNEL_BUILDER(Name("SetIntersection").Device(DEVICE_CPU).TypeConstraint<T>("T"), SetIntersection<T>); \
   REGISTER_KERNEL_BUILDER(Name("SetDifference").Device(DEVICE_CPU).TypeConstraint<T>("T"), SetDifference<T>); \
   REGISTER_KERNEL_BUILDER(Name("BitmapDifference").Device(DEVICE_CPU).TypeConstraint<T>("T"), BitmapDifference<T>); \
-  REGISTER_KERNEL_BUILDER(Name("BitmapInit").Device(DEVICE_CPU).TypeConstraint<T>("T"), BitmapInit<T>);
+  REGISTER_KERNEL_BUILDER(Name("BitmapInit").Device(DEVICE_CPU).TypeConstraint<T>("T"), BitmapInit<T>);\
+  REGISTER_KERNEL_BUILDER(Name("BitmapRefDifference").Device(DEVICE_CPU).TypeConstraint<T>("T"), BitmapRefDifference<T>); \
+  REGISTER_KERNEL_BUILDER(Name("BloomFilterDifference").Device(DEVICE_CPU).TypeConstraint<T>("T"), BloomFilterDifference<T>);
 
 REGISTER_CPU(int32);
 REGISTER_CPU(int64);
