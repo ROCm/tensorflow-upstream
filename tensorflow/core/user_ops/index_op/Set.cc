@@ -104,7 +104,7 @@ REGISTER_OP("BitmapRefDifference")
     .Output("c_row_splits: int64")
     .Output("idx_flag_new: Ref (int32)")
     .Attr("init: bool = false")
-    .Attr("T: {int32}")
+    .Attr("T: {int32, int64}")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
       ShapeHandle shape;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &shape));
@@ -119,13 +119,14 @@ REGISTER_OP("BitmapRefDifference")
 REGISTER_OP("BloomFilterDifference")
     .Input("idx_next_values: T")
     .Input("idx_next_row_splits: int64")
-    .Input("idx_flag: int32")
+    .Input("idx_flag: Ref (int32)")
     .Output("c_values: T")
     .Output("c_row_splits: int64")
-    .Output("idx_flag_new: int32")
+    .Output("idx_flag_new: Ref (int32)")
     .Attr("bucket: int >= 0 = 0")
     .Attr("bucket_size: int >= 1")
-    .Attr("T: {int32}")
+    .Attr("init: bool = false")
+    .Attr("T: {int32, int64}")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
       ShapeHandle shape;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &shape));
@@ -136,6 +137,15 @@ REGISTER_OP("BloomFilterDifference")
       c->set_output(2, c->input(2));
       return Status::OK();
     });
+
+template <typename T>
+int ValidateRaggedTensor(const typename TTypes<T>::ConstVec& values,
+                         const typename TTypes<int64>::ConstVec& row_splits) {
+  if (row_splits.dimension(0) == 0) return 1;
+  if (row_splits(0) != 0) return 2;
+  if (row_splits(row_splits.dimension(0)-1) != values.dimension(0)) return 3;
+  return 0;
+}
 
 template <typename T>
 class SetUnion: public OpKernel {
@@ -332,8 +342,8 @@ class BitmapDifference: public OpKernel {
 
     for (int i = 0; i < num_idx_next; ++i){
       T node = idx_next(i);
-      int flag_index = node / 32;
-      int bit_index = node % 32;
+      int flag_index = node >> 5;
+      int bit_index = node & 31;
       if (!(idx_flag_new_values(flag_index) & (1 << bit_index))){
         idx_next_unvisited.push_back(node);
         idx_flag_new_values(flag_index) = idx_flag_new_values(flag_index) | (1 << bit_index); 
@@ -374,14 +384,17 @@ class BitmapInit: public OpKernel {
 
     for (size_t i = 0; i < idx_size; ++i){
       T node = idx(i);
-      int flag_index = node / 32;
-      int bit_index = node % 32;
+      int flag_index = node >> 5;
+      int bit_index = node & 31;
       if (!(bitmap_values(flag_index) & (1 << bit_index))){
         bitmap_values(flag_index) = bitmap_values(flag_index) | (1 << bit_index); 
       }
     }
   };
 };
+
+const int multi_hash_multiply[4] = {1, 3, 5, 7};
+const int multi_hash_mod_param[4] = {29, 47, 67, 83};
 
 template<typename T>
 class BloomFilterDifference: public OpKernel {
@@ -390,6 +403,7 @@ class BloomFilterDifference: public OpKernel {
   {
      OP_REQUIRES_OK(context, context->GetAttr("bucket", &_bucket));
      OP_REQUIRES_OK(context, context->GetAttr("bucket_size", &_bucket_size));
+     OP_REQUIRES_OK(context, context->GetAttr("init", &_init));
      init_prime_array();
   }
 
@@ -397,8 +411,11 @@ class BloomFilterDifference: public OpKernel {
 
     const auto& idx_next_values = context->input(0).vec<T>();
     const auto& idx_next_row_splits = context->input(1).vec<int64>();
-    const auto& idx_flag = context->input(2).vec<int32>();
+    auto idx_flag = context->mutable_input(2, false).vec<int32>(); 
 
+    if(_init){
+      std::fill(idx_flag.data(), idx_flag.data()+idx_flag.dimension(0), 0);
+    }
 
     int valid = ValidateRaggedTensor<T>(idx_next_values, idx_next_row_splits);
     OP_REQUIRES(context, valid == 0,
@@ -414,13 +431,6 @@ class BloomFilterDifference: public OpKernel {
       (t->vec<int64>())(0) = 0;
       return;
     }
-
-    int num_idx_flag = idx_flag.dimension(0);
-    Tensor *idx_flag_new;
-    TensorShape idx_flag_output_shape({num_idx_flag});
-    OP_REQUIRES_OK(context, context->allocate_output(2, idx_flag_output_shape, &idx_flag_new));
-    auto idx_flag_new_values = idx_flag_new->vec<int32>();
-    std::copy(idx_flag.data(), idx_flag.data()+num_idx_flag, idx_flag_new_values.data());
 
     int num_groups = idx_next_row_splits.dimension(0) - 1;
     int num_values = idx_next_values.dimension(0);
@@ -458,11 +468,11 @@ class BloomFilterDifference: public OpKernel {
             int64 lower_prime = _prime_array[l];
             uint64_t tmp_id = ((rawHash * multi_hash_multiply[l]) % lower_prime + lower_prime) % lower_prime;
             int64 bucket_id = tmp_id % (_bucket_size * 32);
-            int flag_index = bucket_id / 32;
-            int bit_index = bucket_id % 32;
-            if (!(idx_flag_new_values(flag_index) & (1 << bit_index))){
+            int flag_index = bucket_id >> 5;
+            int bit_index = bucket_id & 31;
+            if (!(idx_flag(flag_index) & (1 << bit_index))){
                miss ++; 
-               idx_flag_new_values(flag_index) = idx_flag_new_values(flag_index) | (1 << bit_index); 
+               idx_flag(flag_index) = idx_flag(flag_index) | (1 << bit_index); 
             }
           }
           
@@ -470,8 +480,11 @@ class BloomFilterDifference: public OpKernel {
         }
       }
     };
+
     
     Differ(0, num_groups);
+
+    context->forward_ref_input_to_ref_output(2, 2);
 
     for (int i = 0; i < num_groups; ++i) {
       idx_next_new_row_splits(i+1) = idx_next_new_row_splits(i) + idx_next_unvisited[i].size();
@@ -524,6 +537,7 @@ class BloomFilterDifference: public OpKernel {
     int64 _bucket;  // first hash bucket, if first hash is farmhash
     int64 _bucket_size; // this bucket size for the second hash
     int64 _prime_array[4];
+    bool _init;
 };
 
 template<typename T>
@@ -587,8 +601,8 @@ class BitmapRefDifference: public OpKernel {
         auto& vec = idx_next_unvisited[i];
         for (int j = idx_next_row_splits(i); j < idx_next_row_splits(i+1); ++j) {
           T node = idx_next_values(j);
-          int flag_index = node / 32;
-          int bit_index = node % 32;
+          int flag_index = node >> 5;
+          int bit_index = node & 31;
           if (!(idx_flag(flag_index) & (1 << bit_index))){
             vec.push_back(node);
             idx_flag(flag_index) = idx_flag(flag_index) | (1 << bit_index); 
@@ -597,9 +611,9 @@ class BitmapRefDifference: public OpKernel {
       }
     };
     
-    context->forward_ref_input_to_ref_output(2, 2);
-    
     Differ(0, num_groups);
+
+    context->forward_ref_input_to_ref_output(2, 2);
 
     for (int i = 0; i < num_groups; ++i) {
       idx_next_new_row_splits(i+1) = idx_next_new_row_splits(i) + idx_next_unvisited[i].size();
