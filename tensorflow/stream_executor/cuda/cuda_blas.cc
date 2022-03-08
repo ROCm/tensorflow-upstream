@@ -1768,7 +1768,7 @@ port::Status CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
                                   const void *alpha, const DeviceMemoryBase &a,
                                   int lda, const DeviceMemoryBase &b, int ldb,
                                   const void *beta, DeviceMemoryBase *c,
-                                  int ldc) {
+                                  int ldc, blas::CallContext context) {
   cublasMath_t math_type = CUBLAS_DEFAULT_MATH;
 
 #if CUDA_VERSION < 11000
@@ -1944,10 +1944,10 @@ bool CUDABlas::DoBlasGemmWithProfiling(
     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64_t m,
     uint64_t n, uint64 k, float alpha, const DeviceMemory<Eigen::half> &a,
     int lda, const DeviceMemory<Eigen::half> &b, int ldb, float beta,
-    DeviceMemory<Eigen::half> *c, int ldc,
+    DeviceMemory<Eigen::half> *c, int ldc, blas::CallContext context,
     blas::ProfileResult *output_profile_result) {
   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
-                                     lda, b, ldb, beta, c, ldc,
+                                     lda, b, ldb, beta, c, ldc, context,
                                      output_profile_result);
 }
 
@@ -1955,9 +1955,10 @@ bool CUDABlas::DoBlasGemmWithProfiling(
     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64_t m,
     uint64_t n, uint64 k, float alpha, const DeviceMemory<float> &a, int lda,
     const DeviceMemory<float> &b, int ldb, float beta, DeviceMemory<float> *c,
-    int ldc, blas::ProfileResult *output_profile_result) {
+    int ldc, blas::CallContext context,
+    blas::ProfileResult *output_profile_result) {
   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
-                                     lda, b, ldb, beta, c, ldc,
+                                     lda, b, ldb, beta, c, ldc, context,
                                      output_profile_result);
 }
 
@@ -1965,10 +1966,10 @@ bool CUDABlas::DoBlasGemmWithProfiling(
     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64_t m,
     uint64_t n, uint64 k, double alpha, const DeviceMemory<double> &a, int lda,
     const DeviceMemory<double> &b, int ldb, double beta,
-    DeviceMemory<double> *c, int ldc,
+    DeviceMemory<double> *c, int ldc, blas::CallContext context,
     blas::ProfileResult *output_profile_result) {
   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
-                                     lda, b, ldb, beta, c, ldc,
+                                     lda, b, ldb, beta, c, ldc, context,
                                      output_profile_result);
 }
 
@@ -1978,9 +1979,9 @@ bool CUDABlas::DoBlasGemmWithProfiling(
     const DeviceMemory<std::complex<float>> &a, int lda,
     const DeviceMemory<std::complex<float>> &b, int ldb,
     std::complex<float> beta, DeviceMemory<std::complex<float>> *c, int ldc,
-    blas::ProfileResult *output_profile_result) {
+    blas::CallContext context, blas::ProfileResult *output_profile_result) {
   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
-                                     lda, b, ldb, beta, c, ldc,
+                                     lda, b, ldb, beta, c, ldc, context,
                                      output_profile_result);
 }
 
@@ -1990,9 +1991,9 @@ bool CUDABlas::DoBlasGemmWithProfiling(
     const DeviceMemory<std::complex<double>> &a, int lda,
     const DeviceMemory<std::complex<double>> &b, int ldb,
     std::complex<double> beta, DeviceMemory<std::complex<double>> *c, int ldc,
-    blas::ProfileResult *output_profile_result) {
+    blas::CallContext context, blas::ProfileResult *output_profile_result) {
   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
-                                     lda, b, ldb, beta, c, ldc,
+                                     lda, b, ldb, beta, c, ldc, context,
                                      output_profile_result);
 }
 
@@ -2033,7 +2034,8 @@ bool CUDABlas::DoBlasGemmWithProfilingImpl(
     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64_t m,
     uint64_t n, uint64 k, const ParamType &alpha, const DeviceMemory<T> &a,
     int lda, const DeviceMemory<T> &b, int ldb, const ParamType &beta,
-    DeviceMemory<T> *c, int ldc, blas::ProfileResult *output_profile_result) {
+    DeviceMemory<T> *c, int ldc, blas::CallContext context,
+    blas::ProfileResult *output_profile_result) {
   std::unique_ptr<GpuTimer, GpuTimerDeleter> timer;
   if (output_profile_result != nullptr) {
     timer.reset(new GpuTimer(parent_));
@@ -2172,7 +2174,8 @@ port::Status CUDABlas::DoBlasGemmWithAlgorithm(
     blas::DataType type_a, int lda, const DeviceMemoryBase &b,
     blas::DataType type_b, int ldb, const void *beta, DeviceMemoryBase *c,
     blas::DataType type_c, int ldc, blas::ComputationType computation_type,
-    blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result) {
+    blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result,
+    blas::CallContext context) {
   TF_ASSIGN_OR_RETURN(cublasMath_t math_type,
                       GetMathTypeForGemmEx(stream, algorithm, type_a, type_b));
 
@@ -2202,7 +2205,8 @@ port::Status CUDABlas::DoBlasGemmStridedBatchedWithAlgorithm(
     blas::DataType type_b, int ldb, int64_t stride_b, const void *beta,
     DeviceMemoryBase *c, blas::DataType type_c, int ldc, int64_t stride_c,
     int batch_count, blas::ComputationType computation_type,
-    blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result) {
+    blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result,
+    blas::CallContext context) {
   TF_ASSIGN_OR_RETURN(cublasMath_t math_type,
                       GetMathTypeForGemmEx(stream, algorithm, type_a, type_b));
   TF_ASSIGN_OR_RETURN(auto timer, StartGpuTimerForProfile(
@@ -2469,7 +2473,8 @@ bool CUDABlas::DoBlasGemmBatched(
     const port::ArraySlice<DeviceMemory<Eigen::half> *> &a_array, int lda,
     const port::ArraySlice<DeviceMemory<Eigen::half> *> &b_array, int ldb,
     float beta, const port::ArraySlice<DeviceMemory<Eigen::half> *> &c_array,
-    int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+    int ldc, int batch_count, ScratchAllocator *scratch_allocator,
+    blas::CallContext context) {
   // Note: The func passed here (cublasSgemmBatched) is not actually called,
   // due to special handling of fp16 inside DoBlasGemmBatchedInternal.
   port::Status status = DoBlasGemmBatchedInternal(
@@ -2487,7 +2492,8 @@ bool CUDABlas::DoBlasGemmBatched(
     const port::ArraySlice<DeviceMemory<float> *> &a_array, int lda,
     const port::ArraySlice<DeviceMemory<float> *> &b_array, int ldb, float beta,
     const port::ArraySlice<DeviceMemory<float> *> &c_array, int ldc,
-    int batch_count, ScratchAllocator *scratch_allocator) {
+    int batch_count, ScratchAllocator *scratch_allocator,
+    blas::CallContext context) {
   port::Status status = DoBlasGemmBatchedInternal(
       cublasSgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
@@ -2503,7 +2509,8 @@ bool CUDABlas::DoBlasGemmBatched(
     const port::ArraySlice<DeviceMemory<double> *> &a_array, int lda,
     const port::ArraySlice<DeviceMemory<double> *> &b_array, int ldb,
     double beta, const port::ArraySlice<DeviceMemory<double> *> &c_array,
-    int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+    int ldc, int batch_count, ScratchAllocator *scratch_allocator,
+    blas::CallContext context) {
   port::Status status = DoBlasGemmBatchedInternal(
       cublasDgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
@@ -2521,7 +2528,8 @@ bool CUDABlas::DoBlasGemmBatched(
     const port::ArraySlice<DeviceMemory<std::complex<float>> *> &b_array,
     int ldb, std::complex<float> beta,
     const port::ArraySlice<DeviceMemory<std::complex<float>> *> &c_array,
-    int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+    int ldc, int batch_count, ScratchAllocator *scratch_allocator,
+    blas::CallContext context) {
   port::Status status = DoBlasGemmBatchedInternal(
       cublasCgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
@@ -2539,7 +2547,8 @@ bool CUDABlas::DoBlasGemmBatched(
     const port::ArraySlice<DeviceMemory<std::complex<double>> *> &b_array,
     int ldb, std::complex<double> beta,
     const port::ArraySlice<DeviceMemory<std::complex<double>> *> &c_array,
-    int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+    int ldc, int batch_count, ScratchAllocator *scratch_allocator,
+    blas::CallContext context) {
   port::Status status = DoBlasGemmBatchedInternal(
       cublasZgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
@@ -2554,7 +2563,8 @@ port::Status CUDABlas::DoBlasGemmStridedBatched(
     uint64_t n, uint64 k, blas::DataType dtype, const void *alpha,
     const DeviceMemoryBase &a, int lda, int64_t stride_a,
     const DeviceMemoryBase &b, int ldb, int64_t stride_b, const void *beta,
-    DeviceMemoryBase *c, int ldc, int64_t stride_c, int batch_count) {
+    DeviceMemoryBase *c, int ldc, int64_t stride_c, int batch_count,
+    blas::CallContext context) {
   cublasMath_t math_type = CUBLAS_DEFAULT_MATH;
 #if CUDA_VERSION < 11000
   if (dtype == dnn::kHalf) {

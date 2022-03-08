@@ -136,7 +136,8 @@ Status RunGpuConvUnfused(GpuConvParams params, se::Stream* stream,
                                  params.config.input_descriptor,
                                  params.config.filter_descriptor,
                                  params.config.output_descriptor,
-                                 params.config.conv_desc};
+                                 params.config.conv_desc,
+                                 params.config.call_context};
   TF_ASSIGN_OR_RETURN(auto* runner,
                       lazy_runner->GetOrCreateRunner(config, stream));
 
@@ -316,6 +317,16 @@ int64_t GetVectCSize(FilterLayout layout) {
 
 }  // anonymous namespace
 
+se::dnn::CallContext GetCallContext(const absl::string_view call_context) {
+  if (call_context == "kForward")
+    return se::dnn::CallContext::kForward;
+  else if (call_context == "kBackpropData")
+    return se::dnn::CallContext::kBackpropData;
+  else if (call_context == "kBackpropFilter")
+    return se::dnn::CallContext::kBackpropFilter;
+  return se::dnn::CallContext::kNone;
+}
+
 StatusOr<GpuConvConfig> GetGpuConvConfig(
     const GpuConvDescriptor& desc, const absl::string_view inst_as_string) {
   GpuConvConfig config;
@@ -329,6 +340,7 @@ StatusOr<GpuConvConfig> GetGpuConvConfig(
   config.output_type = result_shape.element_type();
   config.kind = desc.kind;
   config.algorithm = se::dnn::AlgorithmDesc(backend_config.algorithm());
+  config.call_context = GetCallContext(backend_config.call_context());
   config.conv_result_scale = backend_config.conv_result_scale();
 
   switch (config.kind) {
