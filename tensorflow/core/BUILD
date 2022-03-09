@@ -1264,7 +1264,8 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":framework",
-        ":core"
+        ":core",
+        "@farmhash_archive//:farmhash",
     ],
     alwayslink = 1,
 )

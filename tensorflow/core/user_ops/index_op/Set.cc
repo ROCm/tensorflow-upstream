@@ -4,6 +4,7 @@
 #include <vector>
 #include <unordered_set>
 #include <algorithm>
+#include "tensorflow/core/platform/fingerprint.h"
 
 using namespace tensorflow;
 
@@ -103,7 +104,6 @@ REGISTER_OP("BitmapRefDifference")
     .Output("c_values: T")
     .Output("c_row_splits: int64")
     .Output("idx_flag_new: Ref (int32)")
-    .Attr("init: bool = false")
     .Attr("T: {int32, int64}")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
       ShapeHandle shape;
@@ -125,7 +125,6 @@ REGISTER_OP("BloomFilterDifference")
     .Output("idx_flag_new: Ref (int32)")
     .Attr("bucket: int >= 0 = 0")
     .Attr("bucket_size: int >= 1")
-    .Attr("init: bool = false")
     .Attr("T: {int32, int64}")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
       ShapeHandle shape;
@@ -403,7 +402,6 @@ class BloomFilterDifference: public OpKernel {
   {
      OP_REQUIRES_OK(context, context->GetAttr("bucket", &_bucket));
      OP_REQUIRES_OK(context, context->GetAttr("bucket_size", &_bucket_size));
-     OP_REQUIRES_OK(context, context->GetAttr("init", &_init));
      init_prime_array();
   }
 
@@ -412,10 +410,6 @@ class BloomFilterDifference: public OpKernel {
     const auto& idx_next_values = context->input(0).vec<T>();
     const auto& idx_next_row_splits = context->input(1).vec<int64>();
     auto idx_flag = context->mutable_input(2, false).vec<int32>(); 
-
-    if(_init){
-      std::fill(idx_flag.data(), idx_flag.data()+idx_flag.dimension(0), 0);
-    }
 
     int valid = ValidateRaggedTensor<T>(idx_next_values, idx_next_row_splits);
     OP_REQUIRES(context, valid == 0,
@@ -461,7 +455,7 @@ class BloomFilterDifference: public OpKernel {
         for (int j = idx_next_row_splits(i); j < idx_next_row_splits(i+1); ++j) {
           T node = idx_next_values(j);
           std::string node_str = std::to_string(node);
-          uint64_t rawHash = ::ops_util::Fingerprint64(node_str.c_str(), node_str.size());
+          uint64_t rawHash = Fingerprint64(node_str.c_str(), node_str.size());
           if (_bucket > 0)  rawHash = rawHash % (uint64_t) _bucket;
           int miss  = 0;
           for (int l = 0; l < 4; l++) {
@@ -537,26 +531,18 @@ class BloomFilterDifference: public OpKernel {
     int64 _bucket;  // first hash bucket, if first hash is farmhash
     int64 _bucket_size; // this bucket size for the second hash
     int64 _prime_array[4];
-    bool _init;
 };
 
 template<typename T>
 class BitmapRefDifference: public OpKernel {
  public:
-  explicit BitmapRefDifference(OpKernelConstruction* context) : OpKernel(context){
-     OP_REQUIRES_OK(context, context->GetAttr("init", &_init));
-  } 
+  explicit BitmapRefDifference(OpKernelConstruction* context) : OpKernel(context){} 
 
   void Compute(OpKernelContext* context) override {
 
     const auto& idx_next_values = context->input(0).vec<T>();
     const auto& idx_next_row_splits = context->input(1).vec<int64>();
     auto idx_flag = context->mutable_input(2, false).vec<int32>(); 
-    
-    if(_init){
-      std::fill(idx_flag.data(), idx_flag.data()+idx_flag.dimension(0), 0);
-    }
-
 
     int valid = ValidateRaggedTensor<T>(idx_next_values, idx_next_row_splits);
     OP_REQUIRES(context, valid == 0,
@@ -633,8 +619,6 @@ class BitmapRefDifference: public OpKernel {
     Move(0, num_groups);
 
   };
- private:
-  bool _init;
 };
 
 #define REGISTER_CPU(T)                                           \
