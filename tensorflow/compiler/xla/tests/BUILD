@@ -1285,7 +1285,6 @@ xla_test(
     backends = ["gpu"],
     shard_count = 50,
     tags = [
-        "no_rocm",
         "nozapfhahn",
         "optonly",
     ],
