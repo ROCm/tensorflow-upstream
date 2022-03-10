@@ -106,7 +106,7 @@ REGISTER_OP("BitmapRefDifference")
     .Output("idx_flag_new: Ref (int32)")
     .Attr("T: {int32, int64}")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
-      ShapeHandle shape;
+      shape_inference::ShapeHandle shape;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &shape));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &shape));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 1, &shape));
@@ -127,7 +127,7 @@ REGISTER_OP("BloomFilterDifference")
     .Attr("bucket_size: int >= 1")
     .Attr("T: {int32, int64}")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
-      ShapeHandle shape;
+      shape_inference::ShapeHandle shape;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &shape));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &shape));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 1, &shape));
@@ -455,7 +455,7 @@ class BloomFilterDifference: public OpKernel {
         for (int j = idx_next_row_splits(i); j < idx_next_row_splits(i+1); ++j) {
           T node = idx_next_values(j);
           std::string node_str = std::to_string(node);
-          uint64_t rawHash = Fingerprint64(node_str.c_str(), node_str.size());
+          uint64_t rawHash = Fingerprint64(node_str.c_str());
           if (_bucket > 0)  rawHash = rawHash % (uint64_t) _bucket;
           int miss  = 0;
           for (int l = 0; l < 4; l++) {
