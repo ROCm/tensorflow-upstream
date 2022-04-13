@@ -1,0 +1,24 @@
+diff --git a/llvm/lib/Target/AMDGPU/AMDGPUAliasAnalysis.cpp b/llvm/lib/Target/AMDGPU/AMDGPUAliasAnalysis.cpp
+index dd3eb3849eac..cd95e6cdb5fb 100644
+--- a/llvm/lib/Target/AMDGPU/AMDGPUAliasAnalysis.cpp
++++ b/llvm/lib/Target/AMDGPU/AMDGPUAliasAnalysis.cpp
+@@ -126,13 +126,13 @@ AliasResult AMDGPUAAResult::alias(const MemoryLocation &LocA,
+ 
+ bool AMDGPUAAResult::pointsToConstantMemory(const MemoryLocation &Loc,
+                                             AAQueryInfo &AAQI, bool OrLocal) {
+-  unsigned AS = Loc.Ptr->getType()->getPointerAddressSpace();
+-  if (AS == AMDGPUAS::CONSTANT_ADDRESS ||
+-      AS == AMDGPUAS::CONSTANT_ADDRESS_32BIT)
+-    return true;
+-
+   const Value *Base = getUnderlyingObject(Loc.Ptr);
+-  AS = Base->getType()->getPointerAddressSpace();
++  unsigned AS = Base->getType()->getPointerAddressSpace();
++  if (!(AS == AMDGPUAS::CONSTANT_ADDRESS ||
++      AS == AMDGPUAS::CONSTANT_ADDRESS_32BIT))
++    return false;
++
++  AS = Loc.Ptr->getType()->getPointerAddressSpace();
+   if (AS == AMDGPUAS::CONSTANT_ADDRESS ||
+       AS == AMDGPUAS::CONSTANT_ADDRESS_32BIT)
+     return true;
