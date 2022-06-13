@@ -3115,6 +3115,7 @@ cuda_py_test(
     srcs = ["conv_ops_test.py"],
     shard_count = 4,
     tags = [
+        "no_rocm",
         "optonly",  # times out
     ],
     deps = [
