@@ -13,6 +13,7 @@ import "tensorflow/core/framework/graph.proto";
 import "tensorflow/core/framework/step_stats.proto";
 import "tensorflow/core/protobuf/cluster.proto";
 import "tensorflow/core/protobuf/debug.proto";
+import "tensorflow/core/protobuf/named_tensor.proto";
 import "tensorflow/core/protobuf/rewriter_config.proto";
 
 message GPUOptions {
@@ -547,12 +548,14 @@ message ConfigProto {
   bool run_graph_mode = 100;
   bool force_run_in_caller_thread = 110;
   bool enable_graph_opt_place = 111;
-  
+  BlazeKernelOptions blaze_options = 112;
+  bool is_blaze = 113;
+  // Next: 17
+
   // if enable_xla_auto_padding, we will add pad and slice for every cluster
   // so that xla behaives like dynamic padding
-  bool enable_xla_auto_padding = 112;
-  int32 xla_padding_type = 113;
-  // Next: 17
+  bool enable_xla_auto_padding = 120;
+  int32 xla_padding_type = 121;
 }
 
 // Options for a single Run() call.
@@ -610,9 +613,34 @@ message RunOptions {
 
   Experimental experimental = 8;
 
+  message PaddingInfo {
+    uint64 before_padding = 1;
+    uint64 after_padding = 2;
+  }
+  PaddingInfo padding_info = 600;
+
+  // for RTP
+  // proto3 does not support set default value and no *has_* interface for POD
+  message RunId {
+    int64 value = 1;
+  }
+  RunId run_id = 9;
+
+  // If true, then the float-pointing operations count of operations during
+  // session.run() call will be accumulated. The value can be access through
+  // RunMetadata.flop_count_sp
+  bool record_flop_count = 109;
+
+  bool trace_tensors = 127;
+  map<string, string> debug_spec = 128;
+  bool trace_tensor_infos = 129;
+
   reserved 4;
 }
 
+message  TracedTensors {
+  repeated NamedTensorProto name_tensors = 1;
+}
 // Metadata output (i.e., non-Tensor) for a single Run() call.
 message RunMetadata {
   // Statistics traced for this step. Populated if tracing is turned on via the
@@ -644,12 +672,29 @@ message RunMetadata {
   // level idea of what the built graph looks like (since the various graph
   // optimization passes might change the structure of the graph significantly).
   repeated FunctionGraphs function_graphs = 4;
+
   //[PROF-STATS]
   message ProfStats {
     uint64 flops = 1;
-    uint64 tao_op_calls = 2;
+    float blaze_latency_ms = 2;
+    uint64 tao_op_calls = 3;
   }
-  ProfStats prof_stats = 5;
+
+  message BlazeMetrics {
+    enum MetricType {
+      GUAGE = 0;
+      QPS = 1;
+    }
+    string key = 1;
+    float value = 2;
+    MetricType type = 3;
+  }
+
+// ToDO remove this, using key value pair
+  ProfStats prof_stats = 500;
+  TracedTensors traced_tensors = 501;
+  repeated BlazeMetrics blaze_metrics = 502;
+  TracedTensors tensor_infos = 503;
 }
 
 // Defines a connection between two tensors in a `GraphDef`.
@@ -751,4 +796,47 @@ message CallableOptions {
   bool fetch_skip_sync = 8;
 
   // Next: 9
+}
+
+message BlazeWarmupValue {
+  int32 start = 1;
+  int32 end = 2;
+}
+
+message BlazeKernelOptions {
+  repeated int32 warmup_batchsize = 1;
+  bool xla_compilation = 2;
+  bool gemm_optimization = 3;
+  bool auto_mixed_precision = 4;
+  // CUDAGraphOptions cuda_graph = 5; deleted
+  int32 virtual_gpus_per_device = 6;
+  int32 inter_op_threads = 7;
+  int32 intra_op_threads = 8;
+  repeated string no_warmup_inputs = 9;
+
+  // Callable option is disabled when use single threaded executor, because
+  // single threaded executor force feed and fetch operations must be on device.
+  bool use_single_threaded_executor = 10;
+  // Make callable to specify the feed and fetch device
+  bool callable_adapt_device = 11;
+  //[DYNAMIC-SHAPE]
+  bool gemm_dynamic_shape = 12;
+  // The max batch size to use cpu predictor
+  int32 max_batch_for_cpu = 13;
+  int32 cpu_buckets_nums = 14;
+  // Disable output padding
+  bool disable_output_padding = 15;
+  uint64 unit_flops = 16; //override measured values
+  bool debug_batchsize = 100;
+  int64 dump_timeline_interval = 101;
+  ConfigProto config_proto = 102;
+  map<string, BlazeWarmupValue> warmup_value = 103;
+  enum RunMode {
+    DEFAULT = 0;
+    BENCHMARK = 1;
+    SKIP = 2; // skip for dense test, but i do not know shape
+  }
+
+  RunMode run_mode = 104;
+  int32 wait_ms = 105;
 }
