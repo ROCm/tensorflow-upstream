@@ -71,7 +71,8 @@ class Placer {
   Placer(Graph* graph, const string& function_name,
          const FunctionLibraryDefinition* flib_def, const DeviceSet* devices,
          const Device* default_local_device, bool allow_soft_placement,
-         bool log_device_placement);
+         bool log_device_placement,
+         bool allow_device_opt=false);
 
   Placer(Graph* graph, const string& function_name, const DeviceSet* devices,
          const Device* default_local_device);
@@ -100,7 +101,7 @@ class Placer {
   const Device* default_local_device_;               // Not owned.
   const bool allow_soft_placement_;
   const bool log_device_placement_;
-
+  const bool allow_device_opt_;
   TF_DISALLOW_COPY_AND_ASSIGN(Placer);
 };
 

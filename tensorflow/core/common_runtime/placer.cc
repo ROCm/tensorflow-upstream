@@ -74,14 +74,16 @@ Status AssignAndLog(int assigned_device, Node* node,
 Placer::Placer(Graph* graph, const string& function_name,
                const FunctionLibraryDefinition* flib_def,
                const DeviceSet* devices, const Device* default_local_device,
-               bool allow_soft_placement, bool log_device_placement)
+               bool allow_soft_placement, bool log_device_placement,
+               bool allow_device_opt)
     : graph_(graph),
       function_name_(function_name),
       flib_def_(flib_def),
       devices_(devices),
       default_local_device_(default_local_device),
       allow_soft_placement_(allow_soft_placement),
-      log_device_placement_(log_device_placement) {}
+      log_device_placement_(log_device_placement),
+      allow_device_opt_(allow_device_opt) {}
 
 Placer::Placer(Graph* graph, const string& function_name,
                const DeviceSet* devices, const Device* default_local_device)
@@ -118,9 +120,25 @@ Status Placer::Run() {
 
   TF_RETURN_IF_ERROR(colocation_graph.Initialize());
 
+  ColocationGraph colocation_graph_tmp(graph_, stack, flib_def_, devices_,
+                                   default_local_device_, allow_soft_placement_,
+                                   log_device_placement_);
+
+  if (allow_device_opt_) {
+    VLOG(0) << "Allow optimize placer";
+  } else {
+    VLOG(0) << "Not allow optimize placer";
+  }
+  TF_RETURN_IF_ERROR(colocation_graph_tmp.Initialize());
   // For each node, assign a device based on the constraints in the disjoint
   // node set.
   std::vector<Node*> second_pass;
+
+  // for device opt
+  std::vector<Node*> third_pass;
+  bool on_same_device = true;
+  std::string device_name = "";
+
   for (Node* node : graph_->op_nodes()) {
     // The graph may have come pre-populated by the framework with assigned
     // devices (e.g., for stateful placements), so the placer should not try to
@@ -181,6 +199,7 @@ Status Placer::Run() {
     // Provide the default, if necessary.
     if (assigned_device == -1) {
       assigned_device = graph_->InternDeviceName((*devices)[0]->name());
+      third_pass.push_back(node);
     }
 
     TF_RETURN_IF_ERROR(AssignAndLog(assigned_device, node, &colocation_graph,
@@ -215,16 +234,54 @@ Status Placer::Run() {
       if (consumers_on_same_device &&
           CanAssignToDevice(output->assigned_device_name(), *devices)) {
         assigned_device = output_device_name;
+        if (allow_device_opt_) {
+          if (output->assigned_device_name().find("GPU") != std::string::npos) {
+            if(device_name.size() == 0) {
+              device_name = output->assigned_device_name();
+            } else if(device_name != output->assigned_device_name()) {
+              on_same_device = false;
+            }
+          }
+        }
       }
     }
 
     // Provide the default, if necessary.
     if (assigned_device == -1) {
       assigned_device = graph_->InternDeviceName((*devices)[0]->name());
+      if (allow_device_opt_) {
+        auto first_dev = (*devices)[0]->name();
+        if (first_dev.find("GPU") != std::string::npos) {
+          if(device_name.size() == 0) {
+            device_name = first_dev;
+          } else if(device_name != first_dev) {
+            on_same_device = false;
+          }
+        }
+      }
     }
 
     TF_RETURN_IF_ERROR(AssignAndLog(assigned_device, node, &colocation_graph,
                                     log_device_placement_));
+  }
+
+  if (allow_device_opt_ && device_name.size() > 0 && on_same_device) {
+    for (Node* node : third_pass) {
+      const std::vector<Device*>* devices;
+      Status status = colocation_graph_tmp.GetDevicesForNode(node, &devices);
+      if (!status.ok()) {
+        return AttachDef(
+            errors::InvalidArgument("Cannot assign a device for operation ",
+              node->name(), ": ", status.error_message()),
+            *node);
+      }
+
+      if (CanAssignToDevice(device_name, *devices)) {
+        int assigned_device = graph_->InternDeviceName(device_name);
+        TF_RETURN_IF_ERROR(AssignAndLog(assigned_device, node, &colocation_graph_tmp,
+              log_device_placement_));
+      } 
+    }
   }
 
   if (VLOG_IS_ON(3)) {
