@@ -1942,4 +1942,5 @@ DirectSession::Callable::~Callable() {
   function_info.reset();
 }
 
+mutex BlazeConfSingleton::mu_;
 }  // namespace tensorflow

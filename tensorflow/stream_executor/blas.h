@@ -1083,8 +1083,25 @@ class BlasSupport {
   // The batched GEMM computes matrix product for each input/output in a, b,
   // and c, which contain batch_count DeviceMemory objects.
   virtual bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<Eigen::half> ctx) = 0;
+  virtual bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
+                                 blas::Transpose transb, uint64 m, uint64 n,
+                                 uint64 k, float alpha, const Eigen::half **a,
+                                 int lda, const Eigen::half **b, int ldb,
+                                 float beta, Eigen::half **c, int ldc,
+                                 int batch_count) = 0;  
   virtual bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<float> ctx) = 0;
+  virtual bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
+                                 blas::Transpose transb, uint64 m, uint64 n,
+                                 uint64 k, float alpha, const float **a,
+                                 int lda, const float **b, int ldb, float beta,
+                                 float **c, int ldc, int batch_count) = 0;
   virtual bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<double> ctx) = 0;
+  virtual bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
+                                 blas::Transpose transb, uint64 m, uint64 n,
+                                 uint64 k, double alpha, const double **a,
+                                 int lda, const double **b, int ldb,
+                                 double beta, double **c, int ldc,
+                                 int batch_count) = 0;  
   virtual bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<std::complex<float> > ctx) = 0;
   virtual bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<std::complex<double> > ctx) = 0;
   // Computes a matrix-matrix product where one input matrix is Hermitian:
@@ -1814,6 +1831,21 @@ class BlasSupport {
   bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<double> ctx) override; \
   bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<std::complex<float> > ctx) override; \
   bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<std::complex<double> > ctx) override; \
+  bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,               \
+                         blas::Transpose transb, uint64 m, uint64 n, uint64 k, \
+                         float alpha, const Eigen::half **a, int lda,          \
+                         const Eigen::half **b, int ldb, float beta,           \
+                         Eigen::half **c, int ldc, int batch_count) override;  \
+  bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,               \
+                         blas::Transpose transb, uint64 m, uint64 n, uint64 k, \
+                         float alpha, const float **a, int lda,                \
+                         const float **b, int ldb, float beta, float **c,      \
+                         int ldc, int batch_count) override;                   \
+  bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,               \
+                         blas::Transpose transb, uint64 m, uint64 n, uint64 k, \
+                         double alpha, const double **a, int lda,              \
+                         const double **b, int ldb, double beta, double **c,   \
+                         int ldc, int batch_count) override;                   \
   bool DoBlasHemm(Stream *stream, blas::Side side, blas::UpperLower uplo,      \
                   uint64 m, uint64 n, std::complex<float> alpha,               \
                   const DeviceMemory<std::complex<float>> &a, int lda,         \

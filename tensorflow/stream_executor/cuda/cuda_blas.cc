@@ -2525,6 +2525,86 @@ port::Status CUDABlas::DoBlasGemmBatchedInternal(
   }
 }
 
+template <typename T, typename Scalar, typename FuncT>
+port::Status CUDABlas::DoBlasGemmBatchedInternal(
+    FuncT cublas_func, Stream *stream, blas::Transpose transa,
+    blas::Transpose transb, uint64 m, uint64 n, uint64 k, Scalar alpha,
+    const T **a_array, int lda, const T **b_array, int ldb, Scalar beta,
+    T **c_array, int ldc, int batch_count) {
+  cudaDataType_t data_type = CUDADataType<T>::type;
+  const void *const *a_void_ptrs =
+      reinterpret_cast<const void *const *>(a_array);
+  const void *const *b_void_ptrs =
+      reinterpret_cast<const void *const *>(b_array);
+  void *const *c_void_ptrs = reinterpret_cast<void *const *>(c_array);
+#if CUDA_VERSION >= 9010
+  int cc_major, cc_minor;
+  if (stream->parent()->GetDeviceDescription().cuda_compute_capability(
+          &cc_major, &cc_minor) &&
+      cc_major >= 5) {
+    cublasMath_t math_type;
+    cublasGemmAlgo_t algo;
+    if (data_type == CUDA_R_16F) {
+#if CUDA_VERSION < 11000
+      math_type = CUBLAS_TENSOR_OP_MATH;
+#else
+      math_type = CUBLAS_DEFAULT_MATH;
+#endif
+      algo = CUBLAS_GEMM_DFALT_TENSOR_OP;
+#if CUBLAS_VER_MAJOR >= 11
+    } else if (data_type == CUDA_R_32F) {
+      // DoBlassInternalImpl will switch math_type back to CUBLAS_DEFAULT_MATH
+      // if TensorFloat-32 is disabled.
+      math_type = CUBLAS_TF32_TENSOR_OP_MATH;
+      algo = tensorflow::tensor_float_32_execution_enabled()
+                 ? CUBLAS_GEMM_DFALT_TENSOR_OP
+                 : CUBLAS_GEMM_DFALT;
+#endif
+    } else {
+      math_type = CUBLAS_DEFAULT_MATH;
+      algo = CUBLAS_GEMM_DFALT;
+    }
+    cudaDataType_t compute_type =
+        (data_type == CUDA_R_16F ? CUDA_R_32F : data_type);
+    bool ok;
+    cublasStatus_t (*gemm)(cublasHandle_t, cublasOperation_t, cublasOperation_t,
+                           int, int, int, const void *, const void *const[],
+                           cudaDataType, int, const void *const[], cudaDataType,
+                           int, const void *, void *const[], cudaDataType, int,
+                           int, cudaDataType, cublasGemmAlgo_t) =
+        cublasGemmBatchedEx;
+    ok = DoBlasInternalImpl(
+        gemm, stream, true /* = pointer_mode_host */,
+        true /* = err_on_failure */, math_type, CUDABlasTranspose(transa),
+        CUDABlasTranspose(transb), m, n, k, &alpha, a_void_ptrs, data_type, lda,
+        b_void_ptrs, data_type, ldb, &beta, c_void_ptrs, data_type, ldc,
+        batch_count, compute_type, algo);
+    if (ok) {
+      return port::Status::OK();
+    }
+    return port::Status(port::error::INTERNAL,
+                        "failed BLAS call, see log for details");
+  }
+#endif
+  // either CUDA_VERSION < 9.1 or SM < 5.0
+  //  if (data_type != CUDA_R_16F) {
+  //    bool ok =
+  //        DoBlasInternal(cublas_func, stream, true /* = pointer_mode_host */,
+  //                       CUDABlasTranspose(transa), CUDABlasTranspose(transb),
+  //                       m, n, k, GpuComplex(&alpha), a_void_ptrs, lda,
+  //                       b_void_ptrs, ldb, GpuComplex(&beta), c_void_ptrs,
+  //                       ldc, batch_count);
+  //    if (ok) {
+  //      return port::Status::OK();
+  //    }
+  //    return port::Status(port::error::INTERNAL,
+  //                        "failed BLAS call, see log for details");
+  //  } else {
+  return port::Status(port::error::INTERNAL,
+                      "CUDA_VERSION < 9.1 or SM < 5.0 not support.");
+  //  }
+}
+
 bool CUDABlas::DoBlasGemmBatched(
     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
     uint64 n, uint64 k, float alpha,
@@ -2553,6 +2633,52 @@ bool CUDABlas::DoBlasGemmBatched(
   port::Status status = DoBlasGemmBatchedInternal(
       cublasSgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
+  if (!status.ok()) {
+    LOG(ERROR) << status;
+  }
+  return status.ok();
+}
+
+bool CUDABlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
+                                 blas::Transpose transb, uint64 m, uint64 n,
+                                 uint64 k, float alpha,
+                                 const Eigen::half **a_array, int lda,
+                                 const Eigen::half **b_array, int ldb,
+                                 float beta, Eigen::half **c_array, int ldc,
+                                 int batch_count) {
+  port::Status status = DoBlasGemmBatchedInternal(
+      cublasSgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
+      b_array, ldb, beta, c_array, ldc, batch_count);
+  if (!status.ok()) {
+    LOG(ERROR) << status;
+  }
+  return status.ok();
+}
+
+bool CUDABlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
+                                 blas::Transpose transb, uint64 m, uint64 n,
+                                 uint64 k, float alpha, const float **a_array,
+                                 int lda, const float **b_array, int ldb,
+                                 float beta, float **c_array, int ldc,
+                                 int batch_count) {
+  port::Status status = DoBlasGemmBatchedInternal(
+      cublasSgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
+      b_array, ldb, beta, c_array, ldc, batch_count);
+  if (!status.ok()) {
+    LOG(ERROR) << status;
+  }
+  return status.ok();
+}
+
+bool CUDABlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
+                                 blas::Transpose transb, uint64 m, uint64 n,
+                                 uint64 k, double alpha, const double **a_array,
+                                 int lda, const double **b_array, int ldb,
+                                 double beta, double **c_array, int ldc,
+                                 int batch_count) {
+  port::Status status = DoBlasGemmBatchedInternal(
+      cublasDgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
+      b_array, ldb, beta, c_array, ldc, batch_count);
   if (!status.ok()) {
     LOG(ERROR) << status;
   }

@@ -584,6 +584,9 @@ class StreamExecutor {
   // Wait for the specified event at the end of the specified stream.
   port::Status WaitForEvent(Stream *stream, Event *event);
 
+  // Block current host thread and wait for an event to complete
+  port::Status SynchronizeEvent(Event *event);
+
   // Requests the current status of the event from the underlying platform.
   Event::Status PollForEventStatus(Event *event);
 

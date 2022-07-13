@@ -247,6 +247,7 @@ class StreamExecutorInterface {
   virtual port::Status DeallocateEvent(Event *event) = 0;
   virtual port::Status RecordEvent(Stream *stream, Event *event) = 0;
   virtual port::Status WaitForEvent(Stream *stream, Event *event) = 0;
+  virtual port::Status SynchronizeEvent(Event *event) = 0;
   virtual Event::Status PollForEventStatus(Event *event) = 0;
   virtual bool AllocateStream(Stream *stream) = 0;
   virtual void DeallocateStream(Stream *stream) = 0;

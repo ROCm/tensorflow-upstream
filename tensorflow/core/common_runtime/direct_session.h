@@ -425,6 +425,39 @@ class DirectSession : public Session {
   friend class DebugGateway;
 };
 
+class BlazeConfSingleton {
+ public:
+  static BlazeConfSingleton* GetInstance() {
+    mutex_lock l(mu_);
+    static BlazeConfSingleton* sig = new BlazeConfSingleton;
+    return sig;
+  }
+
+  void Set(const ConfigProto& tf_options) {
+    mutex_lock l(mu_);
+    if (!setted_) {
+      run_config_ = tf_options;
+      setted_ = true;
+      VLOG(0) << "Blaze will use globla_opts : " << run_config_.DebugString();
+    }
+  }
+
+  const ConfigProto& GetConfig() {
+    return run_config_;
+  }
+
+  bool Setted() {
+    return setted_;
+  }
+
+ private:
+  BlazeConfSingleton() {};
+
+ private:
+  static mutex mu_;
+  bool setted_ = false;;
+  ConfigProto run_config_;
+};
 }  // end namespace tensorflow
 
 #endif  // TENSORFLOW_CORE_COMMON_RUNTIME_DIRECT_SESSION_H_

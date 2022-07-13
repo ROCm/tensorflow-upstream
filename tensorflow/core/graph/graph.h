@@ -183,6 +183,8 @@ class Node {
   // Is this node a function output
   bool IsRetval() const { return class_ == NC_RETVAL; }
 
+  bool IsBlaze() const { return class_ == NC_BLAZE; }
+
   template <typename T>
   void AddAttr(const string& name, const T& val) {
     SetAttrValue(val, AddAttrHelper(name));
@@ -273,7 +275,8 @@ class Node {
     NC_WHILE,
     NC_ARG,
     NC_RETVAL,
-    NC_OTHER  // Not a special kind of node
+    NC_OTHER,  // Not a special kind of node
+    NC_BLAZE
   };
 
   static const std::unordered_map<string, NodeClass>& kNodeClassTable;
@@ -778,6 +781,7 @@ inline bool IsScopedAllocator(const Node* n) { return n->IsScopedAllocator(); }
 inline bool IsHostMemoryPreserving(const Node* node) {
   return IsIdentity(node) || IsControlFlow(node);
 }
+inline bool IsBlaze(const Node* node) { return node->IsBlaze(); }
 
 // NOTE: We declare Reference type of NodeIter and NeighborIter as Node* (see
 // https://en.cppreference.com/w/cpp/iterator/iterator).

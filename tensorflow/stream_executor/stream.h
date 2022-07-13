@@ -225,6 +225,8 @@ class Stream {
   // must extend past the point at which it is marked complete!
   Stream &ThenRecordEvent(Event *event);
 
+  Stream &ThenSynchronizeEvent(Event *event);
+
   ////////////////
   // DNN support
   //
@@ -1345,6 +1347,24 @@ class Stream {
   Stream &ThenBlasGemmBatched(blas::BatchedGemmCallContext<std::complex<float> > ctx);
   Stream &ThenBlasGemmBatched(blas::BatchedGemmCallContext<std::complex<double> > ctx);
 
+  Stream& ThenBlasGemmBatched(blas::Transpose transa, blas::Transpose transb,
+                              uint64 m, uint64 n, uint64 k, float alpha,
+                              const Eigen::half** a, int lda,
+                              const Eigen::half** b, int ldb, float beta,
+                              Eigen::half** c, int ldc, int batch_count);
+
+  Stream& ThenBlasGemmBatched(blas::Transpose transa, blas::Transpose transb,
+                              uint64 m, uint64 n, uint64 k, float alpha,
+                              const float** a, int lda, const float** b,
+                              int ldb, float beta, float** c, int ldc,
+                              int batch_count);
+
+  Stream& ThenBlasGemmBatched(blas::Transpose transa, blas::Transpose transb,
+                              uint64 m, uint64 n, uint64 k, double alpha,
+                              const double** a, int lda, const double** b,
+                              int ldb, double beta, double** c, int ldc,
+                              int batch_count);
+                              
   // See BlasSupport::DoBlasHemm.
   Stream &ThenBlasHemm(blas::Side side, blas::UpperLower uplo, uint64 m,
                        uint64 n, std::complex<float> alpha,

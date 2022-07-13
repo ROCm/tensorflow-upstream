@@ -111,6 +111,13 @@ class CUDABlas : public blas::BlasSupport {
       const port::ArraySlice<DeviceMemory<T> *> &c_array, int ldc,
       int batch_count, ScratchAllocator *scratch_allocator);
 
+  template <typename T, typename Scalar, typename FuncT>
+  port::Status DoBlasGemmBatchedInternal(
+      FuncT cublas_func, Stream* stream, blas::Transpose transa,
+      blas::Transpose transb, uint64 m, uint64 n, uint64 k, Scalar alpha,
+      const T** a_array, int lda, const T** b_array, int ldb, Scalar beta,
+      T** c_array, int ldc, int batch_count);
+
   // Helper function for implementing DoBlasGemmWithAlgorithm.
   template <typename InT, typename OutT, typename CompT>
   bool DoBlasGemmWithAlgorithmImpl(

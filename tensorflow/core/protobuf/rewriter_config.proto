@@ -88,6 +88,8 @@ message RewriterConfig {
   // Note that this can change the numerical stability of the graph and may
   // require the use of loss scaling to maintain model convergence.
   Toggle auto_mixed_precision = 23;
+  // Gemm optimizations (default is ON).
+  Toggle gemm_optimization = 24;
   // Disable the entire meta optimizer (off by default).
   bool disable_meta_optimizer = 19;
 
