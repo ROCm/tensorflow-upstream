@@ -167,4 +167,25 @@ REGISTER_OP("_ArrayToList")
 Converts an array of tensors to a list of tensors.
 )doc");
 
+REGISTER_OP("BlazeGeneralMap")
+    .Input("key: Tin")
+    .Output("output: Tout")
+    .Attr("Tin: {int32, int64} = DT_INT64")
+    .Attr("Tout:{int32, int64} = DT_INT32")
+    .Attr("keys: list(string) >= 0")
+    .Attr("values: list(string) >= 0")
+    .Attr("default_val: int >= 0")
+    .SetShapeFn(shape_inference::UnchangedShape);
+
+REGISTER_OP("BlazeXlaOp")
+    .Attr("InT: list({int8,int64,float16,float32,int32})")
+    .Attr("OutT: list({int8,int64,float16,float32,int32})")
+    .Attr("input_names: list(string) >= 0")
+    .Attr("output_names: list(string) >= 0")
+    .Attr("graph_def: string")
+    .Attr("blaze_option_path: string")
+    .Input("in_tensor: InT")
+    .Output("out_tensor: OutT")
+    .SetShapeFn(shape_inference::UnknownShape);
+
 }  // namespace tensorflow

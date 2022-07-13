@@ -133,8 +133,7 @@ class BaseGPUDevice : public LocalDevice {
   se::StreamExecutor* executor_;  // not owned
   std::unique_ptr<ScopedAllocatorMgr> scoped_allocator_mgr_;
 
- private:
-  friend class GPUDeviceTestHelper;
+ public:
   struct StreamGroup {
     se::Stream* compute = nullptr;
 #if TENSORFLOW_USE_ROCM
@@ -144,8 +143,9 @@ class BaseGPUDevice : public LocalDevice {
     se::Stream* device_to_host = nullptr;
     gtl::InlinedVector<se::Stream*, 4> device_to_device;
   };
-  class StreamGroupFactory;
 
+ private:
+  friend class GPUDeviceTestHelper;
   gtl::InlinedVector<StreamGroup*, 4> streams_;
   mutex scratch_init_mutex_;
   gtl::InlinedVector<char*, 4> scratch_;
@@ -379,6 +379,95 @@ class BaseGPUDeviceFactory : public DeviceFactory {
   // visible_gpu_initialized_[platform_gpu_id] is true if visible GPU
   // platform_gpu_id has been initialized by the process.
   std::unordered_map<int, bool> visible_gpu_initialized_;
+};
+
+// This factory helps to ensure that different GPU device objects that refer to
+// the same physical device and stream group id use the same stream group
+// object (and therefore the same CUDA streams). This is necessary since there
+// is a single memory allocator per device (see ProcessState::GetGPUAllocator)
+// and allocators must not be shared across streams.
+class StreamGroupFactory {
+ public:
+  // Returns the unique stream group for use with the stream defined by
+  // {tf_gpu_id, stream_group_within_gpu}, creating it if it does not yet
+  // exist.
+  // This function is thread safe.
+  BaseGPUDevice::StreamGroup* GetOrCreate(TfGpuId tf_gpu_id,
+                                          int stream_group_within_gpu,
+                                          se::StreamExecutor* executor,
+                                          const GPUOptions& options) {
+    mutex_lock guard(lock_);
+    BaseGPUDevice::StreamGroup* group =
+        &streams_[key_type(tf_gpu_id.value(), stream_group_within_gpu)];
+    if (!group->compute) {
+      group->compute = new se::Stream(executor);
+      group->compute->Init();
+      VLOG(2) << "Created stream[" << stream_group_within_gpu
+              << "] = " << group->compute;
+
+#if TENSORFLOW_USE_ROCM
+      // ROCm streams are lightweight and will not necessarily trigger device
+      // queue init until they are first used. For optimal performance,
+      // compute and nccl streams must be immediate siblings.
+      group->nccl = new se::Stream(executor);
+      group->nccl->Init();
+      VLOG(2) << "Created nccl_stream[" << stream_group_within_gpu
+              << "] = " << group->nccl;
+
+      // ROCm streams are lightweight and will not necessarily trigger device
+      // queue init until they are first used. For optimal performance,
+      // compute and nccl streams must be immediate siblings.
+      // Force underlying resource creation now.
+      group->compute->ThenWaitFor(group->nccl);
+      group->nccl->ThenWaitFor(group->compute);
+#endif
+
+      group->host_to_device = new se::Stream(executor);
+      group->host_to_device->Init();
+      VLOG(2) << "Created host_to_device_stream[" << stream_group_within_gpu
+              << "] = " << group->host_to_device;
+
+      group->device_to_host = new se::Stream(executor);
+      group->device_to_host->Init();
+      VLOG(2) << "Created device_to_host_stream[" << stream_group_within_gpu
+              << "] = " << group->device_to_host;
+
+      int num_d2d_streams =
+          options.experimental().num_dev_to_dev_copy_streams();
+      if (num_d2d_streams == 0) num_d2d_streams = 1;
+      if (num_d2d_streams < 1 || num_d2d_streams > 4) {
+        LOG(ERROR)
+            << "Illegal GPUOptions.experimental.num_dev_to_dev_copy_streams="
+            << num_d2d_streams << " set to 1 instead.";
+        num_d2d_streams = 1;
+      }
+      for (int i = 0; i < num_d2d_streams; ++i) {
+        se::Stream* stream = new se::Stream(executor);
+        stream->Init();
+        group->device_to_device.push_back(stream);
+        VLOG(2) << "Created device_to_device_stream[" << stream_group_within_gpu
+                << "] = " << group->device_to_device.back();
+      }
+    }
+    return group;
+  }
+
+  // Returns a reference to the StreamGroupFactory singleton. Note that this is
+  // never destroyed, so the objects it owns are never deleted.
+  static StreamGroupFactory& Global() {
+    static StreamGroupFactory* instance = new StreamGroupFactory();
+    return *instance;
+  }
+
+ private:
+  mutex lock_;
+  using key_type = std::tuple<int, int>;
+  std::map<key_type, BaseGPUDevice::StreamGroup> streams_;
+
+  // StreamGroupFactory cannot be created directly; Call
+  // StreamGroupFactory::Global() to get the global instance.
+  StreamGroupFactory() = default;
+  TF_DISALLOW_COPY_AND_ASSIGN(StreamGroupFactory);
 };
 
 }  // namespace tensorflow

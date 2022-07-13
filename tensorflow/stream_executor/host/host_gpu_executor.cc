@@ -219,6 +219,11 @@ port::Status HostExecutor::WaitForEvent(Stream *stream, Event *event) {
   return port::Status::OK();
 }
 
+port::Status HostExecutor::SynchronizeEvent(Event *event) {
+  // Not impl
+  return port::Status::OK();
+}
+
 Event::Status HostExecutor::PollForEventStatus(Event *event) {
   absl::Notification &notification = *AsHostEvent(event)->notification();
   return notification.HasBeenNotified() ? Event::Status::kComplete

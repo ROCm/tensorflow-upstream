@@ -726,6 +726,10 @@ port::Status StreamExecutor::WaitForEvent(Stream *stream, Event *event) {
   return implementation_->WaitForEvent(stream, event);
 }
 
+port::Status StreamExecutor::SynchronizeEvent(Event *event) {
+  return implementation_->SynchronizeEvent(event);
+}
+
 Event::Status StreamExecutor::PollForEventStatus(Event *event) {
   return implementation_->PollForEventStatus(event);
 }

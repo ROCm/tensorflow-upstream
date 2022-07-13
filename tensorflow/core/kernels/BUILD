@@ -3693,6 +3693,8 @@ cc_library(
         ":cwise_op",
         ":fft_ops",
         ":histogram_op",
+        ":co_action_op",
+        ":indicator_matmul_op",
         ":matmul_op",
         ":nextafter_op",
         ":population_count_op",
@@ -4923,6 +4925,8 @@ tf_cc_test(
 cc_library(
     name = "sparse",
     deps = [
+        ":blaze_general_map",
+        ":blaze_xla_op",
         ":deserialize_sparse_string_op",
         ":deserialize_sparse_variant_op",
         ":serialize_sparse_op",
@@ -8050,4 +8054,79 @@ tf_cc_shared_object(
         ":kernel_platform_strings",
         "//tensorflow/core:all_kernels_impl",
     ],
+)
+
+tf_kernel_library(
+    name = "co_action_op",
+    hdrs = ["co_action_op.h"],
+    srcs = ["co_action_op.cc"],
+    gpu_srcs = [
+      "co_action_op.h",
+      "co_action_op_gpu.cu.cc",
+    ],
+    deps = MATH_DEPS,
+)
+
+tf_kernel_library(
+    name = "indicator_matmul_op",
+    hdrs = ["indicator_matmul_op.h"],
+    srcs = ["indicator_matmul_op.cc"],
+    gpu_srcs = [
+      "indicator_matmul_op.h",
+      "indicator_matmul_op_gpu.cu.cc",
+    ],
+    deps = MATH_DEPS,
+)
+
+tf_kernel_library(
+    name = "blaze_general_map",
+    prefix = "blaze_general_map",
+    deps = PARSING_DEPS,
+)
+
+tf_kernel_library(
+    name = "blaze_xla_op",
+    srcs = [
+        "blaze_xla_kernel.cc",
+    ],
+    copts = tf_copts(),
+    deps = [
+        "//tensorflow/core/kernels:blaze_predictor",
+    ],
+)
+
+blaze_deps = [
+    "@com_google_absl//absl/memory",
+    "@com_google_absl//absl/strings",
+    "//tensorflow/core:core_cpu_lib_no_ops",
+    "//tensorflow/core:direct_session",
+    "//tensorflow/core:framework",
+    "//tensorflow/core:gpu_headers_lib",
+    "//tensorflow/core:proto_text",
+    "//tensorflow/core:lib",
+    "//tensorflow/core:lib_internal",
+    "//tensorflow/core:lib_proto_parsing",
+    "//tensorflow/core:gpu_runtime",
+    "//tensorflow/core:stream_executor",
+    "//tensorflow/core:stream_executor_headers_lib",
+    "//tensorflow/core/grappler/costs:graph_properties",
+    "//tensorflow/core/kernels:gpu_utils",
+    "//tensorflow/stream_executor/lib",
+    "//tensorflow/core/kernels/data:captured_function",
+    "//tensorflow/compiler/jit:flags",
+]
+
+cc_library(
+    name = "blaze_predictor",
+    srcs = [
+        "blaze_predictor.cc",
+        "blaze_xla_predictor.cc",
+    ],
+    hdrs = [
+        "blaze_predictor.h",
+        "blaze_xla_predictor.h",
+    ],
+    copts = tf_copts(),
+    deps = blaze_deps,
+    alwayslink = 1,
 )

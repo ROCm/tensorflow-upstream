@@ -224,6 +224,8 @@ class Stream {
   // must extend past the point at which it is marked complete!
   Stream &ThenRecordEvent(Event *event);
 
+  Stream &ThenSynchronizeEvent(Event *event);
+
   ////////////////
   // DNN support
   //
@@ -1425,6 +1427,11 @@ class Stream {
       const port::ArraySlice<DeviceMemory<Eigen::half> *> &b, int ldb,
       float beta, const port::ArraySlice<DeviceMemory<Eigen::half> *> &c,
       int ldc, int batch_count);
+  Stream& ThenBlasGemmBatched(blas::Transpose transa, blas::Transpose transb,
+                              uint64 m, uint64 n, uint64 k, float alpha,
+                              const Eigen::half** a, int lda,
+                              const Eigen::half** b, int ldb, float beta,
+                              Eigen::half** c, int ldc, int batch_count);
   Stream &ThenBlasGemmBatched(blas::Transpose transa, blas::Transpose transb,
                               uint64 m, uint64 n, uint64 k, float alpha,
                               const port::ArraySlice<DeviceMemory<float> *> &a,
@@ -1433,6 +1440,11 @@ class Stream {
                               int ldb, float beta,
                               const port::ArraySlice<DeviceMemory<float> *> &c,
                               int ldc, int batch_count);
+  Stream& ThenBlasGemmBatched(blas::Transpose transa, blas::Transpose transb,
+                              uint64 m, uint64 n, uint64 k, float alpha,
+                              const float** a, int lda, const float** b,
+                              int ldb, float beta, float** c, int ldc,
+                              int batch_count);
   Stream &ThenBlasGemmBatched(blas::Transpose transa, blas::Transpose transb,
                               uint64 m, uint64 n, uint64 k, double alpha,
                               const port::ArraySlice<DeviceMemory<double> *> &a,
@@ -1441,6 +1453,11 @@ class Stream {
                               int ldb, double beta,
                               const port::ArraySlice<DeviceMemory<double> *> &c,
                               int ldc, int batch_count);
+  Stream& ThenBlasGemmBatched(blas::Transpose transa, blas::Transpose transb,
+                              uint64 m, uint64 n, uint64 k, double alpha,
+                              const double** a, int lda, const double** b,
+                              int ldb, double beta, double** c, int ldc,
+                              int batch_count);
   Stream &ThenBlasGemmBatched(
       blas::Transpose transa, blas::Transpose transb, uint64 m, uint64 n,
       uint64 k, std::complex<float> alpha,

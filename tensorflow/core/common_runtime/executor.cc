@@ -843,6 +843,10 @@ Status InferAllocAttr(const Node* n, const Node* dst,
               << " remote type " << parsed_dst_name.type;
     }
   }
+  if (IsBlaze(dst)) {
+    attr->set_gpu_compatible(true);
+    VLOG(2) << "node " << n->name() << " is the source of a cpu->gpu copy";
+  }
   if (n->IsCollective()) {
     // We'll make the sweeping assumption that any collective op is going
     // to be involved in network i/o.

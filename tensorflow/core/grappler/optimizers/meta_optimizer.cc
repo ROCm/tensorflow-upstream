@@ -32,6 +32,7 @@ limitations under the License.
 #include "tensorflow/core/grappler/optimizers/debug_stripper.h"
 #include "tensorflow/core/grappler/optimizers/dependency_optimizer.h"
 #include "tensorflow/core/grappler/optimizers/function_optimizer.h"
+#include "tensorflow/core/grappler/optimizers/gemm_optimizer.h"
 #include "tensorflow/core/grappler/optimizers/generic_layout_optimizer.h"
 #include "tensorflow/core/grappler/optimizers/implementation_selector.h"
 #include "tensorflow/core/grappler/optimizers/loop_optimizer.h"
@@ -139,6 +140,7 @@ std::unique_ptr<GraphOptimizer> MetaOptimizer::MakeNewOptimizer(
   MK_OPT("shape", new ShapeOptimizer());
   MK_OPT("remap", new Remapper(cfg_.remapping()));
   MK_OPT("layout", new GenericLayoutOptimizer());
+  MK_OPT("gemm", new GemmOptimizer());
   MK_OPT("auto_mixed_precision",
          new AutoMixedPrecision(cfg_.auto_mixed_precision()));
   MK_OPT("memory", new MemoryOptimizer(RewriterConfig::MANUAL));
@@ -208,6 +210,9 @@ Status MetaOptimizer::InitializeOptimizers(
   if (cfg_.dependency_optimization() != RewriterConfig::OFF) {
     optimizers->push_back(
         MakeUnique<DependencyOptimizer>(cfg_.dependency_optimization()));
+  }
+  if (cfg_.gemm_optimization() == RewriterConfig::ON) {
+    optimizers->push_back(MakeUnique<GemmOptimizer>());
   }
   if (AutoMixedPrecisionEnabled(cfg_.auto_mixed_precision())) {
     optimizers->push_back(
@@ -814,6 +819,7 @@ bool MetaOptimizerEnabled(const ConfigProto& cfg) {
          rewrite_cfg.debug_stripper() == RewriterConfig::ON ||
          rewrite_cfg.scoped_allocator_optimization() == RewriterConfig::ON ||
          rewrite_cfg.pin_to_host_optimization() == RewriterConfig::ON ||
+         rewrite_cfg.gemm_optimization() != RewriterConfig::OFF ||
          AutoMixedPrecisionEnabled(rewrite_cfg.auto_mixed_precision()) ||
          !rewrite_cfg.optimizers().empty() ||
          !rewrite_cfg.custom_optimizers().empty();

@@ -110,6 +110,7 @@ class HostExecutor : public internal::StreamExecutorInterface {
   port::Status DeallocateEvent(Event *event) override;
   port::Status RecordEvent(Stream *stream, Event *event) override;
   port::Status WaitForEvent(Stream *stream, Event *event) override;
+  port::Status SynchronizeEvent(Event *event) override;
   Event::Status PollForEventStatus(Event *event) override;
 
   bool AllocateStream(Stream *stream) override;

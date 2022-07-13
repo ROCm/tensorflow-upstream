@@ -177,6 +177,8 @@ class GpuExecutor : public internal::StreamExecutorInterface {
 
   port::Status WaitForEvent(Stream* stream, Event* event) override;
 
+  port::Status SynchronizeEvent(Event* event) override;
+
   Event::Status PollForEventStatus(Event* event) override;
 
   port::Status BlockHostUntilDone(Stream* stream) override;
