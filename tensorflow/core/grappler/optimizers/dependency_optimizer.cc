@@ -368,11 +368,11 @@ void DependencyOptimizer::OptimizeNode(int node_idx,
       return;
     }
 
-    VLOG(1) << "***** Rerouting input around\n" << node->DebugString();
+    VLOG(2) << "***** Rerouting input around\n" << node->DebugString();
     // Now remove the node and re-wire its inputs to its outputs.
     for (auto consumer : output_nodes) {
       bool updated_consumer = false;
-      VLOG(1) << "consumer before:\n" << consumer->DebugString();
+      VLOG(2) << "consumer before:\n" << consumer->DebugString();
       // Remove dependency on node from consumer.
       for (int i = 0; i < num_inputs; ++i) {
         const NodeDef* input = input_nodes[i];
@@ -419,7 +419,7 @@ void DependencyOptimizer::OptimizeNode(int node_idx,
       if (updated_consumer) {
         nodes_to_simplify->PushBack(node_to_idx_[consumer]);
       }
-      VLOG(1) << "consumer after:\n" << consumer->DebugString();
+      VLOG(2) << "consumer after:\n" << consumer->DebugString();
     }
     node_map_->RemoveOutputs(node_name);
     if (fetch_nodes_known_ &&
