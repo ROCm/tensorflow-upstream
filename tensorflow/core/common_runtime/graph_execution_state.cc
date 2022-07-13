@@ -614,7 +614,8 @@ Status GraphExecutionState::InitBaseGraph(std::unique_ptr<Graph>&& new_graph) {
                 session_options_ == nullptr ||
                     session_options_->config.allow_soft_placement(),
                 session_options_ != nullptr &&
-                    session_options_->config.log_device_placement());
+                    session_options_->config.log_device_placement(),
+                    session_options_->config.enable_graph_opt_place());
   // TODO(mrry): Consider making the Placer cancelable.
   TF_RETURN_IF_ERROR(placer.Run());
 
