@@ -125,8 +125,8 @@ class Platform {
   virtual int VisibleDeviceCount() const = 0;
 
   // For CUDA, return the number of tf virtual GPUs.
-  virtual int VirtualDeviceCount() const;
-  virtual port::Status SetVirtualDeviceCount(int count);
+  virtual int VirtualDeviceCount(int physical_device_id) const;
+  virtual port::Status SetVirtualDeviceCount(int physical_device_id, int virtual_device_count);
 
   // Returns true iff the platform has been initialized.
   virtual bool Initialized() const;
