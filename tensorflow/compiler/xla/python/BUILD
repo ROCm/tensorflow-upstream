@@ -331,6 +331,7 @@ cc_library(
         "//tensorflow/compiler/xla/pjrt:transpose",
         "//tensorflow/compiler/xla/service:custom_call_status",
         "//tensorflow/compiler/xla/service:custom_call_target_registry",
+        "//tensorflow/compiler/xla/service:platform_util",
         "//tensorflow/core/platform:fingerprint",
         "//tensorflow/tsl/platform:statusor",
         "//tensorflow/tsl/profiler/lib:traceme",

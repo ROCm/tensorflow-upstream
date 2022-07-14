@@ -27,6 +27,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/statusor.h"
 #include "tensorflow/compiler/xla/stream_executor/multi_platform_manager.h"
 #include "tensorflow/compiler/xla/stream_executor/stream.h"
+#include "tensorflow/compiler/xla/service/platform_util.h"
 #include "tensorflow/compiler/xla/util.h"
 
 #if TENSORFLOW_USE_ROCM
@@ -43,6 +44,8 @@ static Status AssertOnGpu(void* stream_handle, void* buffer,
                           absl::string_view error_msg) {
   TF_ASSIGN_OR_RETURN(se::Platform * platform,
                       se::MultiPlatformManager::PlatformWithName(PLATFORM));
+
+  VLOG(1) << " RB: Platform Name= "  << PlatformUtil::GetDefaultPlatform().value()->Name();
   se::StreamExecutorConfig config;
   config.gpu_stream = stream_handle;
   TF_ASSIGN_OR_RETURN(se::StreamExecutor * executor,
@@ -78,11 +81,7 @@ static void AssertionCustomCall(void* stream_handle, void** buffers,
   }
 }
 
-#if TENSORFLOW_USE_ROCM
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(kXlaGpuAssertCustomCallTag,
-                                         AssertionCustomCall, "ROCM");
-#elif GOOGLE_CUDA
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(kXlaGpuAssertCustomCallTag,
-                                         AssertionCustomCall, "CUDA");
-#endif
+                                        AssertionCustomCall, PlatformUtil::CanonicalPlatformName("gpu").value());
+
 }  // namespace xla
