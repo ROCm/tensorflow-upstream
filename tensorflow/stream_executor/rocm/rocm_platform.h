@@ -61,8 +61,8 @@ class ROCmPlatform : public Platform {
 
   // Returns -1 as a sentinel on internal failure (and logs the error).
   int VisibleDeviceCount() const override;
-  int VisibleDeviceCount() const override;
-  port::Status SetVirtualDeviceCount(int count) override;
+  int VisibleDeviceCount(int physical_gpu_id) const override;
+  port::Status SetVirtualDeviceCount(int physical_gpu_id, int virtual_gpu_count) override;
 
   const string& Name() const override;
 
@@ -110,7 +110,7 @@ class ROCmPlatform : public Platform {
   // manager.
   int limit_numa_node_;
   // Num of GPU virtual devices
-  int virtual_device_count_;
+  std::map<int, int> virtual_device_count_;
   
   SE_DISALLOW_COPY_AND_ASSIGN(ROCmPlatform);
 };

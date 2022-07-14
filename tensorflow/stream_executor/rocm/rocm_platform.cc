@@ -28,10 +28,7 @@ namespace stream_executor {
 namespace gpu {
 
 ROCmPlatform::ROCmPlatform()
-    : name_("ROCM"),
-      min_numa_node_(0),
-      limit_numa_node_(0),
-      virtual_device_count_(-1) {}
+    : name_("ROCM"), min_numa_node_(0), limit_numa_node_(0) {}
 
 ROCmPlatform::~ROCmPlatform() {}
 
@@ -104,17 +101,34 @@ int ROCmPlatform::VisibleDeviceCount() const {
   return GpuDriver::GetDeviceCount();
 }
 
-int ROCmPlatform::VirtualDeviceCount() const {
-  if (virtual_device_count_ == -1) {
-    return VisibleDeviceCount();
+int ROCmPlatform::VirtualDeviceCount(int physical_gpu_id) const {
+  auto iter = virtual_device_count_.find(physical_gpu_id);
+  if (iter == virtual_device_count_.end()) {
+    return 1;
   } else {
-    return virtual_device_count_;
+    return iter->second;
   }
 }
 
-port::Status ROCmPlatform::SetVirtualDeviceCount(int count) {
-  virtual_device_count_ = count;
-  return port::Status::OK();
+port::Status ROCmPlatform::SetVirtualDeviceCount(int physical_gpu_id, int virtual_gpu_count) {
+  if (virtual_gpu_count < 1) {
+    return port::Status(
+        port::error::INVALID_ARGUMENT,
+        absl::StrFormat("virutal_gpu_count must >= 1, whereas the input is %d.", virtual_gpu_count));
+  }
+  auto iter = virtual_device_count_.find(physical_gpu_id);
+  if (iter != virtual_device_count_.end()) {
+    if (iter->second != virtual_gpu_count) {
+      return port::Status(
+          port::error::INVALID_ARGUMENT,
+          absl::StrFormat("virtual gpu settings for device %d are not consistent: %d vs %d.",
+                          physical_gpu_id, iter->second, virtual_gpu_count));
+    } else {
+      return port::Status::OK();
+    }
+  }
+
+  virtual_device_count_[physical_gpu_id] = virtual_gpu_count;  return port::Status::OK();
 }
 
 const string& ROCmPlatform::Name() const { return name_; }

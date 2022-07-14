@@ -66,10 +66,7 @@ const DeviceOptions GetDeviceOptionsFromEnv() {
 }  // namespace
 
 CudaPlatform::CudaPlatform()
-    : name_("CUDA"),
-      min_numa_node_(0),
-      limit_numa_node_(0),
-      virtual_device_count_(-1) {}
+    : name_("CUDA"), min_numa_node_(0), limit_numa_node_(0) {}
 
 CudaPlatform::~CudaPlatform() {}
 
@@ -141,16 +138,34 @@ int CudaPlatform::VisibleDeviceCount() const {
   return GpuDriver::GetDeviceCount();
 }
 
-int CudaPlatform::VirtualDeviceCount() const {
-  if (virtual_device_count_ == -1) {
-    return VisibleDeviceCount();
+int CudaPlatform::VirtualDeviceCount(int physical_gpu_id) const {
+  auto iter = virtual_device_count_.find(physical_gpu_id);
+  if (iter == virtual_device_count_.end()) {
+    return 1;
   } else {
-    return virtual_device_count_;
+    return iter->second;
   }
 }
 
-port::Status CudaPlatform::SetVirtualDeviceCount(int count) {
-  virtual_device_count_ = count;
+port::Status CudaPlatform::SetVirtualDeviceCount(int physical_gpu_id, int virtual_gpu_count) {
+  if (virtual_gpu_count < 1) {
+    return port::Status(
+        port::error::INVALID_ARGUMENT,
+        absl::StrFormat("virutal_gpu_count must >= 1, whereas the input is %d.", virtual_gpu_count));
+  }
+  auto iter = virtual_device_count_.find(physical_gpu_id);
+  if (iter != virtual_device_count_.end()) {
+    if (iter->second != virtual_gpu_count) {
+      return port::Status(
+          port::error::INVALID_ARGUMENT,
+          absl::StrFormat("virtual gpu settings for device %d are not consistent: %d vs %d.",
+                          physical_gpu_id, iter->second, virtual_gpu_count));
+    } else {
+      return port::Status::OK();
+    }
+  }
+
+  virtual_device_count_[physical_gpu_id] = virtual_gpu_count;
   return port::Status::OK();
 }
 

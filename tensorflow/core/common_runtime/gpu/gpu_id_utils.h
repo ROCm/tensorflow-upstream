@@ -39,12 +39,9 @@ class GpuIdUtil {
     return ExecutorForPlatformGpuId(GPUMachineManager(), platform_gpu_id);
   }
   static se::port::StatusOr<se::StreamExecutor*> ExecutorForTfGpuId(
-      se::Platform* gpu_manager, PlatformGpuId platform_gpu_id,
-      TfGpuId tf_gpu_id) {
-    const int virtual_gpus = gpu_manager->VirtualDeviceCount();
-    const int visible_gpus = gpu_manager->VisibleDeviceCount();
-    int temp = tf_gpu_id.value() % (virtual_gpus / visible_gpus);
-    return gpu_manager->ExecutorForDevice(platform_gpu_id.value(), temp);
+      se::Platform* gpu_manager, PlatformGpuId platform_gpu_id, TfGpuId tf_gpu_id) {
+    const int virtual_gpus = gpu_manager->VirtualDeviceCount(platform_gpu_id.value());
+    return gpu_manager->ExecutorForDevice(platform_gpu_id.value(), tf_gpu_id.value() % virtual_gpus);
   }
   static se::port::StatusOr<se::StreamExecutor*> ExecutorForTfGpuId(
       TfGpuId tf_gpu_id) {

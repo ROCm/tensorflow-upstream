@@ -1213,6 +1213,7 @@ Status BaseGPUDeviceFactory::CreateDevices(
   int next_tf_gpu_id = 0;
   std::vector<int64> memory_limit_bytes;
   for (int i = 0; i < num_gpus_to_use; ++i) {
+    int next_tf_gpu_id_per_device = 0;
     const PlatformGpuId platform_gpu_id = valid_platform_gpu_ids[i];
     if (virtual_devices.empty() ||
         virtual_devices.Get(i).memory_limit_mb_size() == 0) {
@@ -1230,12 +1231,13 @@ Status BaseGPUDeviceFactory::CreateDevices(
     while (next_tf_gpu_id < memory_limit_bytes.size()) {
       TfGpuId tf_gpu_id(next_tf_gpu_id);
       ++next_tf_gpu_id;
+      ++next_tf_gpu_id_per_device;
       TF_RETURN_IF_ERROR(
           GpuIdManager::InsertTfPlatformGpuIdPair(tf_gpu_id, platform_gpu_id));
     }
+    gpu_manager->SetVirtualDeviceCount(i, next_tf_gpu_id_per_device);
   }
   const int num_tf_gpus = next_tf_gpu_id;
-  gpu_manager->SetVirtualDeviceCount(num_tf_gpus);
 
   LocalityMap device_localities;
   TF_RETURN_IF_ERROR(
