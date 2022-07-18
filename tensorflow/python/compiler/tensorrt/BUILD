@@ -41,7 +41,7 @@ py_library(
     srcs_version = "PY2AND3",
     deps = [
         "//tensorflow/compiler/tf2tensorrt:trt_ops_loader",
-        "//tensorflow/compiler/tf2tensorrt:wrap_py_utils",
+        "//tensorflow/compiler/tf2tensorrt:_pywrap_py_utils",
         "//tensorflow/python:convert_to_constants",
         "//tensorflow/python:func_graph",
         "//tensorflow/python:graph_util",

@@ -18,35 +18,40 @@ limitations under the License.
 #include <vector>
 
 #include "tensorflow/compiler/tf2tensorrt/convert/convert_nodes.h"
-#include "tensorflow/core/framework/function.pb.h"
+#include "tensorflow/compiler/tf2tensorrt/convert/utils.h"
+#include "tensorflow/compiler/tf2tensorrt/utils/trt_shape_optimization_profiles.h"
 #include "tensorflow/core/framework/graph.pb.h"
+#include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/grappler/clusters/cluster.h"
-#include "tensorflow/core/grappler/costs/graph_properties.h"
+#include "tensorflow/core/grappler/grappler_item.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/types.h"
 
-#if GOOGLE_CUDA
-#if GOOGLE_TENSORRT
+#if GOOGLE_CUDA && GOOGLE_TENSORRT
 
 namespace tensorflow {
 namespace tensorrt {
 namespace convert {
 
 struct ConversionParams {
-  const GraphDef* input_graph_def = nullptr;
+  const grappler::GrapplerItem* grappler_item = nullptr;
   const std::vector<string>* output_names = nullptr;
+  string trt_logger_name;
   size_t max_batch_size = 1;
   size_t max_workspace_size_bytes = 1 << 30;
   GraphDef* output_graph_def = nullptr;
   TrtPrecisionMode precision_mode = TrtPrecisionMode::FP32;
   int minimum_segment_size = 3;
-  const grappler::GraphProperties* graph_properties = nullptr;
   const grappler::Cluster* cluster = nullptr;
   // Whether to create engine on conversion or execution time
   bool is_dyn_op = false;
   // maximum number of cached engines
   int max_cached_engines = 1;
   bool use_calibration = true;
+  bool use_implicit_batch = true;
+  ProfileStrategy profile_strategy = ProfileStrategy::kRange;
+  bool allow_build_at_runtime = true;
+  std::vector<string> convert_ranges;
 };
 
 // Method to call from optimization pass
@@ -57,15 +62,25 @@ std::pair<int, Allocator*> GetDeviceAndAllocator(const ConversionParams& params,
                                                  const EngineInfo& engine);
 
 // Helper method that registers `segment_graph` as a function to the function
-// library in `graph`.
+// library in `graph`. When `has_int32_input` is true, the routine will informs
+// TensorFlow that int32 _Arg node inputs are on device memory during native
+// segment execution.
 Status RegisterGraphToFunctionLibrary(const GraphDef& segment_graph_def,
-                                      Graph* graph, const string& engine_name);
+                                      Graph* graph, const string& engine_name,
+                                      bool has_int32_input = false);
+
+// Creates and serializes an ICudaEngine. Used only in is_dynamic_op=false,
+// a.k.a. static engine mode.
+Status CreateStaticEngine(const ConversionParams& params,
+                          const EngineInfo& info, int max_batch_size,
+                          const std::vector<PartialTensorShape>& input_shapes,
+                          TrtShapeOptimizationProfile* profile,
+                          string* segment_string);
 
 }  // namespace convert
 }  // namespace tensorrt
 }  // namespace tensorflow
 
-#endif  // GOOGLE_TENSORRT
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA && GOOGLE_TENSORRT
 
 #endif  // TENSORFLOW_COMPILER_TF2TENSORRT_CONVERT_CONVERT_GRAPH_H_

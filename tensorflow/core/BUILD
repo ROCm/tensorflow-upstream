@@ -515,6 +515,7 @@ cc_library(
     visibility = [
         ":__subpackages__",
         "//tensorflow/c:__subpackages__",
+        "//tensorflow/compiler:__subpackages__",
     ],
     deps = [
         ":error_codes_proto_cc",

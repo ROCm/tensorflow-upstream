@@ -602,6 +602,9 @@ class Graph {
   // REQUIRES: 0 <= id < num_node_ids().
   Node* FindNodeId(int id) const { return nodes_[id]; }
 
+  // Returns the node whose name is equal to node_name.
+  Node* FindNodeByName(const std::string& node_name) const;
+
   // Returns one more than the maximum id assigned to any edge.
   int num_edge_ids() const { return edges_.size(); }
 
