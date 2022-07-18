@@ -650,6 +650,15 @@ GraphDef Graph::ToGraphDefDebug() const {
   return ret;
 }
 
+Node* Graph::FindNodeByName(const std::string& node_name) const {
+  for (Node* node : this->nodes()) {
+    if (node->name() == node_name) {
+      return node;
+    }
+  }
+  return nullptr;
+}
+
 void Graph::ToGraphDefSubRange(GraphDef* graph_def, int from_node_id) const {
   graph_def->Clear();
   *graph_def->mutable_versions() = versions();

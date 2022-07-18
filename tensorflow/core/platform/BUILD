@@ -102,6 +102,15 @@ cc_library(
 )
 
 cc_library(
+    name = "casts",
+    hdrs = ["casts.h"],
+    srcs = tf_platform_hdrs(["casts.h"]),
+    deps = [
+        ":platform",
+    ],
+)
+
+cc_library(
     name = "tensor_float_32_utils",
     srcs = ["tensor_float_32_utils.cc"],
     hdrs = ["tensor_float_32_utils.h"],

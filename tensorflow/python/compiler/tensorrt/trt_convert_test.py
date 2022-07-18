@@ -24,7 +24,7 @@ import tempfile
 
 import numpy as np
 
-from tensorflow.compiler.tf2tensorrt.wrap_py_utils import is_tensorrt_enabled
+from tensorflow.compiler.tf2tensorrt._pywrap_py_utils import is_tensorrt_enabled
 from tensorflow.core.framework import graph_pb2
 from tensorflow.core.protobuf import config_pb2
 from tensorflow.core.protobuf import rewriter_config_pb2
