@@ -328,6 +328,25 @@ class GpuSolver {
                       const Scalar* const host_a_dev_ptrs[], int lda,
                       DeviceLapackInfo* dev_lapack_info, int batch_size);
 
+
+  // See
+  // https://rocblas.readthedocs.io/en/latest/API_Reference_Guide.html#trsm_batched
+  // trsm_batched performs the following batched operation:
+  // op(A_i)*X_i = alpha*B_i or
+  // X_i*op(A_i) = alpha*B_i, for i = 1, ..., batch_count,
+  // where alpha is a scalar, X and B are batched m by n matrices,
+  // A is triangular batched matrix and op(A) is one of
+  // op( A ) = A   or
+  // op( A ) = A^T   or
+  // op( A ) = A^H.
+  // Each matrix X_i is overwritten on B_i for i = 1, ..., batch_count.
+  template <typename Scalar>
+  Status TrsmBatched(rocblas_side side, rocblas_fill uplo, rocblas_operation trans,
+                    rocblas_diagonal diag, int m, int n, const Scalar* alpha,
+                    const Scalar* const dev_Aarray[], int lda, 
+                    Scalar* dev_Barray[], int ldb, int batch_size);
+
+
   template <typename Scalar>
   Status Trsm(rocblas_side side, rocblas_fill uplo, rocblas_operation trans,
               rocblas_diagonal diag, int m, int n, const Scalar* alpha,

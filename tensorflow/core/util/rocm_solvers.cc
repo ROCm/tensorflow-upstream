@@ -728,6 +728,7 @@ Status GpuSolver::forward_input_or_allocate_scoped_tensor(
   return status;
 }
 
+
 template <typename Scalar, typename SolverFnT>
 static inline Status TrsmImpl(GpuExecutor* gpu_executor, SolverFnT solver,
                               rocblas_handle rocm_blas_handle,
@@ -764,6 +765,42 @@ static inline Status TrsmImpl(GpuExecutor* gpu_executor, SolverFnT solver,
   }
 
 TF_CALL_LAPACK_TYPES_NO_COMPLEX(TRSM_INSTANCE);
+
+#define TRSM_BATCHED_INSTANCE(Scalar, type_prefix)                            \
+  template <>                                                                 \
+  Status GpuSolver::TrsmBatched<Scalar>(                                      \
+      rocblas_side side, rocblas_fill uplo, rocblas_operation trans,          \
+      rocblas_diagonal diag, int m, int n, const Scalar* alpha,               \
+      const Scalar* const dev_Aarray[], int lda, Scalar* dev_Barray[],        \
+      int ldb, int batch_size) {                                              \
+      mutex_lock lock(handle_map_mutex);                                      \
+      using ROCmScalar = typename ROCmComplexT<Scalar>::type;                 \
+      ScratchSpace<uint8> dev_a_dev_ptrs =                                    \
+          this->GetScratchSpace<uint8>(sizeof(ROCmScalar*) * batch_size, "",  \
+                                              /* on_host */ false);           \
+      ScratchSpace<uint8> dev_b_dev_ptrs =                                    \
+          this->GetScratchSpace<uint8>(sizeof(ROCmScalar*) * batch_size, "",  \
+                                              /* on_host */ false);           \
+      if (!CopyHostToDevice(context_, dev_a_dev_ptrs.mutable_data() /* dest */,\
+                            dev_Aarray /* source */,                          \
+                            dev_a_dev_ptrs.bytes())) {                        \
+    return errors::Internal("TrsmBatched: Failed to copy pointers to device");\
+    }                                                                         \
+      if (!CopyHostToDevice(context_, dev_b_dev_ptrs.mutable_data() /* dest */,\
+                            dev_Barray /* source */,                          \ 
+                            dev_b_dev_ptrs.bytes())) {                        \
+    return errors::Internal("TrsmBatched: Failed to copy pointers to device");\
+    }                                                                         \
+      TF_RETURN_IF_ROCBLAS_ERROR(BLAS_SOLVER_FN(trsm_batched, type_prefix)(   \
+          rocm_blas_handle_, side, uplo, trans, diag, m, n, alpha,            \
+          reinterpret_cast<ROCmScalar**>(dev_a_dev_ptrs.mutable_data()),      \ 
+          lda, reinterpret_cast<ROCmScalar**>(dev_b_dev_ptrs.mutable_data()), \
+          ldb, batch_size));                                                  \
+    return Status::OK();                                                      \
+  }
+  
+TF_CALL_LAPACK_TYPES_NO_COMPLEX(TRSM_BATCHED_INSTANCE);
+
 
 template <typename Scalar, typename SolverFnT>
 Status MatInvBatchedImpl(GpuExecutor* gpu_executor, SolverFnT solver,
