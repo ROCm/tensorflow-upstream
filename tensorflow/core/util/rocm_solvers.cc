@@ -766,6 +766,23 @@ static inline Status TrsmImpl(GpuExecutor* gpu_executor, SolverFnT solver,
 
 TF_CALL_LAPACK_TYPES_NO_COMPLEX(TRSM_INSTANCE);
 
+
+#define TRSV_INSTANCE(Scalar, type_prefix)                                   \
+  template <>                                                                \
+  Status GpuSolver::Trsv<Scalar>(                                            \
+      rocblas_fill uplo, rocblas_operation trans, rocblas_diagonal diag,     \
+      int n, const Scalar* A, int lda, Scalar* x, int incx) {                \
+      mutex_lock lock(handle_map_mutex);                                     \
+      using ROCmScalar = typename ROCmComplexT<Scalar>::type;                \
+      TF_RETURN_IF_ROCBLAS_ERROR(BLAS_SOLVER_FN(trsv, type_prefix)(          \
+        rocm_blas_handle_, uplo, trans, diag, n, A, lda, x, incx));          \
+      return Status::OK();                                                   \
+  }
+
+TF_CALL_LAPACK_TYPES(TRSV_INSTANCE);
+
+
+
 #define TRSM_BATCHED_INSTANCE(Scalar, type_prefix)                            \
   template <>                                                                 \
   Status GpuSolver::TrsmBatched<Scalar>(                                      \

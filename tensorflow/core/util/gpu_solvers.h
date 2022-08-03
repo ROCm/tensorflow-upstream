@@ -344,8 +344,12 @@ class GpuSolver {
   Status TrsmBatched(rocblas_side side, rocblas_fill uplo, rocblas_operation trans,
                     rocblas_diagonal diag, int m, int n, const Scalar* alpha,
                     const Scalar* const dev_Aarray[], int lda, 
-                    Scalar* dev_Barray[], int ldb, int batch_size);
+                    Scalar* dev_Barray, int ldb, int batch_size);
 
+
+  template <typename Scalar>
+  Status Trsv(rocblas_fill uplo, rocblas_operation trans, rocblas_diagonal diag, 
+              int n, const Scalar* A, int lda, Scalar* x, int intcx);
 
   template <typename Scalar>
   Status Trsm(rocblas_side side, rocblas_fill uplo, rocblas_operation trans,
