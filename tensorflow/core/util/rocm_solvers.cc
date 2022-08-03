@@ -779,7 +779,7 @@ TF_CALL_LAPACK_TYPES_NO_COMPLEX(TRSM_INSTANCE);
       return Status::OK();                                                   \
   }
 
-TF_CALL_LAPACK_TYPES(TRSV_INSTANCE);
+TF_CALL_LAPACK_TYPES_NO_COMPLEX(TRSV_INSTANCE);
 
 
 
