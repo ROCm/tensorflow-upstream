@@ -86,6 +86,14 @@ namespace wrap {
   __macro(hipsolverSgetrs_bufferSize)        \
   __macro(hipsolverZgetrs)                   \
   __macro(hipsolverZgetrs_bufferSize)        \
+  __macro(hipsolverSgesvd)                   \
+  __macro(hipsolverSgesvd_bufferSize)        \
+  __macro(hipsolverDgesvd)                   \
+  __macro(hipsolverDgesvd_bufferSize)        \
+  __macro(hipsolverCgesvd)                   \
+  __macro(hipsolverCgesvd_bufferSize)        \
+  __macro(hipsolverZgesvd)                   \
+  __macro(hipsolverZgesvd_bufferSize)        \
   __macro(hipsolverCpotrf)                   \
   __macro(hipsolverCpotrf_bufferSize)        \
   __macro(hipsolverDpotrf)                   \
@@ -118,14 +126,6 @@ namespace wrap {
   __macro(hipsolverCungqr_bufferSize)        \
   __macro(hipsolverZungqr)                   \
   __macro(hipsolverZungqr_bufferSize)        \
-  __macro(hipsolverSgesvd)                   \
-  __macro(hipsolverSgesvd_bufferSize)        \
-  __macro(hipsolverDgesvd)                   \
-  __macro(hipsolverDgesvd_bufferSize)        \
-  __macro(hipsolverCgesvd)                   \
-  __macro(hipsolverCgesvd_bufferSize)        \
-  __macro(hipsolverZgesvd)                   \
-  __macro(hipsolverZgesvd_bufferSize)        \
   __macro(hipsolverCheevd)                   \
   __macro(hipsolverCheevd_bufferSize)        \
   __macro(hipsolverZheevd)                   \

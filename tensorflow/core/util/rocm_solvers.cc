@@ -256,6 +256,9 @@ void GpuSolver::CheckLapackInfoAndDeleteSolverAsync(
 #define TF_CALL_ROCSOLV_TYPES(m) \
   m(float, s) m(double, d) m(std::complex<float>, c) m(std::complex<double>, z)
 #define TF_CALL_LAPACK_TYPES_NO_COMPLEX(m) m(float, s) m(double, d)
+#define TF_CALL_LAPACK_TYPES_NO_COMPLEX_(m) m(float, S) m(double, D)
+
+
 #define BLAS_SOLVER_FN(method, type_prefix) \
   wrap::rocblas##_##type_prefix##method
 
@@ -833,15 +836,17 @@ TF_CALL_LAPACK_TYPES_NO_COMPLEX(TRSM_BATCHED_INSTANCE);
       /* Allocate device memory for workspace. */                        \
       auto dev_workspace =                                               \
         this->GetScratchSpace<Scalar>(lwork, "", /* on_host */ false);   \
-      TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(gesvd, type_prefix)(       \
+      TF_RETURN_IF_ROCBLAS_ERROR(SOLVER_FN(gesvd, type_prefix)(          \
                               hipsolver_handle_, jobu, jobvt, m, n,      \
-                              ROCmComplex(dev_A), lda, dev_S,            \                            
+                              ROCmComplex(dev_A), lda, dev_S,            \
+                              ROCmComplex(dev_U), ldu,                   \
+                              ROCmComplex(dev_VT), ldvt,                 \                            
                               ROCmComplex(dev_workspace.mutable_data()), \
                               lwork, nullptr, dev_lapack_info));         \
       return Status::OK();                                               \
   }
 
-TF_CALL_LAPACK_TYPES(GESVD_INSTANCE);
+TF_CALL_LAPACK_TYPES_NO_COMPLEX_(GESVD_INSTANCE);
 
 
 template <typename Scalar, typename SolverFnT>
