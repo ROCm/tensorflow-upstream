@@ -819,6 +819,31 @@ TF_CALL_LAPACK_TYPES_NO_COMPLEX(TRSV_INSTANCE);
 TF_CALL_LAPACK_TYPES_NO_COMPLEX(TRSM_BATCHED_INSTANCE);
 
 
+#define GESVD_INSTANCE(Scalar, type_prefix)                              \
+  template <>                                                            \
+  Status GpuSolver::Gesvd<Scalar>(                                       \
+      signed char jobu, signed char jobvt, int m, int n, Scalar* dev_A,  \
+      int lda, Scalar* dev_S, Scalar* dev_U, int ldu, Scalar* dev_VT,    \
+      int ldvt, int* dev_lapack_info) {                                  \
+      mutex_lock lock(handle_map_mutex);                                 \
+      /* Get amount of workspace memory required. */                     \
+      int lwork;                                                         \
+      TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(gesvd, type_prefix)(         \
+                        hipsolver_handle_, jobu, jobvt, m, n, &lwork));  \
+      /* Allocate device memory for workspace. */                        \
+      auto dev_workspace =                                               \
+        this->GetScratchSpace<Scalar>(lwork, "", /* on_host */ false);   \
+      TF_RETURN_IF_ROCBLAS_ERROR(BUFSIZE_FN(gesvd, type_prefix)(       \
+                              hipsolver_handle_, jobu, jobvt, m, n,      \
+                              ROCmComplex(dev_A), lda, dev_S,            \                            
+                              ROCmComplex(dev_workspace.mutable_data()), \
+                              lwork, nullptr, dev_lapack_info));         \
+      return Status::OK();                                               \
+  }
+
+TF_CALL_LAPACK_TYPES(GESVD_INSTANCE);
+
+
 template <typename Scalar, typename SolverFnT>
 Status MatInvBatchedImpl(GpuExecutor* gpu_executor, SolverFnT solver,
                          rocblas_handle rocm_blas_handle, int n,

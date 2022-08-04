@@ -31,13 +31,10 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cusolverDn.h"
 #else
-#include "rocm/rocm_config.h"
 #include "rocm/include/hip/hip_complex.h"
 #include "rocm/include/rocblas.h"
 #include "tensorflow/stream_executor/blas.h"
-#if TF_ROCM_VERSION >= 40500
 #include "tensorflow/stream_executor/rocm/hipsolver_wrapper.h"
-#endif
 #include "tensorflow/stream_executor/rocm/rocsolver_wrapper.h"
 #endif
 #include "tensorflow/core/framework/op_kernel.h"
@@ -355,6 +352,13 @@ class GpuSolver {
   Status Trsm(rocblas_side side, rocblas_fill uplo, rocblas_operation trans,
               rocblas_diagonal diag, int m, int n, const Scalar* alpha,
               const Scalar* A, int lda, Scalar* B, int ldb);
+
+  // Singular value decomposition.
+  // See: https://hipsolver.readthedocs.io/en/latest/api_lapackfunc.html#svds
+  template <typename Scalar>
+  Status Gesvd(signed char jobu, signed char jobvt, int m, int n, Scalar* dev_A,
+               int lda, Scalar* dev_S, Scalar* dev_U, int ldu, Scalar* dev_VT,
+               int ldvt, int* dev_lapack_info) TF_MUST_USE_RESULT;
 
   // QR factorization.
   // Computes QR factorization A = Q * R.
