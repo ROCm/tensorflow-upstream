@@ -308,7 +308,8 @@ Status GpuSolver::forward_input_or_allocate_scoped_tensor(
 
 
 //=============================================================================
-// Wrappers of hip/rocSolverDN computational methods begin here.
+// Wrappers of hip/rocSolver computational methods begin here.
+//  Please check actual declarations here
 //  https://github.com/ROCmSoftwarePlatform/hipSOLVER
 //  https://github.com/ROCmSoftwarePlatform/rocSOLVER
 //=============================================================================
