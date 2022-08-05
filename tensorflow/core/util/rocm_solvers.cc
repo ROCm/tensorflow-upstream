@@ -807,6 +807,7 @@ Status MatInvBatchedImpl(GpuExecutor* gpu_executor, SolverFnT solver,
 
 //=============================================================================
 // Wrappers of rocBlas computational methods begin here.
+//  Please check actual declarations here
 //  https://github.com/ROCmSoftwarePlatform/rocBlas
 //=============================================================================
 #define TRSV_INSTANCE(Scalar, type_prefix)                                   \
