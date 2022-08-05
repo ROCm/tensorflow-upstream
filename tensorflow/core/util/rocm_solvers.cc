@@ -256,7 +256,7 @@ void GpuSolver::CheckLapackInfoAndDeleteSolverAsync(
 #define TF_CALL_ROCSOLV_TYPES(m) \
   m(float, s) m(double, d) m(std::complex<float>, c) m(std::complex<double>, z)
 #define TF_CALL_LAPACK_TYPES_NO_COMPLEX(m) m(float, s) m(double, d)
-#define TF_CALL_LAPACK_TYPES_NO_COMPLEX_(m) m(float, S) m(double, D)
+#define TF_CALL_HIP_LAPACK_TYPES_NO_COMPLEX(m) m(float, S) m(double, D)
 
 
 #define BLAS_SOLVER_FN(method, type_prefix) \
@@ -846,7 +846,7 @@ TF_CALL_LAPACK_TYPES_NO_COMPLEX(TRSM_BATCHED_INSTANCE);
       return Status::OK();                                               \
   }
 
-TF_CALL_LAPACK_TYPES_NO_COMPLEX_(GESVD_INSTANCE);
+TF_CALL_HIP_LAPACK_TYPES_NO_COMPLEX(GESVD_INSTANCE);
 
 
 template <typename Scalar, typename SolverFnT>
