@@ -2546,7 +2546,7 @@ class PoolingTest(test.TestCase, parameterized.TestCase):
             orig_input_shape=orig_input_shape,
             grad=grad,
             ksize=[1, 40, 128, 1],
-            strides=[1, 128, 128, 30],
+            strides=[1, 128, 128, 30, 1],
             padding="SAME",
             data_format="NHWC")
         self.evaluate(t)
