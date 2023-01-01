@@ -28,7 +28,6 @@ limitations under the License.
 #else
 #include "rocm/include/hipfft.h"
 #endif
-#include "rocm/rocm_config.h"
 
 #endif
 
