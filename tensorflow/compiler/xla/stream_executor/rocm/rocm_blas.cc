@@ -905,8 +905,8 @@ port::Status ROCMBlas::DoBlasGemmBatchedInternal(
   if constexpr (std::is_same_v<T, Eigen::bfloat16>) {
     float alpha_ = static_cast<float> (alpha);
     float beta_ = static_cast<float> (beta);
-    const void* *alpha_ptr = reinterpret_cast<const void* *>(&alpha_);
-    const void* *beta_ptr = reinterpret_cast<const void* *>(&beta_);
+    const void* alpha_ptr = reinterpret_cast<const void*>(&alpha_);
+    const void* beta_ptr = reinterpret_cast<const void*>(&beta_);
 
     ok = DoBlasInternal(
         rocblas_func, stream, /* pointer_mode_host = */ true,
