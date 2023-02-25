@@ -624,9 +624,75 @@ Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
         "Incompatible AMD GCN ISA version was specified.");
   }
   TF_RETURN_IF_ERROR(
-      LinkROCDLIfNecessary(module, *amdgpu_version, device_bitcode_dir_path, ir_path, linked_ir_path, optimized_ir_path));
+      LinkROCDLIfNecessary(module, gcn_arch_name, device_bitcode_dir_path));
 
-  return Status::OK();
+  // For rocm, we always enable flush to zero. (for cuda, this is determined
+  // via environemnt variables). This deceision was based on the observation
+  // Eugene had that the AMD GPU llvm backend has not picked up the atomic add
+  // instructions correctly without ftz enabled. We concluded that this should
+  // not has major impact as the hipcc path by default enables flush to zero for
+  // compilation.
+  // If ftz is enabled, set it as an attribute on every function in the module.
+  if (debug_options.xla_gpu_ftz()) {
+    for (llvm::Function& fn : *module) {
+      // may be necessary for the compiler to generate atomics (confirm!)
+      fn.addFnAttr("denormal-fp-math-f32", "preserve-sign");
+      fn.addFnAttr("amdgpu-unsafe-fp-atomics", "true");
+    }
+  }
+
+  return OkStatus();
+}
+
+// The following routine maps a feature token extracted from the
+// hipDeviceProp_t::gcnArchName string, and maps it to a valid feature_str
+// to be used for creating the AMDGPUTarget.
+// This mapping is currently in a state of flux because TF XLA uses its
+// own copy of LLVM, which is different from the LLVM version used by
+// hipcc/runtime in the ROCm install. Ordinarily this is not a problem,
+// but right now, the LLVM version used by hipcc/runtime has "targetID"
+// related changes which have not yet been upstreamed (to the LLVM repo)
+// When that upstreaming happens (and TF LLVM pointer moves past the
+// upstream commit), the following mapping will need to change
+std::string MapGCNArchNameTokenToFeatureStr(const std::string& token,
+                                            const std::string& gfx) {
+  if (token == "sramecc+") {
+    return "+sramecc";
+  } else if (token == "sramecc-") {
+    if(gfx == "gfx90a" || gfx == "gfx940")
+      return "";
+    return "-sramecc";
+  } else if (token == "xnack+") {
+    return "+xnack";
+  } else if (token == "xnack-") {
+    return "-xnack";
+  }
+  return "";
+
+}
+
+std::pair<std::string, std::string> GetFeatureStrFromGCNArchName(
+    const std::string& gcn_arch_name) {
+  std::string feature_str;
+
+  std::string gfx = gcn_arch_name;
+  // For ROCm versions 4.0 and greater, we need to specify the correct
+  // feature str, based on the underlying GPU HW to get max performance.
+  std::vector<std::string> tokens = absl::StrSplit(gcn_arch_name, ':');
+  std::vector<std::string> mapped_tokens;
+  if (!tokens.empty()) gfx = tokens[0];
+  for (auto it = tokens.begin(); it != tokens.end(); it++) {
+    // Skip the first token, that is the gfxNNN str
+    // The rest of the tokens are the feature/targetid strings
+    if (it != tokens.begin()) {
+      std::string token(*it);
+      std::string mapped_token = MapGCNArchNameTokenToFeatureStr(token, gfx);
+      mapped_tokens.push_back(mapped_token);
+    }
+  }
+  feature_str = absl::StrJoin(mapped_tokens, ",");
+
+  return std::make_pair(gfx, feature_str);
 }
 
 std::unique_ptr<llvm::TargetMachine> AMDGPUGetTargetMachine(
