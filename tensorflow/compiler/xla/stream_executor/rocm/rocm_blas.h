@@ -23,7 +23,12 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "rocm/rocm_config.h"
+#if (TF_ROCM_VERSION >= 50200)
+#include "rocm/include/rocblas/rocblas.h"
+#else
 #include "rocm/include/rocblas.h"
+#endif
 #include "tensorflow/compiler/xla/stream_executor/blas.h"
 #include "tensorflow/compiler/xla/stream_executor/platform/port.h"
 #include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
