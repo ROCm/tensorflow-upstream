@@ -98,7 +98,8 @@ struct GemmConfig {
       absl::Span<const int64_t> rhs_batch_dims,
       absl::Span<const int64_t> rhs_contracting_dims, const Shape& output_shape,
       double alpha_real, double alpha_imag, double beta,
-      std::optional<int64_t> algorithm, int64_t compute_precision);
+      std::optional<int64_t> algorithm, int64_t compute_precision,
+      bool grad_x, bool grad_y);
 
   // As above with additional `c_shape` parameter.
   static StatusOr<GemmConfig> For(
@@ -107,7 +108,8 @@ struct GemmConfig {
       absl::Span<const int64_t> rhs_batch_dims,
       absl::Span<const int64_t> rhs_contracting_dims, const Shape& c_shape,
       const Shape& output_shape, double alpha_real, double alpha_imag,
-      double beta, std::optional<int64_t> algorithm, int64_t compute_precision);
+      double beta, std::optional<int64_t> algorithm, int64_t compute_precision,
+      bool grad_x, bool grad_y);
 
   MatrixLayout lhs_layout;
   MatrixLayout rhs_layout;
@@ -117,6 +119,7 @@ struct GemmConfig {
   double beta;
   std::optional<int64_t> algorithm;
   int64_t compute_precision;
+  bool grad_x, grad_y;
 };
 
 StatusOr<se::blas::ComputationType> GetBlasComputationType(

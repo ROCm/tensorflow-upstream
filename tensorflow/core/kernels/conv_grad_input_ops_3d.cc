@@ -735,7 +735,8 @@ void LaunchConvBackpropInputOpImpl(
     OP_REQUIRES_OK(
         context,
         stream->ThenBlasGemm(transpose, no_transpose, n, m, k, b_ptr, k, a_ptr,
-                             k, &c_ptr, n, se::blas::kDefaultComputePrecision));
+                             k, &c_ptr, n, se::blas::kDefaultComputePrecision,
+                             stream_executor::blas::CallContext::kBackpropInput1));
     return;
   } else if (!is_grouped_convolution &&
              dims.filter_size(0) == dims.input_size(0) &&
@@ -760,7 +761,8 @@ void LaunchConvBackpropInputOpImpl(
     OP_REQUIRES_OK(
         context,
         stream->ThenBlasGemm(transpose, no_transpose, n, m, k, b_ptr, k, a_ptr,
-                             k, &c_ptr, n, se::blas::kDefaultComputePrecision));
+                             k, &c_ptr, n, se::blas::kDefaultComputePrecision,
+                             stream_executor::blas::CallContext::kBackpropInput1));
     return;
   }
 
@@ -1150,7 +1152,6 @@ class Conv3DBackpropInputOp<GPUDevice, T> : public OpKernel {
   bool takes_shape_;
   bool cudnn_use_autotune_;
 };
-
 
 #define REGISTER_GPU_KERNEL(T)                                                \
   REGISTER_KERNEL_BUILDER(                                                    \

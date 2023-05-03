@@ -174,6 +174,22 @@ Status LaunchAutotunedConv(const AutotuneEntry<se::dnn::ConvOp>& autotune_entry,
                            const se::dnn::ConvolutionDescriptor& conv_desc,
                            const se::dnn::BatchDescriptor& output_desc,
                            se::DeviceMemory<T> out_ptr) {
+  se::dnn::CallContext call_context = se::dnn::CallContext::kNone;
+  switch (kind) {
+    case se::dnn::ConvolutionKind::FORWARD:
+      call_context = se::dnn::CallContext::kForward;
+      break;
+    case se::dnn::ConvolutionKind::BACKWARD_DATA:
+      call_context = se::dnn::CallContext::kBackpropData;
+      break;
+    case se::dnn::ConvolutionKind::BACKWARD_FILTER:
+      call_context = se::dnn::CallContext::kBackpropFilter;
+      break;
+    default:
+      return errors::InvalidArgument(
+          absl::StrFormat("Unknown ConvolutionKind %d", kind));
+  }
+
   if (!autotune_entry.is_algorithm_config()) {
     const auto& runners = autotune_entry.GetOpRunners();
     se::dnn::DataType element_type = se::dnn::ToDataType<T>::value;
@@ -201,7 +217,7 @@ Status LaunchAutotunedConv(const AutotuneEntry<se::dnn::ConvOp>& autotune_entry,
     return stream->ConvolveWithAlgorithm(
         kind, input_desc, in_ptr, filter_desc, filter_ptr, output_desc, out_ptr,
         conv_desc, scratch_allocator, autotune_entry.GetAlgorithmConfig(),
-        nullptr);
+        call_context, nullptr);
   }
 }
 

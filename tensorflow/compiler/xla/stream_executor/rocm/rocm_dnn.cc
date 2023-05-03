@@ -3129,7 +3129,8 @@ class RocmConvRunner : public dnn::ConvRunner {
                  BatchDescriptor input_descriptor,
                  BatchDescriptor output_descriptor,
                  FilterDescriptor filter_descriptor,
-                 ConvolutionDescriptor conv_descriptor)
+                 ConvolutionDescriptor conv_descriptor,
+                 dnn::CallContext call_context)
       : parent_(parent),
         miopen_(miopen),
         algo_id_(algo_id),
@@ -3139,7 +3140,18 @@ class RocmConvRunner : public dnn::ConvRunner {
         input_desc_{input_descriptor, ToMIOpenDataType(input_type)},
         output_desc_{output_descriptor, ToMIOpenDataType(input_type)},
         filter_desc_{filter_descriptor, ToMIOpenDataType(input_type)},
-        conv_desc_{conv_descriptor, ToMIOpenDataType(input_type)} {}
+        conv_desc_{conv_descriptor, ToMIOpenDataType(input_type)},
+        call_context_(call_context) {
+    bool is_backprop = (call_context == dnn::CallContext::kBackpropData) ||
+                       (call_context == dnn::CallContext::kBackpropFilter);
+
+#if TF_ROCM_VERSION >= 50000
+    if (is_backprop && (ToMIOpenDataType(input_type) == miopenHalf)) {
+      wrap::miopenSetConvolutionAttribute(
+          conv_desc_.handle(), MIOPEN_CONVOLUTION_ATTRIB_FP16_ALT_IMPL, 1);
+    }
+#endif
+  }
 
   std::string ToString() const override {
     return dnn::AlgorithmDesc{algo_id_, false, workspace_size_}.ToString();
@@ -3279,6 +3291,7 @@ class RocmConvRunner : public dnn::ConvRunner {
   ScopedTensorDescriptor output_desc_;
   ScopedFilterDescriptor filter_desc_;
   ScopedConvolutionDescriptor conv_desc_;
+  dnn::CallContext call_context_;
 };
 
 tsl::Status MIOpenSupport::DoConvolve(
@@ -3290,12 +3303,13 @@ tsl::Status MIOpenSupport::DoConvolve(
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::AlgorithmDesc algorithm_desc, DeviceMemory<uint8> scratch_memory,
-    dnn::ProfileResult* output_profile_result) {
+    dnn::CallContext call_context, dnn::ProfileResult* output_profile_result) {
   TF_ASSIGN_OR_RETURN(
       auto runner,
       ConvolveRunnerFromDesc(stream, algorithm_desc, kind, element_type,
                              output_type, input_descriptor, filter_descriptor,
-                             output_descriptor, convolution_descriptor));
+                             output_descriptor, convolution_descriptor,
+                             call_context));
 
   return (*runner)(stream, output_profile_result, scratch_memory, input_data,
                    filter_data, output_data);
@@ -3323,7 +3337,8 @@ tsl::Status MIOpenSupport::GetConvolveRunners(
     const dnn::FilterDescriptor& filter_descriptor,
     DeviceMemoryBase filter_data, const dnn::BatchDescriptor& output_descriptor,
     DeviceMemoryBase output_data,
-    const dnn::ConvolutionDescriptor& convolution_descriptor, bool use_fallback,
+    const dnn::ConvolutionDescriptor& convolution_descriptor,
+    dnn::CallContext call_context, bool use_fallback,
     ScratchAllocator* scratch_allocator,
     std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_runners) {
   if (input_type != output_type) {
@@ -3337,7 +3352,7 @@ tsl::Status MIOpenSupport::GetConvolveRunners(
   if (!GetMIOpenConvolveAlgorithms(
           kind, input_type, stream, input_descriptor, input_data,
           filter_descriptor, filter_data, output_descriptor, output_data,
-          convolution_descriptor, scratch_allocator, &profile_results)) {
+          convolution_descriptor, scratch_allocator, call_context, &profile_results)) {
     return tsl::Status(
         absl::StatusCode::kUnknown,
         "GetConvolveRunners: GetMIOpenConvolveAlgorithms failed");
@@ -3348,7 +3363,8 @@ tsl::Status MIOpenSupport::GetConvolveRunners(
         auto runner, ConvolveRunnerFromDesc(
                          stream, profile_result.algorithm(), kind, input_type,
                          output_type, input_descriptor, filter_descriptor,
-                         output_descriptor, convolution_descriptor));
+                         output_descriptor, convolution_descriptor,
+                         call_context));
     out_runners->push_back(std::move(runner));
   }
 
@@ -3362,7 +3378,8 @@ MIOpenSupport::ConvolveRunnerFromDesc(
     dnn::DataType output_type, const dnn::BatchDescriptor& input_descriptor,
     const dnn::FilterDescriptor& filter_descriptor,
     const dnn::BatchDescriptor& output_descriptor,
-    const dnn::ConvolutionDescriptor& convolution_descriptor) {
+    const dnn::ConvolutionDescriptor& convolution_descriptor,
+    dnn::CallContext call_context) {
   if (input_type != output_type) {
     return tsl::errors::Unimplemented(
         absl::StrFormat("MIOpen backend does not support different input and "
@@ -3379,7 +3396,7 @@ MIOpenSupport::ConvolveRunnerFromDesc(
   return {std::make_unique<RocmConvRunner>(
       parent_, miopen_.get(), algorithm_desc.algo_id(), *workspace_size, kind,
       input_type, use_immediate_mode_, input_descriptor, output_descriptor,
-      filter_descriptor, convolution_descriptor)};
+      filter_descriptor, convolution_descriptor, call_context)};
 }
 
 bool MIOpenSupport::GetMIOpenConvolveAlgorithms(
@@ -3389,19 +3406,19 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithms(
     DeviceMemoryBase filter_data, const dnn::BatchDescriptor& output_descriptor,
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
-    ScratchAllocator* scratch_allocator,
+    ScratchAllocator* scratch_allocator, dnn::CallContext call_context,
     std::vector<dnn::ProfileResult>* out_algorithms) {
   return use_immediate_mode_
              ? GetMIOpenConvolveAlgorithmsImmediateMode(
                    kind, element_type, stream, input_descriptor, input_data,
                    filter_descriptor, filter_data, output_descriptor,
                    output_data, convolution_descriptor, scratch_allocator,
-                   out_algorithms)
+                   call_context, out_algorithms)
              : GetMIOpenConvolveAlgorithmsFindMode(
                    kind, element_type, stream, input_descriptor, input_data,
                    filter_descriptor, filter_data, output_descriptor,
                    output_data, convolution_descriptor, scratch_allocator,
-                   out_algorithms);
+                   call_context, out_algorithms);
 }
 
 bool MIOpenSupport::GetMIOpenConvolveAlgorithmsImmediateMode(
@@ -3411,7 +3428,7 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsImmediateMode(
     DeviceMemoryBase filter_data, const dnn::BatchDescriptor& output_descriptor,
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
-    ScratchAllocator* scratch_allocator,
+    ScratchAllocator* scratch_allocator, dnn::CallContext call_context,
     std::vector<dnn::ProfileResult>* out_algorithms) {
   auto miopen = miopen_->GetHandle(parent_, stream);
 
@@ -3424,6 +3441,15 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsImmediateMode(
   ScopedConvolutionDescriptor conv{convolution_descriptor,
                                    ToMIOpenDataType(element_type)};
 
+  bool is_backprop = (call_context == dnn::CallContext::kBackpropData) ||
+                     (call_context == dnn::CallContext::kBackpropFilter);
+
+#if TF_ROCM_VERSION >= 50000
+  if (is_backprop && (ToMIOpenDataType(element_type) == miopenHalf)) {
+    wrap::miopenSetConvolutionAttribute(
+        conv.handle(), MIOPEN_CONVOLUTION_ATTRIB_FP16_ALT_IMPL, 1);
+  }
+#endif
   // First determine the number of algorityhms available
   size_t maxSolutionCount = 0;
 
@@ -3620,7 +3646,7 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsFindMode(
     DeviceMemoryBase filter_data, const dnn::BatchDescriptor& output_descriptor,
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
-    ScratchAllocator* scratch_allocator,
+    ScratchAllocator* scratch_allocator, dnn::CallContext call_context,
     std::vector<dnn::ProfileResult>* out_algorithms) {
   auto miopen = miopen_->GetHandle(parent_, stream);
 
@@ -3633,6 +3659,15 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsFindMode(
   ScopedConvolutionDescriptor conv{convolution_descriptor,
                                    ToMIOpenDataType(element_type)};
 
+  bool is_backprop = (call_context == dnn::CallContext::kBackpropData) ||
+                     (call_context == dnn::CallContext::kBackpropFilter);
+
+#if TF_ROCM_VERSION >= 50000
+  if (is_backprop && (ToMIOpenDataType(element_type) == miopenHalf)) {
+    wrap::miopenSetConvolutionAttribute(
+        conv.handle(), MIOPEN_CONVOLUTION_ATTRIB_FP16_ALT_IMPL, 1);
+  }
+#endif
   // Determine the workspace memory size that will need by the call to Find
   size_t scratch_memory_size = 0;
   switch (kind) {
@@ -4053,7 +4088,8 @@ bool MIOpenSupport::DoMatMul(Stream* stream,
              ->ThenBlasGemm(blas::Transpose::kNoTranspose,
                             blas::Transpose::kNoTranspose, m, n, k, weights, m,
                             input_data, k, output_data, m,
-                            blas::kDefaultComputePrecision)
+                            blas::kDefaultComputePrecision,
+                            blas::CallContext::kNone)
              .ok()) {
       return false;
     }
@@ -4136,7 +4172,7 @@ bool MIOpenSupport::DoMatMul(Stream* stream,
     stream->ThenBlasGemmBatched(blas::Transpose::kNoTranspose,
                                 blas::Transpose::kNoTranspose, m, n, k, alpha,
                                 toPtrs(a), lda, toPtrs(b), ldb, beta, toPtrs(c),
-                                ldc, batch_count);
+                                ldc, batch_count, blas::CallContext::kNone);
   }
 
   return stream->ok();

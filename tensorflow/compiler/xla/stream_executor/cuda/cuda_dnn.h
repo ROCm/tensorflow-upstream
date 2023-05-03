@@ -228,7 +228,8 @@ class CudnnSupport : public dnn::DnnSupport {
       const dnn::BatchDescriptor& output_descriptor,
       DeviceMemoryBase output_data,
       const dnn::ConvolutionDescriptor& convolution_descriptor,
-      bool use_fallback, ScratchAllocator* scratch_allocator,
+      dnn::CallContext call_context, bool use_fallback, 
+      ScratchAllocator* scratch_allocator,
       std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_exec_plans)
       override;
 
@@ -238,7 +239,8 @@ class CudnnSupport : public dnn::DnnSupport {
       dnn::DataType output_type, const dnn::BatchDescriptor& input_descriptor,
       const dnn::FilterDescriptor& filter_descriptor,
       const dnn::BatchDescriptor& output_descriptor,
-      const dnn::ConvolutionDescriptor& convolution_descriptor) override;
+      const dnn::ConvolutionDescriptor& convolution_descriptor,
+      dnn::CallContext call_context) override;
 
   tsl::Status GetFusedConvolveRunners(
       bool use_cudnn_frontend, dnn::ConvolutionKind kind,
@@ -431,6 +433,7 @@ class CudnnSupport : public dnn::DnnSupport {
       DeviceMemoryBase output_data,
       const dnn::ConvolutionDescriptor& convolution_descriptor,
       dnn::AlgorithmDesc algorithm_desc, DeviceMemory<uint8_t> scratch_memory,
+      dnn::CallContext call_context,
       dnn::ProfileResult* output_profile_result) override;
 
   tsl::Status DoFusedConvolve(

@@ -5052,7 +5052,7 @@ tsl::Status CudnnSupport::DoConvolve(
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::AlgorithmDesc algorithm_desc, DeviceMemory<uint8_t> scratch_memory,
-    dnn::ProfileResult* profile_result) {
+    dnn::CallContext call_context, dnn::ProfileResult* profile_result) {
   cudnnDataType_t cudnn_type =
       ToCudnnDataType(element_type, input_descriptor.layout());
   CudnnTensorDescriptor input_nd(input_descriptor, cudnn_type);
@@ -5470,7 +5470,8 @@ tsl::Status CudnnSupport::GetConvolveRunners(
     DeviceMemoryBase /*filter_data*/,
     const dnn::BatchDescriptor& output_descriptor,
     DeviceMemoryBase /*output_data*/,
-    const dnn::ConvolutionDescriptor& convolution_descriptor, bool use_fallback,
+    const dnn::ConvolutionDescriptor& convolution_descriptor,
+    dnn::CallContext call_context, bool use_fallback,
     ScratchAllocator* /*scratch_allocator*/,
     std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_exec_plans) {
   // cuDNN frontend support became sufficiently stable to use in 8.1.
@@ -5533,7 +5534,8 @@ tsl::Status CudnnSupport::GetConvolveRunners(
     for (const auto& algo : algorithms) {
       auto runner_or = ConvolveRunnerFromDesc(
           stream, algo, kind, input_type, output_type, input_descriptor,
-          filter_descriptor, output_descriptor, convolution_descriptor);
+          filter_descriptor, output_descriptor, convolution_descriptor,
+          call_context);
       if (!runner_or.ok()) {
         // Failures here can result from trying to query the workspace size for
         // algorithms that aren't supported for the present configuration.  This
@@ -5577,7 +5579,8 @@ CudnnSupport::ConvolveRunnerFromDesc(
     dnn::DataType output_type, const dnn::BatchDescriptor& input_descriptor,
     const dnn::FilterDescriptor& filter_descriptor,
     const dnn::BatchDescriptor& output_descriptor,
-    const dnn::ConvolutionDescriptor& convolution_descriptor) {
+    const dnn::ConvolutionDescriptor& convolution_descriptor,
+    dnn::CallContext call_context) {
   if (!algorithm_desc.is_cudnn_frontend()) {
     CudnnConvolutionDescriptor conv(
         convolution_descriptor,
@@ -7046,7 +7049,8 @@ bool CudnnSupport::DoMatMul(Stream* stream,
              ->ThenBlasGemm(blas::Transpose::kNoTranspose,
                             blas::Transpose::kNoTranspose, m, n, k, weights, m,
                             input_data, k, output_data, m,
-                            blas::kDefaultComputePrecision)
+                            blas::kDefaultComputePrecision,
+                            blas::CallContext::kNone)
              .ok()) {
       return false;
     }
@@ -7129,7 +7133,7 @@ bool CudnnSupport::DoMatMul(Stream* stream,
     stream->ThenBlasGemmBatched(blas::Transpose::kNoTranspose,
                                 blas::Transpose::kNoTranspose, m, n, k, alpha,
                                 toPtrs(a), lda, toPtrs(b), ldb, beta, toPtrs(c),
-                                ldc, batch_count);
+                                ldc, batch_count, blas::CallContext::kNone);
   }
 
   return stream->ok();

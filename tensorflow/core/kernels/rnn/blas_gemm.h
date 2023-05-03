@@ -25,6 +25,10 @@ limitations under the License.
 #include "tensorflow/tsl/framework/contraction/eigen_contraction_kernel.h"
 #endif
 
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#include "tensorflow/core/platform/stream_executor.h"
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
 namespace tensorflow {
 class OpKernelContext;
 namespace functor {

@@ -119,7 +119,7 @@ class CUDABlas : public blas::BlasSupport {
                                    const DeviceMemory<T> &a, int lda,
                                    const DeviceMemory<T> &b, int ldb,
                                    const ParamType &beta, DeviceMemory<T> *c,
-                                   int ldc,
+                                   int ldc, blas::CallContext context,
                                    blas::ProfileResult *output_profile_result);
 
   // Helper function for implementing DoBlasGemvWithProfiling.

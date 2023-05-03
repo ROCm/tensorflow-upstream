@@ -521,6 +521,7 @@ Stream &Stream::ThenConvolve(
                    filter_descriptor, filter_data, output_descriptor, *output,
                    convolution_descriptor,
                    /*scratch_allocator=*/nullptr, dnn::AlgorithmConfig(),
+                   dnn::CallContext::kForward,
                    /*output_profile_result=*/nullptr)
                    .ok());
   }
@@ -1523,7 +1524,7 @@ Stream &Stream::ThenBlasGemmWithProfiling(
     blas::Transpose transa, blas::Transpose transb, uint64_t m, uint64 n,
     uint64_t k, float alpha, const DeviceMemory<Eigen::half> &a, int lda,
     const DeviceMemory<Eigen::half> &b, int ldb, float beta,
-    DeviceMemory<Eigen::half> *c, int ldc,
+    DeviceMemory<Eigen::half> *c, int ldc, blas::CallContext context,
     blas::ProfileResult *output_profile_result) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
@@ -1532,10 +1533,10 @@ Stream &Stream::ThenBlasGemmWithProfiling(
   ThenBlasWithProfileImpl<blas::Transpose, blas::Transpose, uint64_t, uint64_t,
                           uint64_t, float, const DeviceMemory<Eigen::half> &,
                           int, const DeviceMemory<Eigen::half> &, int, float,
-                          DeviceMemory<Eigen::half> *, int>
+                          DeviceMemory<Eigen::half> *, int, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmWithProfiling, transa, transb,
-              m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+              m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, context,
               output_profile_result);
 }
 
@@ -1543,7 +1544,8 @@ Stream &Stream::ThenBlasGemmWithProfiling(
     blas::Transpose transa, blas::Transpose transb, uint64_t m, uint64 n,
     uint64_t k, float alpha, const DeviceMemory<float> &a, int lda,
     const DeviceMemory<float> &b, int ldb, float beta, DeviceMemory<float> *c,
-    int ldc, blas::ProfileResult *output_profile_result) {
+    int ldc, blas::CallContext context,
+    blas::ProfileResult *output_profile_result) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc));
@@ -1551,10 +1553,10 @@ Stream &Stream::ThenBlasGemmWithProfiling(
   ThenBlasWithProfileImpl<blas::Transpose, blas::Transpose, uint64_t, uint64_t,
                           uint64_t, float, const DeviceMemory<float> &, int,
                           const DeviceMemory<float> &, int, float,
-                          DeviceMemory<float> *, int>
+                          DeviceMemory<float> *, int, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmWithProfiling, transa, transb,
-              m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+              m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, context,
               output_profile_result);
 }
 
@@ -1562,7 +1564,7 @@ Stream &Stream::ThenBlasGemmWithProfiling(
     blas::Transpose transa, blas::Transpose transb, uint64_t m, uint64 n,
     uint64_t k, double alpha, const DeviceMemory<double> &a, int lda,
     const DeviceMemory<double> &b, int ldb, double beta,
-    DeviceMemory<double> *c, int ldc,
+    DeviceMemory<double> *c, int ldc, blas::CallContext context,
     blas::ProfileResult *output_profile_result) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
@@ -1571,10 +1573,10 @@ Stream &Stream::ThenBlasGemmWithProfiling(
   ThenBlasWithProfileImpl<blas::Transpose, blas::Transpose, uint64_t, uint64_t,
                           uint64_t, double, const DeviceMemory<double> &, int,
                           const DeviceMemory<double> &, int, double,
-                          DeviceMemory<double> *, int>
+                          DeviceMemory<double> *, int, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmWithProfiling, transa, transb,
-              m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+              m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, context,
               output_profile_result);
 }
 
@@ -1584,7 +1586,7 @@ Stream &Stream::ThenBlasGemmWithProfiling(
     const DeviceMemory<std::complex<float>> &a, int lda,
     const DeviceMemory<std::complex<float>> &b, int ldb,
     std::complex<float> beta, DeviceMemory<std::complex<float>> *c, int ldc,
-    blas::ProfileResult *output_profile_result) {
+    blas::CallContext context, blas::ProfileResult *output_profile_result) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc));
@@ -1593,10 +1595,10 @@ Stream &Stream::ThenBlasGemmWithProfiling(
       blas::Transpose, blas::Transpose, uint64_t, uint64_t, uint64,
       std::complex<float>, const DeviceMemory<std::complex<float>> &, int,
       const DeviceMemory<std::complex<float>> &, int, std::complex<float>,
-      DeviceMemory<std::complex<float>> *, int>
+      DeviceMemory<std::complex<float>> *, int, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmWithProfiling, transa, transb,
-              m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+              m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, context,
               output_profile_result);
 }
 
@@ -1606,7 +1608,7 @@ Stream &Stream::ThenBlasGemmWithProfiling(
     const DeviceMemory<std::complex<double>> &a, int lda,
     const DeviceMemory<std::complex<double>> &b, int ldb,
     std::complex<double> beta, DeviceMemory<std::complex<double>> *c, int ldc,
-    blas::ProfileResult *output_profile_result) {
+    blas::CallContext context, blas::ProfileResult *output_profile_result) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc));
@@ -1615,10 +1617,10 @@ Stream &Stream::ThenBlasGemmWithProfiling(
       blas::Transpose, blas::Transpose, uint64_t, uint64_t, uint64,
       std::complex<double>, const DeviceMemory<std::complex<double>> &, int,
       const DeviceMemory<std::complex<double>> &, int, std::complex<double>,
-      DeviceMemory<std::complex<double>> *, int>
+      DeviceMemory<std::complex<double>> *, int, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmWithProfiling, transa, transb,
-              m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+              m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, context,
               output_profile_result);
 }
 
@@ -1766,10 +1768,10 @@ Stream &Stream::ThenBlasGemmBatched(
     blas::Transpose transa, blas::Transpose transb, uint64_t m, uint64 n,
     uint64_t k, float alpha, DeviceMemorySlice<Eigen::half> a, int lda,
     DeviceMemorySlice<Eigen::half> b, int ldb, float beta,
-    DeviceMemorySlice<Eigen::half> c, int ldc, int batch_count) {
+    DeviceMemorySlice<Eigen::half> c, int ldc, int batch_count, blas::CallContext context) {
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
-                                        /*scratch_allocator=*/nullptr);
+                                        /*scratch_allocator=*/nullptr, context);
 }
 
 Stream &Stream::ThenBlasGemmBatchedWithScratch(
@@ -1777,7 +1779,8 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
     uint64_t k, float alpha, DeviceMemorySlice<Eigen::half> a, int lda,
     DeviceMemorySlice<Eigen::half> b, int ldb, float beta,
     DeviceMemorySlice<Eigen::half> c, int ldc, int batch_count,
-    ScratchAllocator *scratch_allocator) {
+    ScratchAllocator *scratch_allocator,
+    blas::CallContext context) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -1785,11 +1788,11 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64_t, uint64_t, uint64,
                float, DeviceMemorySlice<Eigen::half>, int,
                DeviceMemorySlice<Eigen::half>, int, float,
-               DeviceMemorySlice<Eigen::half>, int, int, ScratchAllocator *>
+               DeviceMemorySlice<Eigen::half>, int, int, ScratchAllocator *, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmBatched, transa, transb, m, n,
               k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count,
-              scratch_allocator);
+              scratch_allocator, context);
 }
 
 Stream &Stream::ThenBlasGemmBatchedWithScratch(
@@ -1797,7 +1800,7 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
     uint64_t k, float alpha, DeviceMemorySlice<Eigen::bfloat16> a, int lda,
     DeviceMemorySlice<Eigen::bfloat16> b, int ldb, float beta,
     DeviceMemorySlice<Eigen::bfloat16> c, int ldc, int batch_count,
-    ScratchAllocator *scratch_allocator) {
+    ScratchAllocator *scratch_allocator, blas::CallContext context ) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -1805,11 +1808,11 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64_t, uint64_t, uint64,
                float, DeviceMemorySlice<Eigen::bfloat16>, int,
                DeviceMemorySlice<Eigen::bfloat16>, int, float,
-               DeviceMemorySlice<Eigen::bfloat16>, int, int, ScratchAllocator *>
+               DeviceMemorySlice<Eigen::bfloat16>, int, int, ScratchAllocator *, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmBatched, transa, transb, m, n,
               k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count,
-              scratch_allocator);
+              scratch_allocator, context);
 }
 
 Stream &Stream::ThenBlasGemmBatched(blas::Transpose transa,
@@ -1818,17 +1821,18 @@ Stream &Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     DeviceMemorySlice<float> a, int lda,
                                     DeviceMemorySlice<float> b, int ldb,
                                     float beta, DeviceMemorySlice<float> c,
-                                    int ldc, int batch_count) {
+                                    int ldc, int batch_count, blas::CallContext context) {
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
-                                        /*scratch_allocator=*/nullptr);
+                                        /*scratch_allocator=*/nullptr, context);
 }
 
 Stream &Stream::ThenBlasGemmBatchedWithScratch(
     blas::Transpose transa, blas::Transpose transb, uint64_t m, uint64 n,
     uint64_t k, float alpha, DeviceMemorySlice<float> a, int lda,
     DeviceMemorySlice<float> b, int ldb, float beta, DeviceMemorySlice<float> c,
-    int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+    int ldc, int batch_count, ScratchAllocator *scratch_allocator,
+    blas::CallContext context) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -1836,11 +1840,11 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64_t, uint64_t, uint64,
                float, DeviceMemorySlice<float>, int, DeviceMemorySlice<float>,
                int, float, DeviceMemorySlice<float>, int, int,
-               ScratchAllocator *>
+               ScratchAllocator *, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmBatched, transa, transb, m, n,
               k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count,
-              scratch_allocator);
+              scratch_allocator, context);
 }
 
 Stream &Stream::ThenBlasGemmBatched(blas::Transpose transa,
@@ -1849,10 +1853,10 @@ Stream &Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     DeviceMemorySlice<double> a, int lda,
                                     DeviceMemorySlice<double> b, int ldb,
                                     double beta, DeviceMemorySlice<double> c,
-                                    int ldc, int batch_count) {
+                                    int ldc, int batch_count, blas::CallContext context) {
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
-                                        /*scratch_allocator=*/nullptr);
+                                        /*scratch_allocator=*/nullptr, context);
 }
 
 Stream &Stream::ThenBlasGemmBatchedWithScratch(
@@ -1860,7 +1864,7 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
     uint64_t k, double alpha, DeviceMemorySlice<double> a, int lda,
     DeviceMemorySlice<double> b, int ldb, double beta,
     DeviceMemorySlice<double> c, int ldc, int batch_count,
-    ScratchAllocator *scratch_allocator) {
+    ScratchAllocator *scratch_allocator, blas::CallContext context) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -1868,11 +1872,11 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64_t, uint64_t, uint64,
                double, DeviceMemorySlice<double>, int,
                DeviceMemorySlice<double>, int, double,
-               DeviceMemorySlice<double>, int, int, ScratchAllocator *>
+               DeviceMemorySlice<double>, int, int, ScratchAllocator *, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmBatched, transa, transb, m, n,
               k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count,
-              scratch_allocator);
+              scratch_allocator, context);
 }
 
 Stream &Stream::ThenBlasGemmBatched(
@@ -1880,10 +1884,10 @@ Stream &Stream::ThenBlasGemmBatched(
     uint64_t k, std::complex<float> alpha,
     DeviceMemorySlice<std::complex<float>> a, int lda,
     DeviceMemorySlice<std::complex<float>> b, int ldb, std::complex<float> beta,
-    DeviceMemorySlice<std::complex<float>> c, int ldc, int batch_count) {
+    DeviceMemorySlice<std::complex<float>> c, int ldc, int batch_count, blas::CallContext context) {
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
-                                        /*scratch_allocator=*/nullptr);
+                                        /*scratch_allocator=*/nullptr, context);
 }
 
 Stream &Stream::ThenBlasGemmBatchedWithScratch(
@@ -1892,7 +1896,7 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
     DeviceMemorySlice<std::complex<float>> a, int lda,
     DeviceMemorySlice<std::complex<float>> b, int ldb, std::complex<float> beta,
     DeviceMemorySlice<std::complex<float>> c, int ldc, int batch_count,
-    ScratchAllocator *scratch_allocator) {
+    ScratchAllocator *scratch_allocator, blas::CallContext context) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -1901,11 +1905,11 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
                std::complex<float>, DeviceMemorySlice<std::complex<float>>, int,
                DeviceMemorySlice<std::complex<float>>, int, std::complex<float>,
                DeviceMemorySlice<std::complex<float>>, int, int,
-               ScratchAllocator *>
+               ScratchAllocator *, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmBatched, transa, transb, m, n,
               k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count,
-              scratch_allocator);
+              scratch_allocator, context);
 }
 
 Stream &Stream::ThenBlasGemmBatched(
@@ -1914,10 +1918,10 @@ Stream &Stream::ThenBlasGemmBatched(
     DeviceMemorySlice<std::complex<double>> a, int lda,
     DeviceMemorySlice<std::complex<double>> b, int ldb,
     std::complex<double> beta, DeviceMemorySlice<std::complex<double>> c,
-    int ldc, int batch_count) {
+    int ldc, int batch_count, blas::CallContext context) {
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
-                                        /*scratch_allocator=*/nullptr);
+                                        /*scratch_allocator=*/nullptr, context);
 }
 
 Stream &Stream::ThenBlasGemmBatchedWithScratch(
@@ -1926,7 +1930,8 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
     DeviceMemorySlice<std::complex<double>> a, int lda,
     DeviceMemorySlice<std::complex<double>> b, int ldb,
     std::complex<double> beta, DeviceMemorySlice<std::complex<double>> c,
-    int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+    int ldc, int batch_count, ScratchAllocator *scratch_allocator,
+    blas::CallContext context) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -1935,11 +1940,11 @@ Stream &Stream::ThenBlasGemmBatchedWithScratch(
                std::complex<double>, DeviceMemorySlice<std::complex<double>>,
                int, DeviceMemorySlice<std::complex<double>>, int,
                std::complex<double>, DeviceMemorySlice<std::complex<double>>,
-               int, int, ScratchAllocator *>
+               int, int, ScratchAllocator *, blas::CallContext>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmBatched, transa, transb, m, n,
               k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count,
-              scratch_allocator);
+              scratch_allocator, context);
 }
 
 Stream &Stream::ThenSetRngSeed(const uint8 *seed, uint64_t seed_bytes) {
