@@ -47,7 +47,7 @@ RUN /setup.python.sh $PYTHON_VERSION devel.requirements.txt true
 
 ARG TF_WHEEL_URL
 RUN if [ -n "${TF_WHEEL_URL}" ]; then pip install "${TF_WHEEL_URL}"; fi
-ARG DWLD_TF_SRC_CMD"
+ARG DWLD_TF_SRC_CMD
 RUN if [ -n "${DWLD_TF_SRC_CMD}" ]; then eval "${DWLD_TF_SRC_CMD}"; fi
 
 # Setup build and environment
