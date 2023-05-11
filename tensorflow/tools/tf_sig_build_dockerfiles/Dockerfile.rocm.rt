@@ -6,6 +6,7 @@ FROM ${DISTRO_IMG:-'ubuntu:20.04'} as runtime
 # Install dependencies
 COPY setup.packages.sh /setup.packages.sh
 COPY runtime.packages.txt /runtime.packages.txt
+COPY sles.runtime.packages.txt /sles.runtime.packages.txt
 RUN /setup.packages.sh /runtime.packages.txt
 
 # Install ROCM
