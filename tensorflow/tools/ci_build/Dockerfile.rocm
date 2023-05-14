@@ -89,6 +89,10 @@ ENV PATH="$HCC_HOME/bin:$HIP_PATH/bin:${PATH}"
 ENV PATH="$ROCM_PATH/bin:${PATH}"
 ENV PATH="$OPENCL_ROOT/bin:${PATH}"
 
+# enable HIP Direct Dispatch by default
+ARG AMD_DIRECT_DISPATCH=1
+ENV AMD_DIRECT_DISPATCH=${AMD_DIRECT_DISPATCH}
+
 # Add target file to help determine which device(s) to build for
 RUN printf '%s\n' > ${ROCM_PATH}/bin/target.lst ${GPU_DEVICE_TARGETS}
 
