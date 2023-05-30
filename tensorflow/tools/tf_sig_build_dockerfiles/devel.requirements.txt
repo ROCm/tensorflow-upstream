@@ -30,7 +30,7 @@ gast == 0.4.0
 # be the latest version.
 keras-nightly == 2.13.0.dev2023032307
 tb-nightly ~= 2.13.0.a
-tf-estimator-nightly == 2.13.0.dev2023032308
+tf-estimator-nightly == 2.13.0.dev2023041508
 tf-model-optimization-nightly == 0.7.3.dev20230323
 # Test dependencies
 grpcio ~= 1.49.1 # Earliest version for Python 3.11
