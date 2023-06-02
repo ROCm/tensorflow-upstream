@@ -122,7 +122,7 @@ static absl::Status GemmImpl(const ServiceExecutableRunOptions* run_options,
                       dot_dims.lhs_batch, dot_dims.lhs_contract,
                       dot_dims.rhs_batch, dot_dims.rhs_contract,
                       precision.empty() ? se::blas::kDefaultComputePrecision
-                                        : *absl::c_max_element(precision));
+                                        : *absl::c_max_element(precision), false , false);
     return ToAbsl(gemm_config);
   });
 

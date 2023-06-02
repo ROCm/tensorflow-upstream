@@ -96,10 +96,12 @@ inline StatusOr<GemmConfig> GetGemmConfig(
     const runtime::StridedMemrefView& out, int64_t algorithm, double alpha_real,
     double alpha_imag, double beta, absl::Span<const int64_t> lhs_batch,
     absl::Span<const int64_t> lhs_contract, absl::Span<const int64_t> rhs_batch,
-    absl::Span<const int64_t> rhs_contract, int64_t compute_precision) {
+    absl::Span<const int64_t> rhs_contract, int64_t compute_precision,
+                         bool grad_x, bool grad_y) {
   return GemmConfig::For(ToShape(lhs), lhs_batch, lhs_contract, ToShape(rhs),
                          rhs_batch, rhs_contract, ToShape(out), alpha_real,
-                         alpha_imag, beta, algorithm, compute_precision);
+                         alpha_imag, beta, algorithm, compute_precision,
+                         grad_x, grad_y);
 }
 
 // adds Dot Dimension Attribute encodings for calls to Gemm and cuBLASLt

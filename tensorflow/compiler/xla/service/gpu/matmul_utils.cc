@@ -261,11 +261,13 @@ StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
     absl::Span<const int64_t> rhs_batch_dims,
     absl::Span<const int64_t> rhs_contracting_dims, const Shape& output_shape,
     double alpha_real, double alpha_imag, double beta,
-    std::optional<int64_t> algorithm, int64_t compute_precision) {
+    std::optional<int64_t> algorithm, int64_t compute_precision,
+    bool gx, bool gy) {
   return GemmConfig::For(lhs_shape, lhs_batch_dims, lhs_contracting_dims,
                          rhs_shape, rhs_batch_dims, rhs_contracting_dims,
                          output_shape, output_shape, alpha_real, alpha_imag,
-                         beta, algorithm, compute_precision);
+                         beta, algorithm, compute_precision,                        
+                         gx, gy );
 }
 
 /*static*/ StatusOr<GemmConfig> GemmConfig::For(
@@ -274,7 +276,8 @@ StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
     absl::Span<const int64_t> rhs_batch_dims,
     absl::Span<const int64_t> rhs_contracting_dims, const Shape& c_shape,
     const Shape& output_shape, double alpha_real, double alpha_imag,
-    double beta, std::optional<int64_t> algorithm, int64_t compute_precision) {
+    double beta, std::optional<int64_t> algorithm, int64_t compute_precision,
+    bool gx, bool gy) {
   absl::Span<const int64_t> lhs_col_dims = lhs_contracting_dims;
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> lhs_row_dims,
@@ -372,6 +375,8 @@ StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
       beta,
       algorithm,
       compute_precision,
+      gx,
+      gy
   };
 }
 
@@ -389,13 +394,17 @@ StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
   const DotDimensionNumbers& dot_dims = config.dot_dimension_numbers();
   const Shape& output_shape =
       gemm->shape().IsTuple() ? gemm->shape().tuple_shapes(0) : gemm->shape();
+  auto attributes = gemm->frontend_attributes().map();
+  bool gx = (attributes["grad_x"] == "true");
+  bool gy = (attributes["grad_y"] == "true");
 
   return GemmConfig::For(
       lhs_shape, dot_dims.lhs_batch_dimensions(),
       dot_dims.lhs_contracting_dimensions(), rhs_shape,
       dot_dims.rhs_batch_dimensions(), dot_dims.rhs_contracting_dimensions(),
       output_shape, config.alpha_real(), config.alpha_imag(), config.beta(),
-      algorithm, se::blas::kDefaultComputePrecision);
+      algorithm, se::blas::kDefaultComputePrecision,
+      gx, gy);
 }
 
 /*static*/ StatusOr<GemmConfig> GemmConfig::For(mlir::lmhlo_gpu::GEMMOp op) {
@@ -403,6 +412,16 @@ StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
 
   std::optional<int64_t> algorithm;
   if (op.getAlgorithm()) algorithm = *op.getAlgorithm();
+
+  bool gx=false, gy=false;
+  auto attr_grad_x = op.getGradX();
+  if (attr_grad_x) {
+    gx=attr_grad_x.value();
+  }
+  auto attr_grad_y = op.getGradY();
+  if (attr_grad_y) {
+    gx=attr_grad_y.value();
+  }
 
   int64_t compute_precision = 0;  // Default
   if (op.getPrecisionConfig().has_value()) {
@@ -422,7 +441,8 @@ StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
       dot_dims.getRhsBatchingDimensions(),
       dot_dims.getRhsContractingDimensions(), GetShape(op.getC()),
       op.getAlphaReal().convertToDouble(), op.getAlphaImag().convertToDouble(),
-      op.getBeta().convertToDouble(), algorithm, compute_precision);
+      op.getBeta().convertToDouble(), algorithm, compute_precision,
+      gx, gy);
 }
 
 StatusOr<se::blas::ComputationType> GetBlasComputationType(
