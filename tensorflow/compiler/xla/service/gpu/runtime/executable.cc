@@ -120,8 +120,8 @@ void RegisterXlaGpuTypeIdNames(TypeIDNameRegistry& registry) {
   RegisterConvTypeIdNames(registry);
   RegisterSendRecvTypeIdNames(registry);
 
-#if GOOGLE_CUDA
-  registry.Register<Tagged<se::cuda::BlasLt::Epilogue>>(
+#if GOOGLE_CUDA || TF_HIPBLASLT
+  registry.Register<Tagged<se::gpu::BlasLt::Epilogue>>(
       "__type_id_se_cublas_lt_epilogue");
 #endif  // GOOGLE_CUDA
 }
@@ -132,7 +132,7 @@ void RegisterXlaGpuAttrEncoding(CustomCallAttrEncodingSet& encoding) {
   PopulateDotDimsAttrEncoding(encoding);
   PopulateSendRecvAttrEncoding(encoding);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TF_HIPBLASLT
   PopulateCublasLtMatmulAttrEncoding(encoding);
 #endif  // GOOGLE_CUDA
 }
@@ -388,13 +388,13 @@ Status GpuRuntimeExecutable::Execute(
 #endif  // GOOGLE_CUDA
 
   // Initialize state required for running functions exported from FFI modules.
-  absl::StatusOr<FfiStateVector> ffi_state = ffi_modules_state_.state_vector();
-  if (!ffi_state.ok()) return ffi_state.status();
+  TF_ASSIGN_OR_RETURN(FfiStateVector ffi_state,
+                      ffi_modules_state_.state_vector());
 
   // Pass auxiliary data to the custom call handlers.
   runtime::CustomCall::UserData user_data(
       run_options, &executable, &debug_options_, &temp_buffer, &asm_text,
-      &ffi_state.value(), &binary, &kernels, &gemm_configs, &conv_runners,
+      &ffi_state, &binary, &kernels, &gemm_configs, &conv_runners,
       &collectives_, &fft_plans, &send_recv_events, &gpu_lock,
 #if GOOGLE_CUDA
       // Auxiliary data that is available only if compiled with CUDA support.
@@ -414,11 +414,7 @@ Status GpuRuntimeExecutable::Execute(
   // Collect all emitted diagnostic messages.
   std::string diagnostic;
   runtime::DiagnosticEngine diagnostic_engine;
-  diagnostic_engine.AddHandler([&](runtime::Diagnostic& d) {
-    if (!diagnostic.empty()) absl::StrAppend(&diagnostic, "; ");
-    absl::StrAppend(&diagnostic, d.status().message());
-    return success();
-  });
+  AppendDiagnosticToString(diagnostic_engine, &diagnostic, true);
 
   // Prepare options for executing XLA Runtime program.
   runtime::Executable::ExecuteOpts opts;
