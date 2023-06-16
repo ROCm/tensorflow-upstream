@@ -42,10 +42,13 @@ class HardwareFeature(object):
     V2: Embedding lookup accelerator V2. The embedding lookup operation can be
         placed anywhere of the computation. Multiple instances of embedding
         lookup layer is allowed.
+    GPU:Embedding lookup on GPU. No embedding lookup accelerator features are
+        used.
     """
     UNSUPPORTED = "UNSUPPORTED"
     V1 = "V1"
     V2 = "V2"
+    GPU = "GPU"
 
   @classmethod
   def _embedding_feature_proto_to_string(cls, embedding_feature_proto):
@@ -56,7 +59,9 @@ class HardwareFeature(object):
         topology_pb2.TPUHardwareFeature.EmbeddingFeature.V1:
             HardwareFeature.EmbeddingFeature.V1,
         topology_pb2.TPUHardwareFeature.EmbeddingFeature.V2:
-            HardwareFeature.EmbeddingFeature.V2
+            HardwareFeature.EmbeddingFeature.V2,
+        topology_pb2.TPUHardwareFeature.EmbeddingFeature.GPU:
+            HardwareFeature.EmbeddingFeature.GPU
     }
     return embedding_feature_proto_to_string_map.get(
         embedding_feature_proto, HardwareFeature.EmbeddingFeature.UNSUPPORTED)

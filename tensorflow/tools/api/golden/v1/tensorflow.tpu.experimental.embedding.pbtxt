@@ -20,6 +20,10 @@ tf_module {
     name: "FeatureConfig"
     mtype: "<type \'type\'>"
   }
+member {
+    name: "GPUEmbeddingV0"
+    mtype: "<type \'type\'>"
+  }
   member {
     name: "QuantizationConfig"
     mtype: "<type \'type\'>"
