@@ -119,14 +119,18 @@ PJRT_TopologyDescriptionDeleter MakeTopologyDescriptionDeleter(
   };
 }
 
-absl::StatusCode PjrtErrorToStatusCode(const PJRT_Error* error,
-                                       const PJRT_Api* api) {
+PJRT_Error_Code GetErrorCode(const PJRT_Error* error, const PJRT_Api* api) {
   PJRT_Error_GetCode_Args args;
   args.struct_size = PJRT_Error_GetCode_Args_STRUCT_SIZE;
   args.priv = nullptr;
   args.error = error;
-  api->PJRT_Error_GetCode(&args);
-  PJRT_Error_Code code = args.code;
+  pjrt::LogFatalIfPjrtError(api->PJRT_Error_GetCode(&args), api);
+  return args.code;
+}
+
+absl::StatusCode PjrtErrorToStatusCode(const PJRT_Error* error,
+                                       const PJRT_Api* api) {
+  PJRT_Error_Code code = GetErrorCode(error, api);
   switch (code) {
     case PJRT_Error_Code_CANCELLED:
     case PJRT_Error_Code_UNKNOWN:
@@ -539,9 +543,14 @@ PJRT_SerializedExecutableDeleter MakeSerializedExecutableDeleter(
 static std::string StructSizeErrorMsg(absl::string_view struct_name,
                                       size_t expected_size,
                                       size_t actual_size) {
-  return absl::StrCat("Unexpected ", struct_name, " size: expected ",
-                      expected_size, ", got ", actual_size,
-                      ". Check installed software versions.");
+  std::string error_msg = absl::StrCat(
+      "Unexpected ", struct_name, " size: expected ", expected_size, ", got ",
+      actual_size, ". Check installed software versions.");
+#if defined(PJRT_API_MAJOR)
+  absl::StrAppend(&error_msg, " The framework PJRT API version is ",
+                  PJRT_API_MAJOR, ".", PJRT_API_MINOR, ".");
+#endif  // PJRT_API_MAJOR
+  return error_msg;
 }
 
 xla::Status CheckMatchingStructSizes(absl::string_view struct_name,
@@ -688,21 +697,21 @@ std::unique_ptr<PJRT_KeyValueCallbackData> ConvertToCKeyValueCallbacks(
 }
 
 xla::StatusOr<BufferMemoryLayoutData> ConvertToBufferMemoryLayoutData(
-    const xla::Layout* cpp_layout) {
+    const xla::Layout& cpp_layout) {
   BufferMemoryLayoutData layout_data;
   layout_data.c_layout.type =
       PJRT_Buffer_MemoryLayout_Type::PJRT_Buffer_MemoryLayout_Type_Tiled;
 
   PJRT_Buffer_MemoryLayout_Tiled c_tiled;
-  layout_data.minor_to_major.assign(cpp_layout->minor_to_major().begin(),
-                                    cpp_layout->minor_to_major().end());
+  layout_data.minor_to_major.assign(cpp_layout.minor_to_major().begin(),
+                                    cpp_layout.minor_to_major().end());
   c_tiled.minor_to_major = layout_data.minor_to_major.data();
   c_tiled.minor_to_major_size = layout_data.minor_to_major.size();
-  c_tiled.num_tiles = cpp_layout->tiles().size();
+  c_tiled.num_tiles = cpp_layout.tiles().size();
   if (c_tiled.num_tiles >= 0) {
     layout_data.tile_dim_sizes.reserve(c_tiled.num_tiles);
     for (int i = 0; i < c_tiled.num_tiles; ++i) {
-      absl::Span<const int64_t> tile_dim = cpp_layout->tiles()[i].dimensions();
+      absl::Span<const int64_t> tile_dim = cpp_layout.tiles()[i].dimensions();
       layout_data.tile_dims.insert(layout_data.tile_dims.end(),
                                    tile_dim.begin(), tile_dim.end());
       layout_data.tile_dim_sizes.push_back(tile_dim.size());
