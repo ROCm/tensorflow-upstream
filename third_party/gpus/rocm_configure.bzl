@@ -339,14 +339,14 @@ def _find_libs(repository_ctx, rocm_config, hipfft_or_rocfft, miopen_path, rccl_
     libs_paths = [
         (name, _rocm_lib_paths(repository_ctx, name, path))
         for name, path in [
-            ("amdhip64", rocm_config.rocm_toolkit_path + "/hip"),
+            ("amdhip64", rocm_config.rocm_toolkit_path),
             ("rocblas", rocm_config.rocm_toolkit_path),
             (hipfft_or_rocfft, rocm_config.rocm_toolkit_path),
             ("hiprand", rocm_config.rocm_toolkit_path),
             ("MIOpen", miopen_path),
             ("rccl", rccl_path),
             ("hipsparse", rocm_config.rocm_toolkit_path),
-            ("roctracer64", rocm_config.rocm_toolkit_path + "/roctracer"),
+            ("roctracer64", rocm_config.rocm_toolkit_path),
             ("rocsolver", rocm_config.rocm_toolkit_path),
         ]
     ]
