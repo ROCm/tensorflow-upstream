@@ -142,7 +142,7 @@ class MultiDeviceIterator : public ResourceBase {
     params.thread_pool = &unbounded_thread_pool_;
     params.cancellation_manager = ctx->cancellation_manager();
     IteratorContext iter_ctx(std::move(params));
-    multi_device_buffer_->GetNextFromShard(&iter_ctx, shard_num, incarnation_id,
+    multi_device_buffer_->GetNextFromShard(&iter_ctx, shard_num, 1/*incarnation_id*/,
                                            std::move(callback));
     return OkStatus();
   }
