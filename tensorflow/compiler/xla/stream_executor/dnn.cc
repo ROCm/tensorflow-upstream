@@ -132,6 +132,7 @@ tsl::Status DnnSupport::GetConvolveRunners(
     const dnn::BatchDescriptor& /*output_descriptor*/,
     DeviceMemoryBase /*output_data*/,
     const dnn::ConvolutionDescriptor& /*convolution_descriptor*/,
+    dnn::CallContext /*call_context*/,
     bool /*use_fallback*/, ScratchAllocator* /*scratch_allocator*/,
     const NumericOptions& /*numeric_options*/,
     std::vector<std::unique_ptr<const dnn::ConvRunner>>* /*exec_plans*/) {
@@ -145,7 +146,8 @@ DnnSupport::ConvolveRunnerFromDesc(
     dnn::DataType output_type, const dnn::BatchDescriptor& input_descriptor,
     const dnn::FilterDescriptor& filter_descriptor,
     const dnn::BatchDescriptor& output_descriptor,
-    const dnn::ConvolutionDescriptor& convolution_descriptor) {
+    const dnn::ConvolutionDescriptor& convolution_descriptor,
+    dnn::CallContext call_context) {
   return tsl::errors::Unimplemented("ConvolveRunnerFromDesc not implemented.");
 }
 
@@ -330,6 +332,7 @@ bool DnnSupport::GetMIOpenConvolveAlgorithms(
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& /*convolution_descriptor*/,
     ScratchAllocator* scratch_allocator,
+    dnn::CallContext call_context,
     std::vector<ProfileResult>* /*out_algorithms*/) {
   return false;
 }

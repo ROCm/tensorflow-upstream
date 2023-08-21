@@ -359,7 +359,8 @@ class Stream {
       const dnn::ConvolutionDescriptor &convolution_descriptor,
       ScratchAllocator *scratch_allocator,
       const dnn::AlgorithmConfig &algorithm_config,
-      dnn::ProfileResult *output_profile_result) {
+      dnn::ProfileResult *output_profile_result,
+      dnn::CallContext call_context = dnn::CallContext::kNone) {
     DeviceMemory<uint8_t> scratch_memory;
     dnn::AlgorithmDesc algorithm_desc;
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
@@ -373,7 +374,7 @@ class Stream {
                              input_descriptor, input_data, filter_descriptor,
                              filter_data, output_descriptor, output_data,
                              convolution_descriptor, algorithm_desc,
-                             scratch_memory, output_profile_result);
+                             scratch_memory, call_context, output_profile_result);
     }
     return tsl::errors::Unimplemented("DNN library is not found.");
   }
@@ -426,14 +427,15 @@ class Stream {
       const dnn::BatchDescriptor &input_descriptor,
       const dnn::FilterDescriptor &filter_descriptor,
       const dnn::BatchDescriptor &output_descriptor,
-      const dnn::ConvolutionDescriptor &convolution_descriptor) {
+      const dnn::ConvolutionDescriptor &convolution_descriptor,
+      dnn::CallContext call_context = dnn::CallContext::kNone) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
     if (!dnn_support) {
       return tsl::errors::Unimplemented("DNN library is not found.");
     }
     return dnn_support->ConvolveRunnerFromDesc(
         this, algorithm_desc, kind, element_type, output_type, input_descriptor,
-        filter_descriptor, output_descriptor, convolution_descriptor);
+        filter_descriptor, output_descriptor, convolution_descriptor, call_context);
   }
 
   tsl::StatusOr<std::unique_ptr<const dnn::GraphConvRunner>>

@@ -67,6 +67,16 @@ enum class DimIndex : int {
   Z = 2,
 };
 
+// Call context information for DNN API calls
+// This is extra information that can optionally be passed down to the cudnn/miopen library 
+// library, so that it can pick the efficient imlpementation based on context
+enum class CallContext {
+  kNone = 0,            // No information
+  kForward = 1,         // call happens in "forward" pass
+  kBackpropData = 2,    // call happens in "backprop" pass for data
+  kBackpropFilter = 4,  // call happens in "backprop" pass for filter
+};
+
 // Return a reordered dims.
 std::vector<int64_t> ReorderDims(const std::vector<int64_t>& input,
                                  const DataLayout& from, const DataLayout& to);
@@ -1605,6 +1615,7 @@ class DnnSupport {
       DeviceMemoryBase output_data,
       const ConvolutionDescriptor& convolution_descriptor,
       AlgorithmDesc algorithm_desc, DeviceMemory<uint8_t> scratch_memory,
+      dnn::CallContext call_context,
       ProfileResult* output_profile_result) = 0;
 
   virtual tsl::Status GetConvolveRunners(
@@ -1616,7 +1627,7 @@ class DnnSupport {
       const dnn::BatchDescriptor& output_descriptor,
       DeviceMemoryBase output_data,
       const dnn::ConvolutionDescriptor& convolution_descriptor,
-      bool use_fallback, ScratchAllocator* scratch_allocator,
+      dnn::CallContext call_context, bool use_fallback, ScratchAllocator* scratch_allocator,
       const NumericOptions& numeric_options,
       std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_exec_plans);
 
@@ -1627,7 +1638,8 @@ class DnnSupport {
       dnn::DataType output_type, const dnn::BatchDescriptor& input_descriptor,
       const dnn::FilterDescriptor& filter_descriptor,
       const dnn::BatchDescriptor& output_descriptor,
-      const dnn::ConvolutionDescriptor& convolution_descriptor);
+      const dnn::ConvolutionDescriptor& convolution_descriptor,
+      dnn::CallContext call_context);
 
   virtual tsl::Status GetGraphConvolveRunners(
       dnn::ConvolutionKind kind, dnn::DataType input_type,
@@ -1781,7 +1793,7 @@ class DnnSupport {
       const dnn::BatchDescriptor& output_descriptor,
       DeviceMemoryBase output_data,
       const dnn::ConvolutionDescriptor& convolution_descriptor,
-      ScratchAllocator* scratch_allocator,
+      ScratchAllocator* scratch_allocator, dnn::CallContext call_context,
       std::vector<ProfileResult>* out_algorithms);
 
   // Returns a list of supported rnn algorithms.
