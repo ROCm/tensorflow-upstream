@@ -220,6 +220,9 @@ StatusOr<HloInstruction*> EnsureIsConvBiasActivation(HloInstruction* conv) {
 StatusOr<bool> FuseConvertTypeIntoConv(HloComputation* comp,
                                        PrimitiveType conv_type,
                                        PrimitiveType cvt_type) {
+#if TENSORFLOW_USE_ROCM
+  return false;
+#endif
   bool changed = false;
   for (auto instr : comp->MakeInstructionPostOrder()) {
     HloInstruction* conv = nullptr;
@@ -294,6 +297,15 @@ StatusOr<bool> FuseConvAlpha(HloComputation* comp) {
     if (!Match(instr, pattern)) {
       continue;
     }
+
+#if TENSORFLOW_USE_ROCM
+    if (conv->custom_call_target() == kCudnnConvForwardCallTarget) {
+      VLOG(2) << conv->ToString() << " " 
+              << conv->convolution_dimension_numbers().kernel_spatial_dimensions_size();
+      if(conv->convolution_dimension_numbers().kernel_spatial_dimensions_size() > 2)
+        continue; // MIOpen does not correctly fuse Conv3D
+    }
+#endif
 
     // alpha is f32 except for f64 convs, where it's f64.  See
     // https://docs.nvidia.com/deeplearning/cudnn/api/index.html#cudnnConvolutionBiasActivationForward
@@ -756,6 +768,12 @@ StatusOr<bool> FuseBiasOrSideInput(HloComputation* comp) {
     // !can_accept_bias && !can_accept_side_input, and our shiny new
     // bias-activation conv will be able to accept both.
     if (conv->custom_call_target() == kCudnnConvForwardCallTarget) {
+#if TENSORFLOW_USE_ROCM
+      VLOG(2) << conv->ToString() << " " 
+              << conv->convolution_dimension_numbers().kernel_spatial_dimensions_size();
+      if(conv->convolution_dimension_numbers().kernel_spatial_dimensions_size() > 2)
+        continue; // MIOpen does not correctly fuse Conv3D
+#endif
       TF_ASSIGN_OR_RETURN(conv, EnsureIsConvBiasActivation(conv));
     }
 
@@ -772,8 +790,11 @@ StatusOr<bool> FuseBiasOrSideInput(HloComputation* comp) {
     // side_input?
     bool can_accept_bias =
         Match(conv->operand(2), m::Broadcast(m::ConstantEffectiveScalar(0)));
+#if TENSORFLOW_USE_ROCM
+    bool can_accept_side_input = false;
+#else
     bool can_accept_side_input = conv->operand_count() < 4;
-
+#endif
     // The addend can be fused as a bias if
     //  - it is 1D broadcasted in the output feature dimension, and
     //  - it is losslessly-convertible to the correct type (f32 for s8/f32/u32
@@ -1209,6 +1230,9 @@ StatusOr<bool> FuseConvertToF16(HloComputation* comp) {
 }
 
 StatusOr<bool> FuseConvertToS8(HloComputation* comp) {
+#if TENSORFLOW_USE_ROCM
+  return false;
+#endif
   bool changed = false;
   for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
     HloInstruction* gte = nullptr;

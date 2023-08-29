@@ -180,10 +180,6 @@ class OpPropertyHelper : public OpCatHelper {
   }
 
   bool IsGpuCompatible(const ContractionBiasAddActivation& pattern) const {
-#if TENSORFLOW_USE_ROCM
-    // ROCm does not support _FusedConv2D. Does it suppport _FusedMatMul?
-    return false;
-#endif
     // The TF->XLA bridge does not support `_FusedMatMul` so we avoid creating
     // this op. Furthermore, XLA already does this fusion internally so there
     // is no true benefit from doing this optimization if XLA is going to

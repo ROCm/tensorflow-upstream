@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 // This include can't be in the conv_ops_fused_impl.h headers. See b/62899350.
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/protobuf/autotuning.pb.h"
 #endif  // GOOGLE_CUDA
 #include "tensorflow/core/kernels/conv_ops_fused_impl.h"
@@ -27,7 +27,7 @@ namespace tensorflow {
 TF_CALL_float(REGISTER_FUSED_CPU_CONV2D);
 #endif  // !USE_GEMM_FOR_CONV
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace functor {
 DECLARE_FUNCTOR_GPU_SPEC(float);

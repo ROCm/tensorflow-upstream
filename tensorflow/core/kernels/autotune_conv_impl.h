@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_KERNELS_AUTOTUNE_CONV_IMPL_H_
 #define TENSORFLOW_CORE_KERNELS_AUTOTUNE_CONV_IMPL_H_
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define EIGEN_USE_THREADS
 
 #include "tensorflow/core/framework/op_kernel.h"

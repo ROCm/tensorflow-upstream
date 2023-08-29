@@ -24,13 +24,13 @@ limitations under the License.
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cudnn/cudnn.h"
+#endif
 #include "tensorflow/compiler/xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "tensorflow/compiler/xla/stream_executor/gpu/redzone_allocator.h"
 #include "tensorflow/compiler/xla/stream_executor/tf_allocator_adapter.h"
 #include "tensorflow/core/kernels/autotune_conv_impl.h"
 #include "tensorflow/core/kernels/numeric_options_utils.h"
 #include "tensorflow/core/platform/tensor_float_32_utils.h"
-#endif  // GOOGLE_CUDA
 
 namespace tensorflow {
 
@@ -81,7 +81,7 @@ StatusOr<AutotuneEntry<se::dnn::FusedConvOp>> AutotuneFusedConv(
     se::DeviceMemory<T> input_ptr, se::DeviceMemory<T> filter_ptr,
     se::DeviceMemory<T> output_ptr, se::DeviceMemory<T> bias_ptr,
     se::DeviceMemory<T> side_input_ptr, int64_t scratch_size_limit) {
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   AutotuneEntry<se::dnn::FusedConvOp> autotune_entry;
   auto* stream = ctx->op_device_context()->stream();
 
@@ -351,7 +351,9 @@ StatusOr<AutotuneEntry<se::dnn::ConvOp>> AutotuneUnfusedConv(
 
     std::vector<se::dnn::ProfileResult> algorithms;
     if (!stream->parent()->GetMIOpenConvolveAlgorithms(
-            kind, se::dnn::ToDataType<T>::value, stream, input_desc, input_ptr,
+            kind, se::dnn::ToDataType<T>::value,
+            se::dnn::ToDataType<T>::value,
+            stream, input_desc, input_ptr,
             filter_desc, filter_ptr, output_desc, output_ptr, conv_desc,
             &scratch_allocator, &algorithms)) {
       return errors::Unknown(

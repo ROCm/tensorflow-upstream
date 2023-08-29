@@ -16,7 +16,7 @@ limitations under the License.
 #include <type_traits>
 
 // This include can't be in the conv_ops_fused_impl.h headers. See b/62899350.
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/kernels/numeric_options_utils.h"
 #include "tensorflow/core/protobuf/autotuning.pb.h"
 #endif  // GOOGLE_CUDA
@@ -34,7 +34,7 @@ TF_CALL_int8(REGISTER_FUSED_CPU_CONV2D);
 TF_CALL_qint8(REGISTER_FUSED_CPU_CONV2D);
 #endif  // !USE_GEMM_FOR_CONV
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace functor {
 DECLARE_FUNCTOR_GPU_SPEC(int32);
@@ -308,7 +308,7 @@ template <>
 struct LaunchFusedConv2DOp<CPUDevice, qint8>
     : LaunchFusedConv2DOpCpuInt8Helper<qint8> {};
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 template <typename T>
 struct LaunchFusedConv2DOpGpuInt8Helper {

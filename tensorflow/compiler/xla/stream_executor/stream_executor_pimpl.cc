@@ -303,7 +303,8 @@ tsl::Status StreamExecutor::GetFusedMatmulRunners(
 }
 
 bool StreamExecutor::GetMIOpenConvolveAlgorithms(
-    dnn::ConvolutionKind kind, dnn::DataType element_type, Stream* stream,
+    dnn::ConvolutionKind kind, dnn::DataType input_type, 
+    dnn::DataType output_type, Stream* stream,
     const dnn::BatchDescriptor& input_descriptor, DeviceMemoryBase input_data,
     const dnn::FilterDescriptor& filter_descriptor,
     DeviceMemoryBase filter_data, const dnn::BatchDescriptor& output_descriptor,
@@ -316,7 +317,7 @@ bool StreamExecutor::GetMIOpenConvolveAlgorithms(
     return false;
   }
   return dnn_support->GetMIOpenConvolveAlgorithms(
-      kind, element_type, stream, input_descriptor, input_data,
+      kind, input_type, output_type, stream, input_descriptor, input_data,
       filter_descriptor, filter_data, output_descriptor, output_data,
       convolution_descriptor, scratch_allocator, out_algorithms);
 }

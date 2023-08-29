@@ -94,9 +94,12 @@ namespace gpu {
 // pass returns an error -- cudnn will not be able to run it.
 class CudnnFusedConvRewriter : public HloModulePass {
  public:
+#if GOOGLE_CUDA
   explicit CudnnFusedConvRewriter(se::CudaComputeCapability cc)
       : compute_capability_(cc) {}
-
+#else
+  explicit CudnnFusedConvRewriter() {}
+#endif
   absl::string_view name() const override {
     return "cudnn-fused-convolution-rewriter";
   }

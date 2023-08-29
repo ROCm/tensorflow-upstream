@@ -34,7 +34,7 @@ limitations under the License.
 #define USE_EIGEN_TENSOR
 #define EIGEN_USE_THREADS
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define EIGEN_USE_GPU
 #endif  // GOOGLE_CUDA
 
@@ -56,8 +56,10 @@ limitations under the License.
 #include "tensorflow/core/util/tensor_format.h"
 #include "tensorflow/core/util/use_cudnn.h"
 
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #if GOOGLE_CUDA
 #include "third_party/gpus/cudnn/cudnn.h"
+#endif
 #include "tensorflow/compiler/xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "tensorflow/compiler/xla/stream_executor/gpu/redzone_allocator.h"
 #include "tensorflow/compiler/xla/stream_executor/tf_allocator_adapter.h"
@@ -312,7 +314,7 @@ struct LaunchFusedConv2DOp<CPUDevice, int8>;
 template <>
 struct LaunchFusedConv2DOp<CPUDevice, qint8>;
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 inline int64_t ConvolveScratchSize() {
   static int64_t convolve_scratch_size = GetDnnWorkspaceLimit(
@@ -811,7 +813,7 @@ class FusedConv2DOp : public OpKernel {
       Name("_FusedConv2D").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
       FusedConv2DOp<CPUDevice, T>);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #define DECLARE_FUNCTOR_GPU_SPEC(T)                                     \
   template <>                                                           \

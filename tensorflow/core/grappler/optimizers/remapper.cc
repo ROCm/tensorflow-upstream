@@ -414,7 +414,11 @@ bool IsGpuCompatibleConv2D(const RemapperContext& ctx, const NodeDef* conv2d,
              IsLeakyRelu(*activation)) {
     DataType dtype = GetDataTypeFromAttr(*conv2d, "T");
     const string& data_format = conv2d->attr().at(kDataFormat).s();
+#if GOOGLE_CUDA
     return NodeIsOnGpu(conv2d) && dtype == DT_HALF && data_format == "NHWC";
+#else
+    return NodeIsOnGpu(conv2d) && (dtype == DT_HALF || dtype == DT_FLOAT);
+#endif
   }
   return false;
 }
@@ -497,6 +501,8 @@ bool RuntimeFusionEnabled(const Cluster* cluster) {
     }
 
     return runtime_fusion_enabled;
+#elif TENSORFLOW_USE_ROCM
+    return true;
 #else
     return false;
 #endif
@@ -516,10 +522,6 @@ bool IsSupportedActivation(const NodeDef& node, const Cluster* cluster) {
 bool IsGpuCompatible(const RemapperContext& ctx,
                      const ContractionWithBiasAddAndActivation& matched,
                      const Cluster* cluster) {
-#if TENSORFLOW_USE_ROCM
-  // TODO: add a hipblaslt pathway
-  return false;
-#endif
   // The TF->XLA bridge does not support `_Fused[Conv2D|MatMul]` so we avoid
   // creating this op. Furthermore, XLA already does this fusion internally so
   // there is no true benefit from doing this optimization if XLA is going to
@@ -562,6 +564,10 @@ bool IsGpuCompatible(const RemapperContext& ctx,
             (RuntimeFusionEnabled(cluster) && valid_channels)) &&
            IsGpuCompatibleConv2D(ctx, &contraction_node, &activation_node);
   } else if (IsMatMul(contraction_node)) {
+#if TENSORFLOW_USE_ROCM
+  // TODO: add a hipblaslt pathway
+  return false;
+#endif
     const std::vector<OpInfo::TensorProperties>& input_props =
         ctx.graph_properties.GetInputProperties(contraction_node.name());
     const TensorShapeProto& a_shape =

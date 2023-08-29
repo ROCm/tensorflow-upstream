@@ -545,9 +545,12 @@ tsl::Status ROCMBlas::DoBlasGemmWithAlgorithm(
     blas::DataType type_c, int ldc, blas::ComputationType computation_type,
     blas::AlgorithmType algorithm, const NumericOptions &numeric_options,
     blas::ProfileResult *output_profile_result) {
-  // ROCM TODO: properly implement the interface
-  return tsl::errors::Internal("DoBlasGemmWithAlgorithm ",
-                               "is not implemented on ROCm yet");
+    if(type_a!=type_b || type_a!=type_c)
+      return tsl::errors::Internal("ROCMBlas::DoBlasGemmWithAlgorithm does not "
+        "support mixed data types");
+    return DoBlasGemm(stream, transa, transb, m, n, k, type_a,
+        alpha, a, lda,
+        b, ldb, beta, c, ldc, numeric_options);
 }
 
 tsl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
@@ -559,9 +562,18 @@ tsl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
     int batch_count, blas::ComputationType computation_type,
     blas::AlgorithmType algorithm, const NumericOptions &numeric_options,
     blas::ProfileResult *output_profile_result) {
-  // ROCM TODO: properly implement the interface
-  return tsl::errors::Internal("DoBlasGemmStridedBatchedWithAlgorithm ",
-                               "is not implemented on ROCm yet");
+    if((type_a!=type_b || type_a!=type_c) && 
+      !(type_a==blas::DataType::kInt8 && type_b==blas::DataType::kInt8 && type_c==blas::DataType::kInt32)
+      )
+      return tsl::errors::Internal(absl::StrCat("ROCMBlas::DoBlasGemmStridedBatchedWithAlgo"
+        " does not support mixed data types ", 
+        blas::DataTypeString(type_a), " ", 
+        blas::DataTypeString(type_b), " ", 
+        blas::DataTypeString(type_c)))
+        ;
+  return DoBlasGemmStridedBatched(stream, transa, transb, m,
+    n, k, type_a, alpha, a, lda, stride_a, b, ldb, stride_b, beta,
+    c, ldc, stride_c, batch_count, numeric_options);
 }
 
 bool ROCMBlas::GetBlasGemmAlgorithms(
@@ -1107,6 +1119,16 @@ tsl::Status ROCMBlas::DoBlasGemmStridedBatched(
       a.opaque(), lda, b.opaque(), ldb, beta, c->opaque(), ldc);
 
   switch (dtype) {
+    case blas::DataType::kInt8:
+      return DoBlasInternalStatus(
+          wrap::rocblas_gemm_strided_batched_ex, stream,
+          false, /* pointer_mode_host */
+          ROCMBlasTranspose(transa), ROCMBlasTranspose(transb), m, n, k, alpha,
+          a.opaque(), rocblas_datatype_i8_r, lda, stride_a, b.opaque(),
+          rocblas_datatype_i8_r, ldb, stride_b, beta, c->opaque(),
+          rocblas_datatype_i32_r, ldc, stride_c, c->opaque(),
+          rocblas_datatype_i32_r, ldc, stride_c, batch_count,
+          rocblas_datatype_i32_r, rocblas_gemm_algo_standard, 0, 0);
     case blas::DataType::kHalf: {
       const Eigen::half alpha_half(*static_cast<const float *>(alpha));
       const Eigen::half beta_half(*static_cast<const float *>(beta));
