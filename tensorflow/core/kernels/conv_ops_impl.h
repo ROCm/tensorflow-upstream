@@ -1106,7 +1106,11 @@ void LaunchConvOpImpl(OpKernelContext* context, bool cudnn_use_autotune,
         absl::InternalError("Failed to set Convolution Descripitor: invalid "
                             "number of spatial dimensions"));
   }
+#if TENSORFLOW_USE_ROCM
+  conv_desc.set_group_count(in_depth/filter_depth);
+#elif GOOGLE_CUDA
   conv_desc.set_group_count(1);
+#endif
   // TODO(b/290223810) Change group count when implementing group/depthwise.
   Tensor transformed_filter;
   auto dst_format =
