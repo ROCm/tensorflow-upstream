@@ -294,7 +294,6 @@ cuda_py_strict_test(
     shard_count = 4,
     tags = [
         "no_mac_arm64",
-		"no_rocm",
         "optonly",  # times out
     ],
     deps = [
