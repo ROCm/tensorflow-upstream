@@ -426,9 +426,6 @@ rocm_library(
 xla_cc_test(
     name = "topk_kernel_test",
     srcs = if_gpu_is_configured(["topk_kernel_test.cc"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
     tags = tf_gpu_tests_tags(),
     deps = [
         ":gpu_kernel_helper",
