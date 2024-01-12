@@ -30,7 +30,18 @@ export TF_PYTHON_VERSION=$PYTHON_VERSION
 
 export TF_NEED_ROCM=0
 
-yes "" | $PYTHON_BIN_PATH configure.py
+if [ -f /usertools/cpu.bazelrc ]; then
+        # Use the bazelrc files in /usertools if available
+        bazel \
+          --bazelrc=/usertools/cpu.bazelrc \
+          test \
+          --config=sigbuild_local_cache \
+          --config=pycpp \
+          --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
+          --local_test_jobs=${N_BUILD_JOBS} \
+          --jobs=${N_BUILD_JOBS}
+else
+         yes "" | $PYTHON_BIN_PATH configure.py
 
 bazel test \
       -k \

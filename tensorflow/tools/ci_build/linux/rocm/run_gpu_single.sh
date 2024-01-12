@@ -37,7 +37,7 @@ if [[ -n $1 ]]; then
     ROCM_INSTALL_DIR=$1
 else
     if [[ -z "${ROCM_PATH}" ]]; then
-        ROCM_INSTALL_DIR=/opt/rocm-6.2.0
+        ROCM_INSTALL_DIR=/opt/rocm-6.0.0
     else
         ROCM_INSTALL_DIR=$ROCM_PATH
     fi
@@ -51,7 +51,22 @@ export TF_PYTHON_VERSION=$PYTHON_VERSION
 export TF_NEED_ROCM=1
 export ROCM_PATH=$ROCM_INSTALL_DIR
 
-yes "" | $PYTHON_BIN_PATH configure.py
+if [ -f /usertools/rocm.bazelrc ]; then
+	# Use the bazelrc files in /usertools if available
+	bazel \
+	     --bazelrc=/usertools/rocm.bazelrc \
+             test \
+             --jobs=${N_BUILD_JOBS} \
+	     --local_test_jobs=${N_TEST_JOBS} \
+             --config=sigbuild_local_cache \
+             --config=rocm \
+             --config=pycpp \
+             --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
+             --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
+             --test_env=TF_GPU_COUNT=$TF_GPU_COUNT
+else
+	# Legacy style: run configure then build
+	yes "" | $PYTHON_BIN_PATH configure.py
 
 # Run bazel test command. Double test timeouts to avoid flakes.
 bazel test \
