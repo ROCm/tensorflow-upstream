@@ -52,7 +52,10 @@ VERSION=$1
 REQUIREMENTS=$2
 
 # Add deadsnakes repo for Python installation
-add-apt-repository -y 'ppa:deadsnakes/ppa'
+if ! add-apt-repository -y 'ppa:deadsnakes/ppa'; then
+	apt-get install -y software-properties-common
+	add-apt-repository -y 'ppa:deadsnakes/ppa'
+fi
 
 # Install Python packages for this container's version
 cat >pythons.txt <<EOF
