@@ -40,6 +40,7 @@ ROCM_PATH=$ROCM_INSTALL_DIR
 PYTHON_VERSION=`python3 -c "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')"`
 export TF_PYTHON_VERSION=$PYTHON_VERSION
 # Explicitly define resource constraints on bazel to avoid overload on rocm-ci
+# Change this fox example with 32GB RAM, put local ram around 24000, and with 7950x3d put 16 and 32
 if [[ -n $restriction ]]; then
     RESOURCE_OPTION="--local_ram_resources=60000 --local_cpu_resources=35 --jobs=70"
 else
