@@ -19,9 +19,10 @@
 # changes made in the current build are not working!
 TF_PKG_LOC=/tmp/tensorflow_pkg
 rm -f $TF_PKG_LOC/tensorflow*.whl
-
+set -e
+set -x
 # First positional argument (if any) specifies the ROCM_INSTALL_DIR
-ROCM_INSTALL_DIR=/opt/rocm-6.1.1
+ROCM_INSTALL_DIR=/opt/rocm
 if [[ -n $1 ]]; then
     ROCM_INSTALL_DIR=$1
 fi

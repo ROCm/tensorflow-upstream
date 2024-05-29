@@ -31,7 +31,7 @@ _TF_ROCM_CONFIG_REPO = "TF_ROCM_CONFIG_REPO"
 
 _DEFAULT_ROCM_VERSION = ""
 _DEFAULT_MIOPEN_VERSION = ""
-_DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm"
+_DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm/bin"
 _DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx942"]
 
 def _get_win_rocm_defines(repository_ctx):

@@ -490,7 +490,7 @@ bool RegisterBfloat16Cast(int numpy_type, bool cast_is_safe) {
 }
 
 template <typename InType, typename OutType, typename Functor>
-void BinaryUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
+void BinaryUFunc(char** args, const npy_intp* dimensions, const npy_intp* steps,
                  void* data) {
   const char* i0 = args[0];
   const char* i1 = args[1];
@@ -505,9 +505,16 @@ void BinaryUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
   }
 }
 
+// this function works for python 3.9 and 1.60.0 <= numpy < 1.85.0
 template <typename Functor>
 void CompareUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
                   void* data) {
+  BinaryUFunc<bfloat16, npy_bool, Functor>(args, dimensions, steps, data);
+}
+
+template <typename Functor>
+void CompareUFunc(char** args, const npy_intp* dimensions, 
+                  const npy_intp* steps, void* data) {
   BinaryUFunc<bfloat16, npy_bool, Functor>(args, dimensions, steps, data);
 }
 

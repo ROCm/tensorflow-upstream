@@ -20,3 +20,20 @@ index 2fb26050..c2744d5b 100644
      includes = ["src/"],
      visibility = ["//visibility:public"],
  )
+diff --git a/python/google/protobuf/pyext/message.cc b/python/google/protobuf/pyext/message.cc
+index 3530a9b37..6388d401a 100644
+--- a/python/google/protobuf/pyext/message.cc
++++ b/python/google/protobuf/pyext/message.cc
+@@ -2992,7 +2992,11 @@ bool InitProto2MessageModule(PyObject *m) {
+             &RepeatedCompositeContainer_Type));
+ 
+     // Register them as collections.Sequence
++    #if PY_MAJOR_VERSION >= 3
++    ScopedPyObjectPtr collections(PyImport_ImportModule("collections.abc"));
++    #else
+     ScopedPyObjectPtr collections(PyImport_ImportModule("collections"));
++    #endif
+     if (collections == NULL) {
+       return false;
+     }
+--
