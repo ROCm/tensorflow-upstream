@@ -52,6 +52,9 @@ def _execute(
       the result of repository_ctx.execute(cmdline)
     """
     result = repository_ctx.execute(cmdline)
+    print("result.stderr:\n", result.stderr)
+    print("result.stdout:\n", result.stdout)
+    return result
     if result.stderr or not (empty_stdout_fine or result.stdout):
         _fail("\n".join([
             error_msg.strip() if error_msg else "Repository command failed",
@@ -155,6 +158,8 @@ def _symlink_genrule_for_dir(
 def _get_python_bin(repository_ctx):
     """Gets the python bin path."""
     python_bin = repository_ctx.os.environ.get(_PYTHON_BIN_PATH)
+    print("_PYTHON_BIN_PATH : {}".format(_PYTHON_BIN_PATH))
+    print("python_bin : {}".format(python_bin))
     if python_bin != None:
         return python_bin
     python_bin_path = repository_ctx.which("python")
