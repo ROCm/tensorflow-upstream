@@ -1043,7 +1043,13 @@ ROCMDriver::DeviceGetSharedMemConfig(int device_ordinal) {
   hipDeviceProp_t props;
   hipError_t result = hipGetDeviceProperties(&props, device);
   if (result == hipSuccess) {
-    *version = props.gcnArch;
+    std::string gcnName = props.gcnArchName;
+    std::vector<std::string> tokens = absl::StrSplit(gcnName, ':');
+    std::string amdgpu_version = gcnName;
+    if (!tokens.empty() && tokens[0].size() >= 3) {
+      amdgpu_version = tokens[0].substr(3);
+    }
+    *version = stoi(amdgpu_version);
     return port::Status::OK();
   }
   *version = 0;
