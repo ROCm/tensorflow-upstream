@@ -27,6 +27,40 @@ from tensorflow.python.util.tf_export import tf_export
 _np_bfloat16 = pywrap_tensorflow.TF_bfloat16_type()
 
 
+@tf_export("dtypes.as_dtype", "as_dtype")
+def as_dtype(type_value):
+  """Converts the given `type_value` to a `DType`.
+
+  Args:
+    type_value: A value that can be converted to a `tf.DType` object. This may
+      currently be a `tf.DType` object, a [`DataType`
+      enum](https://www.tensorflow.org/code/tensorflow/core/framework/types.proto),
+        a string type name, or a `numpy.dtype`.
+
+  Returns:
+    A `DType` corresponding to `type_value`.
+
+  Raises:
+    TypeError: If `type_value` cannot be converted to a `DType`.
+  """
+  if isinstance(type_value, DType):
+    return type_value
+
+  if isinstance(type_value, np.dtype):
+    try:
+      return _NP_TO_TF[type_value.type]
+    except KeyError:
+      pass
+
+  try:
+    return _ANY_TO_TF[type_value]
+  except KeyError:
+    pass
+
+  raise TypeError("Cannot convert value %r to a TensorFlow DType." %
+                  (type_value,))
+
+
 @tf_export("dtypes.DType", "DType")
 class DType(object):
   """Represents the type of the elements in a `Tensor`.
@@ -298,7 +332,7 @@ class DType(object):
 
 # Define data type range of numpy dtype
 dtype_range = {
-    np.bool_: (False, True),
+    bool: (False, True),
     np.bool8: (False, True),
     np.uint8: (0, 255),
     np.uint16: (0, 65535),
@@ -539,10 +573,8 @@ _NP_TO_TF = {
     np.int8: int8,
     np.complex64: complex64,
     np.complex128: complex128,
-    np.object_: string,
     np.string_: string,
     np.unicode_: string,
-    np.bool_: bool,
     _np_qint8: qint8,
     _np_quint8: quint8,
     _np_qint16: qint16,
@@ -594,7 +626,7 @@ _TF_TO_NP = {
     # NOTE(touts): For strings we use np.object as it supports variable length
     # strings.
     types_pb2.DT_STRING:
-        np.object,
+        object,
     types_pb2.DT_COMPLEX64:
         np.complex64,
     types_pb2.DT_COMPLEX128:
@@ -602,7 +634,7 @@ _TF_TO_NP = {
     types_pb2.DT_INT64:
         np.int64,
     types_pb2.DT_BOOL:
-        np.bool,
+        bool,
     types_pb2.DT_QINT8:
         _np_qint8,
     types_pb2.DT_QUINT8:
@@ -636,7 +668,7 @@ _TF_TO_NP = {
     types_pb2.DT_INT8_REF:
         np.int8,
     types_pb2.DT_STRING_REF:
-        np.object,
+        object,
     types_pb2.DT_COMPLEX64_REF:
         np.complex64,
     types_pb2.DT_COMPLEX128_REF:
@@ -646,7 +678,7 @@ _TF_TO_NP = {
     types_pb2.DT_UINT64_REF:
         np.uint64,
     types_pb2.DT_BOOL_REF:
-        np.bool,
+        bool,
     types_pb2.DT_QINT8_REF:
         _np_qint8,
     types_pb2.DT_QUINT8_REF:
@@ -685,37 +717,3 @@ _ANY_TO_TF.update(_NP_TO_TF)
 # Ensure no collisions.
 assert len(_ANY_TO_TF) == sum(
     len(d) for d in [_INTERN_TABLE, _STRING_TO_TF, _PYTHON_TO_TF, _NP_TO_TF])
-
-
-@tf_export("dtypes.as_dtype", "as_dtype")
-def as_dtype(type_value):
-  """Converts the given `type_value` to a `DType`.
-
-  Args:
-    type_value: A value that can be converted to a `tf.DType` object. This may
-      currently be a `tf.DType` object, a [`DataType`
-      enum](https://www.tensorflow.org/code/tensorflow/core/framework/types.proto),
-        a string type name, or a `numpy.dtype`.
-
-  Returns:
-    A `DType` corresponding to `type_value`.
-
-  Raises:
-    TypeError: If `type_value` cannot be converted to a `DType`.
-  """
-  if isinstance(type_value, DType):
-    return type_value
-
-  if isinstance(type_value, np.dtype):
-    try:
-      return _NP_TO_TF[type_value.type]
-    except KeyError:
-      pass
-
-  try:
-    return _ANY_TO_TF[type_value]
-  except KeyError:
-    pass
-
-  raise TypeError("Cannot convert value %r to a TensorFlow DType." %
-                  (type_value,))

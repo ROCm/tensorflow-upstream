@@ -29,7 +29,8 @@
 #include "llvm/Support/Mutex.h"
 #include "llvm/Support/Parallel.h"
 #include "llvm/Support/Threading.h"
-
+#include <execution>
+#include <thread>
 using namespace mlir;
 using namespace mlir::detail;
 
@@ -178,7 +179,7 @@ void ModuleToFunctionPassAdaptorParallel::runOnModule() {
   // Create the async executors if they haven't been created, or if the main
   // function pipeline has changed.
   if (asyncExecutors.empty() || asyncExecutors.front().size() != fpe.size())
-    asyncExecutors = {llvm::hardware_concurrency(), fpe};
+    asyncExecutors = std::vector<FunctionPassExecutor>(std::thread::hardware_concurrency(), fpe);
 
   // Run a prepass over the module to collect the functions to execute a over.
   // This ensures that an analysis manager exists for each function, as well as
@@ -197,8 +198,8 @@ void ModuleToFunctionPassAdaptorParallel::runOnModule() {
 
   // An atomic failure variable for the async executors.
   std::atomic<bool> passFailed(false);
-  llvm::parallel::for_each(
-      llvm::parallel::par, asyncExecutors.begin(),
+  std::for_each(
+      std::execution::par, asyncExecutors.begin(),
       std::next(asyncExecutors.begin(),
                 std::min(asyncExecutors.size(), funcAMPairs.size())),
       [&](FunctionPassExecutor &executor) {

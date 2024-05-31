@@ -180,7 +180,7 @@ uint64_t AffineExpr::getLargestKnownDivisor() const {
   case AffineExprKind::CeilDiv:
   case AffineExprKind::Mod: {
     binExpr = cast<AffineBinaryOpExpr>();
-    return llvm::GreatestCommonDivisor64(
+    return GreatestCommonDivisor64(
         binExpr.getLHS().getLargestKnownDivisor(),
         binExpr.getRHS().getLargestKnownDivisor());
   }
@@ -212,7 +212,7 @@ bool AffineExpr::isMultipleOf(int64_t factor) const {
   case AffineExprKind::CeilDiv:
   case AffineExprKind::Mod: {
     binExpr = cast<AffineBinaryOpExpr>();
-    return llvm::GreatestCommonDivisor64(
+    return GreatestCommonDivisor64(
                binExpr.getLHS().getLargestKnownDivisor(),
                binExpr.getRHS().getLargestKnownDivisor()) %
                factor ==
@@ -671,7 +671,7 @@ void SimpleAffineExprFlattener::visitModExpr(AffineBinaryOpExpr expr) {
   SmallVector<int64_t, 8> floorDividend(lhs);
   uint64_t gcd = rhsConst;
   for (unsigned i = 0, e = lhs.size(); i < e; i++)
-    gcd = llvm::GreatestCommonDivisor64(gcd, std::abs(lhs[i]));
+    gcd = GreatestCommonDivisor64(gcd, std::abs(lhs[i]));
   // Simplify the numerator and the denominator.
   if (gcd != 1) {
     for (unsigned i = 0, e = floorDividend.size(); i < e; i++)
@@ -748,7 +748,7 @@ void SimpleAffineExprFlattener::visitDivExpr(AffineBinaryOpExpr expr,
   // common divisors of the numerator and denominator.
   uint64_t gcd = std::abs(rhsConst);
   for (unsigned i = 0, e = lhs.size(); i < e; i++)
-    gcd = llvm::GreatestCommonDivisor64(gcd, std::abs(lhs[i]));
+    gcd = GreatestCommonDivisor64(gcd, std::abs(lhs[i]));
   // Simplify the numerator and the denominator.
   if (gcd != 1) {
     for (unsigned i = 0, e = lhs.size(); i < e; i++)

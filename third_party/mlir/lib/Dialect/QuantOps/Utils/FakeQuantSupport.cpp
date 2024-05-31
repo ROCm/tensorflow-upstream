@@ -17,6 +17,7 @@
 
 #include "mlir/Dialect/QuantOps/FakeQuantSupport.h"
 #include "mlir/Dialect/QuantOps/QuantTypes.h"
+#include <cmath>
 
 using namespace mlir;
 using namespace mlir::quant;
@@ -107,7 +108,7 @@ mlir::quant::fakeQuantAttrsToType(Location loc, unsigned numBits, double rmin,
   } else if (zeroPointDouble > qmaxDouble) {
     nudgedZeroPoint = qmax;
   } else {
-    nudgedZeroPoint = round(zeroPointDouble);
+    nudgedZeroPoint = std::round(zeroPointDouble);
   }
 
   // By construction, the nudged zero point should always be in range.

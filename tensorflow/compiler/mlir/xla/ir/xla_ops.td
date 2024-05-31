@@ -64,7 +64,7 @@ def XLA_TensorOrTuple : AnyTypeOf<[XLA_Tensor, XLA_Tuple]>;
 // XLA nullary op definitions.
 //===----------------------------------------------------------------------===//
 
-def XLA_ConstOp : XLA_Op<"constant", [NoSideEffect]> {
+def XLA_ConstOp : XLA_Op<"constant", [NoMemoryEffect]> {
   let summary = "Constant operator";
 
   let description = [{
@@ -89,7 +89,7 @@ def XLA_ConstOp : XLA_Op<"constant", [NoSideEffect]> {
   let hasCustomHLOConverter = 1;
 }
 
-def XLA_IotaOp : XLA_Op<"iota", [NoSideEffect]> {
+def XLA_IotaOp : XLA_Op<"iota", [NoMemoryEffect]> {
   let summary = "Iota operator";
 
   let description = [{
@@ -117,7 +117,7 @@ class XLA_UnaryElementwiseOp<string mnemonic, list<OpTrait> traits>:
     let results = (outs XLA_Tensor);
 }
 
-def XLA_AbsOp: XLA_UnaryElementwiseOp<"abs", [NoSideEffect, SameOperandsAndResultType]> {
+def XLA_AbsOp: XLA_UnaryElementwiseOp<"abs", [NoMemoryEffect, SameOperandsAndResultType]> {
   let summary = "Absolute value operator";
 
   let description = [{
@@ -129,7 +129,7 @@ def XLA_AbsOp: XLA_UnaryElementwiseOp<"abs", [NoSideEffect, SameOperandsAndResul
 }
 
 def XLA_ConvertOp : XLA_UnaryElementwiseOp<
-      "convert", [NoSideEffect, SameOperandsAndResultShape]> {
+      "convert", [NoMemoryEffect, SameOperandsAndResultShape]> {
   let summary = "Convert operator";
 
   let description = [{
@@ -146,7 +146,7 @@ def XLA_ConvertOp : XLA_UnaryElementwiseOp<
   let hasCustomHLOConverter = 1;
 }
 
-def XLA_ExpOp: XLA_UnaryElementwiseOp<"exp", [NoSideEffect, SameOperandsAndResultType]> {
+def XLA_ExpOp: XLA_UnaryElementwiseOp<"exp", [NoMemoryEffect, SameOperandsAndResultType]> {
   let summary = "Exponential operator";
 
   let description = [{
@@ -157,7 +157,7 @@ def XLA_ExpOp: XLA_UnaryElementwiseOp<"exp", [NoSideEffect, SameOperandsAndResul
   }];
 }
 
-def XLA_NegOp: XLA_UnaryElementwiseOp<"neg", [NoSideEffect, SameOperandsAndResultType]> {
+def XLA_NegOp: XLA_UnaryElementwiseOp<"neg", [NoMemoryEffect, SameOperandsAndResultType]> {
   let summary = "Negation operator";
 
   let description = [{
@@ -168,7 +168,7 @@ def XLA_NegOp: XLA_UnaryElementwiseOp<"neg", [NoSideEffect, SameOperandsAndResul
   }];
 }
 
-def XLA_SignOp: XLA_UnaryElementwiseOp<"sign", [NoSideEffect, SameOperandsAndResultShape]> {
+def XLA_SignOp: XLA_UnaryElementwiseOp<"sign", [NoMemoryEffect, SameOperandsAndResultShape]> {
   let summary = "Sign operator";
 
   let description = [{
@@ -188,7 +188,7 @@ def XLA_SignOp: XLA_UnaryElementwiseOp<"sign", [NoSideEffect, SameOperandsAndRes
 }
 
 def XLA_TanhOp: XLA_UnaryElementwiseOp<"tanh",
-    [ResultsAreFloatLike, NoSideEffect, SameOperandsAndResultType]> {
+    [ResultsAreFloatLike, NoMemoryEffect, SameOperandsAndResultType]> {
   let summary = "Tanh operator";
 
   let description = [{
@@ -223,7 +223,7 @@ class XLA_BinaryElementwiseOp<string mnemonic, list<OpTrait> traits> :
 }
 
 def XLA_AddOp : XLA_BinaryElementwiseOp<"add",
-      [Commutative, NoSideEffect, SameOperandsAndResultElementType]> {
+      [Commutative, NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Addition operator";
 
   let description = [{
@@ -235,7 +235,7 @@ def XLA_AddOp : XLA_BinaryElementwiseOp<"add",
 }
 
 def XLA_DivOp : XLA_BinaryElementwiseOp<"div",
-      [NoSideEffect, SameOperandsAndResultElementType]> {
+      [NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Division operator";
 
   let description = [{
@@ -247,7 +247,7 @@ def XLA_DivOp : XLA_BinaryElementwiseOp<"div",
 }
 
 def XLA_MaxOp : XLA_BinaryElementwiseOp<"max",
-      [Commutative, NoSideEffect, SameOperandsAndResultElementType]> {
+      [Commutative, NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Maximum operator";
 
   let description = [{
@@ -259,7 +259,7 @@ def XLA_MaxOp : XLA_BinaryElementwiseOp<"max",
 }
 
 def XLA_MinOp : XLA_BinaryElementwiseOp<"min",
-      [Commutative, NoSideEffect, SameOperandsAndResultElementType]> {
+      [Commutative, NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Minimum operator";
 
   let description = [{
@@ -271,7 +271,7 @@ def XLA_MinOp : XLA_BinaryElementwiseOp<"min",
 }
 
 def XLA_MulOp : XLA_BinaryElementwiseOp<"mul",
-      [Commutative, NoSideEffect, SameOperandsAndResultElementType]> {
+      [Commutative, NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Multiplication operator";
 
   let description = [{
@@ -283,7 +283,7 @@ def XLA_MulOp : XLA_BinaryElementwiseOp<"mul",
 }
 
 def XLA_SubOp : XLA_BinaryElementwiseOp<"sub",
-      [NoSideEffect, SameOperandsAndResultElementType]> {
+      [NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Subtraction operator";
 
   let description = [{
@@ -294,12 +294,12 @@ def XLA_SubOp : XLA_BinaryElementwiseOp<"sub",
   }];
 }
 
-def XLA_AndOp: XLA_BinaryElementwiseOp<"and", [Commutative, NoSideEffect]>;
+def XLA_AndOp: XLA_BinaryElementwiseOp<"and", [Commutative, NoMemoryEffect]>;
 
 //===----------------------------------------------------------------------===//
 // XLA control flow op definitions.
 //===----------------------------------------------------------------------===//
-def XLA_WhileOp: XLA_Op<"while", [NoSideEffect, SameOperandsAndResultType]> {
+def XLA_WhileOp: XLA_Op<"while", [NoMemoryEffect, SameOperandsAndResultType]> {
   let summary = "While operator";
 
   let description = [{
@@ -321,7 +321,7 @@ def XLA_WhileOp: XLA_Op<"while", [NoSideEffect, SameOperandsAndResultType]> {
   let hasCustomHLOConverter = 1;
 }
 
-def XLA_ReduceOp: XLA_Op<"reduce", [NoSideEffect]> {
+def XLA_ReduceOp: XLA_Op<"reduce", [NoMemoryEffect]> {
   let summary = "Reduce operator";
 
   let description = [{
@@ -346,7 +346,7 @@ def XLA_ReduceOp: XLA_Op<"reduce", [NoSideEffect]> {
 //===----------------------------------------------------------------------===//
 // XLA tuple op definitions.
 //===----------------------------------------------------------------------===//
-def XLA_GetTupleElementOp: XLA_Op<"get_tuple_element", [NoSideEffect]> {
+def XLA_GetTupleElementOp: XLA_Op<"get_tuple_element", [NoMemoryEffect]> {
   let summary = "GetTupleElement operator";
 
   let description = [{
@@ -366,7 +366,7 @@ def XLA_GetTupleElementOp: XLA_Op<"get_tuple_element", [NoSideEffect]> {
   let hasCustomHLOConverter = 1;
 }
 
-def XLA_TupleOp : XLA_Op<"tuple", [NoSideEffect]> {
+def XLA_TupleOp : XLA_Op<"tuple", [NoMemoryEffect]> {
    let summary = "XLA's tuple op";
 
    let description = [{
@@ -424,7 +424,7 @@ def XLA_ComparisonDirectionAttr : StrEnumAttr<"ComparisonDirection",
     ]>;
 
 def XLA_CompareOp: XLA_Op<"compare",
-      [NoSideEffect, SameOperandsAndResultShape]> {
+      [NoMemoryEffect, SameOperandsAndResultShape]> {
   let arguments = (ins
       XLA_Tensor:$lhs,
       XLA_Tensor:$rhs,
@@ -448,7 +448,7 @@ def XLA_CompareOp: XLA_Op<"compare",
 
 def XLA_SliceOp: XLA_Op<
       "slice",
-      [NoSideEffect, SameOperandsAndResultElementType,
+      [NoMemoryEffect, SameOperandsAndResultElementType,
        AllTypesMatch<["start_indices", "limit_indices"]>]> {
   let arguments = (
     ins XLA_Tensor:$operand,
@@ -472,7 +472,7 @@ def XLA_SliceOp: XLA_Op<
 }
 
 def XLA_DynamicUpdateSliceOp: XLA_Op<"dynamic-update-slice",
-      [NoSideEffect, AllElementTypesMatch<["operand", "result"]>]> {
+      [NoMemoryEffect, AllElementTypesMatch<["operand", "result"]>]> {
   let arguments = (ins
     XLA_Tensor:$operand,
     XLA_Tensor:$update,
@@ -499,7 +499,7 @@ def XLA_DynamicUpdateSliceOp: XLA_Op<"dynamic-update-slice",
 // XLA Other op definitions.
 //===----------------------------------------------------------------------===//
 
-def XLA_BatchNormInferenceOp : XLA_Op<"batch_norm_inference", [NoSideEffect]> {
+def XLA_BatchNormInferenceOp : XLA_Op<"batch_norm_inference", [NoMemoryEffect]> {
   let summary = "Batch Normalization for Inference";
 
   let description = [{
@@ -522,7 +522,7 @@ def XLA_BatchNormInferenceOp : XLA_Op<"batch_norm_inference", [NoSideEffect]> {
 }
 
 def XLA_BroadcastOp : XLA_Op<"broadcast",
-      [NoSideEffect, SameOperandsAndResultElementType]> {
+      [NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Broadcast a tensor to a higher rank by prepending dimensions";
 
   let description = [{
@@ -594,7 +594,7 @@ def XLA_BroadcastOp : XLA_Op<"broadcast",
 }
 
 def XLA_BroadcastInDimOp : XLA_Op<"broadcast_in_dim",
-      [NoSideEffect, SameOperandsAndResultElementType]> {
+      [NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Broadcast a tensor into the given shape by adding dimensions.";
 
   let description = [{
@@ -693,7 +693,7 @@ def XLA_BroadcastInDimOp : XLA_Op<"broadcast_in_dim",
 }
 
 def XLA_ClampOp : XLA_Op<"clamp",
-      [NoSideEffect, SameOperandsAndResultElementType]> {
+      [NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Clamp operator";
 
   let description = [{
@@ -746,7 +746,7 @@ def XLA_ClampOp : XLA_Op<"clamp",
 }
 
 def XLA_ConcatenateOp : XLA_Op<"concatenate",
-      [NoSideEffect, SameOperandsAndResultElementType]> {
+      [NoMemoryEffect, SameOperandsAndResultElementType]> {
    let summary = "XLA's concantenate op";
 
    let description = [{
@@ -793,7 +793,7 @@ def XLA_ConcatenateOp : XLA_Op<"concatenate",
   let hasCustomHLOConverter = 1;
 }
 
-def XLA_ConvOp : XLA_Op<"conv", [NoSideEffect]> {
+def XLA_ConvOp : XLA_Op<"conv", [NoMemoryEffect]> {
   let summary = "Convolution operator";
 
   let description = [{
@@ -814,7 +814,7 @@ def XLA_ConvOp : XLA_Op<"conv", [NoSideEffect]> {
   let hasCustomHLOConverter = 1;
 }
 
-def XLA_CopyOp: XLA_Op<"copy", [NoSideEffect, SameOperandsAndResultType]> {
+def XLA_CopyOp: XLA_Op<"copy", [NoMemoryEffect, SameOperandsAndResultType]> {
   let summary = "Copy operator";
 
   let description = [{
@@ -829,7 +829,7 @@ def XLA_CopyOp: XLA_Op<"copy", [NoSideEffect, SameOperandsAndResultType]> {
   let hasCustomHLOConverter = 1;
 }
 
-def XLA_DotOp: XLA_Op<"dot", [NoSideEffect]> {
+def XLA_DotOp: XLA_Op<"dot", [NoMemoryEffect]> {
   let arguments = (
         ins XLA_Tensor:$lhs,
         XLA_Tensor:$rhs,
@@ -845,7 +845,7 @@ def XLA_DotOp: XLA_Op<"dot", [NoSideEffect]> {
   }];
 }
 
-def XLA_GatherOp: XLA_Op<"gather", [NoSideEffect]> {
+def XLA_GatherOp: XLA_Op<"gather", [NoMemoryEffect]> {
   let arguments = (
       ins XLA_Tensor:$operand,
           XLA_IntTensor:$start_indices,
@@ -872,7 +872,7 @@ def XLA_GatherOp: XLA_Op<"gather", [NoSideEffect]> {
 }
 
 def XLA_ReshapeOp: XLA_Op<"reshape",
-      [NoSideEffect, SameOperandsAndResultElementType]> {
+      [NoMemoryEffect, SameOperandsAndResultElementType]> {
   let arguments = (ins XLA_Tensor:$operand);
 
   let results = (outs XLA_Tensor);
@@ -894,7 +894,7 @@ def XLA_ReshapeOp: XLA_Op<"reshape",
 }
 
 
-def XLA_SelectOp: XLA_Op<"select", [NoSideEffect]> {
+def XLA_SelectOp: XLA_Op<"select", [NoMemoryEffect]> {
   let summary = "Select operator";
 
   let description = [{
@@ -948,7 +948,7 @@ def XLA_SelectOp: XLA_Op<"select", [NoSideEffect]> {
 }
 
 def XLA_ReverseOp: XLA_Op<"reverse",
-      [NoSideEffect, SameOperandsAndResultElementType]> {
+      [NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Reverse operator";
 
   let description = [{
@@ -970,7 +970,7 @@ def XLA_ReverseOp: XLA_Op<"reverse",
 }
 
 def XLA_PadOp: XLA_Op<"pad",
-      [NoSideEffect, SameOperandsAndResultElementType]> {
+      [NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Pad operator";
 
   let description = [{
@@ -1044,7 +1044,7 @@ def XLA_PadOp: XLA_Op<"pad",
 }
 
 def XLA_TransposeOp: XLA_Op<"transpose",
-      [NoSideEffect, SameOperandsAndResultElementType]> {
+      [NoMemoryEffect, SameOperandsAndResultElementType]> {
   let summary = "Transpose operator";
 
   let description = [{

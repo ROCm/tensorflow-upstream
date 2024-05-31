@@ -19,6 +19,7 @@ limitations under the License.
 #include <vector>
 
 #include "llvm/IR/Module.h"
+#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "tensorflow/compiler/xla/layout_util.h"
 #include "tensorflow/compiler/xla/service/gpu/target_util.h"
 #include "tensorflow/compiler/xla/service/hlo_computation.h"

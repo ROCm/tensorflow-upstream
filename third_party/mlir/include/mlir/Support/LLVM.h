@@ -46,12 +46,12 @@ template <unsigned N> class SmallString;
 template <typename T> class ArrayRef;
 template <typename T> class MutableArrayRef;
 template <typename T> class TinyPtrVector;
-template <typename T> class Optional;
+//template <typename T> class Optional;
 template <typename... PT> class PointerUnion;
 namespace detail {
 template <typename KeyT, typename ValueT> struct DenseMapPair;
 }
-template <typename T> struct DenseMapInfo;
+template <typename T, typename Enable> struct DenseMapInfo;
 template <typename ValueT, typename ValueInfoT> class DenseSet;
 template <typename KeyT, typename ValueT, typename KeyInfoT, typename BucketT>
 class DenseMap;
@@ -75,10 +75,10 @@ using llvm::isa_and_nonnull;
 using llvm::ArrayRef;
 using llvm::DenseMapInfo;
 template <typename KeyT, typename ValueT,
-          typename KeyInfoT = DenseMapInfo<KeyT>,
+          typename KeyInfoT = DenseMapInfo<KeyT, void>,
           typename BucketT = llvm::detail::DenseMapPair<KeyT, ValueT>>
 using DenseMap = llvm::DenseMap<KeyT, ValueT, KeyInfoT, BucketT>;
-template <typename ValueT, typename ValueInfoT = DenseMapInfo<ValueT>>
+template <typename ValueT, typename ValueInfoT = DenseMapInfo<ValueT, void>>
 using DenseSet = llvm::DenseSet<ValueT, ValueInfoT>;
 using llvm::MutableArrayRef;
 using llvm::None;

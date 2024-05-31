@@ -23,7 +23,7 @@ limitations under the License.
 
 namespace mlir {
 namespace TFControlFlow {
-
+#if 0
 // TODO(ycao): Implement following verify methods when we know more about their
 // invariant.
 LogicalResult EnterOp::verify() { return success(); }
@@ -41,15 +41,15 @@ LogicalResult SwitchOp::verify() { return success(); }
 LogicalResult ExitOp::verify() { return success(); }
 
 TFControlFlowDialect::TFControlFlowDialect(MLIRContext *context)
-    : Dialect(/*name=*/"_tf", context) {
-  addOperations<SwitchOp, MergeOp, EnterOp, NextIterationSourceOp,
-                NextIterationSinkOp, ExitOp, LoopCondOp>();
-  addTypes<TFControlType>();
+    : Dialect(/*name=*/"_tf", context, TypeID::get<TFControlFlowDialect>()) {
+//  addOperations<SwitchOp, MergeOp, EnterOp, NextIterationSourceOp,
+//                NextIterationSinkOp, ExitOp, LoopCondOp>();
+//  addTypes<TFControlType>();
 
   // We allow unregistered TensorFlow operations in the control dialect.
   allowUnknownOperations();
 }
-
+/*
 // Parses a type registered to this dialect.
 Type TFControlFlowDialect::parseType(StringRef tyData, Location loc) const {
   if (tyData != "control")
@@ -62,6 +62,8 @@ void TFControlFlowDialect::printType(Type type, raw_ostream &os) const {
   assert(type.isa<TFControlType>());
   os << "control";
 }
+*/
+#endif
 
 }  // namespace TFControlFlow
 }  // namespace mlir

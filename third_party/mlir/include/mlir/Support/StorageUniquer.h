@@ -19,8 +19,17 @@
 #define MLIR_SUPPORT_STORAGEUNIQUER_H
 
 #include "mlir/Support/STLExtras.h"
+
+// for function_ref
+#include "llvm/ADT/STLFunctionalExtras.h"
+
+#include "llvm/Support/Allocator.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringRef.h"
 
 namespace mlir {
 namespace detail {

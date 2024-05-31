@@ -24,7 +24,7 @@ namespace gpu {
 // GpuVersion is used to abstract Gpu hardware version. On Cuda platform,
 // it comprises a pair of integers denoting major and minor version.
 // On ROCm platform, it comprises one integer for AMD GCN ISA version.
-using GpuVersion = absl::variant<std::pair<int, int>, int>;
+using GpuVersion = absl::variant<std::pair<int, int>, std::string>;
 }  // namespace gpu
 }  // namespace xla
 

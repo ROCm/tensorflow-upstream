@@ -18,7 +18,6 @@ limitations under the License.
 
 #include "llvm/Support/SourceMgr.h"
 #include "mlir/IR/MLIRContext.h"  // TF:local_config_mlir
-#include "mlir/IR/Module.h"  // TF:local_config_mlir
 #include "mlir/Pass/PassManager.h"  // TF:local_config_mlir
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/stream_executor/lib/statusor.h"

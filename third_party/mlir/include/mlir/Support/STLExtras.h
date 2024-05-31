@@ -25,6 +25,7 @@
 
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/iterator.h"
+#include "llvm/ADT/DenseMapInfo.h"
 #include <tuple>
 
 namespace mlir {
@@ -35,6 +36,9 @@ using ValueOfRange = typename std::remove_reference<decltype(
     *std::begin(std::declval<RangeT &>()))>::type;
 } // end namespace detail
 
+// these all have been moved into llvm
+
+#if 0
 /// An STL-style algorithm similar to std::for_each that applies a second
 /// functor between every pair of elements.
 ///
@@ -76,6 +80,7 @@ template <typename Container, typename raw_ostream,
 inline void interleaveComma(const Container &c, raw_ostream &os) {
   interleaveComma(c, os, [&](const T &a) { os << a; });
 }
+#endif
 
 /// A special type used to provide an address for a given class that can act as
 /// a unique identifier during pass registration.
@@ -166,6 +171,45 @@ protected:
 
 } // end namespace mlir
 
+// this was in LLVM in 2019 but does not exist any more
+namespace llvm {
+
+/// Alias for the common case of a sequence of size_ts.
+template <size_t... I>
+struct index_sequence : std::integer_sequence<std::size_t, I...> {};
+
+template <std::size_t N, std::size_t... I>
+struct build_index_impl : build_index_impl<N - 1, N - 1, I...> {};
+template <std::size_t... I>
+struct build_index_impl<0, I...> : index_sequence<I...> {};
+
+namespace detail {
+
+template <typename F, typename Tuple, std::size_t... I>
+auto apply_tuple_impl(F &&f, Tuple &&t, index_sequence<I...>)
+    -> decltype(std::forward<F>(f)(std::get<I>(std::forward<Tuple>(t))...)) {
+  return std::forward<F>(f)(std::get<I>(std::forward<Tuple>(t))...);
+}
+
+} // end namespace detail
+
+/// Given an input tuple (a1, a2, ..., an), pass the arguments of the
+/// tuple variadically to f as if by calling f(a1, a2, ..., an) and
+/// return the result.
+template <typename F, typename Tuple>
+auto apply_tuple(F &&f, Tuple &&t) -> decltype(detail::apply_tuple_impl(
+    std::forward<F>(f), std::forward<Tuple>(t),
+    build_index_impl<
+        std::tuple_size<typename std::decay<Tuple>::type>::value>{})) {
+  using Indices = build_index_impl<
+      std::tuple_size<typename std::decay<Tuple>::type>::value>;
+
+  return detail::apply_tuple_impl(std::forward<F>(f), std::forward<Tuple>(t),
+                                  Indices{});
+}
+};
+
+#if 0
 // Allow tuples to be usable as DenseMap keys.
 // TODO: Move this to upstream LLVM.
 
@@ -233,7 +277,7 @@ template <typename... Ts> struct DenseMapInfo<std::tuple<Ts...>> {
     return isEqualImpl<0>(lhs, rhs, atEnd);
   }
 };
-
 } // end namespace llvm
+#endif
 
 #endif // MLIR_SUPPORT_STLEXTRAS_H

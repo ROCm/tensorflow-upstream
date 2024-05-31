@@ -1,4 +1,5 @@
-load("@local_config_mlir//:tblgen.bzl", "gentbl")
+load("@local_config_mlir//:tblgen.bzl", "gentbl", "gentbl_cc_library", "td_library")
+load("@local_config_mlir//:mlir_configure.bzl", "is2019")
 load("//tensorflow:tensorflow.bzl", "tf_cc_test", "tf_native_cc_binary")
 
 package(
@@ -21,6 +22,7 @@ filegroup(
     name = "tensorflow_ops_td_files",
     srcs = [
         "ir/tf_generated_ops.td",
+        "ir/tf_op_interfaces.td",
         "ir/tf_op_base.td",
         "ir/tf_ops.td",
         "@local_config_mlir//:OpBaseTdFiles",
@@ -70,8 +72,13 @@ gentbl(
     td_file = "ir/tf_executor_ops.td",
     td_srcs = [
         "@local_config_mlir//:include/mlir/IR/OpBase.td",
-        "@local_config_mlir//:include/mlir/Dialect/StandardOps/Ops.td",
-    ],
+    ] + (
+    ["@local_config_mlir//:include/mlir/Dialect/StandardOps/Ops.td"]
+    if is2019()
+    else [
+        "@local_config_mlir//:include/mlir/Dialect/Transform/IR/TransformOps.td",
+        "@local_config_mlir//:include/mlir/Dialect/Arith/IR/ArithOps.td",
+    ]),
 )
 
 gentbl(
@@ -94,8 +101,13 @@ gentbl(
     td_file = "ir/tf_device_ops.td",
     td_srcs = [
         "@local_config_mlir//:include/mlir/IR/OpBase.td",
-        "@local_config_mlir//:include/mlir/Dialect/StandardOps/Ops.td",
-    ],
+    ] + (
+    ["@local_config_mlir//:include/mlir/Dialect/StandardOps/Ops.td"]
+    if is2019()
+    else [
+        "@local_config_mlir//:include/mlir/Dialect/Transform/IR/TransformOps.td",
+        "@local_config_mlir//:include/mlir/Dialect/Arith/IR/ArithOps.td",
+    ]),
 )
 
 gentbl(
@@ -135,6 +147,7 @@ cc_library(
         "transforms/raise_control_flow.cc",
         "translate/control_to_executor_dialect.cc",
         "translate/executor_to_control_dialect.cc",
+        "utils/verification_utils.cc",
     ],
     hdrs = [
         "ir/control_flow_ops.h",
@@ -144,9 +157,19 @@ cc_library(
         "ir/tf_traits.h",
         "ir/tf_types.def",
         "ir/tf_types.h",
+        "ir/tf_side_effects.h",
         "transforms/passes.h",
+        "utils/attribute_utils.h",
+        "transforms/side_effect_analysis.h",
+        "transforms/per_function_aggregate_analysis.h",
+        "transforms/resource_alias_analysis.h",
+        "utils/cluster_util.h",
+        "utils/verification_utils.h",
+      "ir/tf_op_interfaces.h",
+      "ir/tf_structs.h",
+      "ir/tf_verifiers.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     includes = ["include"],
     deps = [
         ":tensorflow_canonicalize_inc_gen",
@@ -156,15 +179,27 @@ cc_library(
         ":tensorflow_optimize_inc_gen",
         "//tensorflow/compiler/mlir/lite:validators",
         "//tensorflow/core:lib",
+#        "//tensorflow/core:util",
+        "//tensorflow/core:framework",
+        "//tensorflow/compiler/tf2xla:tf2xla_defs",
         "@llvm//:support",
         "@local_config_mlir//:Analysis",
         "@local_config_mlir//:Dialect",
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Parser",
         "@local_config_mlir//:Pass",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
         "@local_config_mlir//:TransformUtils",
+        "@local_config_mlir//:DestinationStyleOpInterfaceIncGen",
+        "@local_config_mlir//:ParallelCombiningOpInterfaceIncGen",
+        "@local_config_mlir//:ShapedOpInterfacesIncGen",
+        "@local_config_mlir//:TilingInterfaceIncGen",
+        "@local_config_mlir//:TensorOpsIncGen",
+        ":TypesIncGen",
+        ":AttributesIncGen",
+        ":DialectIncGen",
+        ":tf_pass_inc_gen",
+        ":tensorflow_op_interfaces_inc_gen",
     ],
     # TODO(jpienaar): Merge in the dialect registration.
     alwayslink = 1,
@@ -174,7 +209,7 @@ cc_library(
 cc_library(
     name = "tensorflow_dialect_registration",
     srcs = ["ir/dialect_registration.cc"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":tensorflow",
         "@local_config_mlir//:IR",
@@ -192,7 +227,7 @@ cc_library(
         "translate/export_graphdef.h",
         "translate/import_model.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":convert_tensor",
         ":convert_type",
@@ -220,9 +255,8 @@ cc_library(
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Pass",
         "@local_config_mlir//:StandardDialectRegistration",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
 )
 
 cc_library(
@@ -233,7 +267,7 @@ cc_library(
     hdrs = [
         "utils/import_utils.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":error_util",
         "//tensorflow/core:lib",
@@ -251,7 +285,7 @@ cc_library(
     hdrs = [
         "utils/export_utils.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":convert_tensor",
         ":convert_type",
@@ -269,9 +303,8 @@ cc_library(
         "@llvm//:support",
         "@local_config_mlir//:IR",
         "@local_config_mlir//:StandardDialectRegistration",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
 )
 
 cc_library(
@@ -283,7 +316,7 @@ cc_library(
     hdrs = [
         "translate/export_tf_dialect_op.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":convert_type",
         ":export_utils",
@@ -300,7 +333,7 @@ cc_library(
 cc_library(
     name = "translate_tf_dialect_op",
     srcs = ["translate/translate_tf_dialect_op.cc"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":export_tf_dialect_op",
         "@llvm//:support",
@@ -315,7 +348,7 @@ cc_library(
     name = "mlir_roundtrip_pass",
     srcs = ["translate/mlir_roundtrip_pass.cc"],
     hdrs = ["translate/mlir_roundtrip_pass.h"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":convert_graphdef",
         ":mlir_roundtrip_flags",
@@ -325,8 +358,7 @@ cc_library(
         "//tensorflow/core:protos_all_proto_cc",
         "@local_config_mlir//:Analysis",
         "@local_config_mlir//:IR",
-        "@local_config_mlir//:StandardOps",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
     alwayslink = 1,
 )
 
@@ -334,7 +366,7 @@ cc_library(
     name = "mlir_roundtrip_flags",
     srcs = ["translate/mlir_roundtrip_flags.cc"],
     hdrs = ["translate/mlir_roundtrip_flags.h"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/core:framework",
@@ -352,7 +384,7 @@ cc_library(
     name = "convert_type",
     srcs = ["utils/convert_type.cc"],
     hdrs = ["utils/convert_type.h"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":tensorflow",
         ":tensorflow_dialect_registration",
@@ -371,7 +403,7 @@ cc_library(
     name = "convert_tensor",
     srcs = ["utils/convert_tensor.cc"],
     hdrs = ["utils/convert_tensor.h"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":convert_type",
         ":mangling_util",
@@ -391,7 +423,7 @@ cc_library(
     name = "mangling_util",
     srcs = ["utils/mangling_util.cc"],
     hdrs = ["utils/mangling_util.h"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
@@ -404,7 +436,7 @@ cc_library(
     name = "error_util",
     srcs = ["utils/error_util.cc"],
     hdrs = ["utils/error_util.h"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         "//tensorflow/core:lib",
         "//tensorflow/stream_executor/lib",
@@ -424,7 +456,7 @@ cc_library(
         "transforms/constant_fold.h",
         "transforms/decode_constant.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":convert_tensor",
         ":eval_util",
@@ -445,7 +477,7 @@ cc_library(
 
 cc_library(
     name = "tf_dialect_lib",
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":tensorflow_dialect_registration",
         ":tf_dialect_passes",
@@ -456,7 +488,7 @@ cc_library(
 cc_library(
     name = "tf_graph_optimization_pass",
     srcs = ["transforms/tf_graph_optimization_pass.cc"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":convert_graphdef",
         ":mlir_roundtrip_flags",
@@ -480,7 +512,7 @@ cc_library(
     name = "eval_util",
     srcs = ["utils/eval_util.cc"],
     hdrs = ["utils/eval_util.h"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":convert_tensor",
         ":convert_type",
@@ -513,7 +545,7 @@ cc_library(
     hdrs = [
         "translate/tf_mlir_translate.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":convert_graphdef",
         ":error_util",
@@ -540,7 +572,7 @@ cc_library(
     hdrs = [
         "translate/tf_mlir_translate_cl.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         "@llvm//:support",
     ],
@@ -552,7 +584,7 @@ cc_library(
     srcs = [
         "translate/tf_mlir_translate_registration.cc",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":convert_graphdef",
         ":mlir_roundtrip_flags",
@@ -631,6 +663,136 @@ gentbl(
     td_file = "transforms/optimize.td",
     td_srcs = [
         ":tensorflow_ops_td_files",
-        "@local_config_mlir//:StdOpsTdFiles",
+        #"@local_config_mlir//:StdOpsTdFiles",
     ],
+)
+
+td_library(
+    name = "DialectTdFiles",
+    srcs = [
+        "ir/dialect.td",
+        "ir/types.td",
+    ],
+    includes = ["include"],
+    deps = [
+        "@local_config_mlir//:BuiltinDialectTdFiles",
+        "@local_config_mlir//:CallInterfacesTdFiles",
+        "@local_config_mlir//:ControlFlowInterfacesTdFiles",
+        "@local_config_mlir//:InferTypeOpInterfaceTdFiles",
+        "@local_config_mlir//:OpBaseTdFiles",
+        "@local_config_mlir//:SideEffectInterfacesTdFiles",
+    ],
+)
+
+gentbl_cc_library(
+    name = "AttributesIncGen",
+    tbl_outs = [
+        (
+            ["-gen-attrdef-decls"],
+            "attributes.h.inc",
+        ),
+        (
+            ["-gen-attrdef-defs"],
+            "attributes.cc.inc",
+        ),
+        (
+            ["-gen-enum-decls"],
+            "attributes_enum.h.inc",
+        ),
+        (
+            ["-gen-enum-defs"],
+            "attributes_enum.cc.inc",
+        ),
+    ],
+    tblgen = "@local_config_mlir//:mlir-tblgen",
+    td_file = "ir/attributes.td",
+    deps = [":DialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "TypesIncGen",
+    tbl_outs = [
+        (
+            ["-gen-typedef-decls"],
+            "tf_types.h.inc",
+        ),
+        (
+            ["-gen-typedef-defs"],
+            "tf_types.cc.inc",
+        ),
+    ],
+    tblgen = "@local_config_mlir//:mlir-tblgen",
+    td_file = "ir/types.td",
+    deps = [":DialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "tf_pass_inc_gen",
+    #compatible_with = get_compatible_with_portable(),
+    tbl_outs = [
+        (
+            [
+                "-gen-pass-decls",
+                "-name=TensorFlow",
+            ],
+            "transforms/tf_passes.h.inc",
+        ),
+#        (
+#            ["-gen-pass-doc"],
+#            "g3doc/_includes/tf_passes.md",
+#        ),
+    ],
+    tblgen = "@local_config_mlir//:mlir-tblgen",
+    td_file = "transforms/tf_passes.td",
+    deps = [
+        "@local_config_mlir//:PassBaseTdFiles",
+    ],
+)
+
+gentbl_cc_library(
+    name = "tensorflow_op_interfaces_inc_gen",
+    #compatible_with = get_compatible_with_portable(),
+    tbl_outs = [
+        (
+            ["-gen-op-interface-decls"],
+            "ir/tf_op_interfaces.h.inc",
+        ),
+        (
+            ["-gen-op-interface-defs"],
+            "ir/tf_op_interfaces.cc.inc",
+        ),
+    ],
+    tblgen = "@local_config_mlir//:mlir-tblgen",
+    td_file = "ir/tf_op_interfaces.td",
+    test = True,
+    deps = [
+        "@local_config_mlir//:PassBaseTdFiles",
+        ":tensorflow_ops_td_files",
+    ],
+)
+
+
+gentbl_cc_library(
+    name = "DialectIncGen",
+    tbl_outs = [
+        (
+            [
+                "-gen-dialect-decls",
+                "-dialect",
+                "tf_type",
+            ],
+            "ir/dialect.h.inc",
+        ),
+        (
+            [
+                "-gen-dialect-defs",
+                "-dialect",
+                "tf_type",
+            ],
+            "ir/dialect.cc.inc",
+        ),
+    ],
+    tblgen = "@local_config_mlir//:mlir-tblgen",
+    td_file = "ir/dialect.td",
+    deps = [":DialectTdFiles"],
 )

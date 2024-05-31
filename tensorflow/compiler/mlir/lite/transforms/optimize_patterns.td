@@ -16,7 +16,9 @@ limitations under the License.
 // This is the optimization pattern definition file for TensorFlow Lite.
 
 include "mlir/IR/OpBase.td"
-include "mlir/Dialect/StandardOps/Ops.td"
+include "mlir/IR/PatternBase.td"
+include "mlir/Dialect/Arith/IR/ArithOps.td"
+include "mlir/Dialect/Func/IR/FuncOps.td"
 include "tensorflow/compiler/mlir/lite/ir/tfl_ops.td"
 
 def F32ElementsAttr : ElementsAttrBase<
@@ -27,30 +29,32 @@ def F32ElementsAttr : ElementsAttrBase<
 //===----------------------------------------------------------------------===//
 // Multi-pattern consisting of matching stand-alone convolution op followed by
 // activation op.
-multiclass FuseActFnIntoConvOpPat<dag ActFnOp, dag ActFnAttr> {
-  def : Pat<(ActFnOp (TFL_Conv2DOp $input, $filter, $bias,
-                                   $h_factor, $w_factor, TFL_AF_None,
-                                   $padding, $stride_h, $stride_w)),
-            (TFL_Conv2DOp $input, $filter, $bias,
-                          $h_factor, $w_factor, ActFnAttr,
-                          $padding, $stride_h, $stride_w)>;
-  def : Pat<(ActFnOp (TFL_DepthwiseConv2DOp $input, $filter, $bias,
-                                   $h_factor, $w_factor, TFL_AF_None,
-                                   $padding, $stride_h, $stride_w,
-                                   $multiplier)),
-            (TFL_DepthwiseConv2DOp $input, $filter, $bias,
-                                   $h_factor, $w_factor, ActFnAttr,
-                                   $padding, $stride_h, $stride_w,
-                                   $multiplier)>;
+multiclass FuseActFnIntoConvOpPat<Op ActFnOp, ConstantStrAttr ActFnAttr> {
+  def FuseActivationFuncWithConv#ActFnOp#ActFnAttr : Pat<
+    (ActFnOp (TFL_Conv2DOp:$conv_out $input, $filter, $bias, $h_factor,
+                 $w_factor, TFL_AF_None, $padding, $stride_h, $stride_w)),
+    (TFL_Conv2DOp $input, $filter, $bias, $h_factor, $w_factor, ActFnAttr,
+        $padding, $stride_h, $stride_w)
+//    , [(HasOneUse $conv_out)]
+    >;
+  def FuseActivationFuncWithDepthwiseConv#ActFnOp#ActFnAttr : Pat<
+    (ActFnOp (TFL_DepthwiseConv2DOp:$conv_out $input, $filter, $bias, $h_factor,
+                $w_factor, TFL_AF_None, $padding, $stride_h, $stride_w,
+                $multiplier)),
+    (TFL_DepthwiseConv2DOp $input, $filter, $bias, $h_factor, $w_factor,
+        ActFnAttr, $padding, $stride_h, $stride_w, $multiplier)
+//    , [(HasOneUse $conv_out)]
+    >;
 }
 
 // TODO(hinsu): Also fuse ops corresponding to RELU_N1_TO_1 and SIGN_BIT fused
 // activation functions.
-foreach actFnPair = [[TFL_ReluOp, TFL_AF_Relu],
-                     [TFL_Relu6Op, TFL_AF_Relu6],
-		     [TFL_TanhOp, TFL_AF_Tanh]] in
-  defm : FuseActFnIntoConvOpPat<actFnPair[0], actFnPair[1]>;
-
+foreach actFnPair = [
+[TFL_ReluOp, TFL_AF_Relu],
+[TFL_Relu6Op, TFL_AF_Relu6],
+[TFL_TanhOp, TFL_AF_Tanh]
+         ] in
+  defm : FuseActFnIntoConvOpPat<!cast<Op>(actFnPair[0]), !cast<ConstantStrAttr>(actFnPair[1])>;
 
 // If we see an add op adding a constant value to a convolution op with constant
 // bias, we can fuse the add into the convolution op by constant folding the

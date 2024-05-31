@@ -21,6 +21,7 @@
 #include "mlir/IR/StandardTypes.h"
 #include "mlir/IR/Types.h"
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/MathExtras.h"

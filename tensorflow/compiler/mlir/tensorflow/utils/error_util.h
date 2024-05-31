@@ -28,30 +28,27 @@ limitations under the License.
 namespace mlir {
 
 // TensorFlow's Status is used for error reporting back to callers.
-using stream_executor::port::StatusOr;
-using tensorflow::Status;
+using ::tensorflow::Status;
 
-// Diagnostic handler that collects all the diagnostics reported and can produce
-// a Status to return to callers. This is for the case where MLIR functions are
-// called from a function that will return a Status: MLIR code still uses the
-// default error reporting, and the final return function can return the Status
-// constructed from the diagnostics collected.
-class StatusScopedDiagnosticHandler : public SourceMgrDiagnosticHandler {
+// Diagnostic handler that collects all the diagnostics reported and can
+// produce a Status to return to callers. This is for the case where MLIR
+// functions are called from a function that will return a Status: MLIR code
+// still uses the default error reporting, and the final return function can
+// return the Status constructed from the diagnostics collected.
+class BaseScopedDiagnosticHandler : public SourceMgrDiagnosticHandler {
  public:
-  // Constructs a diagnostic handler in a context. If propagate is true, then
-  // diagnostics reported are also propagated back to the original diagnostic
-  // handler.
-  explicit StatusScopedDiagnosticHandler(MLIRContext* context,
-                                         bool propagate = false);
+  explicit BaseScopedDiagnosticHandler(MLIRContext* context,
+                                       bool propagate = false,
+                                       bool filter_stack = false);
   // On destruction error consumption is verified.
-  ~StatusScopedDiagnosticHandler();
-
+  ~BaseScopedDiagnosticHandler();
   // Returns whether any errors were reported.
   bool ok() const;
 
-  // Returns Status corresponding to the diagnostics reported. This consumes the
-  // diagnostics reported and returns a Status of type Unknown. It is required
-  // to consume the error status, if there is one, before destroying the object.
+  // Returns Status corresponding to the diagnostics reported. This consumes
+  // the diagnostics reported and returns a Status of type Unknown. It is
+  // required to consume the error status, if there is one, before destroying
+  // the object.
   Status ConsumeStatus();
 
   // Returns the combination of the passed in status and consumed diagnostics.
@@ -60,8 +57,8 @@ class StatusScopedDiagnosticHandler : public SourceMgrDiagnosticHandler {
   // or returns an Unknown status (if diagnostics reported), otherwise OK.
   Status Combine(Status status);
 
- private:
-  void handler(Diagnostic diag);
+ protected:
+  LogicalResult handler(Diagnostic* diag);
 
   // String stream to assemble the final error message.
   std::string diag_str_;
@@ -72,6 +69,40 @@ class StatusScopedDiagnosticHandler : public SourceMgrDiagnosticHandler {
 
   // Whether to propagate diagnostics to the old diagnostic handler.
   bool propagate_;
+};
+
+
+// TF customized diagnostic handler that collects all the diagnostics reported
+// and can produce a Status to return to callers. This is for the case where
+// MLIR functions are called from a function that will return a Status: MLIR
+// code still uses the default error reporting, and the final return function
+// can return the Status constructed from the diagnostics collected.
+// todo: [b/253331656]. Note ConsumeStatus() and Combine() are wrappers
+// of what is inherited from the BaseScopedDiagnosticHandler  to
+// support cases where tensorflow::Status is still being used (base class uses
+// Status)
+class StatusScopedDiagnosticHandler : public BaseScopedDiagnosticHandler {
+ public:
+  // Constructs a diagnostic handler in a context. If propagate is true, then
+  // diagnostics reported are also propagated back to the original diagnostic
+  // handler.  If filter_stack is true, a reduced stack will be produced.
+
+  explicit StatusScopedDiagnosticHandler(MLIRContext* context,
+                                         bool propagate = false,
+                                         bool filter_stack = false);
+
+  ~StatusScopedDiagnosticHandler() = default;
+  // Returns Status corresponding to the diagnostics reported. This consumes
+  // the diagnostics reported and returns a Status of type Unknown. It is
+  // required to consume the error status, if there is one, before destroying
+  // the object.
+  Status ConsumeStatus();
+
+  // Returns the combination of the passed in status and consumed diagnostics.
+  // This consumes the diagnostics reported and either appends the diagnostics
+  // to the error message of 'status' (if 'status' is already an error state),
+  // or returns an Unknown status (if diagnostics reported), otherwise OK.
+  Status Combine(Status status);
 };
 }  // namespace mlir
 

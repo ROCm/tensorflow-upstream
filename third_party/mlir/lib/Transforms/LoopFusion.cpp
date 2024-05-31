@@ -492,15 +492,15 @@ public:
       ++pos;
     }
 
-    if (firstSrcDepPos.hasValue()) {
-      if (lastDstDepPos.hasValue()) {
-        if (firstSrcDepPos.getValue() <= lastDstDepPos.getValue()) {
+    if (firstSrcDepPos.has_value()) {
+      if (lastDstDepPos.has_value()) {
+        if (firstSrcDepPos.value() <= lastDstDepPos.value()) {
           // No valid insertion point exists which preserves dependences.
           return nullptr;
         }
       }
       // Return the insertion point at 'firstSrcDepPos'.
-      return depInsts[firstSrcDepPos.getValue()];
+      return depInsts[firstSrcDepPos.value()];
     }
     // No dependence targets in range (or only dst deps in range), return
     // 'dstNodInst' insertion point.
@@ -879,7 +879,7 @@ static Value *createPrivateMemRef(AffineForOp forOp, Operation *srcStoreOpInst,
   // by 'srcStoreOpInst' at depth 'dstLoopDepth'.
   Optional<int64_t> numElements =
       region.getConstantBoundingSizeAndShape(&newShape, &lbs, &lbDivisors);
-  assert(numElements.hasValue() &&
+  assert(numElements.has_value() &&
          "non-constant number of elts in local buffer");
 
   const FlatAffineConstraints *cst = region.getConstraints();
@@ -908,10 +908,10 @@ static Value *createPrivateMemRef(AffineForOp forOp, Operation *srcStoreOpInst,
   // Create 'newMemRefType' using 'newShape' from MemRefRegion accessed
   // by 'srcStoreOpInst'.
   uint64_t bufSize =
-      getMemRefEltSizeInBytes(oldMemRefType) * numElements.getValue();
+      getMemRefEltSizeInBytes(oldMemRefType) * numElements.value();
   unsigned newMemSpace;
-  if (bufSize <= localBufSizeThreshold && fastMemorySpace.hasValue()) {
-    newMemSpace = fastMemorySpace.getValue();
+  if (bufSize <= localBufSizeThreshold && fastMemorySpace.has_value()) {
+    newMemSpace = fastMemorySpace.value();
   } else {
     newMemSpace = oldMemRefType.getMemorySpace();
   }
@@ -999,7 +999,7 @@ static bool canFuseSrcWhichWritesToLiveOut(unsigned srcId, unsigned dstId,
   // by 'srcStoreOpInst' at depth 'dstLoopDepth'.
   Optional<int64_t> srcNumElements =
       srcWriteRegion.getConstantBoundingSizeAndShape(&srcShape);
-  if (!srcNumElements.hasValue())
+  if (!srcNumElements.has_value())
     return false;
 
   // Compute MemRefRegion 'dstRegion' for 'dstStore/LoadOpInst' on 'memref'.
@@ -1022,7 +1022,7 @@ static bool canFuseSrcWhichWritesToLiveOut(unsigned srcId, unsigned dstId,
   // by 'dstOpInst' at depth 'dstLoopDepth'.
   Optional<int64_t> dstNumElements =
       dstRegion.getConstantBoundingSizeAndShape(&dstShape);
-  if (!dstNumElements.hasValue())
+  if (!dstNumElements.has_value())
     return false;
 
   // Return false if write region is not a superset of 'srcNodes' write
@@ -1141,9 +1141,9 @@ static bool isFusionProfitable(Operation *srcOpInst, Operation *srcStoreOpInst,
 
   Optional<int64_t> maybeSrcWriteRegionSizeBytes =
       srcWriteRegion.getRegionSize();
-  if (!maybeSrcWriteRegionSizeBytes.hasValue())
+  if (!maybeSrcWriteRegionSizeBytes.has_value())
     return false;
-  int64_t srcWriteRegionSizeBytes = maybeSrcWriteRegionSizeBytes.getValue();
+  int64_t srcWriteRegionSizeBytes = maybeSrcWriteRegionSizeBytes.value();
 
   // Compute op instance count for the src loop nest.
   uint64_t dstLoopNestCost = getComputeCost(dstLoopIVs[0], dstLoopNestStats);
@@ -1189,15 +1189,15 @@ static bool isFusionProfitable(Operation *srcOpInst, Operation *srcStoreOpInst,
 
     Optional<int64_t> maybeSliceWriteRegionSizeBytes =
         sliceWriteRegion.getRegionSize();
-    if (!maybeSliceWriteRegionSizeBytes.hasValue() ||
-        maybeSliceWriteRegionSizeBytes.getValue() == 0) {
+    if (!maybeSliceWriteRegionSizeBytes.has_value() ||
+        maybeSliceWriteRegionSizeBytes.value() == 0) {
       LLVM_DEBUG(llvm::dbgs()
                  << "Failed to get slice write region size at loopDepth: " << i
                  << "\n");
       continue;
     }
     int64_t sliceWriteRegionSizeBytes =
-        maybeSliceWriteRegionSizeBytes.getValue();
+        maybeSliceWriteRegionSizeBytes.value();
 
     // If we are fusing for reuse, check that write regions remain the same.
     // TODO(andydavis) Write region check should check sizes and offsets in
@@ -1246,7 +1246,7 @@ static bool isFusionProfitable(Operation *srcOpInst, Operation *srcStoreOpInst,
   // A simple cost model: fuse if it reduces the memory footprint. If
   // -maximal-fusion is set, fuse nevertheless.
 
-  if (!maximalFusion && !bestDstLoopDepth.hasValue()) {
+  if (!maximalFusion && !bestDstLoopDepth.has_value()) {
     LLVM_DEBUG(
         llvm::dbgs()
         << "All fusion choices involve more than the threshold amount of "
@@ -1254,13 +1254,13 @@ static bool isFusionProfitable(Operation *srcOpInst, Operation *srcStoreOpInst,
     return false;
   }
 
-  if (!bestDstLoopDepth.hasValue()) {
+  if (!bestDstLoopDepth.has_value()) {
     LLVM_DEBUG(llvm::dbgs() << "no fusion depth could be evaluated.\n");
     return false;
   }
 
   // Set dstLoopDepth based on best values from search.
-  *dstLoopDepth = bestDstLoopDepth.getValue();
+  *dstLoopDepth = bestDstLoopDepth.value();
 
   LLVM_DEBUG(
       llvm::dbgs() << " LoopFusion fusion stats:"
@@ -1276,18 +1276,18 @@ static bool isFusionProfitable(Operation *srcOpInst, Operation *srcStoreOpInst,
   Optional<double> storageReduction = None;
 
   if (!maximalFusion) {
-    if (!dstMemSize.hasValue() || !srcMemSize.hasValue()) {
+    if (!dstMemSize.has_value() || !srcMemSize.has_value()) {
       LLVM_DEBUG(
           llvm::dbgs()
           << "  fusion memory benefit cannot be evaluated; NOT fusing.\n");
       return false;
     }
 
-    auto srcMemSizeVal = srcMemSize.getValue();
-    auto dstMemSizeVal = dstMemSize.getValue();
+    auto srcMemSizeVal = srcMemSize.value();
+    auto dstMemSizeVal = dstMemSize.value();
 
-    assert(sliceMemEstimate.hasValue() && "expected value");
-    auto fusedMem = dstMemSizeVal + sliceMemEstimate.getValue();
+    assert(sliceMemEstimate.has_value() && "expected value");
+    auto fusedMem = dstMemSizeVal + sliceMemEstimate.value();
 
     LLVM_DEBUG(llvm::dbgs() << "   src mem: " << srcMemSizeVal << "\n"
                             << "   dst mem: " << dstMemSizeVal << "\n"
@@ -1313,8 +1313,8 @@ static bool isFusionProfitable(Operation *srcOpInst, Operation *srcStoreOpInst,
     msg << " fusion is most profitable at depth " << *dstLoopDepth << " with "
         << std::setprecision(2) << additionalComputeFraction
         << "% redundant computation and a ";
-    msg << (storageReduction.hasValue()
-                ? std::to_string(storageReduction.getValue())
+    msg << (storageReduction.has_value()
+                ? std::to_string(storageReduction.value())
                 : "<unknown>");
     msg << "% storage reduction.\n";
     llvm::dbgs() << msg.str();

@@ -22,16 +22,18 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
-#include "mlir/Dialect/StandardOps/Ops.h"  // TF:local_config_mlir
-#include "mlir/IR/Attributes.h"  // TF:local_config_mlir
-#include "mlir/IR/Function.h"  // TF:local_config_mlir
-#include "mlir/IR/Identifier.h"  // TF:local_config_mlir
-#include "mlir/IR/Location.h"  // TF:local_config_mlir
-#include "mlir/IR/Module.h"  // TF:local_config_mlir
-#include "mlir/IR/Operation.h"  // TF:local_config_mlir
-#include "mlir/IR/OperationSupport.h"  // TF:local_config_mlir
-#include "mlir/Support/DebugStringHelper.h"  // TF:local_config_mlir
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Location.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/OperationSupport.h"  // from @llvm-project
+#include "mlir/IR/TypeUtilities.h"  // from @llvm-project
+#include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/utils/convert_tensor.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/convert_type.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/mangling_util.h"
@@ -116,7 +118,7 @@ Status ConvertAttribute(const mlir::UnitAttr& attr, AttrValue* value) {
 }
 
 Status ConvertAttribute(const mlir::SymbolRefAttr& attr, AttrValue* value) {
-  value->mutable_func()->set_name(attr.getValue());
+  value->mutable_func()->set_name(attr.getValue().str());
   return Status::OK();
 }
 
@@ -195,7 +197,7 @@ StatusOr<std::unique_ptr<NodeDef>> GetOperationNodeDef(
   TF_ASSIGN_OR_RETURN(auto op_name,
                       op_name_func(inst->getName().getStringRef()));
   node_def->set_op(op_name);
-  node_def->set_name(name);
+  node_def->set_name(name.str());
 
   // Add inputs to the NodeDef based on the number of operands. This is required
   // as later when edges are added to the Node using Graph::AddEdge the
@@ -204,7 +206,7 @@ StatusOr<std::unique_ptr<NodeDef>> GetOperationNodeDef(
     node_def->add_input();
   }
   if (auto attr = inst->getAttrOfType<mlir::StringAttr>("device")) {
-    node_def->set_device(attr.getValue());
+    node_def->set_device(attr.getValue().str());
   }
 
   // Add the node attributes.
@@ -247,7 +249,7 @@ Status ConvertAttributes(const llvm::ArrayRef<mlir::NamedAttribute> attrs,
     switch (attr.getKind()) {
       case mlir::StandardAttributes::SymbolRef: {
         auto func_attr = attr.cast<mlir::SymbolRefAttr>();
-        value.mutable_func()->set_name(func_attr.getValue());
+        value.mutable_func()->set_name(func_attr.getValue().str());
         func_call_attrs[string(name)] = value;
         continue;
       }

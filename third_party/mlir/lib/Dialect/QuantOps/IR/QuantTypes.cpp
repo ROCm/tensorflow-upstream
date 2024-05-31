@@ -23,6 +23,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/MathExtras.h"
+#include <cmath>
 
 using namespace mlir;
 using namespace mlir::quant;

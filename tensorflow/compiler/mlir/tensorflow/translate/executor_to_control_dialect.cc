@@ -16,18 +16,22 @@ limitations under the License.
 // This transformation pass transforms from TF executor dialect to MLIR TF
 // contol dialect.
 
+// FIXME: disabled: does not compile and has no 2.x equivalent
+#if 0
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "mlir/Dialect/StandardOps/Ops.h"  // TF:local_config_mlir
+//#include "mlir/Dialect/StandardOps/Ops.h"  // TF:local_config_mlir
 #include "mlir/IR/Builders.h"  // TF:local_config_mlir
 #include "mlir/IR/Operation.h"  // TF:local_config_mlir
 #include "mlir/IR/Value.h"  // TF:local_config_mlir
 #include "mlir/Pass/Pass.h"  // TF:local_config_mlir
 #include "mlir/Pass/PassRegistry.h"  // TF:local_config_mlir
 #include "mlir/Support/LLVM.h"  // TF:local_config_mlir
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/control_flow_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
@@ -199,7 +203,7 @@ void ExecutorToControlDialectConversion::runOnFunction() {
   graph.erase();
 }
 
-std::unique_ptr<FunctionPassBase> CreateTFExecutorToControlDialectConversion() {
+std::unique_ptr<OperationPass<func::FuncOp>> CreateTFExecutorToControlDialectConversion() {
   return std::make_unique<ExecutorToControlDialectConversion>();
 }
 
@@ -208,3 +212,5 @@ std::unique_ptr<FunctionPassBase> CreateTFExecutorToControlDialectConversion() {
 static mlir::PassRegistration<mlir::ExecutorToControlDialectConversion> pass(
     "tf-executor-to-control-conversion",
     "Convert from TF executor dialect to TF control dialect");
+
+#endif

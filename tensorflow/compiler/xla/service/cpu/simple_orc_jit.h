@@ -20,14 +20,17 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "llvm/ADT/Triple.h"
+//#include "absl/functional/any_invocable.h"
 #include "llvm/ExecutionEngine/JITEventListener.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
+#include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/SymbolStringPool.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/TargetParser/Triple.h"
 #include "tensorflow/compiler/xla/service/cpu/compiler_functor.h"
 #include "tensorflow/compiler/xla/types.h"
 

@@ -1,4 +1,5 @@
 load("//tensorflow:tensorflow.bzl", "tf_native_cc_binary")
+load("@local_config_mlir//:mlir_configure.bzl", "is2019")
 
 package(
     default_visibility = [
@@ -33,18 +34,17 @@ cc_library(
     hdrs = [
         "quantization_utils.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         "@com_google_absl//absl/memory",
         "@llvm//:support",
         "@local_config_mlir//:IR",
         "@local_config_mlir//:QuantOps",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
         # TODO(fengliuai): remove this dependence.
         "//tensorflow/compiler/mlir/lite:tensorflow_lite",
         "//tensorflow/core:lib_proto_parsing",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
 )
 
 tf_native_cc_binary(

@@ -357,12 +357,12 @@ LogicalResult AffineDataCopyGeneration::generateCopy(
   lbs.reserve(rank);
   Optional<int64_t> numElements = region.getConstantBoundingSizeAndShape(
       &fastBufferShape, &lbs, &lbDivisors);
-  if (!numElements.hasValue()) {
+  if (!numElements.has_value()) {
     LLVM_DEBUG(llvm::dbgs() << "Non-constant region size not supported\n");
     return failure();
   }
 
-  if (numElements.getValue() == 0) {
+  if (numElements.value() == 0) {
     LLVM_DEBUG(llvm::dbgs() << "Nothing to copy\n");
     *sizeInBytes = 0;
     return success();
@@ -434,7 +434,7 @@ LogicalResult AffineDataCopyGeneration::generateCopy(
     // Record it.
     fastBufferMap[memref] = fastMemRef;
     // fastMemRefType is a constant shaped memref.
-    *sizeInBytes = getMemRefSizeInBytes(fastMemRefType).getValue();
+    *sizeInBytes = getMemRefSizeInBytes(fastMemRefType).value();
     LLVM_DEBUG(emitRemarkForBlock(*block)
                << "Creating fast buffer of type " << fastMemRefType
                << " and size " << llvm::divideCeil(*sizeInBytes, 1024)
@@ -446,7 +446,7 @@ LogicalResult AffineDataCopyGeneration::generateCopy(
   }
 
   auto numElementsSSA =
-      top.create<ConstantIndexOp>(loc, numElements.getValue());
+      top.create<ConstantIndexOp>(loc, numElements.value());
 
   SmallVector<StrideInfo, 4> strideInfos;
   getMultiLevelStrides(region, fastBufferShape, &strideInfos);
@@ -610,8 +610,8 @@ LogicalResult AffineDataCopyGeneration::runOnBlock(Block *block) {
         Optional<int64_t> footprint =
             getMemoryFootprintBytes(forOp,
                                     /*memorySpace=*/0);
-        return (footprint.hasValue() &&
-                static_cast<uint64_t>(footprint.getValue()) >
+        return (footprint.has_value() &&
+                static_cast<uint64_t>(footprint.value()) >
                     fastMemCapacityBytes);
       };
 

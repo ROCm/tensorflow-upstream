@@ -457,7 +457,8 @@ llvm_ir::ElementGenerator GpuElementalIrEmitter::MakeElementGenerator(
         TF_ASSIGN_OR_RETURN(
             llvm::Value * accum_value,
             compute_nested_(*hlo->to_apply(),
-                            {b()->CreateLoad(accum_ptr), input_value}));
+                            {b()->CreateLoad(accum_ptr->getAllocatedType(),
+                              accum_ptr), input_value}));
         b()->CreateStore(accum_value, accum_ptr);
         SetToFirstInsertPoint(loops.GetOuterLoopExitBasicBlock(), b());
         return b()->CreateLoad(accum_ptr);

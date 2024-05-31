@@ -130,7 +130,7 @@ void LoopUnroll::runOnFunction() {
     // an outer one may delete gathered inner ones).
     getFunction().walk<AffineForOp>([&](AffineForOp forOp) {
       Optional<uint64_t> tripCount = getConstantTripCount(forOp);
-      if (tripCount.hasValue() && tripCount.getValue() <= clUnrollFullThreshold)
+      if (tripCount.has_value() && tripCount.value() <= clUnrollFullThreshold)
         loops.push_back(forOp);
     });
     for (auto forOp : loops)
@@ -166,14 +166,14 @@ LogicalResult LoopUnroll::runOnAffineForOp(AffineForOp forOp) {
     return loopUnrollByFactor(forOp, getUnrollFactor(forOp));
   }
   // Unroll by the factor passed, if any.
-  if (unrollFactor.hasValue())
-    return loopUnrollByFactor(forOp, unrollFactor.getValue());
+  if (unrollFactor.has_value())
+    return loopUnrollByFactor(forOp, unrollFactor.value());
   // Unroll by the command line factor if one was specified.
   if (clUnrollFactor.getNumOccurrences() > 0)
     return loopUnrollByFactor(forOp, clUnrollFactor);
   // Unroll completely if full loop unroll was specified.
   if (clUnrollFull.getNumOccurrences() > 0 ||
-      (unrollFull.hasValue() && unrollFull.getValue()))
+      (unrollFull.has_value() && unrollFull.value()))
     return loopUnrollFull(forOp);
 
   // Unroll by four otherwise.

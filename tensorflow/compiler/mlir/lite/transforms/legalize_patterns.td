@@ -15,9 +15,12 @@ limitations under the License.
 
 // TFLite legalization patterns
 
-include "mlir/IR/OpBase.td"
-include "mlir/Dialect/StandardOps/Ops.td"
 include "tensorflow/compiler/mlir/lite/ir/tfl_ops.td"
+
+include "mlir/IR/OpBase.td"
+include "mlir/IR/PatternBase.td"
+include "mlir/Dialect/Arith/IR/ArithOps.td"
+include "mlir/Dialect/Func/IR/FuncOps.td"
 include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.td"
 
 def F32ElementsAttr : ElementsAttrBase<
@@ -156,14 +159,17 @@ def : Pat<(TF_ZerosLikeOp $arg), (TFL_ZerosLikeOp $arg)>;
 // The following two rules can both match an tf.Placeholder.input node with
 // min/max/type attributes, so we increase the benefit of the first rule by one
 // so the tfl.quantize and tfl.dequantize ops will be inserted if it matches.
-def : Pat<(TF_PlaceholderInputOp $inputs, $min, $max, $type),
-          (TFL_DequantizeOp
-              (TFL_QuantizeOp
-                  (TFL_InputOp $inputs),
-                  (ConvertToQuantType $inputs, $min, $max, $type))),
-          [(HasAll3Attrs $min, $max, $type)], (addBenefit 1)>;
-def : Pat<(TF_PlaceholderInputOp $inputs, $min, $max, $type),
-          (TFL_InputOp $inputs)>;
+
+// FIXME
+
+//def : Pat<(TF_PlaceholderInputOp $inputs, $min, $max, $type),
+//          (TFL_DequantizeOp
+//              (TFL_QuantizeOp
+//                  (TFL_InputOp $inputs),
+//                  (ConvertToQuantType $inputs, $min, $max, $type))),
+//          [(HasAll3Attrs $min, $max, $type)], (addBenefit 1)>;
+//def : Pat<(TF_PlaceholderInputOp $inputs, $min, $max, $type),
+//          (TFL_InputOp $inputs)>;
 
 //===----------------------------------------------------------------------===//
 // Binary ops patterns.
@@ -196,28 +202,57 @@ def : Pat<(TF_LogicalAndOp $l, $r), (TFL_LogicalAndOp $l, $r)>;
 
 def : Pat<(TF_LogicalOrOp $l, $r), (TFL_LogicalOrOp $l, $r)>;
 
+// OLD VERSION:
 // Multi-pattern consisting of matching stand-alone op or op followed by relu.
-multiclass FusedBinaryActivationFuncOpPat<dag FromOp, dag ToOp> {
-  def : Pat<(FromOp AnyTensor:$l, AnyTensor:$r),
-            (ToOp $l, $r, TFL_AF_None)>;
+// multiclass FusedBinaryActivationFuncOpPat<dag FromOp, dag ToOp> {
+//   def : Pat<(FromOp AnyTensor:$l, AnyTensor:$r),
+//             (ToOp $l, $r, TFL_AF_None)>;
+//   foreach actFnPair = [[TF_ReluOp, TFL_AF_Relu],
+//                        [TF_Relu6Op, TFL_AF_Relu6]] in {
+//     def : Pat<(actFnPair[0] (FromOp $lhs, $rhs)),
+//               (ToOp $lhs, $rhs, actFnPair[1])>;
+//     // TODO: Maybe move these below to general pass?
+//     def : Pat<(actFnPair[0] (ToOp $lhs, $rhs, TFL_AF_None)),
+//               (ToOp $lhs, $rhs, actFnPair[1])>;
+//   }
+// }
+// 
+// // Instantiated FusedBinary patterns for the from-to pairs of ops.
+// foreach fromToPair = [[TF_AddOp, TFL_AddOp],
+//                       [TF_AddV2Op, TFL_AddOp],
+//                       [TF_DivOp, TFL_DivOp],
+//                       [TF_MulOp, TFL_MulOp],
+//                       [TF_RealDivOp, TFL_DivOp],
+//                       [TF_SubOp, TFL_SubOp]] in
+//   defm : FusedBinaryActivationFuncOpPat<fromToPair[0], fromToPair[1]>;
+// 
+// NEW VERSION:
+
+// Multi-pattern consisting of matching stand-alone op or op followed by relu.
+multiclass FusedBinaryActivationFuncOpPat<Op BinaryOp, Op ToOp> {
   foreach actFnPair = [[TF_ReluOp, TFL_AF_Relu],
                        [TF_Relu6Op, TFL_AF_Relu6]] in {
-    def : Pat<(actFnPair[0] (FromOp $lhs, $rhs)),
-              (ToOp $lhs, $rhs, actFnPair[1])>;
-    // TODO: Maybe move these below to general pass?
-    def : Pat<(actFnPair[0] (ToOp $lhs, $rhs, TFL_AF_None)),
-              (ToOp $lhs, $rhs, actFnPair[1])>;
+    def FuseBinaryWithActivation#BinaryOp#actFnPair[0] : Pat<
+      (actFnPair[0] (BinaryOp:$binary_out $lhs, $rhs)),
+      (ToOp $lhs, $rhs, actFnPair[1])
+//    , [(HasOneUse $binary_out)]
+    >;
+    def FuseBinaryWithActivation#BinaryOp#actFnPair[0] : Pat<
+      (actFnPair[0] (ToOp:$binary_out $lhs, $rhs, TFL_AF_None)),
+      (ToOp $lhs, $rhs, actFnPair[1])
+//    , [(HasOneUse $binary_out)]
+    >;
   }
 }
+//foreach BinaryOp = [TFL_AddOp, TFL_SubOp, TFL_DivOp, TFL_MulOp] in {
+  // Instantiated FusedBinary patterns for the from-to pairs of ops.
+defm : FusedBinaryActivationFuncOpPat<TF_AddOp, TFL_AddOp>;
+defm : FusedBinaryActivationFuncOpPat<TF_AddV2Op, TFL_AddOp>;
+defm : FusedBinaryActivationFuncOpPat<TF_DivOp, TFL_DivOp>;
+defm : FusedBinaryActivationFuncOpPat<TF_MulOp, TFL_MulOp>;
+defm : FusedBinaryActivationFuncOpPat<TF_RealDivOp, TFL_DivOp>;
+defm : FusedBinaryActivationFuncOpPat<TF_SubOp, TFL_SubOp>;
 
-// Instantiated FusedBinary patterns for the from-to pairs of ops.
-foreach fromToPair = [[TF_AddOp, TFL_AddOp],
-                      [TF_AddV2Op, TFL_AddOp],
-                      [TF_DivOp, TFL_DivOp],
-                      [TF_MulOp, TFL_MulOp],
-                      [TF_RealDivOp, TFL_DivOp],
-                      [TF_SubOp, TFL_SubOp]] in
-  defm : FusedBinaryActivationFuncOpPat<fromToPair[0], fromToPair[1]>;
 
 def : Pat<(TF_BiasAddOp F32Tensor:$l, F32Tensor:$r,
                         IsDataFormatNHWC:$data_format),

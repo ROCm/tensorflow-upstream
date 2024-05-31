@@ -21,8 +21,10 @@ limitations under the License.
 
 #include "mlir/IR/Builders.h"  // TF:local_config_mlir
 #include "mlir/IR/Dialect.h"  // TF:local_config_mlir
+#include "mlir/Support/TypeID.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Interfaces/CallInterfaces.h"  // from @llvm-project
 
-namespace mlir {
 namespace tf_device {
 
 // The TensorFlow Device dialect.
@@ -31,17 +33,28 @@ namespace tf_device {
 // These operations do not map 1-1 to TensorFlow ops and requires a lowering
 // pass later to transform them into Compile/Run op pairs, like XlaCompile and
 // XlaRun.
-class TensorFlowDeviceDialect : public Dialect {
+class TensorFlowDeviceDialect : public mlir::Dialect {
  public:
+  static mlir::StringRef getDialectNamespace() { return "tf_device"; }
   // Constructing TensorFlowDevice dialect under an non-null MLIRContext.
-  explicit TensorFlowDeviceDialect(MLIRContext *context);
+  explicit TensorFlowDeviceDialect(mlir::MLIRContext *context);
 };
 
+}  // namespace tf_device
+
 // Declares the operations for this dialect using the generated header.
+// NOTE [EK]: This must be in the outermost namespace, because it generates:
+// #define MLIR_DECLARE_EXPLICIT_TYPE_ID(CLASS_NAME)                              \
+//  namespace mlir {                                                             \
+//  namespace detail {                                                           \
+// ....
+
+using namespace mlir;
+//using mlir::StringAttr;
+//using mlir::TypeRange;
+//using mlir::Block;
 #define GET_OP_CLASSES
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h.inc"
 
-}  // namespace tf_device
-}  // namespace mlir
 
 #endif  // TENSORFLOW_COMPILER_MLIR_TENSORFLOW_IR_TF_DEVICE_H_

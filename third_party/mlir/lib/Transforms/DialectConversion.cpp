@@ -546,7 +546,7 @@ void ConversionPatternRewriterImpl::notifySplitBlock(Block *block,
 
 void ConversionPatternRewriterImpl::notifyRegionIsBeingInlinedBefore(
     Region &region, Region &parent, Region::iterator before) {
-  for (auto &pair : llvm::enumerate(region)) {
+  for (const auto &pair : llvm::enumerate(region)) {
     Block &block = pair.value();
     unsigned position = pair.index();
     blockActions.push_back(BlockAction::getMove(&block, {&region, position}));

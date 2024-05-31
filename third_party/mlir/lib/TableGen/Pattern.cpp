@@ -223,7 +223,7 @@ tblgen::SymbolInfoMap::SymbolInfo::getValueAndRangeUse(StringRef name,
   case Kind::Attr:
   case Kind::Operand: {
     assert(index < 0 && "only allowed for symbol bound to result");
-    return name;
+    return name.str();
   }
   case Kind::Result: {
     // TODO(b/133341698): The following is incorrect for variadic results. We
@@ -242,7 +242,7 @@ tblgen::SymbolInfoMap::SymbolInfo::getValueAndRangeUse(StringRef name,
   case Kind::Value: {
     assert(index < 0 && "only allowed for symbol bound to result");
     assert(op == nullptr);
-    return name;
+    return name.str();
   }
   }
   llvm_unreachable("unknown kind");
@@ -363,7 +363,7 @@ std::vector<tblgen::AppliedConstraint> tblgen::Pattern::getConstraints() const {
     std::vector<std::string> entities;
     entities.reserve(dagInit->arg_size());
     for (auto *argName : dagInit->getArgNames())
-      entities.push_back(argName->getValue());
+      entities.push_back(argName->getValue().str());
 
     ret.emplace_back(cast<llvm::DefInit>(dagInit->getOperator())->getDef(),
                      dagInit->getNameStr(), std::move(entities));

@@ -103,9 +103,9 @@ if _FAST_TENSOR_UTIL_AVAILABLE:
           fast_tensor_util.AppendComplex64ArrayToTensorProto,
       np.complex128:
           fast_tensor_util.AppendComplex128ArrayToTensorProto,
-      np.object:
+      object:
           fast_tensor_util.AppendObjectArrayToTensorProto,
-      np.bool:
+      bool:
           fast_tensor_util.AppendBoolArrayToTensorProto,
       dtypes.qint8.as_numpy_dtype:
           fast_tensor_util.AppendInt8ArrayToTensorProto,

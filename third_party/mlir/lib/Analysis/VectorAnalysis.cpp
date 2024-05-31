@@ -224,7 +224,7 @@ bool mlir::matcher::operatesOnSuperVectorsOf(Operation &op,
   auto ratio = shapeRatio(superVectorType, subVectorType);
 
   // Sanity check.
-  assert((ratio.hasValue() || !mustDivide) &&
+  assert((ratio.has_value() || !mustDivide) &&
          "vector.transfer operation in which super-vector size is not an"
          " integer multiple of sub-vector size");
 
@@ -233,7 +233,7 @@ bool mlir::matcher::operatesOnSuperVectorsOf(Operation &op,
   // This could be useful information if we wanted to reshape at the level of
   // the vector type (but we would have to look at the compute and distinguish
   // between parallel, reduction and possibly other cases.
-  if (!ratio.hasValue()) {
+  if (!ratio.has_value()) {
     return false;
   }
 

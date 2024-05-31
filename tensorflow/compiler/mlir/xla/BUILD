@@ -1,4 +1,5 @@
 load("@local_config_mlir//:tblgen.bzl", "gentbl")
+load("@local_config_mlir//:mlir_configure.bzl", "gentbl", "is2019")
 load("//tensorflow:tensorflow.bzl", "tf_cc_test", "tf_native_cc_binary")
 
 package(
@@ -56,7 +57,7 @@ gentbl(
     td_file = "transforms/legalize_tf_patterns.td",
     td_srcs = [
         ":xla_ops_td_files",
-        "@local_config_mlir//:StdOpsTdFiles",
+        #"@local_config_mlir//:StdOpsTdFiles",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops_td_files",
     ],
 )
@@ -67,7 +68,7 @@ cc_library(
         "transforms/generated_legalize_tf.inc",
         "transforms/legalize_tf.cc",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":xla",
         "//tensorflow/compiler/mlir/tensorflow",
@@ -75,9 +76,9 @@ cc_library(
         "@local_config_mlir//:Analysis",
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Pass",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
+,
     alwayslink = 1,
 )
 
@@ -93,7 +94,7 @@ gentbl(
     td_file = "transforms/legalize_to_standard_patterns.td",
     td_srcs = [
         ":xla_ops_td_files",
-        "@local_config_mlir//:StdOpsTdFiles",
+        #"@local_config_mlir//:StdOpsTdFiles",
     ],
 )
 
@@ -102,7 +103,7 @@ cc_library(
     srcs = [
         "transforms/legalize_control_flow.cc",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":xla",
         "//tensorflow/compiler/mlir/tensorflow",
@@ -110,8 +111,7 @@ cc_library(
         "@local_config_mlir//:Analysis",
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Pass",
-        "@local_config_mlir//:StandardOps",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
     alwayslink = 1,
 )
 
@@ -120,7 +120,7 @@ cc_library(
     srcs = [
         "transforms/legalize_to_standard.cc",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":xla",
         ":xla_legalize_to_standard_inc_gen",
@@ -129,8 +129,7 @@ cc_library(
         "@local_config_mlir//:Analysis",
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Pass",
-        "@local_config_mlir//:StandardOps",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
     alwayslink = 1,
 )
 
@@ -145,7 +144,7 @@ cc_library(
         "ir/xla_ops.h",
         "transforms/passes.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     includes = ["include"],
     deps = [
         ":xla_ops_inc_gen",
@@ -153,10 +152,9 @@ cc_library(
         "@local_config_mlir//:Analysis",
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Pass",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
         "@local_config_mlir//:TransformUtils",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
     alwayslink = 1,
 )
 
@@ -164,7 +162,7 @@ cc_library(
 cc_library(
     name = "xla_dialect_registration",
     srcs = ["ir/dialect_registration.cc"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":xla",
         "@local_config_mlir//:IR",
@@ -176,7 +174,7 @@ cc_library(
     name = "type_to_shape",
     srcs = ["type_to_shape.cc"],
     hdrs = ["type_to_shape.h"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         "//tensorflow/compiler/xla:shape_util",
         "//tensorflow/compiler/xla:xla_data_proto",
@@ -207,7 +205,7 @@ cc_library(
         "operator_writers.inc",
     ],
     hdrs = ["mlir_hlo_to_hlo.h"],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":type_to_shape",
         ":xla",
@@ -221,10 +219,9 @@ cc_library(
         "@local_config_mlir//:Analysis",
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Pass",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:TransformUtils",
         "@local_config_mlir//:Transforms",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
 )
 
 cc_library(
@@ -235,7 +232,7 @@ cc_library(
     hdrs = [
         "hlo_to_mlir_hlo.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":hlo_module_importer",
         "//tensorflow/compiler/mlir/tensorflow:error_util",
@@ -255,7 +252,7 @@ cc_library(
         "hlo_function_importer.h",
         "hlo_module_importer.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":xla",
         "//tensorflow/compiler/mlir/tensorflow:error_util",
@@ -269,8 +266,7 @@ cc_library(
         "//tensorflow/core:lib",
         "@llvm//:support",
         "@local_config_mlir//:IR",
-        "@local_config_mlir//:StandardOps",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
 )
 
 cc_library(
@@ -281,7 +277,7 @@ cc_library(
     hdrs = [
         "xla_mlir_translate.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":hlo_to_mlir_hlo",
         ":mlir_hlo_to_hlo",

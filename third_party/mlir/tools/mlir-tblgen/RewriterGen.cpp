@@ -554,7 +554,7 @@ std::string PatternEmitter::handleOpArgument(DagLeaf leaf, StringRef argName) {
     return handleConstantAttr(enumCase, val);
   }
   if (leaf.isUnspecified() || leaf.isOperandMatcher()) {
-    return argName;
+    return argName.str();
   }
   if (leaf.isNativeCodeCall()) {
     return tgfmt(leaf.getNativeCodeTemplate(), &fmtCtx.withSelf(argName));
@@ -636,7 +636,7 @@ std::string PatternEmitter::handleOpCreation(DagNode tree, int resultIndex,
   }
 
   // Use the specified name for this op if available. Generate one otherwise.
-  std::string resultValue = tree.getSymbol();
+  std::string resultValue = tree.getSymbol().str();
   if (resultValue.empty())
     resultValue = getUniqueSymbol(&resultOp);
   // Strip the index to get the name for the value pack. This will be used to

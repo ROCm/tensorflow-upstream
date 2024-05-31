@@ -23,6 +23,10 @@ limitations under the License.
 #else
 include "mlir/IR/OpBase.td"
 #endif // OP_BASE
+include "mlir/Interfaces/CallInterfaces.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/IR/SymbolInterfaces.td"
 
 //===----------------------------------------------------------------------===//
 // TensorFlow Device Dialect definitions
@@ -40,7 +44,7 @@ def TfDevice_Dialect : Dialect {
     XlaRun.
 }];
 
-  let cppNamespace = "tf_device";
+  let cppNamespace = "::mlir::tf_device";
 }
 
 //===----------------------------------------------------------------------===//
@@ -48,7 +52,7 @@ def TfDevice_Dialect : Dialect {
 //===----------------------------------------------------------------------===//
 
 // Base class for the operation in this dialect.
-class TfDevice_Op<string mnemonic, list<OpTrait> traits = []> :
+class TfDevice_Op<string mnemonic, list<Trait> traits = []> :
     Op<TfDevice_Dialect, mnemonic, traits> { }
 
 def TfDevice_LaunchOp : TfDevice_Op<"launch",
@@ -69,19 +73,19 @@ def TfDevice_LaunchOp : TfDevice_Op<"launch",
 
   let extraClassDeclaration = [{
     Block &GetBody() { return getOperation()->getRegion(0).front(); }
-    StringRef getDevice() { return device(); }
+    bool WrapsSingleOp();
   }];
 
   let builders = [
-    OpBuilder<[{Builder *builder, OperationState *result,
-                StringAttr device, ArrayRef<Type> result_types}],
-      [{
-        result->addAttribute("device", device);
-        result->addTypes(result_types);
-        result->addRegion();
-      }]
-    >
+    OpBuilder<(ins "StringAttr":$device, "TypeRange":$result_types),
+    [{
+      $_state.addAttribute("device", device);
+      $_state.addTypes(result_types);
+      $_state.addRegion();
+    }]>
   ];
+
+  let hasCanonicalizer = 1;
 }
 
 def TfDevice_ReturnOp : TfDevice_Op<"return",
@@ -95,14 +99,14 @@ def TfDevice_ReturnOp : TfDevice_Op<"return",
     Variadic<AnyType>:$results
   );
 
-  let builders = [OpBuilder<
-    "Builder *builder, OperationState *result",
+  let builders = [
+    OpBuilder<(ins),
     [{
-      build(builder, result, {});
+      build($_builder, $_state, {});
     }]>
    ];
 
-  let verifier = ?;
+  // let verifier = ?;
 }
 
 def TfDevice_LaunchFuncOp : TfDevice_Op<"launch_func", []> {
@@ -118,11 +122,77 @@ def TfDevice_LaunchFuncOp : TfDevice_Op<"launch_func", []> {
   let results = (outs
     Variadic<AnyType>:$results
   );
+}
+
+def TfDevice_ClusterOp : TfDevice_Op<"cluster",
+    [SingleBlockImplicitTerminator<"ReturnOp">]> {
+  let summary = [{
+The `tf_device.cluster` op wraps containing operations in a region.
+  }];
+
+  let description = [{
+This op can be used to group operations, and captures all needed live-in values.
+
+Optional policy attribute allows to tag clusters with a policy name that was
+used to form the cluster.
+  }];
+
+  let arguments = (ins OptionalAttr<StrAttr>:$policy);
+
+  let results = (outs
+    Variadic<AnyType>:$results
+  );
+
+  let regions = (region SizedRegion<1>:$body);
+
+  let builders = [
+    OpBuilder<(ins "TypeRange":$resultTypes),
+    [{
+      build($_builder, $_state, resultTypes, mlir::StringAttr {});
+    }]>
+  ];
 
   let extraClassDeclaration = [{
-    StringRef getFunc() { return func(); }
-    StringRef getDevice() { return device(); }
-    FunctionType getFuncType();
+    Block &GetBody() { return getOperation()->getRegion(0).front(); }
+  }];
+
+  let hasCanonicalizer = 1;
+}
+
+def TfDevice_ClusterFuncOp : TfDevice_Op<"cluster_func",
+    [CallOpInterface, DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = [{
+The `tf_device.cluster_func` launches a function containing the body of a
+cluster.
+  }];
+
+  let description = [{
+This op is used for outlining a cluster.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$func,
+    Variadic<AnyType>:$args
+  );
+
+  let results = (outs
+    Variadic<AnyType>:$results
+  );
+
+  let extraClassDeclaration = [{
+    // Gets the argument operands to the called function.
+    operand_range getArgOperands() { return getArgs(); }
+    MutableOperandRange getArgOperandsMutable() {
+      return getArgsMutable();
+    }
+    // returns the function that this operation will launch.
+    func::FuncOp getFuncOp() {
+      return SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getFuncAttr());
+    }
+    CallInterfaceCallable getCallableForCallee() {
+      return getFuncAttr();
+    }
+    void setCalleeFromCallable(::mlir::CallInterfaceCallable callee);
   }];
 }
 

@@ -1,4 +1,5 @@
 load("//tensorflow:tensorflow.bzl", "tf_cc_binary", "tf_native_cc_binary")
+load("@local_config_mlir//:mlir_configure.bzl", "is2019")
 load(
     "@local_config_mlir//:tblgen.bzl",
     "gentbl",
@@ -66,7 +67,7 @@ gentbl(
     td_file = "transforms/prepare_patterns.td",
     td_srcs = [
         ":tensorflow_lite_ops_td_files",
-        "@local_config_mlir//:StdOpsTdFiles",
+        #"@local_config_mlir//:StdOpsTdFiles",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops_td_files",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_optimize_td_files",
     ],
@@ -84,7 +85,7 @@ gentbl(
     td_file = "transforms/tensorlist_patterns.td",
     td_srcs = [
         ":tensorflow_lite_ops_td_files",
-        "@local_config_mlir//:StdOpsTdFiles",
+        #"@local_config_mlir//:StdOpsTdFiles",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops_td_files",
     ],
 )
@@ -101,7 +102,7 @@ gentbl(
     td_file = "transforms/legalize_patterns.td",
     td_srcs = [
         ":tensorflow_lite_ops_td_files",
-        "@local_config_mlir//:StdOpsTdFiles",
+        #"@local_config_mlir//:StdOpsTdFiles",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops_td_files",
     ],
 )
@@ -118,7 +119,7 @@ gentbl(
     td_file = "transforms/optimize_patterns.td",
     td_srcs = [
         ":tensorflow_lite_ops_td_files",
-        "@local_config_mlir//:StdOpsTdFiles",
+        #"@local_config_mlir//:StdOpsTdFiles",
     ],
 )
 
@@ -134,7 +135,7 @@ gentbl(
     td_file = "transforms/quantize_patterns.td",
     td_srcs = [
         ":tensorflow_lite_ops_td_files",
-        "@local_config_mlir//:StdOpsTdFiles",
+        #"@local_config_mlir//:StdOpsTdFiles",
     ],
 )
 
@@ -146,12 +147,12 @@ cc_library(
     hdrs = [
         "utils/validators.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         "@local_config_mlir//:Dialect",
         "@local_config_mlir//:IR",
-        "@local_config_mlir//:StandardOps",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() 
+    else ["@local_config_mlir//:FuncDialect", "@local_config_mlir//:ControlFlowInterfaces"])
 )
 
 cc_library(
@@ -169,7 +170,7 @@ cc_library(
         "utils/attribute_utils.h",
         "//tensorflow/compiler/mlir/lite/quantization:quantization_traits.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":tensorflow_lite_ops_inc_gen",
         ":validators",
@@ -181,9 +182,9 @@ cc_library(
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Pass",
         "@local_config_mlir//:QuantOps",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
-    ],
+        "@local_config_mlir//:ArithBaseIncGen",
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
     alwayslink = 1,
 )
 
@@ -203,7 +204,7 @@ cc_library(
     hdrs = [
         "transforms/passes.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":tensorflow_lite",
         ":validators",
@@ -217,9 +218,8 @@ cc_library(
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Pass",
         "@local_config_mlir//:QuantOps",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
     alwayslink = 1,
 )
 
@@ -232,7 +232,7 @@ cc_library(
     hdrs = [
         "transforms/passes.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":tensorflow_lite",
         ":validators",
@@ -241,9 +241,8 @@ cc_library(
         "@local_config_mlir//:Analysis",
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Pass",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
     alwayslink = 1,
 )
 
@@ -259,7 +258,7 @@ cc_library(
     hdrs = [
         "transforms/passes.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":tensorflow_lite",
         ":validators",
@@ -270,9 +269,8 @@ cc_library(
         "@local_config_mlir//:IR",
         "@local_config_mlir//:Pass",
         "@local_config_mlir//:QuantOps",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
     alwayslink = 1,
 )
 
@@ -305,7 +303,7 @@ cc_library(
     srcs = [
         "ir/dialect_registration.cc",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":tensorflow_lite",
         "@local_config_mlir//:IR",
@@ -350,7 +348,7 @@ cc_library(
     hdrs = [
         "flatbuffer_operator.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":tensorflow_lite",
         "//tensorflow/compiler/mlir/tensorflow",
@@ -380,7 +378,7 @@ cc_library(
     hdrs = [
         "emit_error_reporter.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         "//tensorflow/lite/core/api",
         "@local_config_mlir//:IR",
@@ -397,7 +395,7 @@ cc_library(
         "flatbuffer_import.h",
         "flatbuffer_translate.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":flatbuffer_tflite_operator_lib",
         ":tensorflow_lite",
@@ -424,10 +422,9 @@ cc_library(
         "@local_config_mlir//:QuantOps",
         "@local_config_mlir//:QuantOpsDialectRegistration",
         "@local_config_mlir//:StandardDialectRegistration",
-        "@local_config_mlir//:StandardOps",
         "@local_config_mlir//:Support",
         "@local_config_mlir//:Translation",
-    ],
+    ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
     alwayslink = 1,
 )
 
@@ -447,7 +444,7 @@ cc_library(
     hdrs = [
         "tf_tfl_translate_cl.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         "@llvm//:support",
     ],
@@ -508,7 +505,7 @@ cc_library(
     hdrs = [
         "tf_tfl_passes.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":tensorflow_lite_legalize_tf",
         ":tensorflow_lite_optimize",
@@ -536,7 +533,7 @@ cc_library(
     hdrs = [
         "tf_to_tfl_flatbuffer.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         ":flatbuffer_translate_lib",
         ":tensorflow_lite",

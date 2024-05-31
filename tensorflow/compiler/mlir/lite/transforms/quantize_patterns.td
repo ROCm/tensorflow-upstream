@@ -16,7 +16,8 @@ limitations under the License.
 // This is the quantization pattern definition file for TensorFlow Lite.
 
 include "mlir/IR/OpBase.td"
-include "mlir/Dialect/StandardOps/Ops.td"
+//include "mlir/Dialect/StandardOps/Ops.td"
+include "mlir/IR/PatternBase.td"
 include "tensorflow/compiler/mlir/lite/ir/tfl_ops.td"
 
 // Quantize attribute $0 by using quantization parameter from %1.
@@ -30,7 +31,7 @@ def : Pat<(TFL_QuantizeOp (TFL_DequantizeOp $in), $qt), (replaceWithValue $in)>;
 // Quantize the value of a constant op if the quantization parameters have been
 // propagated to the output.
 def : Pat<(TFL_QuantizeOp
-              (ConstantOp ElementsAttr:$value),
+              (TFL_ConstOp ElementsAttr:$value),
               $qtype),
           (TFL_QConstOp
               $qtype,

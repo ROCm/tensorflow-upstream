@@ -237,7 +237,7 @@ void DotOpEmitter::EmitTiledLlvmIrGemm() {
 
   int64 size_bytes = m * n * ShapeUtil::ByteSizeOfPrimitiveType(primitive_type);
   b_->CreateMemSet(target, b_->getInt8(0), /*Size=*/size_bytes,
-                   /*Align=*/1);
+                   /*Align=*/llvm::MaybeAlign(1));
 
   int64 max_target_vector_width =
       target_machine_features_.vector_register_num_elements(
@@ -510,7 +510,7 @@ void DotOpEmitter::EmitNaiveLlvmIrGemm() {
   llvm::Value* lhs_element = lhs_array_.EmitReadArrayElement(lhs_index, b_);
   llvm::Value* rhs_element = rhs_array_.EmitReadArrayElement(rhs_index, b_);
 
-  llvm::Value* accum = b_->CreateLoad(accum_address);
+  llvm::Value* accum = b_->CreateLoad(accum_type, accum_address);
   llvm::Value* updated_accum;
   if (ShapeUtil::ElementIsComplex(lhs_shape)) {
     auto real = [&](llvm::Value* x) { return b_->CreateExtractValue(x, {0}); };

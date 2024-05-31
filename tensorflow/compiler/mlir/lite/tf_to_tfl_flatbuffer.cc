@@ -15,12 +15,19 @@ limitations under the License.
 
 #include "tensorflow/compiler/mlir/lite/tf_to_tfl_flatbuffer.h"
 
-#include "mlir/IR/Attributes.h"  // TF:local_config_mlir
-#include "mlir/IR/Module.h"  // TF:local_config_mlir
-#include "mlir/Parser.h"  // TF:local_config_mlir
-#include "mlir/Pass/Pass.h"  // TF:local_config_mlir
-#include "mlir/Support/FileUtilities.h"  // TF:local_config_mlir
-#include "mlir/Transforms/Passes.h"  // TF:local_config_mlir
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/raw_ostream.h"
+#include "mlir/Dialect/Func/Extensions/AllExtensions.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/Visitors.h"  // from @llvm-project
+#include "mlir/Parser/Parser.h"  // from @llvm-project
+#include "mlir/Pass/Pass.h"  // from @llvm-project
+#include "mlir/Pass/PassManager.h"  // from @llvm-project
+#include "mlir/Support/FileUtilities.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "mlir/Transforms/Passes.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/lite/flatbuffer_translate.h"
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/decode_constant.h"
@@ -33,7 +40,7 @@ limitations under the License.
 
 namespace mlir {
 /// Create a pass to convert from the TFExecutor to the TF control dialect.
-std::unique_ptr<FunctionPassBase> CreateTFExecutorToControlDialectConversion();
+std::unique_ptr<OperationPass<func::FuncOp>> CreateTFExecutorToControlDialectConversion();
 }  // namespace mlir
 
 namespace tensorflow {

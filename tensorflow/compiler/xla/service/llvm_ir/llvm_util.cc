@@ -27,8 +27,10 @@ limitations under the License.
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/TargetParser/Triple.h"
 #include "tensorflow/compiler/xla/layout_util.h"
 #include "tensorflow/compiler/xla/literal.h"
 #include "tensorflow/compiler/xla/service/cpu/cpu_options.h"
@@ -113,7 +115,9 @@ llvm::Value* EmitFloatMin(llvm::Value* lhs_value, llvm::Value* rhs_value,
   }
 }
 
-llvm::Value* EmitBufferIndexingGEP(llvm::Value* array, llvm::Value* index,
+llvm::Value* EmitBufferIndexingGEP(llvm::Value* array, 
+                                   llvm::Type* element_type,
+                                   llvm::Value* index,
                                    llvm::IRBuilder<>* b) {
   llvm::Type* array_type = array->getType();
   CHECK(array_type->isPointerTy());
@@ -125,15 +129,17 @@ llvm::Value* EmitBufferIndexingGEP(llvm::Value* array, llvm::Value* index,
           << " index=" << llvm_ir::DumpToString(*index);
 
   return b->CreateInBoundsGEP(
-      array_type_as_pointer->getElementType(), array,
+      element_type, array,
       llvm::isa<llvm::GlobalVariable>(array)
           ? llvm::ArrayRef<llvm::Value*>({b->getInt64(0), index})
           : index);
 }
 
-llvm::Value* EmitBufferIndexingGEP(llvm::Value* array, int64 index,
+llvm::Value* EmitBufferIndexingGEP(llvm::Value* array,
+                                   llvm::Type* element_type,
+                                   int64 index,
                                    llvm::IRBuilder<>* b) {
-  return EmitBufferIndexingGEP(array, b->getInt64(index), b);
+  return EmitBufferIndexingGEP(array, element_type, b->getInt64(index), b);
 }
 
 llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
@@ -166,7 +172,8 @@ llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
     case F64:
       return llvm::Type::getDoubleTy(module->getContext());
     case C64: {
-      auto cplx_t = module->getTypeByName("complex64");
+      auto cplx_t =
+          llvm::StructType::getTypeByName(module->getContext(), "complex64");
       if (cplx_t == nullptr) {
         // C++ standard dictates the memory layout of std::complex is contiguous
         // real followed by imaginary. C++11 section 26.4 [complex.numbers]:
@@ -183,7 +190,8 @@ llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
       return cplx_t;
     }
     case C128: {
-      auto cplx_t = module->getTypeByName("complex128");
+      auto cplx_t =
+          llvm::StructType::getTypeByName(module->getContext(), "complex128");
       if (cplx_t == nullptr) {
         return llvm::StructType::create(
             {llvm::Type::getDoubleTy(module->getContext()),
@@ -295,7 +303,7 @@ llvm::AllocaInst* EmitAllocaAtFunctionEntryWithCount(llvm::Type* type,
   llvm::AllocaInst* alloca =
       b->CreateAlloca(type, element_count, AsStringRef(name));
   if (alignment != 0) {
-    alloca->setAlignment(alignment);
+    alloca->setAlignment(llvm::Align(alignment));
   }
   return alloca;
 }
@@ -613,7 +621,7 @@ llvm::Function* CreateCpuFunction(llvm::FunctionType* function_type,
 
   // Generate unwind information so that GDB can crawl through the stack frames
   // created by the JIT compiled code.
-  function->setHasUWTable();
+  function->setUWTableKind(llvm::UWTableKind::Default);
 
   if (module_config.debug_options().xla_cpu_enable_fast_math()) {
     function->addFnAttr("unsafe-fp-math", "true");
@@ -728,7 +736,7 @@ llvm::Value* RngGetAndUpdateState(uint64 delta, llvm::Module* module,
   llvm::GlobalVariable* state_ptr =
       GetOrCreateVariableForRngState(module, builder);
   llvm::LoadInst* state_value_old =
-      builder->CreateLoad(state_ptr, "load_state");
+      builder->CreateLoad(state_ptr->getValueType(), state_ptr, "load_state");
   llvm::Value* state_value_new = builder->CreateAdd(
       state_value_old,
       llvm::ConstantInt::get(state_value_old->getType(), delta));

@@ -25,6 +25,7 @@
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/ADT/StringExtras.h"
 using namespace mlir;
 
 using llvm::SMLoc;

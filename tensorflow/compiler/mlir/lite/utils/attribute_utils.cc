@@ -13,19 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "mlir/IR/Attributes.h"  // TF:local_config_mlir
-#include "mlir/IR/StandardTypes.h"  // TF:local_config_mlir
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 
 namespace mlir {
 namespace TFL {
 
 FloatAttr ExtractSingleElementAsFloat(ElementsAttr attr) {
-  if (attr.getType().getNumElements() != 1 ||
-      !attr.getType().getElementType().isa<FloatType>()) {
+  if (attr.getShapedType().getNumElements() != 1 ||
+      !attr.getShapedType().getElementType().isa<FloatType>()) {
     return {};
   }
-  SmallVector<uint64_t, 8> index(attr.getType().getRank(), 0);
-  return attr.getValue<FloatAttr>(index);
+  return attr.getSplatValue<FloatAttr>();
 }
 
 FloatAttr GetSingleElementAsFloatOrSelf(Attribute attr) {
@@ -37,12 +36,12 @@ FloatAttr GetSingleElementAsFloatOrSelf(Attribute attr) {
 }
 
 IntegerAttr ExtractSingleElementAsInteger(ElementsAttr attr) {
-  if (attr.getType().getNumElements() != 1 ||
-      !attr.getType().getElementType().isa<IntegerType>()) {
+  if (attr.getShapedType().getNumElements() != 1 ||
+      !attr.getShapedType().getElementType().isa<IntegerType>()) {
     return {};
   }
-  SmallVector<uint64_t, 8> index(attr.getType().getRank(), 0);
-  return attr.getValue<IntegerAttr>(index);
+  SmallVector<uint64_t, 8> index(attr.getShapedType().getRank(), 0);
+  return attr.getSplatValue<IntegerAttr>();
 }
 
 }  // namespace TFL

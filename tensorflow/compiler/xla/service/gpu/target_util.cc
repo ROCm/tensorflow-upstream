@@ -19,6 +19,8 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/IntrinsicsAMDGPU.h"
+#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 #include "tensorflow/core/platform/logging.h"

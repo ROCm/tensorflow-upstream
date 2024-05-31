@@ -25,6 +25,8 @@ limitations under the License.
 include "mlir/IR/OpBase.td"
 #endif // OP_BASE
 
+include "mlir/Interfaces/SideEffectInterfaces.td"
+
 //===----------------------------------------------------------------------===//
 // TensorFlow dialect definitions
 //===----------------------------------------------------------------------===//
@@ -46,7 +48,7 @@ def TfExecutor_Dialect : Dialect {
     value).
 }];
 
-  let cppNamespace = "tf_executor";
+  let cppNamespace = "::mlir::tf_executor";
 }
 
 // Control type.
@@ -73,12 +75,14 @@ def ControlOperandsAfterAllData :
 
 // Base class for the operation in this dialect, it'll forward the verifier,
 // printer, and parser to free functions.
-class TfExecutor_Op<string mnemonic, list<OpTrait> traits = []> :
+class TfExecutor_Op<string mnemonic, list<Trait> traits = []> :
     Op<TfExecutor_Dialect, mnemonic, traits> {
 
-  let verifier = [{ return ::mlir::tf_executor::Verify(*this); }];
-  let printer = [{ return ::mlir::tf_executor::Print(*this, p); }];
-  let parser = [{ return Parse$cppClass(parser, result); }];
+  //let verifier = [{ return ::mlir::tf_executor::Verify(*this); }];
+  //let printer = [{ return ::mlir::tf_executor::Print(*this, p); }];
+  //let parser = [{ return Parse$cppClass(parser, result); }];
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;  
 }
 
 def TfExecutor_GraphOp : TfExecutor_Op<"graph",
@@ -144,14 +148,14 @@ def TfExecutor_FetchOp : TfExecutor_Op<"fetch",
     Variadic<AnyType>:$fetches
   );
 
-  let builders = [OpBuilder<
-    "Builder *builder, OperationState *result",
+  let builders = [
+    OpBuilder<(ins),
     [{
-      build(builder, result, {});
+      build($_builder, $_state, {});
     }]>
    ];
 
-  let verifier = ?;
+  // let verifier = ?;
 }
 
 def TfExecutor_IslandOp : TfExecutor_Op<"island",
@@ -206,7 +210,12 @@ def TfExecutor_IslandOp : TfExecutor_Op<"island",
   let extraClassDeclaration = [{
     Block &GetBody() { return getOperation()->getRegion(0).front(); }
     YieldOp GetYield();
+    bool WrapsSingleOp();
   }];
+
+  let hasCanonicalizer = 1;
+
+  let hasFolder = 1;
 }
 
 def TfExecutor_YieldOp : TfExecutor_Op<"yield",
@@ -220,18 +229,18 @@ def TfExecutor_YieldOp : TfExecutor_Op<"yield",
     Variadic<AnyType>:$fetches
   );
 
-  let builders = [OpBuilder<
-    "Builder *builder, OperationState *result",
+  let builders = [
+    OpBuilder<(ins),
     [{
-      build(builder, result, {});
+      build($_builder, $_state, {});
     }]>
    ];
 
-  let verifier = ?;
+  // let verifier = ?;
 }
 
 def TfExecutor_SwitchOp : TfExecutor_Op<"Switch",
-    [NoSideEffect, ControlOperandsAfterAllData, HasParent<"GraphOp">,
+    [NoMemoryEffect, ControlOperandsAfterAllData, HasParent<"GraphOp">,
      PredOpTrait<"data operand must be broadcastable to true result",
                  TCOpIsBroadcastableToRes<0, 0>>,
      PredOpTrait<"data operand must be broadcastable to false result",
@@ -273,11 +282,11 @@ def TfExecutor_SwitchOp : TfExecutor_Op<"Switch",
     TfeControlType: $control
   );
 
-   let verifier = ?;
+   // let verifier = ?;
 }
 
 def TfExecutor_SwitchNOp : TfExecutor_Op<"SwitchN",
-    [NoSideEffect, ControlOperandsAfterAllData, HasParent<"GraphOp">]> {
+    [NoMemoryEffect, ControlOperandsAfterAllData, HasParent<"GraphOp">]> {
   let summary = [{
     The "tf_executor.SwitchN" operation takes two inputs, `data` and `index` and
     an integer attribute `num_outs` indicating the number of outputs. The `data`
@@ -318,7 +327,7 @@ def TfExecutor_SwitchNOp : TfExecutor_Op<"SwitchN",
 }
 
 def TfExecutor_MergeOp : TfExecutor_Op<"Merge",
-    [NoSideEffect, ControlOperandsAfterAllData, HasParent<"GraphOp">]> {
+    [NoMemoryEffect, ControlOperandsAfterAllData, HasParent<"GraphOp">]> {
   let summary = [{
     The "tf_executor.Merge" operation takes a list of input operands and returns
     a value of the operand type along with the index of the first match encountered.
@@ -353,7 +362,7 @@ def TfExecutor_MergeOp : TfExecutor_Op<"Merge",
 }
 
 def TfExecutor_EnterOp : TfExecutor_Op<"Enter",
-    [NoSideEffect, ControlOperandsAfterAllData, HasParent<"GraphOp">,
+    [NoMemoryEffect, ControlOperandsAfterAllData, HasParent<"GraphOp">,
      PredOpTrait<"data operand must be broadcastable to result",
                  TCOpIsBroadcastableToRes<0, 0>>]>{
   let summary = [{
@@ -399,11 +408,11 @@ def TfExecutor_EnterOp : TfExecutor_Op<"Enter",
     TfeControlType:$control
   );
 
-  let verifier = ?;
+  // let verifier = ?;
 }
 
 def TfExecutor_NextIterationSourceOp : TfExecutor_Op<"NextIteration.Source",
-    [NoSideEffect, HasParent<"GraphOp">]> {
+    [HasParent<"GraphOp">]> {
   let summary = [{
     The "tf_executor.NextIteration.Source" is paired with a
     "tf_executor.NextIteration.sink" to represent NextIteration op in
@@ -447,23 +456,25 @@ def TfExecutor_NextIterationSourceOp : TfExecutor_Op<"NextIteration.Source",
     TfeControlType:$control
   );
 
-  let builders = [OpBuilder<
-    "Builder *builder, OperationState *result, Type result_type, "
-    "ArrayRef<NamedAttribute> attributes = {}",
+  let builders = [
+    OpBuilder<(ins "Type":$result_type,
+      CArg<"ArrayRef<NamedAttribute>", "{}">:$attributes),
     [{
-      Type token_type = TokenType::get(builder->getContext());
-      Type control_type = ControlType::get(builder->getContext());
-      result->types = { result_type, token_type, control_type };
-      result->attributes.append(attributes.begin(), attributes.end());
+      Type token_type = TokenType::get($_builder.getContext());
+      Type control_type = ControlType::get($_builder.getContext());
+      $_state.types = { result_type, token_type, control_type };
+      $_state.attributes.append(attributes.begin(), attributes.end());
     }]>
    ];
 
   let extraClassDeclaration = [{
     NextIterationSinkOp GetSink() {
-      return cast<NextIterationSinkOp>(*token()->user_begin());
+      return cast<NextIterationSinkOp>(*getToken().user_begin());
     }
   }];
 
+  // let assemblyFormat = "`:` type($output) attr-dict";
+  let hasCustomAssemblyFormat = 0;
 }
 
 
@@ -513,22 +524,30 @@ def TfExecutor_NextIterationSinkOp : TfExecutor_Op<"NextIteration.Sink",
     Variadic<TfeControlType>:$controlInputs
   );
 
-  let builders = [OpBuilder<
-    "Builder *builder, OperationState *result, Value *token, "
-    "ArrayRef<Value *> operands, ArrayRef<NamedAttribute> attributes = {}",
+  let builders = [
+    OpBuilder<(ins "Value":$token, "ArrayRef<Value>":$operands,
+      CArg<"ArrayRef<NamedAttribute>", "{}">:$attributes),
     [{
       assert(operands.size() >= 1 && "tf_executor.NextIteration.Sink builder "
              "expects at least one operand");
-      result->operands.push_back(token);
-      result->operands.insert(result->operands.end(), operands.begin(),
+      $_state.operands.push_back(token);
+      $_state.operands.insert($_state.operands.end(), operands.begin(),
                               operands.end());
-      result->attributes.append(attributes.begin(), attributes.end());
+      $_state.attributes.append(attributes.begin(), attributes.end());
     }]>
    ];
+
+  let extraClassDeclaration = [{
+    NextIterationSourceOp GetSource();
+  }];
+
+  //let assemblyFormat = " `[` $token `]` $input (`,` $controlInputs^)? `:` type($input) attr-dict";
+
+  let hasCustomAssemblyFormat = 0;
 }
 
 def TfExecutor_ExitOp : TfExecutor_Op<"Exit",
-    [NoSideEffect, HasParent<"GraphOp">,
+    [NoMemoryEffect, HasParent<"GraphOp">,
      PredOpTrait<"data operand must be broadcastable to result",
                  TCOpIsBroadcastableToRes<0, 0>>]>{
 
@@ -565,11 +584,11 @@ def TfExecutor_ExitOp : TfExecutor_Op<"Exit",
     TfeControlType:$control
   );
 
-  let verifier = ?;
+  // let verifier = ?;
 }
 
 def TfExecutor_ControlTriggerOp : TfExecutor_Op<"ControlTrigger",
-    [NoSideEffect, HasParent<"GraphOp">]> {
+    [NoMemoryEffect, HasParent<"GraphOp">]> {
   let summary = [{
     The `tf_executor.ControlTrigger` operation is similar to a no-op except that
     it always produces a valid output even when inputs are dead.
@@ -588,25 +607,25 @@ def TfExecutor_ControlTriggerOp : TfExecutor_Op<"ControlTrigger",
     TfeControlType:$control
   );
 
-  let verifier = ?;
+  // let verifier = ?;
 
-  let builders = [OpBuilder<
-    "Builder *builder, OperationState *result, "
-    "ArrayRef<Value *> operands, ArrayRef<NamedAttribute> attributes = {}",
+  let builders = [
+    OpBuilder<(ins "ArrayRef<Value>":$operands,
+      CArg<"ArrayRef<NamedAttribute>", "{}">:$attributes),
     [{
       assert(operands.size() >= 1 && "tf_executor.ControlTrigger builder "
              "expects at least one operand");
-      result->operands.insert(result->operands.end(), operands.begin(),
+      $_state.operands.insert($_state.operands.end(), operands.begin(),
                               operands.end());
-      Type control_type = ControlType::get(builder->getContext());
-      result->types = {control_type};
-      result->attributes.append(attributes.begin(), attributes.end());
+      Type control_type = ControlType::get($_builder.getContext());
+      $_state.types = {control_type};
+      $_state.attributes.append(attributes.begin(), attributes.end());
     }]>
    ];
 }
 
 def TfExecutor_LoopCondOp : TfExecutor_Op<"LoopCond",
-    [NoSideEffect, HasParent<"GraphOp">]> {
+    [NoMemoryEffect, HasParent<"GraphOp">]> {
   let summary = [{
     The "tf_executor.LoopCond" operation forwards a boolean value as loop
     condition of Tensorflow while loops.
@@ -637,7 +656,7 @@ def TfExecutor_LoopCondOp : TfExecutor_Op<"LoopCond",
     TfeControlType:$control
   );
 
-  let verifier = ?;
+  let hasVerifier = 0;
 }
 
 #endif // TF_EXECUTOR_DIALECT

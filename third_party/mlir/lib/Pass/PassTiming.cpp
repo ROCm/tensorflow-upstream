@@ -223,8 +223,8 @@ struct PassTiming : public PassInstrumentation {
 void PassTiming::startPassTimer(Pass *pass) {
   Timer *timer = getTimer(pass, [pass] {
     if (isModuleToFunctionAdaptorPass(pass))
-      return StringRef("Function Pipeline");
-    return pass->getName();
+      return StringRef("Function Pipeline").str();
+    return pass->getName().str();
   });
 
   // We don't actually want to time the adaptor passes, they gather their total

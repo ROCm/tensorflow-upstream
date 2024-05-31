@@ -396,7 +396,7 @@ llvm::Value* IrArray::EmitReadArrayElement(const Index& index,
                                            bool use_linear_index) const {
   llvm::Value* element_address =
       EmitArrayElementAddress(index, b, name, use_linear_index);
-  llvm::LoadInst* load = b->CreateLoad(element_address);
+  llvm::LoadInst* load = b->CreateLoad(element_address->getAllocatedType(), element_address);
   AnnotateLoadStoreInstructionWithMetadata(load);
   return load;
 }

@@ -35,7 +35,7 @@ limitations under the License.
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+//#include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
 #include "tensorflow/compiler/xla/service/cpu/llvm_ir_runtime.h"
 #include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"

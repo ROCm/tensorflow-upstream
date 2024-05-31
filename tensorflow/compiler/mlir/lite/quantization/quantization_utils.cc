@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "tensorflow/compiler/mlir/lite/quantization/quantization_utils.h"
 
+// FIXME
+#if 0
+
 #include "mlir/Dialect/QuantOps/FakeQuantSupport.h"  // TF:local_config_mlir
 #include "mlir/Dialect/QuantOps/QuantTypes.h"  // TF:local_config_mlir
 #include "mlir/Dialect/QuantOps/QuantizeUtils.h"  // TF:local_config_mlir
@@ -132,3 +135,4 @@ ElementsAttr Quantize(Attribute real_value, Type tensor_type) {
 
 }  // namespace TFL
 }  // namespace mlir
+#endif

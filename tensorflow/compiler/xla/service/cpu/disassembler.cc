@@ -23,7 +23,7 @@ limitations under the License.
 
 #include "absl/strings/str_format.h"
 #include "llvm/MC/MCInst.h"
-#include "llvm/Support/TargetRegistry.h"
+//#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/types.h"

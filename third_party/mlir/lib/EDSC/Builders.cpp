@@ -19,8 +19,6 @@
 #include "mlir/Dialect/StandardOps/Ops.h"
 #include "mlir/IR/AffineExpr.h"
 
-#include "llvm/ADT/Optional.h"
-
 using namespace mlir;
 using namespace mlir::edsc;
 
@@ -167,7 +165,7 @@ mlir::edsc::LoopBuilder::LoopBuilder(ValueHandle *iv,
                                      ArrayRef<ValueHandle> ubHandles,
                                      int64_t step) {
   if (auto res = emitStaticFor(lbHandles, ubHandles, step)) {
-    *iv = res.getValue();
+    *iv = res.value();
   } else {
     SmallVector<Value *, 4> lbs(lbHandles.begin(), lbHandles.end());
     SmallVector<Value *, 4> ubs(ubHandles.begin(), ubHandles.end());

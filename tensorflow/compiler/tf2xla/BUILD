@@ -777,3 +777,12 @@ tf_cuda_cc_test(
         "@com_google_absl//absl/memory",
     ],
 )
+
+cc_library(
+    name = "tf2xla_defs",
+    hdrs = ["tf2xla_defs.h"],
+    visibility = [":friends"],
+    deps = [
+        "@com_google_absl//absl/strings",
+    ],
+)

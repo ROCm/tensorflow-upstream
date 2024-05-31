@@ -57,12 +57,15 @@ static void EmitOpAttrPopulators(const std::vector<Operator> &ops,
       if (!attr.isDerivedAttr()) continue;
       auto retType = attr.getReturnType();
       if (retType == "Type" || retType == "mlir::OperandElementTypeRange" ||
-          retType == "mlir::ResultElementTypeRange") {
+          retType == "mlir::ResultElementTypeRange" || 
+          retType == "::mlir::ResultShapeRange" || 
+          retType == "mlir::TF::ResultShapeRange" || 
+          retType == "::mlir::Type") {
         OUT(2) << "TF_RETURN_IF_ERROR(SetAttribute(\"" << attr_name << "\", op."
                << attr_name << "(), values));\n";
       } else {
         PrintFatalError(op.getLoc(),
-                        "NYI: Derived attributes other than DerivedTypeAttr");
+                        "NYI: Derived attributes other than DerivedTypeAttr " + retType);
       }
     }
 

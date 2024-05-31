@@ -29,7 +29,7 @@ HANDLE_TF_TYPE(Qint32, QINT32, "qint32")
 HANDLE_TF_TYPE(Quint8, QUINT8, "quint8")
 HANDLE_TF_TYPE(Quint16, QUINT16, "quint16")
 HANDLE_TF_TYPE(String, STRING, "string")
-HANDLE_TF_TYPE(Resource, RESOURCE, "resource")
+//HANDLE_TF_TYPE(Resource, RESOURCE, "resource")
 HANDLE_TF_TYPE(Complex64, COMPLEX64, "complex64")
 HANDLE_TF_TYPE(Complex128, COMPLEX128, "complex128")
 

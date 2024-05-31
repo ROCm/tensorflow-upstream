@@ -18,7 +18,9 @@ limitations under the License.
 
 #include <string>
 
-#include "mlir/IR/Module.h"  // TF:local_config_mlir
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinOps.h"  
+//#include "mlir/IR/Module.h"  // TF:local_config_mlir
 
 // These flags are used to control the emission or not of different kinds of ops
 // during the flatbuffer translation.

@@ -26,31 +26,38 @@ limitations under the License.
 #include "mlir/IR/Dialect.h"  // TF:local_config_mlir
 #include "mlir/IR/OpDefinition.h"  // TF:local_config_mlir
 #include "mlir/IR/Types.h"  // TF:local_config_mlir
+#include "mlir/Interfaces/SideEffectInterfaces.h"  // TF:local_config_mlir
+
 
 namespace mlir {
 namespace TFControlFlow {
+#if 0
 
 class TFControlFlowDialect : public Dialect {
  public:
   explicit TFControlFlowDialect(MLIRContext *context);
-
+/*
   // Parses a type registered to this dialect.
   Type parseType(StringRef tyData, Location loc) const override;
 
   // Prints a type registered to this dialect.
   void printType(Type type, raw_ostream &os) const override;
+*/  
 };
+
 
 namespace TensorFlowControlTypes {
 enum Kind {
-  Control = Type::FIRST_TENSORFLOW_CONTROL_TYPE,
+    // TODO: Where is this defined???
+   //Control = Type::FIRST_TENSORFLOW_CONTROL_TYPE,
+    Control = 0,
 };
 }
 
-class TFControlType : public Type::TypeBase<TFControlType, Type> {
+class TFControlType : public Type::TypeBase<TFControlType, Type, TypeStorage> {
  public:
   using Base::Base;
-
+/*
   static TFControlType get(MLIRContext *context) {
     return Base::get(context, TensorFlowControlTypes::Control);
   }
@@ -59,6 +66,10 @@ class TFControlType : public Type::TypeBase<TFControlType, Type> {
   static bool kindof(unsigned kind) {
     return kind == TensorFlowControlTypes::Control;
   }
+*/
+   public:
+    using Base = typename Type::TypeBase<TFControlType, Type, TypeStorage>;
+    using Base::Base;
 };
 
 // The "_tf.Enter" operation forwards its input to Tensorflow while loop. Each
@@ -84,7 +95,7 @@ class TFControlType : public Type::TypeBase<TFControlType, Type> {
 // Note: Additional result corresponds to the control output.
 class EnterOp
     : public Op<EnterOp, OpTrait::AtLeastNOperands<1>::Impl,
-                OpTrait::NResults<2>::Impl, OpTrait::HasNoSideEffect> {
+                OpTrait::NResults<2>::Impl, OpTrait::NoMemoryEffect> {
  public:
   using Op::Op;
 
@@ -197,7 +208,7 @@ class NextIterationSinkOp
 // Note: Additional result corresponds to the control output.
 class LoopCondOp
     : public Op<LoopCondOp, OpTrait::AtLeastNOperands<1>::Impl,
-                OpTrait::NResults<2>::Impl, OpTrait::HasNoSideEffect> {
+                OpTrait::NResults<2>::Impl, OpTrait::NoMemoryEffect> {
  public:
   using Op::Op;
   static StringRef getOperationName() { return "_tf.LoopCond"; }
@@ -261,7 +272,7 @@ class SwitchOp : public Op<SwitchOp, OpTrait::AtLeastNOperands<2>::Impl,
 //
 // Note: Additional result corresponds to the control output.
 class ExitOp : public Op<ExitOp, OpTrait::AtLeastNOperands<1>::Impl,
-                         OpTrait::NResults<2>::Impl, OpTrait::HasNoSideEffect> {
+                         OpTrait::NResults<2>::Impl, OpTrait::NoMemoryEffect> {
  public:
   using Op::Op;
   static StringRef getOperationName() { return "_tf.Exit"; }
@@ -272,7 +283,10 @@ class ExitOp : public Op<ExitOp, OpTrait::AtLeastNOperands<1>::Impl,
   LogicalResult verify();
 };
 
+#endif
+
 }  // namespace TFControlFlow
 }  // namespace mlir
+
 
 #endif  // TENSORFLOW_COMPILER_MLIR_TENSORFLOW_IR_CONTROL_FLOW_OPS_H_

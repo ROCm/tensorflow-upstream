@@ -28,12 +28,18 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/ir/control_flow_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
 
+#if 0
 namespace mlir {
 namespace TFControlFlow {
 
 namespace {
-struct RaiseTFControlFlow : public FunctionPass<RaiseTFControlFlow> {
-  void runOnFunction() {
+
+#define GEN_PASS_DEF_RAISETFCONTROLFLOW
+#include "tensorflow/compiler/mlir/tensorflow/transforms/tf_passes.h.inc"
+
+struct RaiseTFControlFlow
+ : public impl::RaiseTFControlFlowBase<RaiseTFControlFlow> {
+  void runOnOperation() {
     // First start by recognizing loops and reconstructing a loop tree.
     buildLoopNests();
 
@@ -77,8 +83,8 @@ static bool isUnderscoredTFOp(Operation &op) {
 
 // Drop control edges, and remove underscores from operation names.
 void RaiseTFControlFlow::rewriteOps() {
-  auto function = getFunction();
-  OpBuilder builder(function.getBody());
+  auto function = getOperation();
+  OpBuilder builder(&getContext());
 
   // On the first pass, create replacement operations for every one we are going
   // to replace, updating anything that uses the normal results with the newly
@@ -100,7 +106,7 @@ void RaiseTFControlFlow::rewriteOps() {
       // aren't necessary any more since the order within a block encodes the
       // same information.
       for (auto &operand : op.getOpOperands()) {
-        if (!operand.get()->getType().isa<TFControlType>())
+        if (!operand.get().getType().isa<TFControlType>())
           result.operands.push_back(operand.get());
 
         // Drop all operands from the old operation, eliminating any
@@ -110,7 +116,7 @@ void RaiseTFControlFlow::rewriteOps() {
 
       // Add a result type for each non-control result we find.
       bool sawControlResult = false;
-      for (auto *opResult : op.getResults()) {
+      for (auto opResult : op.getResults()) {
         if (opResult->getType().isa<TFControlType>()) {
           sawControlResult = true;
         } else {
@@ -145,14 +151,18 @@ void RaiseTFControlFlow::rewriteOps() {
 
 }  // namespace
 
-std::unique_ptr<FunctionPassBase> CreateRaiseTFControlFlowPass() {
+
+std::unique_ptr<OperationPass<ModuleOp>> CreateRaiseTFControlFlowPass() {
   return std::make_unique<RaiseTFControlFlow>();
 }
 
+/*
 static PassRegistration<RaiseTFControlFlow> pass(
     "tf-raise-control-flow",
     "Raise from the TensorFlow Control Flow "
     "dialect to the standard TensorFlow dialect");
-
+**/
 }  // namespace TFControlFlow
 }  // namespace mlir
+
+#endif

@@ -16,6 +16,7 @@ limitations under the License.
 // This is the canonicalize pattern definition file.
 
 include "mlir/IR/OpBase.td"
+include "mlir/IR/PatternBase.td"
 include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.td"
 
 /// TODO(b/130756570): Support OpBase constraints in PatternRewrites.

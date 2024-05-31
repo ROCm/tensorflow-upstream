@@ -13,8 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-include "tensorflow/compiler/mlir/tensorflow/transforms/optimize.td"
 include "tensorflow/compiler/mlir/lite/ir/tfl_ops.td"
+
+include "tensorflow/compiler/mlir/tensorflow/transforms/optimize.td"
 
 def FalseBoolAttr : AttrConstraint<CPred<"!$_self.getValue()">>;
 
@@ -92,8 +93,8 @@ class TFi32<int v> : ConstantAttr<TFi32ElementsAttr, !cast<string>(v)>;
 def : Pat<(TF_MatMulOp $a, $b, ConstBoolAttrFalse:$at, ConstBoolAttrFalse),
           (TF_MatMulOp $a, (TF_TransposeOp $b, (TF_SubOp (TF_RangeOp
              /*start=*/(TF_RankOp $b),
-             /*limit=*/(ConstantOp TFi32<0>),
-             /*delta=*/(ConstantOp TFi32<-1>)), (ConstantOp TFi32<1>))),
+             /*limit=*/(Arith_ConstantOp TFi32<0>),
+             /*delta=*/(Arith_ConstantOp TFi32<-1>)), (Arith_ConstantOp TFi32<1>))),
            $at, ConstBoolAttrTrue)>;
 
 // Matmul with transpose on a to matmul with explicit transpose op and a not
@@ -101,8 +102,8 @@ def : Pat<(TF_MatMulOp $a, $b, ConstBoolAttrFalse:$at, ConstBoolAttrFalse),
 def : Pat<(TF_MatMulOp $a, $b, ConstBoolAttrTrue, $bt),
           (TF_MatMulOp (TF_TransposeOp $a, (TF_SubOp (TF_RangeOp
              /*start=*/(TF_RankOp $a),
-             /*limit=*/(ConstantOp TFi32<0>),
-             /*delta=*/(ConstantOp TFi32<-1>)), (ConstantOp TFi32<1>))), $b,
+             /*limit=*/(Arith_ConstantOp TFi32<0>),
+             /*delta=*/(Arith_ConstantOp TFi32<-1>)), (Arith_ConstantOp TFi32<1>))), $b,
            ConstBoolAttrFalse, $bt)>;
 
 def : Pat<(TF_SnapshotOp $arg), (TF_IdentityOp $arg)>;

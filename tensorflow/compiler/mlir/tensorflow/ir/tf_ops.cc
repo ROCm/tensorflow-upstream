@@ -16,1038 +16,561 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <functional>
+#include <limits>
 #include <numeric>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <utility>
 
+#include "absl/strings/str_cat.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Sequence.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
-#include "mlir/Dialect/StandardOps/Ops.h"  // TF:local_config_mlir
-#include "mlir/IR/Attributes.h"  // TF:local_config_mlir
-#include "mlir/IR/Builders.h"  // TF:local_config_mlir
-#include "mlir/IR/Diagnostics.h"  // TF:local_config_mlir
-#include "mlir/IR/Function.h"  // TF:local_config_mlir
-#include "mlir/IR/MLIRContext.h"  // TF:local_config_mlir
-#include "mlir/IR/Matchers.h"  // TF:local_config_mlir
-#include "mlir/IR/OpImplementation.h"  // TF:local_config_mlir
-#include "mlir/IR/PatternMatch.h"  // TF:local_config_mlir
-#include "mlir/IR/TypeUtilities.h"  // TF:local_config_mlir
-#include "mlir/IR/Types.h"  // TF:local_config_mlir
-#include "mlir/IR/Value.h"  // TF:local_config_mlir
-#include "mlir/Parser.h"  // TF:local_config_mlir
-#include "mlir/Support/LLVM.h"  // TF:local_config_mlir
-#include "mlir/Support/STLExtras.h"  // TF:local_config_mlir
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/Dialect/Traits.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Diagnostics.h"  // from @llvm-project
+#include "mlir/IR/DialectImplementation.h"  // from @llvm-project
+#include "mlir/IR/Location.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/Matchers.h"  // from @llvm-project
+#include "mlir/IR/OpDefinition.h"  // from @llvm-project
+#include "mlir/IR/OpImplementation.h"  // from @llvm-project
+#include "mlir/IR/PatternMatch.h"  // from @llvm-project
+#include "mlir/IR/TypeUtilities.h"  // from @llvm-project
+#include "mlir/IR/Types.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/Interfaces/FoldInterfaces.h"  // from @llvm-project
+#include "mlir/Interfaces/SideEffectInterfaces.h"  // from @llvm-project
+#include "mlir/Parser/Parser.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "mlir/Transforms/InliningUtils.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
+
+#include "tensorflow/compiler/mlir/tensorflow/ir/dialect.h.inc"
+
+#include "tensorflow/compiler/mlir/tensorflow/ir/dialect.cc.inc"
+
+namespace mlir {
+namespace TF {
+
+// This all moved under tensorflow/core/ir/types and these using declaration are
+// to help with the transition.
+using ::mlir::tf_type::FuncAttr;         // NOLINT
+using ::mlir::tf_type::PlaceholderAttr;  // NOLINT
+using ::mlir::tf_type::ShapeAttr;        // NOLINT
+using ::mlir::tf_type::TensorProtoAttr;  // NOLINT
+
+}  // end namespace TF
+}  // end namespace mlir
+
+//#include "tensorflow/core/common_runtime/inline_function_utils.h"
+//#include "tensorflow/core/common_runtime/lower_function_call_inline_policy.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_def_builder.h"
 #include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/util/device_name_utils.h"
+#include "tensorflow/core/util/tensor_format.h"
+
+
+//#include "tensorflow/compiler/mlir/tensorflow/ir/tf_side_effects.h"
+namespace ResourceEffects {
+
+struct Variable : ::mlir::SideEffects::Resource::Base<Variable> {
+  StringRef getName() final { return "Variable"; }
+};
+
+struct Stack : ::mlir::SideEffects::Resource::Base<Stack> {
+  StringRef getName() final { return "Stack"; }
+};
+
+struct TensorArray : ::mlir::SideEffects::Resource::Base<TensorArray> {
+  StringRef getName() final { return "TensorArray"; }
+};
+
+struct Summary : ::mlir::SideEffects::Resource::Base<Summary> {
+  StringRef getName() final { return "Summary"; }
+};
+
+struct LookupTable : ::mlir::SideEffects::Resource::Base<LookupTable> {
+  StringRef getName() final { return "LookupTable"; }
+};
+
+struct DatasetSeedGenerator
+    : ::mlir::SideEffects::Resource::Base<DatasetSeedGenerator> {
+  StringRef getName() final { return "DatasetSeedGenerator"; }
+};
+
+struct DatasetMemoryCache
+    : ::mlir::SideEffects::Resource::Base<DatasetMemoryCache> {
+  StringRef getName() final { return "DatasetMemoryCache"; }
+};
+
+struct DatasetIterator : ::mlir::SideEffects::Resource::Base<DatasetIterator> {
+  StringRef getName() final { return "DatasetIterator"; }
+};
+
+// Special resource type to track TPU Embedding specific ops, which must execute
+// but do not have side effects with one another or with resource variable ops.
+struct TPUEmbedding : ::mlir::SideEffects::Resource::Base<TPUEmbedding> {
+  StringRef getName() final { return "TPUEmbedding"; }
+};
+
+// Resource corresponding to GeneratorOp.
+struct GeneratorOp : public ::mlir::SideEffects::Resource::Base<GeneratorOp> {
+  StringRef getName() final { return "Generator"; }
+};
+
+struct Send : public ::mlir::SideEffects::Resource::Base<Send> {
+  StringRef getName() final { return "Send"; }
+};
+
+struct Recv : public ::mlir::SideEffects::Resource::Base<Recv> {
+  StringRef getName() final { return "Recv"; }
+};
+
+struct XlaHostCompute
+    : public ::mlir::SideEffects::Resource::Base<XlaHostCompute> {
+  StringRef getName() final { return "XlaHostCompute"; }
+};
+
+struct RandomGenerator
+    : public ::mlir::SideEffects::Resource::Base<RandomGenerator> {
+  StringRef getName() final { return "RandomGenerator"; }
+};
+
+struct TPUExecute : public ::mlir::SideEffects::Resource::Base<TPUExecute> {
+  StringRef getName() final { return "TPUExecute"; }
+};
+
+struct MustExecute : public ::mlir::SideEffects::Resource::Base<MustExecute> {
+  StringRef getName() final { return "MustExecute"; }
+};
+
+struct CollectiveReduceOrdering
+    : public ::mlir::SideEffects::Resource::Base<CollectiveReduceOrdering> {
+  StringRef getName() final { return "CollectiveReduceOrdering"; }
+};
+
+struct NcclAllReduceOrdering
+    : public ::mlir::SideEffects::Resource::Base<NcclAllReduceOrdering> {
+  StringRef getName() final { return "NcclAllReduceOrdering"; }
+};
+
+struct GlobalIterId : public ::mlir::SideEffects::Resource::Base<GlobalIterId> {
+  StringRef getName() final { return "GlobalIterId"; }
+};
+
+struct XlaLaunch : public ::mlir::SideEffects::Resource::Base<XlaLaunch> {
+  StringRef getName() final { return "XlaLaunch"; }
+};
+
+struct WriteTrainingPredictions
+    : public ::mlir::SideEffects::Resource::Base<WriteTrainingPredictions> {
+  StringRef getName() final { return "WriteTrainingPredictions"; }
+};
+
+struct _XlaRun : public ::mlir::SideEffects::Resource::Base<_XlaRun> {
+  StringRef getName() final { return "_XlaRun"; }
+};
+
+// Returns true iff resource type with given ID is only self-dependent, i.e.,
+// there are no dependencies to other resource types (including unknown resource
+// type).
+inline bool IsOnlySelfDependent(TypeID resource_type_id) {
+  return resource_type_id == ResourceEffects::Send::getResourceID() ||
+         resource_type_id == ResourceEffects::Recv::getResourceID();
+}
+
+}  // namespace ResourceEffects
+
+#include <optional>
+
+#include "llvm/ADT/StringMap.h"
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Diagnostics.h"  // from @llvm-project
+#include "mlir/IR/Location.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Types.h"  // from @llvm-project
+//#include "tensorflow/core/ir/types/dialect.h"
+#include "tensorflow/core/util/device_name_utils.h"
+
+
+namespace tensorflow {
+static constexpr const char* const kNoInlineAttr = "_noinline";
+
+// 2.x lower_function_call_inline_policy.h
+
+#if 0
+
+// LINT.IfChange
+enum class FunctionCallInlinePolicy {
+  // Place input nodes on the same device as the corresponding caller input
+  // node. Do not specify any placement for all other nodes.
+  kDefaultPlacer,
+
+  // Place all nodes on the same device as caller node.
+  kSingleDevicePlacer,
+
+  // Place input nodes on the same device as the corresponding caller input
+  // node. Do not place output node. Place control nodes on the same device as
+  // caller node. For all function body nodes overrides job, replica and task
+  // parts of the device assignment to match function caller node.
+  kMultiDevicePlacer
+};
+
+// LINT.ThenChange(inline_function_utils.h,\
+//   ../../compiler/mlir/tensorflow/ir/tf_ops.cc)
+
+FunctionCallInlinePolicy GetFunctionCallInlinePolicy(
+    bool is_partioned_call, bool has_lower_as_multi_device_function_attr) {
+  if (is_partioned_call || has_lower_as_multi_device_function_attr)
+    return FunctionCallInlinePolicy::kMultiDevicePlacer;
+  return FunctionCallInlinePolicy::kSingleDevicePlacer;
+}
+
+FunctionCallInlinePolicy GetFunctionCallInlinePolicy(const Node* n) {
+  bool match;
+  bool found = TryGetNodeAttr(
+      n->attrs(), LowerFunctionalOpsConstants::kLowerAsMultiDeviceFunctionAttr,
+      &match);
+  return GetFunctionCallInlinePolicy(n->IsPartitionedCall(), found && match);
+}
+
+#endif
+
+struct LowerFunctionalOpsConstants {
+  static constexpr const char* const kLowerUsingSwitchMergeAttr =
+      "_lower_using_switch_merge";
+  static constexpr const char* const kLowerAsMultiDeviceFunctionAttr =
+      "_lower_as_multi_device_function";
+};
+};
 
 namespace mlir {
 namespace TF {
 
 //===----------------------------------------------------------------------===//
-// TF op helper functions
-//===----------------------------------------------------------------------===//
-
-// Returns true if the given `value` is of ranked float tensor type with the
-// given `rank`.
-static inline bool isOfRankedFloatTensorType(Value *value, int rank) {
-  auto type = value->getType().dyn_cast<RankedTensorType>();
-  return type && type.getRank() == rank &&
-         type.getElementType().isa<FloatType>();
-}
-
-// Returns true if the given `value` has the specified rank or has unranked
-// type.
-static inline bool IsOfRankOrUnranked(Value *value, int64_t rank) {
-  if (auto type = value->getType().dyn_cast<RankedTensorType>()) {
-    return type.getRank() == rank;
-  }
-  return true;
-}
-
-// Returns true if the given `value` has at least the specified rank or has
-// unranked type.
-static inline bool HasRankAtLeast(Value *value, int64_t rank) {
-  auto type = value->getType();
-  if (auto ranked_type = type.dyn_cast<RankedTensorType>())
-    return ranked_type.getRank() >= rank;
-  return type.isa<UnrankedTensorType>();
-}
-
-// Returns true if the given pair of TensorFlow types can be cast to one
-// another. In other words, a single run-time value is legal for both the types.
-// For example, tensor<*xf32> and tensor<3xf32> are cast compatible.
-static bool AreCastCompatible(Type a, Type b) {
-  if (TensorCastOp::areCastCompatible(a, b)) return true;
-
-  // Variant types may optionally contain subtypes information that need not
-  // match.  It is also not possible to compare subtypes for compatibility as
-  // their interpretation depends on the ops operating on them.  So, accept all
-  // pairs of variant types.
-  return getElementTypeOrSelf(a).getKind() == TensorFlowTypes::VARIANT &&
-         getElementTypeOrSelf(b).getKind() == TensorFlowTypes::VARIANT;
-}
-
-// Returns either the element type or type of the result of a single result
-// operation.
-// TODO(antiagainst): We need an overload function, which mandates function
-// name. This is temporary. Remove this post variadic operand support is
-// improved.
-static Type getElementTypeOrSelf(Operation *op) {
-  if (op->getNumResults() != 1) return {};
-  return getElementTypeOrSelf(op->getResult(0));
-}
-
-static bool IsUnknownDimOrRank(int64_t dim_or_rank) {
-  return dim_or_rank == -1;
-}
-
-namespace {
-#include "tensorflow/compiler/mlir/tensorflow/transforms/generated_canonicalize.inc"
-}  // namespace
-
-//===----------------------------------------------------------------------===//
-// AddOp
-//===----------------------------------------------------------------------===//
-
-void AddOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                        MLIRContext *context) {
-  results.insert<AddToAddV2>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// AddV2Op
-//===----------------------------------------------------------------------===//
-
-void AddV2Op::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                          MLIRContext *context) {
-  results.insert<AddV2OfNegLeft, AddV2OfNegRight>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// AssertOp
+// TF Dialect Interfaces
 //===----------------------------------------------------------------------===//
 
 namespace {
 
-// Removes Assert with constant true predicate.
-struct AssertWithTrue : public OpRewritePattern<AssertOp> {
-  using OpRewritePattern<AssertOp>::OpRewritePattern;
-
-  PatternMatchResult matchAndRewrite(AssertOp op,
-                                     PatternRewriter &rewriter) const override {
-    ElementsAttr cst;
-    if (matchPattern(op.condition(), m_Constant(&cst))) {
-      if (cst.getValue<BoolAttr>({}).getValue()) {
-        rewriter.replaceOp(op, llvm::None);
-        return matchSuccess();
-      }
-    }
-    return matchFailure();
+struct TFConstantFoldInterface : public DialectFoldInterface {
+  TFConstantFoldInterface(Dialect *dialect) : DialectFoldInterface(dialect) {}
+  LogicalResult fold(Operation *op, ArrayRef<Attribute> operands,
+                     SmallVectorImpl<OpFoldResult> &results) const final {
+    return TensorFlowDialect::constantFold(op, operands, results);
   }
 };
-}  // namespace
 
-void AssertOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                           MLIRContext *context) {
-  results.insert<AssertWithTrue>(context);
-}
+using DeviceNameUtils = tensorflow::DeviceNameUtils;
 
-//===----------------------------------------------------------------------===//
-// BitcastOp
-//===----------------------------------------------------------------------===//
-
-void BitcastOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                            MLIRContext *context) {
-  results.insert<BitcastSameType, BitcastNested>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// BroadcastToOp
-//===----------------------------------------------------------------------===//
-
-static LogicalResult Verify(BroadcastToOp op) {
-  // TODO(antiagainst): check that
-  // * The 'shape' input is an 1-D int tensor.
-  // * Each dimension pair of the source and target shapes are either equal
-  //   or one of them is one.
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// CastOp
-//===----------------------------------------------------------------------===//
-
-void CastOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                         MLIRContext *context) {
-  results.insert<CastSameType>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// ConjOp
-//===----------------------------------------------------------------------===//
-
-void ConjOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                         MLIRContext *context) {
-  results.insert<ConjNested>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// ConstOp
-//===----------------------------------------------------------------------===//
-
-OpFoldResult ConstOp::fold(ArrayRef<Attribute> operands) {
-  assert(operands.empty() && "constant has no operands");
-
-  // Return the held attribute value.
-  return value();
-}
-
-// Builds a constant op with the specified attribute `value`. The result
-// op's type is deduced from `value`; if `value` is of scalar type,
-// wraps it up with a tensor type of empty shape.
-void ConstOp::build(Builder *builder, OperationState *result, Attribute value) {
-  ShapedType type;
-  if (auto elemAttr = value.dyn_cast<ElementsAttr>()) {
-    type = elemAttr.getType();
-  } else if (value.isa<BoolAttr>() || value.isa<FloatAttr>() ||
-             value.isa<IntegerAttr>()) {
-    // All TensorFlow types must be tensor types. In the build() method,
-    // we want to provide more flexiblity by allowing attributes of scalar
-    // types. But we need to wrap it up with ElementsAttr to construct
-    // valid TensorFlow constants.
-    type = RankedTensorType::get(/*shape=*/{}, value.getType());
-    value = DenseElementsAttr::get(type, value);
+void MergeUnsetDevNames(DeviceNameUtils::ParsedName* target,
+                                         const DeviceNameUtils::ParsedName& other) {
+  if (other.has_job && !target->has_job) {
+    target->has_job = other.has_job;
+    target->job = other.job;
   }
-  // TODO: support other TensorFlow specific types.
-  assert(type && "unsupported attribute type for building tf.Const");
-  result->types.push_back(type);
-  result->addAttribute("value", value);
+
+  if (other.has_replica && !target->has_replica) {
+    target->has_replica = other.has_replica;
+    target->replica = other.replica;
+  }
+
+  if (other.has_task && !target->has_task) {
+    target->has_task = other.has_task;
+    target->task = other.task;
+  }
+
+  if (other.has_type && !target->has_type) {
+    target->has_type = other.has_type;
+    target->type = other.type;
+  }
+
+  if (other.has_id && !target->has_id) {
+    target->has_id = other.has_id;
+    target->id = other.id;
+  }
 }
 
-void ConstOp::build(Builder *builder, OperationState *result, Type type,
-                    Attribute value) {
-  // Handle the case where the type and value are already tensors.
-  if (type.isa<TensorType>() && value.isa<ElementsAttr>()) {
-    result->addTypes(type);
-    result->addAttribute("value", value);
+
+// Helper function that implements the multi-device inlining policy behavior
+// for the inliner hook. In particular, for all function body nodes set unset
+// placement attributes to match the function call node.
+void MultiDeviceProcessInlinedCallBlocks(
+    Operation *call, iterator_range<Region::iterator> inlinedBlocks) {
+  // Duplicate of the logic in MultiDeviceFunctionBodyPlacer::BodyNodeDevice
+  // LINT.IfChange
+  auto device_id = StringAttr::get(call->getContext(), "device");
+  auto caller_device = call->getAttrOfType<StringAttr>(device_id);
+  if (!caller_device) return;
+
+  DeviceNameUtils::ParsedName caller_parsed_device;
+  if (!DeviceNameUtils::ParseFullName(caller_device.getValue().str(),
+                                      &caller_parsed_device))
     return;
-  }
 
-  // Otherwise, default to the attribute builder.
-  ConstOp::build(builder, result, value);
-  assert(type == result->types[0] && "type mismatch in construction");
-}
+  MLIRContext *context = call->getContext();
+  auto node_device = [&](Operation *n) -> StringAttr {
+    auto device = n->getAttrOfType<StringAttr>(device_id);
+    if (!device || device.getValue().empty()) return caller_device;
 
-//===----------------------------------------------------------------------===//
-// DivOp
-//===----------------------------------------------------------------------===//
-
-void DivOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                        MLIRContext *context) {
-  results.insert<DivWithSqrtDivisor>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// EmptyTensorListOp
-//===----------------------------------------------------------------------===//
-
-static LogicalResult Verify(EmptyTensorListOp op) {
-  if (!IsOfRankOrUnranked(op.element_shape(), 0) &&
-      !IsOfRankOrUnranked(op.element_shape(), 1)) {
-    return op.emitOpError("requires element_shape operand to be 0D/1D tensor");
-  }
-
-  if (!IsOfRankOrUnranked(op.max_num_elements(), 0)) {
-    return op.emitOpError("requires max_num_elements operand to be 0D tensor");
-  }
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// FakeQuantWithMinMaxArgsOp
-//===----------------------------------------------------------------------===//
-static LogicalResult Verify(FakeQuantWithMinMaxArgsOp op) {
-  // TODO(fengliuai): moving the following to an utility method.
-  const llvm::fltSemantics &semantics = op.min().getSemantics();
-  float rmin, rmax;
-  if (&semantics == &APFloat::IEEEsingle()) {
-    rmin = op.min().convertToFloat();
-    rmax = op.max().convertToFloat();
-  } else {
-    rmin = op.min().convertToDouble();
-    rmax = op.max().convertToDouble();
-  }
-  // Range boundaries must be valid.
-  if (rmin >= rmax) {
-    return op.emitOpError("range is invalid: [" + Twine(std::to_string(rmin)) +
-                          "," + Twine(std::to_string(rmax)) + "]");
-  }
-  // Range must straddle zero.
-  if (rmin > 0.0 || rmax < 0.0) {
-    return op.emitOpError("range failed to straddle zero: [" +
-                          Twine(std::to_string(rmin)) + "," +
-                          Twine(std::to_string(rmax)) + "]");
-  }
-  int64_t num_bits = op.num_bits().getSExtValue();
-  if (num_bits < 2 || num_bits > 16) {
-    return op.emitOpError(
-        "requires num_bits to be between 2 and 16, inclusive");
-  }
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// FakeQuantWithMinMaxVarsOp
-//===----------------------------------------------------------------------===//
-static LogicalResult Verify(FakeQuantWithMinMaxVarsOp op) {
-  if (!isOfRankedFloatTensorType(op.min(), 0))
-    return op.emitOpError("requires min to be a 0d float tensor");
-
-  if (!isOfRankedFloatTensorType(op.max(), 0))
-    return op.emitOpError("requires max to be a 0d float tensor");
-
-  int64_t num_bits = op.num_bits().getSExtValue();
-  if (num_bits < 2 || num_bits > 16) {
-    return op.emitOpError(
-        "requires num_bits to be between 2 and 16, inclusive");
-  }
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// FusedBatchNormOp
-//===----------------------------------------------------------------------===//
-
-static LogicalResult Verify(FusedBatchNormOp op) {
-  if (!isOfRankedFloatTensorType(op.x(), 4))
-    return op.emitOpError("requires x to be a 4D float tensor");
-
-  if (!isOfRankedFloatTensorType(op.scale(), 1))
-    return op.emitOpError("requires scale to be a 1D float tensor");
-
-  if (!isOfRankedFloatTensorType(op.offset(), 1))
-    return op.emitOpError("requires offset to be a 1D float tensor");
-
-  if (!isOfRankedFloatTensorType(op.mean(), 1))
-    return op.emitOpError("requires mean to be a 1D float tensor");
-
-  if (!isOfRankedFloatTensorType(op.variance(), 1))
-    return op.emitOpError("requires variance to be a 1D float tensor");
-
-  // TODO(antiagainst): check attributes
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// IfOp
-//===----------------------------------------------------------------------===//
-
-static LogicalResult Verify(IfOp op) {
-  auto module = op.getParentOfType<ModuleOp>();
-  auto thenFn = module.lookupSymbol<FuncOp>(op.then_branch());
-  if (!thenFn)
-    return op.emitOpError("then_branch refers to an undefined function : ")
-           << op.then_branch();
-  auto elseFn = module.lookupSymbol<FuncOp>(op.else_branch());
-  if (!elseFn)
-    return op.emitOpError("else_branch refers to an undefined function : ")
-           << op.else_branch();
-  auto thenFuncType = thenFn.getType();
-  auto elseFuncType = elseFn.getType();
-
-  // Non-conditional operands starting with the second operand are passed to
-  // branches and should be pair-wise compatible with branches' inputs.
-  unsigned expectedNumInputs = op.getNumOperands() - 1;
-  if (thenFuncType.getNumInputs() != expectedNumInputs ||
-      elseFuncType.getNumInputs() != expectedNumInputs)
-    return op.emitError("branches should have " + Twine(expectedNumInputs) +
-                        " inputs");
-
-  for (unsigned i = 0; i < expectedNumInputs; ++i) {
-    auto operandType = op.getOperand(i + 1)->getType().cast<TensorType>();
-    auto thenInputType = thenFuncType.getInput(i).cast<TensorType>();
-    if (!AreCastCompatible(operandType, thenInputType))
-      return op.emitError(
-          llvm::formatv("then branch input type {0} is incompatible with "
-                        "operand type {1} at index {2}",
-                        thenInputType, operandType, i));
-
-    auto elseInputType = elseFuncType.getInput(i).cast<TensorType>();
-    if (!AreCastCompatible(operandType, elseInputType))
-      return op.emitError(
-          llvm::formatv("else branch input type {0} is incompatible with "
-                        "operand type {1} at index {2}",
-                        elseInputType, operandType, i));
-
-    // If branches have incompatible input types that means that no tensor can
-    // serve as input to both the functions. Hence, the op is invalid.
-    if (!AreCastCompatible(thenInputType, elseInputType))
-      return op.emitError(llvm::formatv(
-          "branches inputs have incompatible types {0} and {1} at index {2}",
-          thenInputType, elseInputType, i));
-  }
-
-  // Branches' results should be pair-wise compatible with the op results.
-  unsigned expectedNumResults = op.getNumResults();
-  if (thenFuncType.getNumResults() != expectedNumResults ||
-      elseFuncType.getNumResults() != expectedNumResults)
-    return op.emitError("branches should have " + Twine(expectedNumResults) +
-                        " results");
-
-  for (unsigned i = 0; i < expectedNumResults; ++i) {
-    auto resultType = op.getResult(i)->getType().cast<TensorType>();
-    auto thenResultType = thenFuncType.getResult(i).cast<TensorType>();
-    if (!AreCastCompatible(thenResultType, resultType))
-      return op.emitError(
-          llvm::formatv("then branch result type {0} is incompatible with op "
-                        "result type {1} at index {2}",
-                        thenResultType, resultType, i));
-
-    auto elseResultType = elseFuncType.getResult(i).cast<TensorType>();
-    if (!AreCastCompatible(elseResultType, resultType))
-      return op.emitError(
-          llvm::formatv("else branch result type {0} is incompatible with op "
-                        "result type {1} at index {2}",
-                        elseResultType, resultType, i));
-  }
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// InvertOp
-//===----------------------------------------------------------------------===//
-
-void InvertOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                           MLIRContext *context) {
-  results.insert<InvertNested>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// LeakyReluOp
-//===----------------------------------------------------------------------===//
-
-OpFoldResult LeakyReluOp::fold(ArrayRef<Attribute> operands) {
-  assert(operands.size() == 1 && "leaky relu has one operand");
-
-  // leaky_relu(x, alpha: 1) -> x
-  if (alpha().convertToFloat() == 1.0f) return getOperand();
-
-  auto calculate = [&](FloatAttr arg) {
-    APFloat val = arg.getValue();
-    if (val.isNegative()) val = alpha() * val;
-    return FloatAttr::get(arg.getType(), val);
+    DeviceNameUtils::ParsedName ndef_parsed_device;
+    if (!DeviceNameUtils::ParseFullName(device.getValue().str(),
+                                        &ndef_parsed_device))
+      return device;
+    MergeUnsetDevNames(&ndef_parsed_device,
+                                        caller_parsed_device);
+    return StringAttr::get(
+        context, DeviceNameUtils::ParsedNameToString(ndef_parsed_device));
   };
+  // LINT.ThenChange(../../../../core/common_runtime/inline_function_utils.cc)
 
-  if (auto arg = operands[0].dyn_cast_or_null<FloatAttr>()) {
-    return calculate(arg);
-  } else if (auto arg = operands[0].dyn_cast_or_null<SplatElementsAttr>()) {
-    if (auto elementAttr = arg.getSplatValue().dyn_cast<FloatAttr>())
-      return DenseElementsAttr::get(arg.getType(), calculate(elementAttr));
+  for (Block &block : inlinedBlocks) {
+    block.walk([&](Operation *op) {
+      if (op->getDialect() == call->getDialect())
+        op->setAttr(device_id, node_device(op));
+    });
   }
-  return {};
 }
 
-//===----------------------------------------------------------------------===//
-// LogOp
-//===----------------------------------------------------------------------===//
+struct TFInlinerInterface : public DialectInlinerInterface {
+  using DialectInlinerInterface::DialectInlinerInterface;
 
-void LogOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                        MLIRContext *context) {
-  results.insert<LogOfSoftmax>(context);
-}
+  //===--------------------------------------------------------------------===//
+  // Analysis Hooks
+  //===--------------------------------------------------------------------===//
 
-//===----------------------------------------------------------------------===//
-// LogicalNotOp
-//===----------------------------------------------------------------------===//
-
-void LogicalNotOp::getCanonicalizationPatterns(
-    OwningRewritePatternList &results, MLIRContext *context) {
-  results.insert<LogicalNotNested, LogicalNotOfEqual, LogicalNotOfNotEqual,
-                 LogicalNotOfGreater, LogicalNotOfGreaterEqual,
-                 LogicalNotOfLess, LogicalNotOfLessEqual>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// NegOp
-//===----------------------------------------------------------------------===//
-
-void NegOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                        MLIRContext *context) {
-  results.insert<NegNested>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// ReciprocalOp
-//===----------------------------------------------------------------------===//
-
-void ReciprocalOp::getCanonicalizationPatterns(
-    OwningRewritePatternList &results, MLIRContext *context) {
-  results.insert<ReciprocalNested>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// RandomUniformOp
-//===----------------------------------------------------------------------===//
-
-static LogicalResult Verify(RandomUniformOp op) {
-  if (!IsOfRankOrUnranked(op.shape(), 1))
-    return op.emitOpError("shape must be 1D tensor");
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// RangeOp
-//===----------------------------------------------------------------------===//
-
-void RangeOp::build(Builder *builder, OperationState *result, Value *start,
-                    Value *limit, Value *delta) {
-  assert(start->getType() == limit->getType());
-  assert(start->getType() == delta->getType());
-  DenseIntElementsAttr start_val;
-  DenseIntElementsAttr limit_val;
-  DenseIntElementsAttr delta_val;
-  if (matchPattern(start, m_Constant(&start_val)) &&
-      matchPattern(limit, m_Constant(&limit_val)) &&
-      matchPattern(delta, m_Constant(&delta_val))) {
-    auto size = llvm::APIntOps::RoundingSDiv(
-        *limit_val.begin() - *start_val.begin(), *delta_val.begin(),
-        llvm::APInt::Rounding::DOWN);
-    return RangeOp::build(
-        builder, result,
-        builder->getTensorType(
-            size.getSExtValue(),
-            start->getType().cast<TensorType>().getElementType()),
-        start, limit, delta);
-  }
-  return RangeOp::build(
-      builder, result,
-      builder->getTensorType(
-          {-1}, start->getType().cast<TensorType>().getElementType()),
-      start, limit, delta);
-}
-//===----------------------------------------------------------------------===//
-// RankOp
-//===----------------------------------------------------------------------===//
-
-void RankOp::build(Builder *builder, OperationState *result, Value *input) {
-  return RankOp::build(builder, result,
-                       builder->getTensorType({}, builder->getIntegerType(32)),
-                       input);
-}
-
-//===----------------------------------------------------------------------===//
-// RealDivOp
-//===----------------------------------------------------------------------===//
-
-void RealDivOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                            MLIRContext *context) {
-  results.insert<RealDivWithSqrtDivisor>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// ReshapeOp
-//===----------------------------------------------------------------------===//
-
-// TODO(b/128020684): Verify the rank of the output and change to use
-// m_Constant.
-static LogicalResult Verify(ReshapeOp op) {
-  auto shapeType = op.shape()->getType().cast<TensorType>();
-  if (!shapeType.hasRank()) return success();
-  if (shapeType.getRank() != 1)
-    return op.emitOpError("shape must be 1D tensor");
-  auto rankByShape = shapeType.getShape()[0];
-  auto typeOfTensor = op.tensor()->getType().cast<TensorType>();
-  // No compile time verification for unknown sized shape.
-  if (rankByShape == -1 || !typeOfTensor.hasStaticShape()) return success();
-  // Check values if constant shape. No compiling time verification for
-  // non-constant shape.
-  auto *shapeOp = op.shape()->getDefiningOp();
-  if (!shapeOp) return success();
-  Attribute shapeCst;
-  if (auto shapeStdOp = dyn_cast<ConstantOp>(shapeOp)) {
-    shapeCst = shapeStdOp.getValue();
-  } else if (auto shapeTFOp = dyn_cast<ConstOp>(shapeOp)) {
-    shapeCst = shapeTFOp.value();
-  } else {
-    return success();
-  }
-  auto shapeCstAttr = shapeCst.dyn_cast<ElementsAttr>();
-  if (!shapeCstAttr) return op.emitOpError("shape must be a valid tensor");
-
-  if (auto opaqueAttr = shapeCstAttr.dyn_cast<OpaqueElementsAttr>()) {
-    opaqueAttr.decode(shapeCstAttr);
+  // Returns if it's legal to inline 'callable' into the 'call', where 'call' is
+  // a TF operation.
+  bool isLegalToInline(Operation *call, Operation *callable,
+                       bool wouldBeCloned) const final {
+    // Skip inlining for TPUPartitionedCalls and RemoteCalls.
+#if 0    
+    if (isa<TPUPartitionedCallOp>(call)) return false;
+#endif    
+    if (isa<RemoteCallOp>(call)) return false;
+    // Maintain inlining for  `tf.function`s with jit_compile option.
+    if (callable->hasAttr("tf._XlaMustCompile")) return true;
+    auto noinline_attr_name = absl::StrCat("tf.", tensorflow::kNoInlineAttr);
+    if (auto noinline_attr =
+            callable->getAttrOfType<BoolAttr>(noinline_attr_name))
+      return !noinline_attr.getValue();
+    return true;
   }
 
-  // We know the shape is a 1-D Tensor, then let us get the number of
-  // elements it implies.
-  unsigned numByShape = 1;
-  unsigned unknownDimCount = 0;
-  for (int i = 0, e = rankByShape; i != e; ++i) {
-    auto num = shapeCstAttr.getValue<IntegerAttr>(i).getInt();
-    // The dimension size value can be -1, and that the real size needs to
-    // be computed so that the total size remains constant. At most one
-    // component of shape can be -1.
-    if (num == -1) {
-      if (++unknownDimCount > 1) {
-        return op.emitOpError("more than one component of shape are -1");
-      }
-    } else {
-      numByShape *= num;
-    }
-  }
-  auto numByTensor = typeOfTensor.getNumElements();
-  // If there is one component of shape is -1, the dimension should be
-  // computed so that the total size remains constant.
-  if (unknownDimCount == 1) {
-    if (numByTensor % numByShape != 0)
-      return op.emitOpError(
-          "one component of shape is -1 but couldn't infer the dimension");
-    return success();
-  }
-  // If the elements by the tensor and implies by the shape don't match,
-  // fail this static check.
-  if (numByTensor != numByShape) {
-    return op.emitOpError(
-        "mismatch in tensor elements and shape implied elements");
-  }
-  return success();
-}
-
-void ReshapeOp::build(Builder *builder, OperationState *result, Value *tensor,
-                      Value *shape) {
-  auto ttype = tensor->getType().cast<ShapedType>();
-  auto etype = ttype.getElementType();
-
-  auto unranked = [builder, etype, result, shape, tensor]() {
-    return ReshapeOp::build(builder, result, builder->getTensorType(etype),
-                            tensor, shape);
-  };
-
-  // If tensor is unranked then we have no info about output of shape.
-  if (!ttype.hasRank()) return unranked();
-
-  DenseIntElementsAttr attr_shape;
-  if (matchPattern(shape, m_Constant(&attr_shape))) {
-    llvm::SmallVector<int64_t, 4> const_shape;
-    const_shape.reserve(attr_shape.getNumElements());
-
-    // Detect if reshape output shape is folded.
-    bool flatten = false;
-    int unknown_index = -1;
-    // The product of constant shape argument excluding unknown dimension.
-    int64_t product_cshape = 1;
-    for (auto e : llvm::enumerate(attr_shape)) {
-      int64_t val = e.value().getSExtValue();
-      if (IsUnknownDimOrRank(val)) {
-        if (flatten) {
-          mlir::emitError(result->location)
-              << "only one unknown dimension allowed";
-          return;
-        }
-        flatten = true;
-        unknown_index = e.index();
-      } else {
-        product_cshape *= val;
-      }
-      const_shape.push_back(val);
-    }
-
-    // Compute the value of the uknown dimension.
-    if (flatten) {
-      // Compute number of elements in tensor shape.
-      auto tshape = ttype.getShape();
-      int64_t product_tshape = std::accumulate(tshape.begin(), tshape.end(), 1,
-                                               std::multiplies<int64_t>());
-      // Set the unknown dimension such that total number of elements remain
-      // constant.
-      // Note: The case where the ratio is not integral, and so the total size
-      // of reshape not constant, is checked in verify function.
-      const_shape[unknown_index] = product_tshape / product_cshape;
-    }
-    return ReshapeOp::build(builder, result,
-                            builder->getTensorType(const_shape, etype), tensor,
-                            shape);
-  }
-  return unranked();
-}
-
-//===----------------------------------------------------------------------===//
-// ShapeOp
-//===----------------------------------------------------------------------===//
-
-static LogicalResult Verify(ShapeOp op) {
-  auto inputType = op.input()->getType();
-  auto resultType = op.getType().dyn_cast<RankedTensorType>();
-  if (!resultType || resultType.getShape().size() != 1)
-    return op.emitOpError("requires 1D result type");
-
-  auto rankedTensorType = inputType.dyn_cast<RankedTensorType>();
-  if (rankedTensorType) {
-    // The operand is a ranked tensor.
-    if (resultType.hasStaticShape()) {
-      if ((!rankedTensorType.getShape().empty() &&
-           resultType.getDimSize(0) != rankedTensorType.getShape().size()))
-        return op.emitOpError(
-            "requires dimension size of result to match rank of operand");
-    }
-  } else {
-    // The operand is an unranked tensor, verify that the result is dynamic.
-    if (resultType.hasStaticShape())
-      return op.emitOpError("requires dynamic shape result for unranked input");
+  // Returns if its legal to inline 'src' region into the 'dest' region
+  // attached to a TF operation.
+  bool isLegalToInline(Region *dest, Region *src, bool wouldBeCloned,
+                       IRMapping &valueMapping) const final {
+    // Allow inlining in regions attached to region based control flow
+    // operations only if the src region is a single block region
+    return isa<IfRegionOp, CaseRegionOp, WhileRegionOp>(dest->getParentOp()) &&
+           llvm::hasSingleElement(*src);
   }
 
-  Type elt = op.getType().cast<ShapedType>().getElementType();
-  if (elt.isInteger(32) || elt.isInteger(64)) return success();
-  return op.emitOpError("requires int32 or int64 return type");
-}
-
-OpFoldResult ShapeOp::fold(ArrayRef<Attribute> operands) {
-  auto inputType = getOperand()->getType();
-  auto rankedTensorType = inputType.dyn_cast<RankedTensorType>();
-  if (!rankedTensorType || !rankedTensorType.hasStaticShape()) return {};
-
-  auto shape = rankedTensorType.getShape();
-  int rank = shape.size();
-
-  Builder b(getContext());
-  auto elementType = getType().cast<ShapedType>().getElementType();
-
-  SmallVector<Attribute, 4> dimensions;
-  dimensions.reserve(rank);
-  for (int i = 0; i < rank; ++i)
-    dimensions.push_back(b.getIntegerAttr(elementType, shape[i]));
-
-  auto resultType = b.getTensorType({rank}, elementType);
-  return b.getDenseElementsAttr(resultType, dimensions);
-}
-
-//===----------------------------------------------------------------------===//
-// SoftmaxOp
-//===----------------------------------------------------------------------===//
-
-static LogicalResult Verify(SoftmaxOp op) {
-  if (!HasRankAtLeast(op.logits(), 1)) {
-    return op.emitOpError("requires operand to have rank at least 1");
-  }
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// SquareOp
-//===----------------------------------------------------------------------===//
-
-void SquareOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                           MLIRContext *context) {
-  results.insert<SquareOfSub>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// SubOp
-//===----------------------------------------------------------------------===//
-
-void SubOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                        MLIRContext *context) {
-  results.insert<SubOfNeg>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// TensorListReserveOp
-//===----------------------------------------------------------------------===//
-
-static LogicalResult Verify(TensorListReserveOp op) {
-  if (!IsOfRankOrUnranked(op.element_shape(), 0) &&
-      !IsOfRankOrUnranked(op.element_shape(), 1)) {
-    return op.emitOpError("requires element_shape operand to be 0D/1D tensor");
+  // Returns true if its legal to inline a TF operation `op` into the `dest`
+  // region.
+  bool isLegalToInline(Operation *op, Region *dest, bool wouldBeCloned,
+                       IRMapping &) const final {
+    // An op is legal to inline if either of the following conditions is true:
+    // (a) Its legal to duplicate the Op.
+    // (b) The Op is inside a single use function. If that function is inlined,
+    //     post inlining, the function will be dead and eliminated from the IR.
+    //     So there won't be any code duplication.
+    // plus the function caller op can be replaced by inlined ops.
+    return !wouldBeCloned || TensorFlowDialect::CanDuplicate(op);
   }
 
-  if (!IsOfRankOrUnranked(op.num_elements(), 0)) {
-    return op.emitOpError("requires num_elements operand to be 0D tensor");
-  }
-  return success();
-}
+  //===--------------------------------------------------------------------===//
+  // Transformation Hooks
+  //===--------------------------------------------------------------------===//
 
-//===----------------------------------------------------------------------===//
-// TransposeOp
-//===----------------------------------------------------------------------===//
-
-static LogicalResult Verify(TransposeOp op) {
-  // TODO(hinsu): Verify using a custom verifier that,
-  // * Transpose permutation is 1-D of size equal to the rank of the first
-  //   input, if the shapes are partially known. Requires use of a more
-  //   restrictive type than TF_Tensor.
-  // * Result shape dimensions are possible based on the input shape.
-  return success();
-}
-
-// TODO(jpienaar): perm could be optional too.
-void TransposeOp::build(Builder *builder, OperationState *result, Value *x,
-                        Value *perm) {
-  auto x_type = x->getType().cast<TensorType>();
-  // If value is unranked, then so is results.
-  if (!x_type.hasRank())
-    return TransposeOp::build(builder, result,
-                              builder->getTensorType(x_type.getElementType()),
-                              x, perm);
-
-  // TODO(jpienaar): Handle unknown perm case.
-
-  // TODO(jpienaar): Extract utility function.
-  auto etype = x_type.cast<ShapedType>().getElementType();
-  DenseIntElementsAttr attr_shape;
-  if (matchPattern(perm, m_Constant(&attr_shape))) {
-    llvm::SmallVector<int64_t, 4> const_shape;
-    if (attr_shape.isSplat()) {
-      const_shape.assign(
-          attr_shape.getNumElements(),
-          x_type.getDimSize((*attr_shape.begin()).getSExtValue()));
-    } else {
-      const_shape.reserve(attr_shape.getNumElements());
-      for (auto dim : attr_shape)
-        const_shape.push_back(x_type.getDimSize(dim.getSExtValue()));
-    }
-    return TransposeOp::build(
-        builder, result, builder->getTensorType(const_shape, etype), x, perm);
-  }
-  return TransposeOp::build(builder, result, builder->getTensorType(etype), x,
-                            perm);
-}
-
-//===----------------------------------------------------------------------===//
-// TruncateDivOp
-//===----------------------------------------------------------------------===//
-
-void TruncateDivOp::getCanonicalizationPatterns(
-    OwningRewritePatternList &results, MLIRContext *context) {
-  results.insert<TruncateDivWithSqrtDivisor>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// WhileOp
-//===----------------------------------------------------------------------===//
-
-static LogicalResult Verify(WhileOp op) {
-  auto module = op.getParentOfType<ModuleOp>();
-  auto condFn = module.lookupSymbol<FuncOp>(op.cond());
-  auto bodyFn = module.lookupSymbol<FuncOp>(op.body());
-  if (!condFn) {
-    return op.emitOpError("cond refers to an undefined function : ")
-           << op.cond();
-  }
-  if (!bodyFn) {
-    return op.emitOpError("body refers to an undefined function : ")
-           << op.body();
+  // Attempts to materialize a conversion for a type mismatch between a call
+  // from this dialect, and a callable region. This method should generate an
+  // operation that takes 'input' as the only operand, and produces a single
+  // result of 'resultType'. If a conversion can not be generated, nullptr
+  // should be returned.
+  Operation *materializeCallConversion(OpBuilder &builder, Value input,
+                                       Type result_type,
+                                       Location conversion_loc) const final {
+    if (!result_type.isa<TensorType>() || !input.getType().isa<TensorType>())
+      return nullptr;
+    return builder.create<TF::CastOp>(conversion_loc, result_type, input,
+                                      /*truncate=*/builder.getBoolAttr(false));
   }
 
-  auto condFuncType = condFn.getType();
-  auto bodyFuncType = bodyFn.getType();
+  void processInlinedCallBlocks(
+      Operation *call,
+      iterator_range<Region::iterator> inlinedBlocks) const final {
+// FIXME
+/*
+    bool has_lower_as_multi_device_function_attr = false;
+    if (auto lower = call->getAttrOfType<BoolAttr>(
+            tensorflow::LowerFunctionalOpsConstants::
+                kLowerAsMultiDeviceFunctionAttr))
+      has_lower_as_multi_device_function_attr = lower.getValue();
+    tensorflow::FunctionCallInlinePolicy policy =
+        tensorflow::GetFunctionCallInlinePolicy(
+            isa<PartitionedCallOp, StatefulPartitionedCallOp>(call),
+            has_lower_as_multi_device_function_attr);
 
-  // Verify that the cond function has exactly one result.
-  if (condFuncType.getNumResults() != 1)
-    return op.emitOpError("requires cond function to have exactly one result");
-
-  SmallVector<Type, 4> operands(op.getOperandTypes());
-  SmallVector<Type, 4> results(op.getResultTypes());
-
-  // Collect all the type lists for the op so that different pairs of type lists
-  // can be compared for the compatibility.
-  int numTypeLists = 5;
-  std::pair<std::string, ArrayRef<Type>> typeLists[] = {
-      {"operand", operands},
-      {"body function result", bodyFuncType.getResults()},
-      {"result", results},
-      {"cond function input", condFuncType.getInputs()},
-      {"body function input", bodyFuncType.getInputs()},
-  };
-
-  // A pair of type lists should be cast compatible with each other if one is
-  // converted to the another for a function call or assignment or there is a
-  // common source of inputs for both.  Therefore, the While op requires the
-  // following pairs of type lists to be cast compatible for the tensor_cast
-  // operation:
-  //
-  // * Operands and cond inputs to call the cond function before the
-  //   first iteration.
-  // * Operands and body inputs to call the body function for the first
-  //   iteration if the cond functions returns True or equivalent result.
-  // * Operands and results to assign cond function arguments to op results if
-  //   the cond function returns False or equivalent result.
-  // * All three pairs using cond inputs, body inputs and results as operand is
-  //   a common source for all three.
-  // * Body result and cond inputs to call the cond function for the subsequent
-  //   iterations. Similarly, Body result should be compatible with body inputs
-  //   and op results.
-  //
-  // Note that the operands and body results need not be compatible as they are
-  // never converted from one to the another nor there is a common source
-  // tensors.  Compatibility requirement is not transitive.
-
-  for (int i = 0; i < numTypeLists; ++i) {
-    // Skip the first pair as the While op operands and body function results
-    // does not need to be compatible with each other.
-    for (int j = std::max(2, i + 1); j < numTypeLists; ++j) {
-      auto &a = typeLists[i];
-      auto &b = typeLists[j];
-
-      int aSize = a.second.size();
-      if (aSize != b.second.size())
-        return op.emitOpError(
-            llvm::formatv("requires the number of {0}s to be equal to the "
-                          "number of {1}s. Found {2} and {3}, respectively",
-                          a.first, b.first, aSize, b.second.size()));
-
-      for (int idx = 0; idx < aSize; ++idx) {
-        auto aType = a.second[idx];
-        auto bType = b.second[idx];
-
-        if (!AreCastCompatible(aType, bType))
-          return op.emitError(llvm::formatv(
-              "{0} type {1} is incompatible with {2} type {3} at index {4}",
-              a.first, aType, b.first, bType, idx));
-      }
-    }
+    if (policy == tensorflow::FunctionCallInlinePolicy::kMultiDevicePlacer)
+      return MultiDeviceProcessInlinedCallBlocks(call, inlinedBlocks);
+*/    
   }
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// XdivyOp
-//===----------------------------------------------------------------------===//
-
-void XdivyOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
-                                          MLIRContext *context) {
-  results.insert<XdivyWithSqrtDivisor>(context);
-}
-
-//===----------------------------------------------------------------------===//
-// TableGen'd op method definitions
-//===----------------------------------------------------------------------===//
-
-#define GET_OP_CLASSES
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc.inc"
+};
+}  // end anonymous namespace
 
 //===----------------------------------------------------------------------===//
 // TF Dialect
 //===----------------------------------------------------------------------===//
 
+// Returns true if the op can be duplicated.
+bool TensorFlowDialect::CanDuplicate(Operation *op) {
+  // If the op is marked with the cannot duplicate trait, it cannot be
+  // duplicated.
+  if (op->hasTrait<OpTrait::TF::CannotDuplicate>()) return false;
+
+  // If the op has no memory side effects, it can be duplicated.
+  if (isMemoryEffectFree(op)) return true;
+
+  // If the op is marked stateless using the `is_stateless` attribute, that
+  // attribute determines if the op can be duplicated.
+  if (auto is_stateless = op->getAttrOfType<BoolAttr>("is_stateless"))
+    return is_stateless.getValue();
+
+  // Assume ops can be duplicated if modelled.
+  return op->isRegistered();
+}
+
+// TF dialect fallback for MemoryEffectOpInterface. The filtering for returning
+// the interface is done in the return below and here it is empty as it is only
+// returned for known not-stateful and unmodelled ops.
+struct TensorFlowRegistryEffectInterfaceFallback
+    : public MemoryEffectOpInterface::FallbackModel<
+          TensorFlowRegistryEffectInterfaceFallback> {
+  static bool classof(Operation *op) { return true; }
+  void getEffects(
+      Operation *op,
+      SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+          &effects) const {}
+};
+
+void *TensorFlowDialect::getRegisteredInterfaceForOp(
+    mlir::TypeID interface, mlir::OperationName opName) {
+  if (interface == TypeID::get<mlir::MemoryEffectOpInterface>()) {
+    // Don't use fallback for modelled ops.
+    if (opName.isRegistered()) return nullptr;
+
+    // Only use fallback interface for known not-stateful ops.
+    const tensorflow::OpRegistrationData *op_reg_data = nullptr;
+    tensorflow::Status s = tensorflow::OpRegistry::Global()->LookUp(
+        opName.stripDialect().str(), &op_reg_data);
+    return (s.ok() && !op_reg_data->op_def.is_stateful())
+               ? fallback_effect_op_interface_
+               : nullptr;
+  }
+
+  return nullptr;
+}
+
+// Returns true if the op can have side effects.
+bool TensorFlowDialect::CanHaveSideEffects(Operation *op) {
+  // If the op has no memory side effects, it has no side effects
+  if (isMemoryEffectFree(op)) return false;
+
+  // If the op is marked stateless using the `is_stateless` attribute, then
+  // it has no side effects.
+  if (auto is_stateless = op->getAttrOfType<BoolAttr>("is_stateless"))
+    return !is_stateless.getValue();
+
+  // Terminators defined in the TF dialect do not have side effects.
+  if (op->hasTrait<OpTrait::IsTerminator>()) return false;
+
+  // Otherwise assume that the op can have side effects.
+  return true;
+}
+
+// Hook functions which may add additional operations to the dialect.
+// These are invoked at construction time.
+static DenseMap<TypeID, TensorFlowDialect::AdditionalOpFunction>
+    &GetAdditionalOperationHooks() {
+  static auto *additional_operation_hooks =
+      new DenseMap<TypeID, TensorFlowDialect::AdditionalOpFunction>();
+  return *additional_operation_hooks;
+}
+
+void TensorFlowDialect::RegisterAdditionalOperationHook(
+    TypeID id, AdditionalOpFunction fn) {
+  GetAdditionalOperationHooks().try_emplace(id, std::move(fn));
+}
+
+TensorFlowDialect::ConstantFoldHook TensorFlowDialect::constant_fold_hook_;
+
 TensorFlowDialect::TensorFlowDialect(MLIRContext *context)
-    : Dialect(/*name=*/"tf", context) {
+    : Dialect(/*name=*/"tf", context, TypeID::get<TensorFlowDialect>()) {
+  context->getOrLoadDialect<::mlir::tf_type::TFTypeDialect>();
   addOperations<
 #define GET_OP_LIST
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc.inc"
       >();
-  addTypes<
-#define HANDLE_TF_TYPE(tftype, enumerant, name) tftype##Type,
-#define HANDLE_LAST_TF_TYPE(tftype, enumerant, name) tftype##Type
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.def"
-      >();
+  addInterfaces<TFInlinerInterface, TFConstantFoldInterface>();
+  fallback_effect_op_interface_ =
+      new TensorFlowRegistryEffectInterfaceFallback();
 
   // Support unknown operations because not all TensorFlow operations are
   // registered.
   allowUnknownOperations();
-}
 
-// Parses a type registered to this dialect.
-Type TensorFlowDialect::parseType(StringRef data, Location loc) const {
-  auto typeKind = llvm::StringSwitch<unsigned>(data)
-#define HANDLE_TF_TYPE(tftype, enumerant, name) \
-  .Case(name, TensorFlowTypes::enumerant)
-// Custom TensorFlow types are handled separately at the end as they do partial
-// match.
-#define HANDLE_CUSTOM_TF_TYPE(tftype, enumerant, name)
-// NOLINTNEXTLINE
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.def"
-                      .StartsWith("variant", TensorFlowTypes::VARIANT)
-                      .Default(0);
-  switch (typeKind) {
-    default:
-      return (emitError(loc, "unknown TensorFlow type: " + data), nullptr);
-
-#define HANDLE_TF_TYPE(tftype, enumerant, name) \
-  case TensorFlowTypes::enumerant:              \
-    return tftype##Type::get(getContext());
-#define HANDLE_CUSTOM_TF_TYPE(tftype, enumerant, name)
-// NOLINTNEXTLINE
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.def"
-    case TensorFlowTypes::VARIANT:
-      return ParseVariantType(data, loc);
+  for (auto &hook : GetAdditionalOperationHooks()) {
+    hook.second(*this);
   }
 }
 
-// Prints a type registered to this dialect.
-void TensorFlowDialect::printType(Type ty, raw_ostream &os) const {
-  assert(ty.isa<TensorFlowType>());
-  switch (ty.getKind()) {
-    default:
-      llvm_unreachable("unexpected tensorflow type kind");
-#define HANDLE_TF_TYPE(tftype, enumerant, name) \
-  case TensorFlowTypes::enumerant:              \
-    os << name;                                 \
-    break;
-#define HANDLE_CUSTOM_TF_TYPE(tftype, enumerant, name) \
-  case TensorFlowTypes::enumerant:                     \
-    Print##tftype##Type(ty.cast<tftype##Type>(), os);  \
-    break;
-// NOLINTNEXTLINE
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.def"
-  }
+TensorFlowDialect::~TensorFlowDialect() {
+  delete fallback_effect_op_interface_;
 }
 
-Type TensorFlowDialect::ParseVariantType(StringRef spec, Location loc) const {
-  bool success = spec.consume_front("variant");
-  DCHECK(success) << spec.str();
-
-  // Default variant type without inferred subtypes.
-  MLIRContext *context = getContext();
-  if (spec.empty()) return VariantType::get(context);
-
-  if (!spec.consume_front("<") || !spec.consume_back(">"))
-    return emitError(loc) << "tf.variant delimiter <...> mismatch", nullptr;
-
-  // Most variant types with subtypes have only one subtype.
-  SmallVector<StringRef, 1> subtype_specs;
-  llvm::SplitString(spec, subtype_specs, ",");
-  if (subtype_specs.empty())
-    return emitError(loc) << "invalid type: tf.variant<>", nullptr;
-
-  SmallVector<TensorType, 1> subtypes;
-  subtypes.reserve(subtype_specs.size());
-  for (StringRef subtype_spec : subtype_specs) {
-    subtype_spec = subtype_spec.trim();
-    Type type = mlir::parseType(subtype_spec, context);
-    if (!type) {
-      return emitError(loc) << "invalid type: " << subtype_spec, nullptr;
-    }
-
-    if (TensorType tensor_ty = type.dyn_cast<TensorType>()) {
-      subtypes.push_back(tensor_ty);
-    } else {
-      return emitError(loc) << "expected TensorType. Found: " << type, nullptr;
-    }
-  }
-  return VariantType::getChecked(subtypes, context, loc);
+Type TensorFlowDialect::parseType(DialectAsmParser &parser) const {
+  StringRef spec = parser.getFullSymbolSpec();
+  llvm::SMLoc loc = parser.getCurrentLocation();
+  parser.emitError(
+      loc, "tf dialect has no types, potentially meant !tf_type." + spec);
+  return nullptr;
 }
 
-void TensorFlowDialect::PrintVariantType(VariantType ty,
-                                         raw_ostream &os) const {
-  os << "variant";
-  ArrayRef<TensorType> subtypes = ty.getSubtypes();
-  if (subtypes.empty()) return;
-
-  os << "<";
-  interleaveComma(subtypes, os);
-  os << ">";
+Attribute TensorFlowDialect::parseAttribute(DialectAsmParser &parser,
+                                            Type type) const {
+  StringRef spec = parser.getFullSymbolSpec();
+  llvm::SMLoc loc = parser.getCurrentLocation();
+  parser.emitError(
+      loc, "tf dialect has no attributes, potentially meant #tf_type." + spec);
+  return nullptr;
 }
 
 Operation *TensorFlowDialect::materializeConstant(OpBuilder &builder,
                                                   Attribute value, Type type,
                                                   Location loc) {
-  // If this is an opaque elements attribute or the result type doesn't match
-  // the attribute type, then generate a tf.Const.
-  if (value.isa<OpaqueElementsAttr>() || value.getType() != type)
-    return builder.create<ConstOp>(loc, type, value);
-  return nullptr;
+  return builder.create<ConstOp>(loc, type, value);
 }
 
 }  // namespace TF

@@ -24,6 +24,10 @@
 #ifndef MLIR_TRANSFORMS_LOOP_UTILS_H
 #define MLIR_TRANSFORMS_LOOP_UTILS_H
 
+#ifndef LLVM_NODISCARD
+#define LLVM_NODISCARD [[nodiscard]]
+#endif
+
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 

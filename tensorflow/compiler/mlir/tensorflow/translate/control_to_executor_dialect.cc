@@ -19,16 +19,20 @@ limitations under the License.
 // !! This code is only intended for migration purpose and will be deleted when
 // !! the importer is updated to directly emit the tf_executor dialect.
 
+// FIXME: disabled: does not compile and has no 2.x equivalent
+#if 0
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
 #include "llvm/Support/Debug.h"
-#include "mlir/Dialect/StandardOps/Ops.h"  // TF:local_config_mlir
+//#include "mlir/Dialect/StandardOps/Ops.h"  // TF:local_config_mlir
 #include "mlir/IR/Builders.h"  // TF:local_config_mlir
 #include "mlir/IR/Operation.h"  // TF:local_config_mlir
 #include "mlir/IR/Value.h"  // TF:local_config_mlir
 #include "mlir/Pass/Pass.h"  // TF:local_config_mlir
 #include "mlir/Pass/PassRegistry.h"  // TF:local_config_mlir
 #include "mlir/Support/LLVM.h"  // TF:local_config_mlir
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/control_flow_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
@@ -120,7 +124,7 @@ void ControlToExecutorDialectConversion::runOnFunction() {
       // take as operands the results of the tf_executor.graph operation.
       SmallVector<Value *, 8> ret_vals;
       for (Value *operand : op.getOperands()) ret_vals.push_back(operand);
-      for (auto &graph_result : llvm::enumerate(graph_op.getResults()))
+      for (const auto &graph_result : llvm::enumerate(graph_op.getResults()))
         op.setOperand(graph_result.index(), graph_result.value());
       builder.create<tf_executor::FetchOp>(getFunction().getLoc(), ret_vals);
       continue;
@@ -237,7 +241,7 @@ void ControlToExecutorDialectConversion::runOnFunction() {
   }
 }
 
-FunctionPassBase *CreateTFControlToExecutorDialectConversion() {
+OperationPass<func::FuncOp> *CreateTFControlToExecutorDialectConversion() {
   return new ControlToExecutorDialectConversion();
 }
 
@@ -246,3 +250,5 @@ FunctionPassBase *CreateTFControlToExecutorDialectConversion() {
 static mlir::PassRegistration<mlir::ControlToExecutorDialectConversion> pass(
     "tf-control-to-executor-conversion",
     "Transform from TF control dialect to TF executor dialect.");
+
+#endif

@@ -16,14 +16,9 @@
 // =============================================================================
 
 #include "mlir/IR/MLIRContext.h"
-#include "AffineExprDetail.h"
-#include "AffineMapDetail.h"
-#include "AttributeDetail.h"
-#include "IntegerSetDetail.h"
-#include "LocationDetail.h"
-#include "TypeDetail.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
+#include "mlir/IR/Types.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dialect.h"
@@ -32,7 +27,6 @@
 #include "mlir/IR/IntegerSet.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Module.h"
-#include "mlir/IR/Types.h"
 #include "mlir/Support/STLExtras.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -43,6 +37,12 @@
 #include "llvm/Support/RWMutex.h"
 #include "llvm/Support/raw_ostream.h"
 #include <memory>
+#include "AffineExprDetail.h"
+#include "AffineMapDetail.h"
+#include "AttributeDetail.h"
+#include "IntegerSetDetail.h"
+#include "LocationDetail.h"
+#include "TypeDetail.h"
 
 using namespace mlir;
 using namespace mlir::detail;

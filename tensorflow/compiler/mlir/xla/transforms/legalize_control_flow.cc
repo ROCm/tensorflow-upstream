@@ -150,7 +150,7 @@ void LegalizeControlFlow::runOnFunction() {
 }  // namespace XLA
 }  // namespace mlir
 
-std::unique_ptr<mlir::FunctionPassBase>
+std::unique_ptr<mlir::OperationPass<func::FuncOp>>
 mlir::XLA::createLegalizeControlFlowPass() {
   return std::make_unique<LegalizeControlFlow>();
 }
