@@ -85,13 +85,13 @@ static const char *const opCommentHeader = R"(
 static inline bool hasStringAttribute(const Record &record,
                                       StringRef fieldName) {
   auto valueInit = record.getValueInit(fieldName);
-  return isa<CodeInit>(valueInit) || isa<StringInit>(valueInit);
+  return isa<StringInit>(valueInit);
 }
 
 static std::string getArgumentName(const Operator &op, int index) {
   const auto &operand = op.getOperand(index);
   if (!operand.name.empty())
-    return operand.name;
+    return operand.name.str();
   else
     return formatv("{0}_{1}", generatedArgName, index);
 }
@@ -933,7 +933,7 @@ void OpEmitter::buildParamList(std::string &paramList,
     // Add parameters for all return types
     for (int i = 0; i < numResults; ++i) {
       const auto &result = op.getResult(i);
-      std::string resultName = result.name;
+      std::string resultName = result.name.str();
       if (resultName.empty())
         resultName = formatv("resultType{0}", i);
 
@@ -1045,7 +1045,7 @@ void OpEmitter::genParser() {
 
 void OpEmitter::genPrinter() {
   auto valueInit = def.getValueInit("printer");
-  CodeInit *codeInit = dyn_cast<CodeInit>(valueInit);
+  StringInit *codeInit = dyn_cast<StringInit>(valueInit);
   if (!codeInit)
     return;
 
@@ -1058,7 +1058,7 @@ void OpEmitter::genPrinter() {
 
 void OpEmitter::genVerifier() {
   auto valueInit = def.getValueInit("verifier");
-  CodeInit *codeInit = dyn_cast<CodeInit>(valueInit);
+  StringInit *codeInit = dyn_cast<StringInit>(valueInit);
   bool hasCustomVerify = codeInit && !codeInit->getValue().empty();
 
   auto &method = opClass.newMethod("LogicalResult", "verify", /*params=*/"");

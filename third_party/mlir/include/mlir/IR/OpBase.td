@@ -1267,7 +1267,7 @@ class ElementTypeIs<string name, Type type> : PredOpTrait<
 
 // TODO(b/135032064): Only works for non-variadic.
 class AllMatchPred<list<string> names, string operator> :
-    CPred<"llvm::is_splat(llvm::makeArrayRef({" #
+    CPred<"llvm::all_equal(llvm::makeArrayRef({" #
           StrJoin<!foreach(n, names,
                            !subst("$_self", "$" # n, operator))>.result
           # "}))">;
@@ -1336,7 +1336,7 @@ class TCOpIsBroadcastableToRes<int opId, int resId> : And<[
 // 1) all operands involved are of shaped type and
 // 2) the indices are not out of range.
 class TCopVTEtAreSameAt<list<int> indices> : CPred<
-  "llvm::is_splat(mlir::functional::map("
+  "llvm::all_equal(mlir::functional::map("
     "[this](unsigned i) { return getElementTypeOrSelf(this->getOperand(i)); }, "
     "llvm::ArrayRef<unsigned>({" # StrJoinInt<indices>.result # "})))">;
 

@@ -228,6 +228,9 @@ Status OpRegistry::RegisterAlreadyLocked(
       s = errors::AlreadyExists("Op with name ", op_reg_data->op_def.name());
     }
   }
+  if (!s.ok())
+    return Status::OK();
+    //s = errors::AlreadyExists("Op with name ", op_reg_data->op_def.name());
   Status watcher_status = s;
   if (watcher_) {
     watcher_status = watcher_(s, op_reg_data->op_def);

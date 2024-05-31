@@ -123,7 +123,7 @@ struct GenericFullQuantizationPattern : public RewritePattern {
     for (auto result : llvm::enumerate(quantized_op->getResults())) {
       if (!result.value()->hasOneUse()) return matchFailure();
       auto result_ele_type =
-          result.value()->getType().cast<TensorType>().getElementType();
+          result.value()->getType().template cast<TensorType>().getElementType();
       if (auto user = dyn_cast_or_null<Q>(*result.value()->user_begin())) {
         outputs_replaced.insert({user.output(), result.index()});
         output_types.push_back(user.getType());

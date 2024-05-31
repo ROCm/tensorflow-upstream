@@ -329,7 +329,7 @@ public:
 
   template <typename Container, typename UnaryFunctor>
   inline void interleaveComma(const Container &c, UnaryFunctor each_fn) const {
-    interleave(c.begin(), c.end(), each_fn, [&]() { os << ", "; });
+    llvm::interleave(c.begin(), c.end(), each_fn, [&]() { os << ", "; });
   }
 
   void print(ModuleOp module);
@@ -441,7 +441,7 @@ void ModulePrinter::printLocationInternal(LocationAttr loc, bool pretty) {
     if (auto metadata = fusedLoc.getMetadata())
       os << '<' << metadata << '>';
     os << '[';
-    interleave(
+    llvm::interleave(
         fusedLoc.getLocations(),
         [&](Location loc) { printLocationInternal(loc, pretty); },
         [&]() { os << ", "; });

@@ -101,8 +101,8 @@ void LoopUnrollAndJam::runOnFunction() {
 /// kDefaultUnrollJamFactor. Return failure if nothing was done.
 LogicalResult LoopUnrollAndJam::runOnAffineForOp(AffineForOp forOp) {
   // Unroll and jam by the factor that was passed if any.
-  if (unrollJamFactor.hasValue())
-    return loopUnrollJamByFactor(forOp, unrollJamFactor.getValue());
+  if (unrollJamFactor.has_value())
+    return loopUnrollJamByFactor(forOp, unrollJamFactor.value());
   // Otherwise, unroll jam by the command-line factor if one was specified.
   if (clUnrollJamFactor.getNumOccurrences() > 0)
     return loopUnrollJamByFactor(forOp, clUnrollJamFactor);
@@ -115,9 +115,9 @@ LogicalResult mlir::loopUnrollJamUpToFactor(AffineForOp forOp,
                                             uint64_t unrollJamFactor) {
   Optional<uint64_t> mayBeConstantTripCount = getConstantTripCount(forOp);
 
-  if (mayBeConstantTripCount.hasValue() &&
-      mayBeConstantTripCount.getValue() < unrollJamFactor)
-    return loopUnrollJamByFactor(forOp, mayBeConstantTripCount.getValue());
+  if (mayBeConstantTripCount.has_value() &&
+      mayBeConstantTripCount.value() < unrollJamFactor)
+    return loopUnrollJamByFactor(forOp, mayBeConstantTripCount.value());
   return loopUnrollJamByFactor(forOp, unrollJamFactor);
 }
 
@@ -171,8 +171,8 @@ LogicalResult mlir::loopUnrollJamByFactor(AffineForOp forOp,
 
   Optional<uint64_t> mayBeConstantTripCount = getConstantTripCount(forOp);
   // If the trip count is lower than the unroll jam factor, no unroll jam.
-  if (mayBeConstantTripCount.hasValue() &&
-      mayBeConstantTripCount.getValue() < unrollJamFactor)
+  if (mayBeConstantTripCount.has_value() &&
+      mayBeConstantTripCount.value() < unrollJamFactor)
     return failure();
 
   auto *forInst = forOp.getOperation();

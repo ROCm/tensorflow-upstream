@@ -151,7 +151,7 @@ void PassManagerOptions::addTimingInstrumentation(PassManager &pm) {
 
 void mlir::registerPassManagerCLOptions() {
   // Reset the options instance if it hasn't been enabled yet.
-  if (!options->hasValue())
+  if (!options->has_value())
     options->emplace();
 }
 

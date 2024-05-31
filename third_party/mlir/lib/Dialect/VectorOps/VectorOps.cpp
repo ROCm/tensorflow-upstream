@@ -298,7 +298,7 @@ ParseResult VectorTransferReadOp::parse(OpAsmParser *parser,
 
 LogicalResult VectorTransferReadOp::verify() {
   // Consistency of memref type in function type.
-  if (llvm::empty(getOperands())) {
+  if (std::empty(getOperands())) {
     return emitOpError(
         "requires at least a memref operand followed by 'rank' indices");
   }
@@ -442,7 +442,7 @@ ParseResult VectorTransferWriteOp::parse(OpAsmParser *parser,
 
 LogicalResult VectorTransferWriteOp::verify() {
   // Consistency of memref type in function type.
-  if (llvm::empty(getOperands())) {
+  if (std::empty(getOperands())) {
     return emitOpError(
         "requires at least a memref operand followed by 'rank' indices");
   }

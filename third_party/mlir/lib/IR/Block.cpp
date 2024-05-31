@@ -43,7 +43,10 @@ Block::~Block() {
     if (!arg->use_empty())
       arg->user_begin()->dump();
 
-  llvm::DeleteContainerPointers(arguments);
+  //llvm::DeleteContainerPointers(arguments);
+  for (auto V : arguments)
+    delete V;
+  arguments.clear();
 }
 
 Region *Block::getParent() { return parentValidInstOrderPair.getPointer(); }

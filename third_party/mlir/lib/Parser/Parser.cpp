@@ -37,6 +37,7 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/bit.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/PrettyStackTrace.h"
@@ -654,9 +655,9 @@ Type Parser::parseMemRefType() {
       if (parsedMemorySpace)
         return emitError("multiple memory spaces specified in memref type");
       auto v = getToken().getUnsignedIntegerValue();
-      if (!v.hasValue())
+      if (!v.has_value())
         return emitError("invalid memory space in memref type");
-      memorySpace = v.getValue();
+      memorySpace = v.value();
       consumeToken(Token::integer);
       parsedMemorySpace = true;
     } else {
@@ -726,11 +727,11 @@ Type Parser::parseNonFunctionType() {
   // integer-type
   case Token::inttype: {
     auto width = getToken().getIntTypeBitwidth();
-    if (!width.hasValue())
+    if (!width.has_value())
       return (emitError("invalid integer width"), nullptr);
     auto loc = getEncodedSourceLocation(getToken().getLoc());
     consumeToken(Token::inttype);
-    return IntegerType::getChecked(width.getValue(), builder.getContext(), loc);
+    return IntegerType::getChecked(width.value(), builder.getContext(), loc);
   }
 
   // float-type
@@ -886,9 +887,9 @@ Parser::parseDimensionListRanked(SmallVectorImpl<int64_t> &dimensions,
       } else {
         // Make sure this integer value is in bound and valid.
         auto dimension = getToken().getUnsignedIntegerValue();
-        if (!dimension.hasValue())
+        if (!dimension.has_value())
           return emitError("invalid dimension");
-        dimensions.push_back((int64_t)dimension.getValue());
+        dimensions.push_back((int64_t)dimension.value());
         consumeToken(Token::integer);
       }
     }
@@ -1136,7 +1137,7 @@ Attribute Parser::parseExtendedAttr(Type type) {
 /// Parse a float attribute.
 Attribute Parser::parseFloatAttr(Type type, bool isNegative) {
   auto val = getToken().getFloatingPointValue();
-  if (!val.hasValue())
+  if (!val.has_value())
     return (emitError("floating point value too large for attribute"), nullptr);
   consumeToken(Token::floatliteral);
   if (!type) {
@@ -1149,7 +1150,7 @@ Attribute Parser::parseFloatAttr(Type type, bool isNegative) {
   if (!type.isa<FloatType>())
     return (emitError("floating point value not valid for specified type"),
             nullptr);
-  return FloatAttr::get(type, isNegative ? -val.getValue() : val.getValue());
+  return FloatAttr::get(type, isNegative ? -val.value() : val.value());
 }
 
 /// Construct a float attribute bitwise equivalent to the integer literal.
@@ -1169,7 +1170,7 @@ static FloatAttr buildHexadecimalFloatLiteral(Parser *p, FloatType type,
 /// or a float attribute.
 Attribute Parser::parseDecOrHexAttr(Type type, bool isNegative) {
   auto val = getToken().getUInt64IntegerValue();
-  if (!val.hasValue())
+  if (!val.has_value())
     return (emitError("integer constant out of range for attribute"), nullptr);
 
   // Remember if the literal is hexadecimal.
@@ -1214,7 +1215,7 @@ Attribute Parser::parseDecOrHexAttr(Type type, bool isNegative) {
     return (emitError("integer constant out of range for attribute"), nullptr);
 
   // Otherwise construct an integer attribute.
-  if (isNegative ? (int64_t)-val.getValue() >= 0 : (int64_t)val.getValue() < 0)
+  if (isNegative ? (int64_t)-val.value() >= 0 : (int64_t)val.value() < 0)
     return (emitError("integer constant out of range for attribute"), nullptr);
 
   return builder.getIntegerAttr(type, isNegative ? -apInt : apInt);
@@ -1389,14 +1390,14 @@ DenseElementsAttr TensorLiteralParser::getIntAttr(llvm::SMLoc loc,
 
     // Create APInt values for each element with the correct bitwidth.
     auto val = token.getUInt64IntegerValue();
-    if (!val.hasValue() || (isNegative ? (int64_t)-val.getValue() >= 0
-                                       : (int64_t)val.getValue() < 0)) {
+    if (!val.has_value() || (isNegative ? (int64_t)-val.value() >= 0
+                                       : (int64_t)val.value() < 0)) {
       p.emitError(token.getLoc(),
                   "integer constant out of range for attribute");
       return nullptr;
     }
-    APInt apInt(eltTy.getWidth(), val.getValue(), isNegative);
-    if (apInt != val.getValue())
+    APInt apInt(eltTy.getWidth(), val.value(), isNegative);
+    if (apInt != val.value())
       return (p.emitError("integer constant out of range for type"), nullptr);
     intElements.push_back(isNegative ? -apInt : apInt);
   }
@@ -1422,7 +1423,7 @@ DenseElementsAttr TensorLiteralParser::getFloatAttr(llvm::SMLoc loc,
         return nullptr;
       }
       auto val = token.getUInt64IntegerValue();
-      if (!val.hasValue()) {
+      if (!val.has_value()) {
         p.emitError("hexadecimal float constant out of range for attribute");
         return nullptr;
       }
@@ -1441,7 +1442,7 @@ DenseElementsAttr TensorLiteralParser::getFloatAttr(llvm::SMLoc loc,
 
     // Build the float values from tokens.
     auto val = token.getFloatingPointValue();
-    if (!val.hasValue()) {
+    if (!val.has_value()) {
       p.emitError("floating point value too large for attribute");
       return nullptr;
     }
@@ -1694,7 +1695,7 @@ ParseResult Parser::parseLocationInstance(LocationAttr &loc) {
       if (getToken().isNot(Token::integer))
         return emitError("expected integer line number in FileLineColLoc");
       auto line = getToken().getUnsignedIntegerValue();
-      if (!line.hasValue())
+      if (!line.has_value())
         return emitError("expected integer line number in FileLineColLoc");
       consumeToken(Token::integer);
 
@@ -1706,11 +1707,11 @@ ParseResult Parser::parseLocationInstance(LocationAttr &loc) {
       if (getToken().isNot(Token::integer))
         return emitError("expected integer column number in FileLineColLoc");
       auto column = getToken().getUnsignedIntegerValue();
-      if (!column.hasValue())
+      if (!column.has_value())
         return emitError("expected integer column number in FileLineColLoc");
       consumeToken(Token::integer);
 
-      loc = FileLineColLoc::get(str, line.getValue(), column.getValue(), ctx);
+      loc = FileLineColLoc::get(str, line.value(), column.value(), ctx);
       return success();
     }
 
@@ -2130,11 +2131,11 @@ AffineExpr AffineParser::parseSymbolSSAIdExpr() {
 ///   affine-expr ::= integer-literal
 AffineExpr AffineParser::parseIntegerExpr() {
   auto val = getToken().getUInt64IntegerValue();
-  if (!val.hasValue() || (int64_t)val.getValue() < 0)
+  if (!val.has_value() || (int64_t)val.value() < 0)
     return (emitError("constant too large for index"), nullptr);
 
   consumeToken(Token::integer);
-  return builder.getAffineConstantExpr((int64_t)val.getValue());
+  return builder.getAffineConstantExpr((int64_t)val.value());
 }
 
 /// Parses an expression that can be a valid operand of an affine expression.
@@ -2415,7 +2416,7 @@ AffineExpr AffineParser::parseAffineConstraint(bool *isEq) {
   if (consumeIf(Token::greater) && consumeIf(Token::equal) &&
       getToken().is(Token::integer)) {
     auto dim = getToken().getUnsignedIntegerValue();
-    if (dim.hasValue() && dim.getValue() == 0) {
+    if (dim.has_value() && dim.value() == 0) {
       consumeToken(Token::integer);
       *isEq = false;
       return expr;
@@ -2426,7 +2427,7 @@ AffineExpr AffineParser::parseAffineConstraint(bool *isEq) {
   if (consumeIf(Token::equal) && consumeIf(Token::equal) &&
       getToken().is(Token::integer)) {
     auto dim = getToken().getUnsignedIntegerValue();
-    if (dim.hasValue() && dim.getValue() == 0) {
+    if (dim.has_value() && dim.value() == 0) {
       consumeToken(Token::integer);
       *isEq = true;
       return expr;
@@ -2840,7 +2841,7 @@ ParseResult OperationParser::parseSSAUse(SSAUseInfo &result) {
   // If we have an attribute ID, it is a result number.
   if (getToken().is(Token::hash_identifier)) {
     if (auto value = getToken().getHashIdentifierNumber())
-      result.number = value.getValue();
+      result.number = value.value();
     else
       return emitError("invalid SSA value result number");
     consumeToken(Token::hash_identifier);
@@ -2997,7 +2998,7 @@ ParseResult OperationParser::parseOperation() {
 
       // Check that number of results is > 0.
       auto val = getToken().getUInt64IntegerValue();
-      if (!val.hasValue() || val.getValue() < 1)
+      if (!val.has_value() || val.value() < 1)
         return emitError("expected named operation to have atleast 1 result");
       consumeToken(Token::integer);
       numExpectedResults = *val;

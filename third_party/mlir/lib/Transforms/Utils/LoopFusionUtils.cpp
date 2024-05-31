@@ -282,13 +282,13 @@ bool mlir::getLoopNestStats(AffineForOp forOpRoot, LoopNestStats *stats) {
     // Record trip count for 'forOp'. Set flag if trip count is not
     // constant.
     Optional<uint64_t> maybeConstTripCount = getConstantTripCount(forOp);
-    if (!maybeConstTripCount.hasValue()) {
+    if (!maybeConstTripCount.has_value()) {
       // Currently only constant trip count loop nests are supported.
       LLVM_DEBUG(llvm::dbgs() << "Non-constant trip count unsupported");
       ret = false;
       return;
     }
-    stats->tripCountMap[childForOp] = maybeConstTripCount.getValue();
+    stats->tripCountMap[childForOp] = maybeConstTripCount.value();
   });
   return ret;
 }
@@ -389,17 +389,17 @@ static bool buildSliceTripCountMap(
         continue;
       }
       Optional<uint64_t> maybeConstTripCount = getConstantTripCount(forOp);
-      if (maybeConstTripCount.hasValue()) {
-        (*tripCountMap)[op] = maybeConstTripCount.getValue();
+      if (maybeConstTripCount.has_value()) {
+        (*tripCountMap)[op] = maybeConstTripCount.value();
         continue;
       }
       return false;
     }
     Optional<uint64_t> tripCount = getConstDifference(lbMap, ubMap);
     // Slice bounds are created with a constant ub - lb difference.
-    if (!tripCount.hasValue())
+    if (!tripCount.has_value())
       return false;
-    (*tripCountMap)[op] = tripCount.getValue();
+    (*tripCountMap)[op] = tripCount.value();
   }
   return true;
 }

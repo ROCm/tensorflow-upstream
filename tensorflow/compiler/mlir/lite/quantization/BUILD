@@ -33,7 +33,7 @@ cc_library(
     hdrs = [
         "quantization_utils.h",
     ],
-    copts = ["-std=c++14"],
+    copts = ["-std=c++17"],
     deps = [
         "@com_google_absl//absl/memory",
         "@llvm//:support",

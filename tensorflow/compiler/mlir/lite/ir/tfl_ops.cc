@@ -16,7 +16,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 
 #include <cstdint>
-
+#include <cmath>
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"

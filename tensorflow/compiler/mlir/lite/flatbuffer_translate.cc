@@ -34,7 +34,6 @@ limitations under the License.
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/None.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -479,7 +478,7 @@ std::string Translator::GetName(Operation* inst) {
 
 std::string Translator::UniqueName(llvm::StringRef prefix) {
   // Keep incrementing the counter until we find a unique name.
-  std::string name = prefix;
+  std::string name = prefix.str();
   int64_t& prefix_count = name_to_count_[name];
   int64_t val = prefix_count;
   while (val != 0) {

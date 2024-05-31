@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "mlir/Dialect/QuantOps/QuantTypes.h"  // TF:local_config_mlir
 #include "mlir/Support/LLVM.h"  // TF:local_config_mlir
+#include <cmath>
 
 namespace mlir {
 namespace OpTrait {
@@ -74,7 +75,7 @@ class FixedResultUniformScale {
       Builder builder(op->getContext());
       IntegerType storage_type = builder.getIntegerType(BitWidth);
       const double scale = static_cast<double>(ScaleMantissa) *
-                           ::pow(10.0, static_cast<double>(ScaleExp));
+                           std::pow(10.0, static_cast<double>(ScaleExp));
       return UniformQuantizedType::getChecked(
           Sign, storage_type, result_type.getElementType(), scale, ZeroPoint,
           StorageTypeMin, StorageTypeMax, builder.getUnknownLoc());

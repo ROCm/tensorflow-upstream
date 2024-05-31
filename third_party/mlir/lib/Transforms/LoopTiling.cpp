@@ -31,6 +31,7 @@
 #include "mlir/Transforms/Utils.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include <cmath>
 using namespace mlir;
 
 #define DEBUG_TYPE "affine-loop-tile"
@@ -136,10 +137,10 @@ constructTiledIndexSetHyperRect(MutableArrayRef<AffineForOp> origLoops,
         /*operands=*/newLoops[i].getInductionVar(), lbMap);
 
     // Set the upper bound.
-    if (mayBeConstantCount.hasValue() &&
-        mayBeConstantCount.getValue() < tileSizes[i]) {
+    if (mayBeConstantCount.has_value() &&
+        mayBeConstantCount.value() < tileSizes[i]) {
       // Trip count is less than tile size; upper bound is the trip count.
-      auto ubMap = b.getConstantAffineMap(mayBeConstantCount.getValue());
+      auto ubMap = b.getConstantAffineMap(mayBeConstantCount.value());
       newLoops[width + i].setUpperBoundMap(ubMap);
     } else if (largestDiv % tileSizes[i] != 0) {
       // Intra-tile loop ii goes from i to min(i + tileSize, ub_i).
@@ -286,11 +287,11 @@ static void adjustToDivisorsOfTripCounts(ArrayRef<AffineForOp> band,
   for (unsigned i = 0, e = band.size(); i < e; i++) {
     unsigned &tSizeAdjusted = (*tileSizes)[i];
     auto mayConst = getConstantTripCount(band[i]);
-    if (!mayConst.hasValue())
+    if (!mayConst.has_value())
       continue;
     // Adjust the tile size to largest factor of the trip count less than
     // tSize.
-    uint64_t constTripCount = mayConst.getValue();
+    uint64_t constTripCount = mayConst.value();
     if (constTripCount > 1 && tSizeAdjusted > constTripCount / 2)
       tSizeAdjusted = constTripCount / 2;
     while (constTripCount % tSizeAdjusted != 0)
@@ -336,7 +337,7 @@ void LoopTiling::getTileSizes(ArrayRef<AffineForOp> band,
   // footprint increases with the tile size linearly in that dimension (i.e.,
   // assumes one-to-one access function).
   auto fp = getMemoryFootprintBytes(band[0], 0);
-  if (!fp.hasValue()) {
+  if (!fp.has_value()) {
     // Fill with default tile sizes if footprint is unknown.
     std::fill(tileSizes->begin(), tileSizes->end(),
               LoopTiling::kDefaultTileSize);
@@ -349,7 +350,7 @@ void LoopTiling::getTileSizes(ArrayRef<AffineForOp> band,
   }
 
   // Check how many times larger the cache size is when compared to footprint.
-  uint64_t excessFactor = llvm::divideCeil(fp.getValue(), cacheSizeBytes);
+  uint64_t excessFactor = llvm::divideCeil(fp.value(), cacheSizeBytes);
   if (excessFactor <= 1) {
     // No need of any tiling - set tile size to 1.
     std::fill(tileSizes->begin(), tileSizes->end(), 1);

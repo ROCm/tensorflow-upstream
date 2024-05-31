@@ -121,7 +121,7 @@ void mlir::getCleanupLoopLowerBound(AffineForOp forOp, unsigned unrollFactor,
 // TODO(bondhugula): extend this for arbitrary affine bounds.
 LogicalResult mlir::promoteIfSingleIteration(AffineForOp forOp) {
   Optional<uint64_t> tripCount = getConstantTripCount(forOp);
-  if (!tripCount.hasValue() || tripCount.getValue() != 1)
+  if (!tripCount.has_value() || tripCount.value() != 1)
     return failure();
 
   // TODO(mlir-team): there is no builder for a max.
@@ -249,11 +249,11 @@ LogicalResult mlir::instBodySkew(AffineForOp forOp, ArrayRef<uint64_t> shifts,
   // better way to pipeline for such loops is to first tile them and extract
   // constant trip count "full tiles" before applying this.
   auto mayBeConstTripCount = getConstantTripCount(forOp);
-  if (!mayBeConstTripCount.hasValue()) {
+  if (!mayBeConstTripCount.has_value()) {
     LLVM_DEBUG(forOp.emitRemark("non-constant trip count loop not handled"));
     return success();
   }
-  uint64_t tripCount = mayBeConstTripCount.getValue();
+  uint64_t tripCount = mayBeConstTripCount.value();
 
   assert(isInstwiseShiftValid(forOp, shifts) &&
          "shifts will lead to an invalid transformation\n");
@@ -399,8 +399,8 @@ void mlir::getPerfectlyNestedLoops(SmallVectorImpl<loop::ForOp> &nestedLoops,
 /// Unrolls this loop completely.
 LogicalResult mlir::loopUnrollFull(AffineForOp forOp) {
   Optional<uint64_t> mayBeConstantTripCount = getConstantTripCount(forOp);
-  if (mayBeConstantTripCount.hasValue()) {
-    uint64_t tripCount = mayBeConstantTripCount.getValue();
+  if (mayBeConstantTripCount.has_value()) {
+    uint64_t tripCount = mayBeConstantTripCount.value();
     if (tripCount == 1) {
       return promoteIfSingleIteration(forOp);
     }
@@ -415,9 +415,9 @@ LogicalResult mlir::loopUnrollUpToFactor(AffineForOp forOp,
                                          uint64_t unrollFactor) {
   Optional<uint64_t> mayBeConstantTripCount = getConstantTripCount(forOp);
 
-  if (mayBeConstantTripCount.hasValue() &&
-      mayBeConstantTripCount.getValue() < unrollFactor)
-    return loopUnrollByFactor(forOp, mayBeConstantTripCount.getValue());
+  if (mayBeConstantTripCount.has_value() &&
+      mayBeConstantTripCount.value() < unrollFactor)
+    return loopUnrollByFactor(forOp, mayBeConstantTripCount.value());
   return loopUnrollByFactor(forOp, unrollFactor);
 }
 
@@ -445,8 +445,8 @@ LogicalResult mlir::loopUnrollByFactor(AffineForOp forOp,
   // If the trip count is lower than the unroll factor, no unrolled body.
   // TODO(bondhugula): option to specify cleanup loop unrolling.
   Optional<uint64_t> mayBeConstantTripCount = getConstantTripCount(forOp);
-  if (mayBeConstantTripCount.hasValue() &&
-      mayBeConstantTripCount.getValue() < unrollFactor)
+  if (mayBeConstantTripCount.has_value() &&
+      mayBeConstantTripCount.value() < unrollFactor)
     return failure();
 
   // Generate the cleanup loop if trip count isn't a multiple of unrollFactor.
@@ -559,8 +559,8 @@ static bool checkLoopInterchangeDependences(
     // This iterates through loops in the desired order.
     for (unsigned j = 0; j < maxLoopDepth; ++j) {
       unsigned permIndex = loopPermMapInv[j];
-      assert(depComps[permIndex].lb.hasValue());
-      int64_t depCompLb = depComps[permIndex].lb.getValue();
+      assert(depComps[permIndex].lb.has_value());
+      int64_t depCompLb = depComps[permIndex].lb.value();
       if (depCompLb > 0)
         break;
       if (depCompLb < 0)
@@ -598,8 +598,8 @@ unsigned mlir::interchangeLoops(ArrayRef<AffineForOp> loops,
       sinkLoop(loops[i], permIndex - i);
     }
   }
-  assert(loopNestRootIndex.hasValue());
-  return loopNestRootIndex.getValue();
+  assert(loopNestRootIndex.has_value());
+  return loopNestRootIndex.value();
 }
 
 // Sinks all sequential loops to the innermost levels (while preserving
@@ -624,8 +624,8 @@ AffineForOp mlir::sinkSequentialLoops(AffineForOp forOp) {
     assert(depComps.size() >= maxLoopDepth);
     for (unsigned j = 0; j < maxLoopDepth; ++j) {
       DependenceComponent &depComp = depComps[j];
-      assert(depComp.lb.hasValue() && depComp.ub.hasValue());
-      if (depComp.lb.getValue() != 0 || depComp.ub.getValue() != 0)
+      assert(depComp.lb.has_value() && depComp.ub.has_value());
+      if (depComp.lb.value() != 0 || depComp.ub.value() != 0)
         isParallelLoop[j] = false;
     }
   }
@@ -1009,12 +1009,12 @@ static void normalizeLoop(loop::ForOp loop, loop::ForOp outer,
   bool isZeroBased = false;
   if (auto ubCst =
           dyn_cast_or_null<ConstantIndexOp>(loop.lowerBound()->getDefiningOp()))
-    isZeroBased = ubCst.getValue() == 0;
+    isZeroBased = (ubCst.getValue() == 0);
 
   bool isStepOne = false;
   if (auto stepCst =
           dyn_cast_or_null<ConstantIndexOp>(loop.step()->getDefiningOp()))
-    isStepOne = stepCst.getValue() == 1;
+    isStepOne = (stepCst.getValue() == 1);
 
   if (isZeroBased && isStepOne)
     return;

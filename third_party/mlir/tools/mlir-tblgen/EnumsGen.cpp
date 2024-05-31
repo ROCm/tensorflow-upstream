@@ -163,7 +163,7 @@ static void emitStrToSymFn(const Record &enumDef, raw_ostream &os) {
 static void emitUnderlyingToSymFn(const Record &enumDef, raw_ostream &os) {
   EnumAttr enumAttr(enumDef);
   StringRef enumName = enumAttr.getEnumClassName();
-  std::string underlyingType = enumAttr.getUnderlyingType();
+  std::string underlyingType = enumAttr.getUnderlyingType().str();
   StringRef underlyingToSymFnName = enumAttr.getUnderlyingToSymbolFnName();
   auto enumerants = enumAttr.getAllCases();
 
@@ -194,7 +194,7 @@ static void emitEnumDecl(const Record &enumDef, raw_ostream &os) {
   EnumAttr enumAttr(enumDef);
   StringRef enumName = enumAttr.getEnumClassName();
   StringRef cppNamespace = enumAttr.getCppNamespace();
-  std::string underlyingType = enumAttr.getUnderlyingType();
+  std::string underlyingType = enumAttr.getUnderlyingType().str();
   StringRef description = enumAttr.getDescription();
   StringRef strToSymFnName = enumAttr.getStringToSymbolFnName();
   StringRef symToStrFnName = enumAttr.getSymbolToStringFnName();

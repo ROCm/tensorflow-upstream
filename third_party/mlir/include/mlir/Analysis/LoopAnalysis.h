@@ -24,7 +24,6 @@
 
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/Optional.h"
 
 namespace mlir {
 
@@ -49,7 +48,7 @@ void buildTripCountMapAndOperands(AffineForOp forOp, AffineMap *map,
 /// Returns the trip count of the loop if it's a constant, None otherwise. This
 /// uses affine expression analysis and is able to determine constant trip count
 /// in non-trivial cases.
-llvm::Optional<uint64_t> getConstantTripCount(AffineForOp forOp);
+std::optional<uint64_t> getConstantTripCount(AffineForOp forOp);
 
 /// Returns the greatest known integral divisor of the trip count. Affine
 /// expression analysis is used (indirectly through getTripCount), and
@@ -82,7 +81,7 @@ bool isAccessInvariant(Value *iv, Value *index);
 ///
 /// Emits a note if it encounters a chain of affine.apply and conservatively
 ///  those cases.
-llvm::DenseSet<Value *, llvm::DenseMapInfo<Value *>>
+llvm::DenseSet<Value *, llvm::DenseMapInfo<Value *, void>>
 getInvariantAccesses(Value *iv, llvm::ArrayRef<Value *> indices);
 
 using VectorizableLoopFun = std::function<bool(AffineForOp)>;

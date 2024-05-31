@@ -29,6 +29,7 @@ EIGEN_RESTRICTED_DEPS = [
 
 EIGEN_FILES = [
     "Eigen/**",
+    "Eigen/Core",
     "unsupported/Eigen/CXX11/**",
     "unsupported/Eigen/FFT",
     "unsupported/Eigen/KroneckerProduct",

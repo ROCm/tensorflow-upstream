@@ -121,7 +121,11 @@ public:
   /* implicit */ Type(const ImplType *impl)
       : impl(const_cast<ImplType *>(impl)) {}
 
-  Type(const Type &other) : impl(other.impl) {}
+  // This constructor prevents the use of Type in a PointerIntPair, because
+  // it makes the type 'not trivially copy constructible', firing a static assert
+
+  //Type(const Type &other) : impl(other.impl) {}
+
   Type &operator=(Type other) {
     impl = other.impl;
     return *this;

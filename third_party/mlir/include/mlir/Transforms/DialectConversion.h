@@ -26,6 +26,12 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/StringMap.h"
+
+#ifndef LLVM_NODISCARD
+#define LLVM_NODISCARD [[nodiscard]]
+#endif
+
 
 namespace mlir {
 

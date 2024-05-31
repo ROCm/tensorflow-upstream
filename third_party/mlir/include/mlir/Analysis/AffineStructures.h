@@ -584,8 +584,8 @@ public:
   /// Returns the Value associated with the pos^th identifier. Asserts if
   /// no Value identifier was associated.
   inline Value *getIdValue(unsigned pos) const {
-    assert(ids[pos].hasValue() && "identifier's Value not set");
-    return ids[pos].getValue();
+    assert(ids[pos].has_value() && "identifier's Value not set");
+    return ids[pos].value();
   }
 
   /// Returns the Values associated with identifiers in range [start, end).

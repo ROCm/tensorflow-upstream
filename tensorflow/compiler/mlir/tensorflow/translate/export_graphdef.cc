@@ -79,7 +79,7 @@ std::string GetName(Operation* inst) {
   // from experimental_debug_info) to generate node names. Until it is fixed,
   // first check for "name" attribute to get node name.
   if (auto attr = inst->getAttrOfType<mlir::StringAttr>("name")) {
-    return attr.getValue();
+    return attr.getValue().str();
   }
   if (auto name_loc = inst->getLoc().dyn_cast<mlir::NameLoc>())
     return name_loc.getName().str();
@@ -162,7 +162,7 @@ class Exporter {
   }
 
   Graph* graph_;
-  absl::flat_hash_map<mlir::Operation*, string> op_to_name_;
+  absl::flat_hash_map<mlir::Operation*, std::string> op_to_name_;
   absl::flat_hash_map<string, int64> name_to_count_;
   absl::flat_hash_map<mlir::Operation*, Node*> nodes_;
   absl::flat_hash_map<const mlir::BlockArgument*, Node*> args_;
@@ -187,7 +187,7 @@ class Exporter {
 
 std::string Exporter::UniqueName(llvm::StringRef prefix) {
   // Keep incrementing the counter until we find a unique name.
-  std::string name = prefix;
+  std::string name = prefix.str();
   int64& prefix_count = name_to_count_[name];
   int64 val = prefix_count;
   while (val != 0) {
@@ -562,7 +562,7 @@ Status Exporter::ConvertLibFunction(const ExporterConfigs& configs,
 
   // Ignore the gradient and is_stateful attribute on the function as they have
   // been handled above.
-  absl::flat_hash_set<string> attrs_to_ignore = {grad_string, stateful_string};
+  absl::flat_hash_set<string> attrs_to_ignore = {grad_string.str(), stateful_string.str()};
   llvm::SmallVector<mlir::NamedAttribute, 8> funcAttrs(
       function.getDialectAttrs());
   TF_RETURN_IF_ERROR(

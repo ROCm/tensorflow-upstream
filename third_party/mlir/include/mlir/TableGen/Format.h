@@ -25,7 +25,9 @@
 #define MLIR_TABLEGEN_FORMAT_H_
 
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/STLExtras.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/FormatVariadic.h"
 
 namespace mlir {

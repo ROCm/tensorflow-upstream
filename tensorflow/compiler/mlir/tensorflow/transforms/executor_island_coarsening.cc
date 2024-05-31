@@ -22,7 +22,6 @@ limitations under the License.
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/None.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -150,7 +149,7 @@ llvm::SmallVector<Output, 8> GetNewIslandResultsAndForwardOutputs(
 
   YieldOp yield_op = parent.GetYield();
   Block& child_body = child.GetBody();
-  for (auto& ret_and_idx : llvm::enumerate(parent.outputs())) {
+  for (const auto& ret_and_idx : llvm::enumerate(parent.outputs())) {
     bool output_captured = false;
     Value* yield_input = yield_op.getOperand(ret_and_idx.index());
     for (auto& use :
@@ -167,7 +166,7 @@ llvm::SmallVector<Output, 8> GetNewIslandResultsAndForwardOutputs(
     }
   }
 
-  for (auto& ret_and_idx : llvm::enumerate(child.outputs())) {
+  for (const auto& ret_and_idx : llvm::enumerate(child.outputs())) {
     if (!ret_and_idx.value()->use_empty()) {
       results.push_back(Output(IslandType::kChildIsland, ret_and_idx.index()));
       result_types->push_back(ret_and_idx.value()->getType());
@@ -273,8 +272,8 @@ void ExecutorIslandCoarsening::MergeIslands(IslandOp parent, IslandOp child,
 bool ExecutorIslandCoarsening::MergeIslandWithOperand(IslandOp child) {
   // Find candidate operand to merge island with.
   llvm::Optional<IslandOp> candidate = GetOperandCandidateToMergeWith(child);
-  if (!candidate.hasValue()) return false;
-  auto& parent = candidate.getValue();
+  if (!candidate.has_value()) return false;
+  auto& parent = candidate.value();
   MergeIslands(parent, child, IslandType::kParentIsland);
   return true;
 }
@@ -286,8 +285,8 @@ bool ExecutorIslandCoarsening::MergeIslandWithOperand(IslandOp child) {
 bool ExecutorIslandCoarsening::MergeIslandWithResult(IslandOp parent) {
   // Find candidate result to merge island with.
   llvm::Optional<IslandOp> candidate = GetResultCandidateToMergeWith(parent);
-  if (!candidate.hasValue()) return false;
-  auto& child = candidate.getValue();
+  if (!candidate.has_value()) return false;
+  auto& child = candidate.value();
   MergeIslands(parent, child, IslandType::kChildIsland);
   return false;
 }

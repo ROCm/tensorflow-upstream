@@ -26,7 +26,6 @@
 
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace mlir {

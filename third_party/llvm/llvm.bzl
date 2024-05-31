@@ -411,7 +411,7 @@ llvm_copts = select({
         "-w14062",
         "-we4238",
     ],
-    "//conditions:default": [],
+    "//conditions:default": ["-std=c++17", "-DHAVE_SYSEXITS_H=1"],
 })
 
 # Platform specific sources for libSupport.

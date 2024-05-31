@@ -121,8 +121,8 @@ Optional<int64_t> MemRefRegion::getConstantBoundingSizeAndShape(
   for (unsigned d = 0; d < rank; d++) {
     SmallVector<int64_t, 4> lb;
     Optional<int64_t> diff = cst.getConstantBoundOnDimSize(d, &lb, &lbDivisor);
-    if (diff.hasValue()) {
-      diffConstant = diff.getValue();
+    if (diff.has_value()) {
+      diffConstant = diff.value();
       assert(lbDivisor > 0);
     } else {
       // If no constant bound is found, then it can always be bound by the
@@ -354,11 +354,11 @@ Optional<int64_t> MemRefRegion::getRegionSize() {
 
   // Compute the extents of the buffer.
   Optional<int64_t> numElements = getConstantBoundingSizeAndShape();
-  if (!numElements.hasValue()) {
+  if (!numElements.has_value()) {
     LLVM_DEBUG(llvm::dbgs() << "Dynamic shapes not yet supported\n");
     return None;
   }
-  return getMemRefEltSizeInBytes(memRefType) * numElements.getValue();
+  return getMemRefEltSizeInBytes(memRefType) * numElements.value();
 }
 
 /// Returns the size of memref data in bytes if it's statically shaped, None
@@ -939,9 +939,9 @@ static Optional<int64_t> getMemoryFootprintBytes(Block &block,
   int64_t totalSizeInBytes = 0;
   for (const auto &region : regions) {
     Optional<int64_t> size = region.second->getRegionSize();
-    if (!size.hasValue())
+    if (!size.has_value())
       return None;
-    totalSizeInBytes += size.getValue();
+    totalSizeInBytes += size.value();
   }
   return totalSizeInBytes;
 }

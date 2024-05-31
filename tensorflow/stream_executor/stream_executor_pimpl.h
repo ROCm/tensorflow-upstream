@@ -772,7 +772,7 @@ inline port::StatusOr<std::unique_ptr<TypedKernel<Args...>>>
 StreamExecutor::CreateTypedKernel(absl::string_view kernel_name,
                                   absl::string_view ptx,
                                   absl::Span<const uint8> cubin_data) {
-  auto kernel_base = absl::make_unique<TypedKernel<Args...>>(this);
+  auto kernel_base = std::make_unique<TypedKernel<Args...>>(this);
   MultiKernelLoaderSpec loader_spec(kernel_base->kNumberOfParameters);
   loader_spec.AddCudaPtxInMemory(ptx, kernel_name);
 

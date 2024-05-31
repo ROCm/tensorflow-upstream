@@ -23,6 +23,9 @@
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/PointerIntPair.h"
 
+// this used to exist in LLVM in 2019, but no longer
+#define LLVM_NODISCARD [[nodiscard]] 
+
 namespace mlir {
 /// The abstract base pass class. This class contains information describing the
 /// derived pass object, e.g its kind and abstract PassInfo.

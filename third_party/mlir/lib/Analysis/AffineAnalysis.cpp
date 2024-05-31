@@ -659,10 +659,10 @@ static void computeDirectionVector(
     (*dependenceComponents)[j].op = commonLoops[j].getOperation();
     auto lbConst = dependenceDomain->getConstantLowerBound(j);
     (*dependenceComponents)[j].lb =
-        lbConst.getValueOr(std::numeric_limits<int64_t>::min());
+        lbConst.value_or(std::numeric_limits<int64_t>::min());
     auto ubConst = dependenceDomain->getConstantUpperBound(j);
     (*dependenceComponents)[j].ub =
-        ubConst.getValueOr(std::numeric_limits<int64_t>::max());
+        ubConst.value_or(std::numeric_limits<int64_t>::max());
   }
 }
 

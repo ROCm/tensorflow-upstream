@@ -41,6 +41,7 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Regex.h"
+#include "llvm/ADT/StringMap.h"
 using namespace mlir;
 
 namespace {

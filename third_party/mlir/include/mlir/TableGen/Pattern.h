@@ -26,7 +26,9 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/TableGen/Argument.h"
 #include "mlir/TableGen/Operator.h"
+#include "llvm/Support/SMLoc.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 

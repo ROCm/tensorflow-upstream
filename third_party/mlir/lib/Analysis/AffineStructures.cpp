@@ -496,7 +496,7 @@ static bool LLVM_ATTRIBUTE_UNUSED
 areIdsUnique(const FlatAffineConstraints &cst) {
   SmallPtrSet<Value *, 8> uniqueIds;
   for (auto id : cst.getIds()) {
-    if (id.hasValue() && !uniqueIds.insert(id.getValue()).second)
+    if (id.has_value() && !uniqueIds.insert(id.value()).second)
       return false;
   }
   return true;
@@ -538,11 +538,11 @@ static void mergeAndAlignIds(unsigned offset, FlatAffineConstraints *A,
 
   assert(std::all_of(A->getIds().begin() + offset,
                      A->getIds().begin() + A->getNumDimAndSymbolIds(),
-                     [](Optional<Value *> id) { return id.hasValue(); }));
+                     [](Optional<Value *> id) { return id.has_value(); }));
 
   assert(std::all_of(B->getIds().begin() + offset,
                      B->getIds().begin() + B->getNumDimAndSymbolIds(),
-                     [](Optional<Value *> id) { return id.hasValue(); }));
+                     [](Optional<Value *> id) { return id.has_value(); }));
 
   // Place local id's of A after local id's of B.
   for (unsigned l = 0, e = A->getNumLocalIds(); l < e; l++) {
@@ -707,8 +707,8 @@ void FlatAffineConstraints::convertLoopIVSymbolsToDims() {
   // Gather all symbols which are loop IVs.
   SmallVector<Value *, 4> loopIVs;
   for (unsigned i = getNumDimIds(), e = getNumDimAndSymbolIds(); i < e; i++) {
-    if (ids[i].hasValue() && getForInductionVarOwner(ids[i].getValue()))
-      loopIVs.push_back(ids[i].getValue());
+    if (ids[i].has_value() && getForInductionVarOwner(ids[i].value()))
+      loopIVs.push_back(ids[i].value());
   }
   // Turn each symbol in 'loopIVs' into a dim identifier.
   for (auto *iv : loopIVs) {
@@ -825,7 +825,7 @@ static void normalizeConstraintByGCD(FlatAffineConstraints *constraints,
   };
   uint64_t gcd = std::abs(at(0));
   for (unsigned j = 1, e = constraints->getNumCols(); j < e; ++j) {
-    gcd = llvm::GreatestCommonDivisor64(gcd, std::abs(at(j)));
+    gcd = mlir::GreatestCommonDivisor64(gcd, std::abs(at(j)));
   }
   if (gcd > 0 && gcd != 1) {
     for (unsigned j = 0, e = constraints->getNumCols(); j < e; ++j) {
@@ -1097,7 +1097,7 @@ bool FlatAffineConstraints::isEmptyByGCDTest() const {
   for (unsigned i = 0, e = getNumEqualities(); i < e; ++i) {
     uint64_t gcd = std::abs(atEq(i, 0));
     for (unsigned j = 1; j < numCols - 1; ++j) {
-      gcd = llvm::GreatestCommonDivisor64(gcd, std::abs(atEq(i, j)));
+      gcd = mlir::GreatestCommonDivisor64(gcd, std::abs(atEq(i, j)));
     }
     int64_t v = std::abs(atEq(i, numCols - 1));
     if (gcd > 0 && (v % gcd != 0)) {
@@ -1120,7 +1120,7 @@ void FlatAffineConstraints::GCDTightenInequalities() {
   for (unsigned i = 0, e = getNumInequalities(); i < e; ++i) {
     uint64_t gcd = std::abs(atIneq(i, 0));
     for (unsigned j = 1; j < numCols - 1; ++j) {
-      gcd = llvm::GreatestCommonDivisor64(gcd, std::abs(atIneq(i, j)));
+      gcd = mlir::GreatestCommonDivisor64(gcd, std::abs(atIneq(i, j)));
     }
     if (gcd > 0 && gcd != 1) {
       int64_t gcdI = static_cast<int64_t>(gcd);
@@ -1256,7 +1256,7 @@ static bool detectAsMod(const FlatAffineConstraints &cst, unsigned pos,
       // Successfully detected a mod.
       (*memo)[pos] = (*memo)[dividendPos] % divisor * dividendSign;
       auto ub = cst.getConstantUpperBound(dividendPos);
-      if (ub.hasValue() && ub.getValue() < divisor)
+      if (ub.has_value() && ub.value() < divisor)
         // The mod can be optimized away.
         (*memo)[pos] = (*memo)[dividendPos] * dividendSign;
       else
@@ -1519,17 +1519,17 @@ void FlatAffineConstraints::getSliceBounds(unsigned offset, unsigned num,
 
       auto lbConst = getConstantLowerBound(pos);
       auto ubConst = getConstantUpperBound(pos);
-      if (lbConst.hasValue() && ubConst.hasValue()) {
+      if (lbConst.has_value() && ubConst.has_value()) {
         // Detect equality to a constant.
-        if (lbConst.getValue() == ubConst.getValue()) {
-          memo[pos] = getAffineConstantExpr(lbConst.getValue(), context);
+        if (lbConst.value() == ubConst.value()) {
+          memo[pos] = getAffineConstantExpr(lbConst.value(), context);
           changed = true;
           continue;
         }
 
         // Detect an identifier as modulo of another identifier w.r.t a
         // constant.
-        if (detectAsMod(*this, pos, lbConst.getValue(), ubConst.getValue(),
+        if (detectAsMod(*this, pos, lbConst.value(), ubConst.value(),
                         &memo)) {
           changed = true;
           continue;
@@ -1628,20 +1628,20 @@ void FlatAffineConstraints::getSliceBounds(unsigned offset, unsigned num,
         LLVM_DEBUG(llvm::dbgs()
                    << "WARNING: Potentially over-approximating slice lb\n");
         auto lbConst = getConstantLowerBound(pos + offset);
-        if (lbConst.hasValue()) {
+        if (lbConst.has_value()) {
           lbMap = AffineMap::get(
               numMapDims, numMapSymbols,
-              getAffineConstantExpr(lbConst.getValue(), context));
+              getAffineConstantExpr(lbConst.value(), context));
         }
       }
       if (!ubMap || ubMap.getNumResults() > 1) {
         LLVM_DEBUG(llvm::dbgs()
                    << "WARNING: Potentially over-approximating slice ub\n");
         auto ubConst = getConstantUpperBound(pos + offset);
-        if (ubConst.hasValue()) {
+        if (ubConst.has_value()) {
           (ubMap) = AffineMap::get(
               numMapDims, numMapSymbols,
-              getAffineConstantExpr(ubConst.getValue() + 1, context));
+              getAffineConstantExpr(ubConst.value() + 1, context));
         }
       }
     }
@@ -1873,7 +1873,7 @@ void FlatAffineConstraints::addLocalFloorDiv(ArrayRef<int64_t> dividend,
 bool FlatAffineConstraints::findId(Value &id, unsigned *pos) const {
   unsigned i = 0;
   for (const auto &mayBeId : ids) {
-    if (mayBeId.hasValue() && mayBeId.getValue() == &id) {
+    if (mayBeId.has_value() && mayBeId.value() == &id) {
       *pos = i;
       return true;
     }
@@ -1884,7 +1884,7 @@ bool FlatAffineConstraints::findId(Value &id, unsigned *pos) const {
 
 bool FlatAffineConstraints::containsId(Value &id) const {
   return llvm::any_of(ids, [&](const Optional<Value *> &mayBeId) {
-    return mayBeId.hasValue() && mayBeId.getValue() == &id;
+    return mayBeId.has_value() && mayBeId.value() == &id;
   });
 }
 
@@ -2100,7 +2100,7 @@ Optional<int64_t> FlatAffineConstraints::getConstantBoundOnDimSize(
       }
     }
   }
-  if (lb && minDiff.hasValue()) {
+  if (lb && minDiff.has_value()) {
     // Set lb to the symbolic lower bound.
     lb->resize(getNumSymbolIds() + 1);
     if (ub)
@@ -2655,7 +2655,7 @@ bool FlatAffineConstraints::isRangeOneToOne(unsigned start,
   // treating the rest as symbols).
   for (unsigned pos = 0, e = tmpCst.getNumDimIds(); pos < e; ++pos) {
     auto extent = tmpCst.getConstantBoundOnDimSize(pos);
-    if (!extent.hasValue() || extent.getValue() != 1)
+    if (!extent.has_value() || extent.value() != 1)
       return false;
   }
   return true;
@@ -2704,7 +2704,7 @@ FlatAffineConstraints::unionBoundingBox(const FlatAffineConstraints &otherCst) {
   Optional<FlatAffineConstraints> otherCopy;
   if (!areIdsAligned(*this, otherCst)) {
     otherCopy.emplace(FlatAffineConstraints(otherCst));
-    mergeAndAlignIds(/*offset=*/numDims, this, &otherCopy.getValue());
+    mergeAndAlignIds(/*offset=*/numDims, this, &otherCopy.value());
   }
 
   const auto &other = otherCopy ? *otherCopy : otherCst;
@@ -2725,14 +2725,14 @@ FlatAffineConstraints::unionBoundingBox(const FlatAffineConstraints &otherCst) {
   int64_t lbFloorDivisor, otherLbFloorDivisor;
   for (unsigned d = 0, e = getNumDimIds(); d < e; ++d) {
     auto extent = getConstantBoundOnDimSize(d, &lb, &lbFloorDivisor, &ub);
-    if (!extent.hasValue())
+    if (!extent.has_value())
       // TODO(bondhugula): symbolic extents when necessary.
       // TODO(bondhugula): handle union if a dimension is unbounded.
       return failure();
 
     auto otherExtent = other.getConstantBoundOnDimSize(
         d, &otherLb, &otherLbFloorDivisor, &otherUb);
-    if (!otherExtent.hasValue() || lbFloorDivisor != otherLbFloorDivisor)
+    if (!otherExtent.has_value() || lbFloorDivisor != otherLbFloorDivisor)
       // TODO(bondhugula): symbolic extents when necessary.
       return failure();
 
@@ -2753,10 +2753,10 @@ FlatAffineConstraints::unionBoundingBox(const FlatAffineConstraints &otherCst) {
       // Uncomparable - check for constant lower/upper bounds.
       auto constLb = getConstantLowerBound(d);
       auto constOtherLb = other.getConstantLowerBound(d);
-      if (!constLb.hasValue() || !constOtherLb.hasValue())
+      if (!constLb.has_value() || !constOtherLb.has_value())
         return failure();
       std::fill(minLb.begin(), minLb.end(), 0);
-      minLb.back() = std::min(constLb.getValue(), constOtherLb.getValue());
+      minLb.back() = std::min(constLb.value(), constOtherLb.value());
     }
 
     // Do the same for ub's but max of upper bounds. Identify max.
@@ -2769,10 +2769,10 @@ FlatAffineConstraints::unionBoundingBox(const FlatAffineConstraints &otherCst) {
       // Uncomparable - check for constant lower/upper bounds.
       auto constUb = getConstantUpperBound(d);
       auto constOtherUb = other.getConstantUpperBound(d);
-      if (!constUb.hasValue() || !constOtherUb.hasValue())
+      if (!constUb.has_value() || !constOtherUb.has_value())
         return failure();
       std::fill(maxUb.begin(), maxUb.end(), 0);
-      maxUb.back() = std::max(constUb.getValue(), constOtherUb.getValue());
+      maxUb.back() = std::max(constUb.value(), constOtherUb.value());
     }
 
     std::fill(newLb.begin(), newLb.end(), 0);
