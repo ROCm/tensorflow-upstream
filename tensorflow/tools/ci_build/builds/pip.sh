@@ -64,7 +64,7 @@ str_strip () {
 # Fixed naming patterns for wheel (.whl) files given different python versions
 if [[ $(uname) == "Linux" ]]; then
   declare -A WHL_TAGS
-  WHL_TAGS=(["2.7"]="cp27-none" ["3.4"]="cp34-cp34m" ["3.5"]="cp35-cp35m")
+  WHL_TAGS=(["2.7"]="cp27-none" ["3.4"]="cp34-cp34m" ["3.5"]="cp35-cp35m" ["3.6"]="cp36-cp36m")
 fi
 
 

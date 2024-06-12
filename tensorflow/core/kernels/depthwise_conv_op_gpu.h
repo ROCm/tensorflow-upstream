@@ -25,6 +25,7 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/gpu_kernel_helper.h"
 #include "tensorflow/core/util/tensor_format.h"
+#include "tensorflow/core/kernels/reduction_gpu_kernels.cu.h"
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #define UNROLL
@@ -797,7 +798,7 @@ void LaunchDepthwiseConvOp<GpuDevice, T>::operator()(OpKernelContext* ctx,
 // A GPU kernel to compute the depthwise convolution backprop w.r.t. input.
 template <typename T, int kKnownFilterWidth, int kKnownFilterHeight,
           int kKnownDepthMultiplier>
-__global__ void __launch_bounds__(640, 2)
+__global__ void __launch_bounds__(1024, 2)
     DepthwiseConv2dBackpropInputGPUKernelNHWC(const DepthwiseArgs args,
                                               const T* out_backprop,
                                               const T* filter, T* in_backprop,
@@ -867,7 +868,7 @@ __global__ void __launch_bounds__(640, 2)
 
 template <typename T, int kKnownFilterWidth, int kKnownFilterHeight,
           int kKnownDepthMultiplier>
-__global__ void __launch_bounds__(640, 2)
+__global__ void __launch_bounds__(1024, 2)
     DepthwiseConv2dBackpropInputGPUKernelNCHW(const DepthwiseArgs args,
                                               const T* out_backprop,
                                               const T* filter, T* in_backprop,
@@ -1018,12 +1019,20 @@ void LaunchDepthwiseConvBackpropInputOp<GpuDevice, T>::operator()(
 // is non-trivial as the partial sums are added directly to the output
 template <typename T, int kKnownFilterWidth, int kKnownFilterHeight,
           int kKnownDepthMultiplier>
-__global__ void __launch_bounds__(640, 2)
+/* original tf1.5 	  
+__global__ void __launch_bounds__(1024, 2)
     DepthwiseConv2dBackpropFilterGPUKernelNHWC(const DepthwiseArgs args,
                                                const T* out_backprop,
                                                const T* input,
                                                T* filter_backprop,
                                                int num_out_backprop) {
+*/
+// backport from tf2.x	  
+__global__ void __launch_bounds__(640, 2)
+    DepthwiseConv2dBackpropFilterGPUKernelNHWC(
+        const DepthwiseArgs args, const T* __restrict__ out_backprop,
+        const T* __restrict__ input, T* __restrict__ filter_backprop,
+        int num_out_backprop) {	  
   const int in_height = args.in_rows;
   const int in_width = args.in_cols;
   const int in_depth = args.in_depth;
@@ -1301,9 +1310,10 @@ __launch_bounds__(1024, 2) void DepthwiseConv2dBackpropFilterGPUKernelNHWCSmall(
 }
 
 // A GPU kernel to compute the depthwise convolution backprop w.r.t. filter.
+/*   original TF1.5 kernel
 template <typename T, int kKnownFilterWidth, int kKnownFilterHeight,
           int kKnownDepthMultiplier>
-__global__ void __launch_bounds__(640, 2)
+__global__ void __launch_bounds__(1024, 2)
     DepthwiseConv2dBackpropFilterGPUKernelNCHW(const DepthwiseArgs args,
                                                const T* out_backprop,
                                                const T* input,
@@ -1406,6 +1416,78 @@ __global__ void __launch_bounds__(640, 2)
         }
       }
     }
+  }
+}
+*/
+//backport  kernel from TF2.x
+template <typename T>
+__global__ void __launch_bounds__(512, 2)
+    DepthwiseConv2dBackpropFilterGPUKernelNCHW(
+        const DepthwiseArgs args, const T* __restrict__ out_backprop,
+        const T* __restrict__ input, T* __restrict__ filter_backprop) {
+  const int batch_num = args.batch;
+  const int in_depth = args.in_depth;
+  const int in_height = args.in_rows;
+  const int in_width = args.in_cols;
+  const int filter_width = args.filter_cols;
+  const int stride_height = args.stride;
+  const int stride_width = args.stride;
+  const int pad_height = args.pad_rows;
+  const int pad_width = args.pad_cols;
+  const int out_depth = args.out_depth;
+  const int out_height = args.out_rows;
+//  const FastDividerUint32
+  const int   out_width = args.out_cols;
+//  const FastDividerUint32
+  const int depth_multiplier = args.depth_multiplier;
+  assert(gridDim.x == filter_width);
+  assert(gridDim.z == out_depth);
+
+  typedef gpuprim::WarpReduce<T> WarpReduce;
+  typename WarpReduce::TempStorage temp_storage;
+
+  const int filter_w = blockIdx.x;
+  const int filter_h = blockIdx.y;
+  const int out_c = blockIdx.z;
+
+  const int in_c = out_c / depth_multiplier;
+  const int dm = out_c % depth_multiplier;
+  const int filter_backprop_offset =
+      (((filter_h * filter_width) + filter_w) * in_depth + in_c) *
+          depth_multiplier +
+      dm;
+  const int out_spatial_size = out_height * out_width;
+
+  T partial_sum = static_cast<T>(0.f);
+  for (int batch = 0; batch < batch_num; batch++) {
+    const int input_offset_temp = (batch * in_depth + in_c) * in_height;
+    const int output_backprop_offset_temp =
+        (batch * out_depth + out_c) * out_height;
+    for (int i = threadIdx.x; i < out_spatial_size; i += blockDim.x) {
+      const int out_col = i % out_width;
+      const int out_row = i / out_width;
+      // We use the formula: `(in_row - filter_w + pad_left ) / stride =
+      // out_row` to compute corresponding in_row and out_row positions. Similar
+      // for in_col and out_col.
+      const int in_row = out_row * stride_height + filter_h - pad_height;
+      const int in_col = out_col * stride_width + filter_w - pad_width;
+
+      if (in_row < 0 || in_col < 0 || in_row >= in_height ||
+          in_col >= in_width) {
+        continue;
+      }
+
+      int input_offset = (input_offset_temp + in_row) * in_width + in_col;
+      int output_backprop_offset =
+          (output_backprop_offset_temp + out_row) * out_width + out_col;
+      partial_sum += out_backprop[output_backprop_offset] * input[input_offset];
+    }
+  }
+
+  T val = WarpReduce(temp_storage).Sum(partial_sum);
+  if (gpuprim::LaneId() == 0) {
+    T* addr = filter_backprop + filter_backprop_offset;
+    GpuAtomicAdd(addr, val);
   }
 }
 
@@ -1697,6 +1779,7 @@ template <typename T, int kKnownFilterWidth, int kKnownFilterHeight,
 Status LaunchDepthwiseConv2dBackpropFilterGPU(
     OpKernelContext* ctx, const DepthwiseArgs& args, const T* out_backprop,
     const T* input, T* filter_backprop, TensorFormat data_format) {
+/*	original tf1.5 
   void (*kernel)(const DepthwiseArgs, const T*, const T*, T*, int);
   switch (data_format) {
     case FORMAT_NHWC:
@@ -1719,6 +1802,32 @@ Status LaunchDepthwiseConv2dBackpropFilterGPU(
   TF_CHECK_OK(GpuLaunchKernel(
       kernel, config.block_count, config.thread_per_block, 0, device.stream(),
       args, out_backprop, input, filter_backprop, num_out_backprop));
+*/
+//backport from tf2.x	
+  auto device = ctx->eigen_gpu_device();
+  const int num_out_backprop =
+      args.batch * args.out_rows * args.out_cols * args.out_depth;
+  if (data_format == FORMAT_NHWC) {
+    auto kernel = DepthwiseConv2dBackpropFilterGPUKernelNHWC<
+        T, kKnownFilterWidth, kKnownFilterHeight, kKnownDepthMultiplier>;
+
+    int launch_bounds_value = 640;
+    GpuLaunchConfig config = GetGpuLaunchConfig(num_out_backprop, device,
+                                                kernel, 0, launch_bounds_value);
+    TF_CHECK_OK(GpuLaunchKernel(
+        kernel, config.block_count, config.thread_per_block, 0, device.stream(),
+        args, out_backprop, input, filter_backprop, num_out_backprop));
+  } else if (data_format == FORMAT_NCHW) {
+    auto kernel = DepthwiseConv2dBackpropFilterGPUKernelNCHW<T>;
+    dim3 blocks = dim3(args.filter_cols, args.filter_rows, args.out_depth);
+    dim3 threads = dim3(512, 1, 1);
+
+    TF_CHECK_OK(GpuLaunchKernel(kernel, blocks, threads, 0, device.stream(),
+                                args, out_backprop, input, filter_backprop));
+  } else {
+    return errors::InvalidArgument("FORMAT_", ToString(data_format),
+                                   " is not supported");
+  }  	
   return Status::OK();
 }
 

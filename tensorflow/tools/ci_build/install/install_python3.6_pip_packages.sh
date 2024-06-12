@@ -41,13 +41,16 @@ apt-get install libsqlite3-dev
 set -e
 
 # Install Python 3.6 and dev library
-wget https://www.python.org/ftp/python/3.6.1/Python-3.6.1.tar.xz
-tar xvf Python-3.6.1.tar.xz
-cd Python-3.6.1
+wget https://www.python.org/ftp/python/3.6.8/Python-3.6.8.tar.xz
+tar xvf Python-3.6.8.tar.xz
+cd Python-3.6.8
 
 ./configure
 make altinstall
-ln -s /usr/local/bin/pip3.6 /usr/local/bin/pip3
+
+# /usr/local/bin/pip3 may already exist
+rm /usr/local/bin/pip3 || true
+ln -s /usr/local/bin/pip3.6 /usr/local/bin/pip3 || true
 
 pip3 install --upgrade pip
 
@@ -61,7 +64,7 @@ set -e
 
 # Install six.
 pip3 install --upgrade absl-py
-pip3 install --upgrade six==1.10.0
+pip3 install six==1.12.0
 
 # Install protobuf.
 pip3 install --upgrade protobuf==3.6.1
@@ -74,7 +77,8 @@ rm -rf /usr/lib/python3/dist-packages/six*
 # numpy needs to be installed from source to fix segfaults. See:
 # https://github.com/tensorflow/tensorflow/issues/6968
 # This workaround isn't needed for Ubuntu 16.04 or later.
-pip3 install --no-binary=:all: --upgrade numpy==1.14.5
+#pip3 install --no-binary=:all: --upgrade numpy==1.14.5
+pip3 install numpy==1.18.5
 
 pip3 install scipy==0.18.1
 
@@ -98,7 +102,7 @@ pip3 install grpcio
 
 # Eager-to-graph execution needs astor, gast and termcolor:
 pip3 install --upgrade astor
-pip3 install --upgrade gast
+pip3 install --upgrade gast==0.2.2
 pip3 install --upgrade termcolor
 
 pip3 install --upgrade h5py==2.8.0

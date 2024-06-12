@@ -1268,11 +1268,11 @@ def _impl(ctx):
     )
 
     cpp11_feature = feature(
-        name = "c++11",
+        name = "c++14",
         flag_sets = [
             flag_set(
                 actions = [ACTION_NAMES.cpp_compile],
-                flag_groups = [flag_group(flags = ["-std=c++11"])],
+                flag_groups = [flag_group(flags = ["-std=c++14"])],
             ),
         ],
     )
@@ -1282,7 +1282,7 @@ def _impl(ctx):
             name = "common",
             implies = [
                 "stdlib",
-                "c++11",
+                "c++14",
                 "determinism",
                 "alwayslink",
                 "hardening",
@@ -1298,7 +1298,7 @@ def _impl(ctx):
             name = "common",
             implies = [
                 "stdlib",
-                "c++11",
+                "c++14",
                 "determinism",
                 "hardening",
                 "warnings",

@@ -364,15 +364,11 @@ class NcclManagerTest : public ::testing::Test {
               device->executor(), stream, info, input,
               output, global_rank, this->CreateDoneCallback(test_case.get()));
           if (global_rank == src_global_rank) {
-            VLOG(1) << "AddBroadcastSend node " << node << " global_rank "
-                    << global_rank;
             node_states[node].nccl_manager.AddBroadcastSend(
                 std::move(participant),
                 {collective_key, num_ranks_per_node, num_global_ranks,
                  communicator_key, src_global_rank});
           } else {
-            VLOG(1) << "AddBroadcastRecv node " << node << " global_rank "
-                    << global_rank;
             node_states[node].nccl_manager.AddBroadcastRecv(
                 std::move(participant),
                 {collective_key, num_ranks_per_node, num_global_ranks,

@@ -25,6 +25,7 @@ limitations under the License.
 
 #if TENSORFLOW_USE_ROCM
 #include "rocm/include/hip/hip_runtime.h"
+#include "absl/strings/str_split.h"
 #endif
 
 #ifdef TENSORFLOW_USE_LIBXSMM
@@ -141,8 +142,13 @@ DeviceProperties GetLocalGPUInfo(PlatformGpuId platform_gpu_id) {
   device.set_bandwidth(properties.memoryBusWidth / 8 *
                        properties.memoryClockRate * 2);
 
-  (*device.mutable_environment())["architecture"] =
-      strings::StrCat("gfx", properties.gcnArch);
+  std::string gcnFullName = properties.gcnArchName;
+  std::vector<std::string> tokens = absl::StrSplit(gcnFullName, ':');
+  std::string gcnName = gcnFullName;
+  if (!tokens.empty() && tokens[0].size() >= 3) {
+      gcnName = tokens[0];
+  }
+  (*device.mutable_environment())["architecture"] = gcnName;
 #endif
 
   return device;

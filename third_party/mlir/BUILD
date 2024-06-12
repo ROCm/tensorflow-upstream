@@ -1053,6 +1053,23 @@ cc_library(
 )
 
 cc_library(
+    name = "ControlFlowToCFG",
+    srcs = [
+        "lib/Conversion/ControlFlowToCFG/ConvertControlFlowToCFG.cpp",
+    ],
+    hdrs = [
+        "include/mlir/Conversion/ControlFlowToCFG/ConvertControlFlowToCFG.h",
+    ],
+    includes = ["include"],
+    deps = [
+        ":IR",
+        ":LLVMDialect",
+        ":StandardOps",
+        "@llvm//:support",
+    ],
+)
+
+cc_library(
     name = "LoopsToGPUPass",
     srcs = [
         "lib/Conversion/LoopsToGPU/LoopsToGPUPass.cpp",

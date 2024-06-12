@@ -25,6 +25,10 @@ limitations under the License.
 #include "tensorflow/core/kernels/eigen_contraction_kernel.h"
 #endif
 
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#include "tensorflow/core/platform/stream_executor.h"
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
 namespace tensorflow {
 class OpKernelContext;
 namespace functor {
@@ -33,7 +37,8 @@ template <typename T>
 struct TensorCuBlasGemm {
   void operator()(OpKernelContext* ctx, bool transa, bool transb, uint64 m,
                   uint64 n, uint64 k, float alpha, const T* a, int lda,
-                  const T* b, int ldb, float beta, T* c, int ldc);
+                  const T* b, int ldb, float beta, T* c, int ldc,
+                  se::blas::CallContext);
 };
 
 template <typename T>
@@ -56,14 +61,15 @@ struct TensorBlasGemm<Device, T, true /* USE_CUBLAS */> {
                       typename TTypes<T>::ConstMatrix a,
                       typename TTypes<T>::ConstMatrix b,
                       typename gemm_compute_type<T>::type beta,
-                      typename TTypes<T>::Matrix c) {
+                      typename TTypes<T>::Matrix c,
+                      se::blas::CallContext cc) {
     int64 m = c.dimensions()[0];
     int64 n = c.dimensions()[1];
     int64 k = transa ? a.dimensions()[0] : a.dimensions()[1];
 
     TensorCuBlasGemm<T>()(ctx, transb, transa, n, m, k, alpha, b.data(),
                           transb ? k : n, a.data(), transa ? m : k, beta,
-                          c.data(), n);
+                          c.data(), n, cc);
   }
 };
 
@@ -74,7 +80,8 @@ struct TensorBlasGemm<Device, T, false /* USE_CUBLAS */> {
                       typename TTypes<T>::ConstMatrix a,
                       typename TTypes<T>::ConstMatrix b,
                       typename gemm_compute_type<T>::type beta,
-                      typename TTypes<T>::Matrix c) {
+                      typename TTypes<T>::Matrix c,
+                      se::blas::CallContext cc) {
     Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1> contract_pairs;
     contract_pairs[0] =
         Eigen::IndexPair<Eigen::DenseIndex>(transa == false, transb == true);

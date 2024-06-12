@@ -1,4 +1,3 @@
-# -*- Python -*-
 """Repository rule for ROCm autoconfiguration.
 
 `rocm_configure` depends on the following environment variables:
@@ -33,7 +32,7 @@ _TF_ROCM_CONFIG_REPO = "TF_ROCM_CONFIG_REPO"
 _DEFAULT_ROCM_VERSION = ""
 _DEFAULT_MIOPEN_VERSION = ""
 _DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm"
-_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx803", "gfx900"]
+_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx90a", "gfx9040", "gfx9041", "gfx9042"]
 
 def _get_win_rocm_defines(repository_ctx):
     """Return CROSSTOOL defines for Windows"""
@@ -176,50 +175,75 @@ def _rocm_include_path(repository_ctx, rocm_config):
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/include")
 
     # Add HSA headers
-    inc_dirs.append("/opt/rocm/hsa/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hsa/include")
 
     # Add HIP headers
-    inc_dirs.append("/opt/rocm/include/hip")
-    inc_dirs.append("/opt/rocm/include/hip/hcc_detail")
-    inc_dirs.append("/opt/rocm/hip/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/include/hip")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/include/hip/hcc_detail")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hip/include")
 
     # Add HIP-Clang headers
-    inc_dirs.append("/opt/rocm/llvm/lib/clang/8.0/include")
-    inc_dirs.append("/opt/rocm/llvm/lib/clang/9.0.0/include")
-    inc_dirs.append("/opt/rocm/llvm/lib/clang/10.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/8.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/9.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/10.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/11.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/12.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/13.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/14.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/15.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/15.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/17/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/17/include")
 
     # Add rocrand and hiprand headers
-    inc_dirs.append("/opt/rocm/rocrand/include")
-    inc_dirs.append("/opt/rocm/hiprand/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/rocrand/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hiprand/include")
 
-    # Add rocfft headers
-    inc_dirs.append("/opt/rocm/rocfft/include")
+    # Add hipfft headers
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hipfft/include")
 
     # Add rocBLAS headers
-    inc_dirs.append("/opt/rocm/rocblas/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/rocblas/include")
 
     # Add MIOpen headers
-    inc_dirs.append("/opt/rocm/miopen/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/miopen/include")
 
     # Add RCCL headers
-    inc_dirs.append("/opt/rocm/rccl/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/rccl/include")
 
     # Add hcc headers
-    inc_dirs.append("/opt/rocm/hcc/include")
-    inc_dirs.append("/opt/rocm/hcc/compiler/lib/clang/7.0.0/include/")
-    inc_dirs.append("/opt/rocm/hcc/lib/clang/7.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/compiler/lib/clang/7.0.0/include/")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/lib/clang/7.0.0/include")
 
     # Newer hcc builds use/are based off of clang 8.0.0.
-    inc_dirs.append("/opt/rocm/hcc/compiler/lib/clang/8.0.0/include/")
-    inc_dirs.append("/opt/rocm/hcc/lib/clang/8.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/compiler/lib/clang/8.0.0/include/")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/lib/clang/8.0.0/include")
 
     # Support hcc based off clang 9.0.0, included in ROCm2.2
-    inc_dirs.append("/opt/rocm/hcc/compiler/lib/clang/9.0.0/include/")
-    inc_dirs.append("/opt/rocm/hcc/lib/clang/9.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/compiler/lib/clang/9.0.0/include/")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/lib/clang/9.0.0/include")
 
     # Support hcc based off clang 10.0.0, included in ROCm2.8
-    inc_dirs.append("/opt/rocm/hcc/compiler/lib/clang/10.0.0/include/")
-    inc_dirs.append("/opt/rocm/hcc/lib/clang/10.0.0/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/compiler/lib/clang/10.0.0/include/")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/lib/clang/10.0.0/include")
+
+    # Support hcc based off clang 11.0.0, included in ROCm3.3 
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/compiler/lib/clang/11.0.0/include/")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/lib/clang/11.0.0/include")
+    
+    # Support hcc based off clang 12.0.0, included in coming ROCm
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/compiler/lib/clang/12.0.0/include/")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/lib/clang/12.0.0/include")
+
+    # Support hcc based off clang 13.0.0, included in coming ROCm
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/compiler/lib/clang/13.0.0/include/")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/lib/clang/13.0.0/include")
+
+    # Support hcc based off clang 14.0.0, included in coming ROCm
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/compiler/lib/clang/14.0.0/include/")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hcc/lib/clang/14.0.0/include")
+
 
     return inc_dirs
 
@@ -281,11 +305,12 @@ def _hipcc_env(repository_ctx):
                          repository_ctx.os.environ[name].strip() + "\";")
     return hipcc_env.strip()
 
-def _hipcc_is_hipclang(repository_ctx):
+def _hipcc_is_hipclang(repository_ctx,rocm_config):
     """Returns if hipcc is based on hip-clang toolchain.
 
     Args:
         repository_ctx: The repository context.
+        rocm_config: The path to the hip compiler.
 
     Returns:
         A string "True" if hipcc is based on hip-clang toolchain.
@@ -300,7 +325,7 @@ def _hipcc_is_hipclang(repository_ctx):
     # grep for "HIP_COMPILER=clang" in /opt/rocm/hip/lib/.hipInfo
     grep_result = _execute(
         repository_ctx,
-        ["grep", "HIP_COMPILER=clang", "/opt/rocm/hip/lib/.hipInfo"],
+        ["grep", "HIP_COMPILER=clang", rocm_config.rocm_toolkit_path + "/lib/.hipInfo"],
         empty_stdout_fine = True,
     )
     result = grep_result.stdout.strip()
@@ -308,13 +333,14 @@ def _hipcc_is_hipclang(repository_ctx):
         return "True"
     return "False"
 
-def _if_hipcc_is_hipclang(repository_ctx, if_true, if_false = []):
+def _if_hipcc_is_hipclang(repository_ctx, rocm_config, if_true, if_false = []):
     """
     Returns either the if_true or if_false arg based on whether hipcc
     is based on the hip-clang toolchain
 
     Args :
         repository_ctx: The repository context.
+        rocm_config: The path to the hip compiler.
         if_true : value to return if hipcc is hip-clang based
         if_false : value to return if hipcc is not hip-clang based
                    (optional, defaults to empty list)
@@ -322,7 +348,7 @@ def _if_hipcc_is_hipclang(repository_ctx, if_true, if_false = []):
     Returns :
         either the if_true arg or the of_False arg
     """
-    if _hipcc_is_hipclang(repository_ctx) == "True":
+    if _hipcc_is_hipclang(repository_ctx,rocm_config) == "True":
         return if_true
     return if_false
 
@@ -446,7 +472,7 @@ def _find_libs(repository_ctx, rocm_config):
     cpu_value = rocm_config.cpu_value
     return {
         "hip": _find_rocm_lib(
-            "hip_hcc",
+            "amdhip64",
             repository_ctx,
             cpu_value,
             rocm_config.rocm_toolkit_path,
@@ -455,31 +481,31 @@ def _find_libs(repository_ctx, rocm_config):
             "rocblas",
             repository_ctx,
             cpu_value,
-            rocm_config.rocm_toolkit_path + "/rocblas",
+            rocm_config.rocm_toolkit_path,
         ),
-        "rocfft": _find_rocm_lib(
-            "rocfft",
+        "hipfft": _find_rocm_lib(
+            "hipfft",
             repository_ctx,
             cpu_value,
-            rocm_config.rocm_toolkit_path + "/rocfft",
+            rocm_config.rocm_toolkit_path,
         ),
         "hiprand": _find_rocm_lib(
             "hiprand",
             repository_ctx,
             cpu_value,
-            rocm_config.rocm_toolkit_path + "/hiprand",
+            rocm_config.rocm_toolkit_path,
         ),
         "miopen": _find_rocm_lib(
             "MIOpen",
             repository_ctx,
             cpu_value,
-            rocm_config.rocm_toolkit_path + "/miopen",
+            rocm_config.rocm_toolkit_path,
         ),
         "rccl": _find_rocm_lib(
             "rccl",
             repository_ctx,
             cpu_value,
-            rocm_config.rocm_toolkit_path + "/rccl",
+            rocm_config.rocm_toolkit_path,
         ),
     }
 
@@ -564,7 +590,7 @@ def _create_dummy_repository(repository_ctx):
             "%{rocblas_lib}": _lib_name("rocblas", cpu_value),
             "%{miopen_lib}": _lib_name("miopen", cpu_value),
             "%{rccl_lib}": _lib_name("rccl", cpu_value),
-            "%{rocfft_lib}": _lib_name("rocfft", cpu_value),
+            "%{hipfft_lib}": _lib_name("hipfft", cpu_value),
             "%{hiprand_lib}": _lib_name("hiprand", cpu_value),
             "%{copy_rules}": "",
             "%{rocm_headers}": "",
@@ -687,31 +713,37 @@ def _create_local_rocm_repository(repository_ctx):
             src_dir = rocm_toolkit_path + "/include",
             out_dir = "rocm/include",
         ),
-        make_copy_dir_rule(
-            repository_ctx,
-            name = "rocfft-include",
-            src_dir = rocm_toolkit_path + "/rocfft/include",
-            out_dir = "rocm/include/rocfft",
-        ),
-        make_copy_dir_rule(
-            repository_ctx,
-            name = "rocblas-include",
-            src_dir = rocm_toolkit_path + "/rocblas/include",
-            out_dir = "rocm/include/rocblas",
-        ),
-        make_copy_dir_rule(
-            repository_ctx,
-            name = "miopen-include",
-            src_dir = rocm_toolkit_path + "/miopen/include",
-            out_dir = "rocm/include/miopen",
-        ),
-        make_copy_dir_rule(
-            repository_ctx,
-            name = "rccl-include",
-            src_dir = rocm_toolkit_path + "/rccl/include",
-            out_dir = "rocm/include/rccl",
-        ),
     ]
+
+    # explicitly copy (into the local_config_rocm repo) the $ROCM_PATH/hiprand/include and
+    # $ROCM_PATH/rocrand/include dirs, only once the softlink to them in $ROCM_PATH/include
+    # dir has been removed. This removal will happen in a near-future ROCm release.
+    hiprand_include = ""
+    hiprand_include_softlink = repository_ctx.path(rocm_config.rocm_toolkit_path + "/include/hiprand")
+    if not hiprand_include_softlink.exists:
+        hiprand_include = '":hiprand-include",\n'
+        copy_rules.append(
+            make_copy_dir_rule(
+                repository_ctx,
+                name = "hiprand-include",
+                src_dir = rocm_toolkit_path + "/hiprand/include",
+                out_dir = "rocm/include/hiprand",
+            )
+        )
+
+    rocrand_include = ""
+    rocrand_include_softlink = repository_ctx.path(rocm_config.rocm_toolkit_path + "/include/rocrand")
+    if not rocrand_include_softlink.exists:
+        rocrand_include = '":rocrand-include",\n'
+        copy_rules.append(
+            make_copy_dir_rule(
+                repository_ctx,
+                name = "rocrand-include",
+                src_dir = rocm_toolkit_path + "/rocrand/include",
+                out_dir = "rocm/include/rocrand",
+            )
+        )
+
 
     rocm_libs = _find_libs(repository_ctx, rocm_config)
     rocm_lib_srcs = []
@@ -744,16 +776,14 @@ def _create_local_rocm_repository(repository_ctx):
         {
             "%{hip_lib}": rocm_libs["hip"].file_name,
             "%{rocblas_lib}": rocm_libs["rocblas"].file_name,
-            "%{rocfft_lib}": rocm_libs["rocfft"].file_name,
+            "%{hipfft_lib}": rocm_libs["hipfft"].file_name,
             "%{hiprand_lib}": rocm_libs["hiprand"].file_name,
             "%{miopen_lib}": rocm_libs["miopen"].file_name,
             "%{rccl_lib}": rocm_libs["rccl"].file_name,
             "%{copy_rules}": "\n".join(copy_rules),
             "%{rocm_headers}": ('":rocm-include",\n' +
-                                '":rocfft-include",\n' +
-                                '":rocblas-include",\n' +
-                                '":miopen-include",\n' +
-                                '":rccl-include",'),
+                                hiprand_include +
+                                rocrand_include),
         },
     )
 
@@ -770,7 +800,7 @@ def _create_local_rocm_repository(repository_ctx):
 
     rocm_defines["%{host_compiler_prefix}"] = host_compiler_prefix
 
-    rocm_defines["%{linker_bin_path}"] = "/opt/rocm/hcc/compiler/bin"
+    rocm_defines["%{linker_bin_path}"] = rocm_config.rocm_toolkit_path + "/hcc/compiler/bin"
 
     # For gcc, do not canonicalize system header paths; some versions of gcc
     # pick the shortest possible path for system includes when creating the
@@ -781,9 +811,9 @@ def _create_local_rocm_repository(repository_ctx):
 
     rocm_defines["%{unfiltered_compile_flags}"] = to_list_of_strings([
         "-DTENSORFLOW_USE_ROCM=1",
-        "-D__HIP_PLATFORM_HCC__",
+        "-D__HIP_PLATFORM_AMD__",
         "-DEIGEN_USE_HIP",
-    ] + _if_hipcc_is_hipclang(repository_ctx, [
+    ] + _if_hipcc_is_hipclang(repository_ctx, rocm_config, [
         #
         # define "TENSORFLOW_COMPILER_IS_HIP_CLANG" when we are using clang
         # based hipcc to compile/build tensorflow
@@ -833,15 +863,13 @@ def _create_local_rocm_repository(repository_ctx):
         "crosstool:clang/bin/crosstool_wrapper_driver_rocm",
         {
             "%{cpu_compiler}": str(cc),
-            "%{hipcc_path}": "/opt/rocm/bin/hipcc",
+            "%{hipcc_path}": rocm_config.rocm_toolkit_path + "/bin/hipcc",
             "%{hipcc_env}": _hipcc_env(repository_ctx),
-            "%{hipcc_is_hipclang}": _hipcc_is_hipclang(repository_ctx),
-            "%{rocr_runtime_path}": "/opt/rocm/lib",
+            "%{hipcc_is_hipclang}": _hipcc_is_hipclang(repository_ctx,rocm_config),
+            "%{rocr_runtime_path}": rocm_config.rocm_toolkit_path + "/lib",
             "%{rocr_runtime_library}": "hsa-runtime64",
-            "%{hip_runtime_path}": "/opt/rocm/hip/lib",
-            "%{hip_runtime_library}": "hip_hcc",
-            "%{hcc_runtime_path}": "/opt/rocm/hcc/lib",
-            "%{hcc_runtime_library}": "mcwamp",
+            "%{hip_runtime_path}": rocm_config.rocm_toolkit_path + "/hip/lib",
+            "%{hip_runtime_library}": "amdhip64",
             "%{crosstool_verbose}": _crosstool_verbose(repository_ctx),
             "%{gcc_host_compiler_path}": str(cc),
             "%{rocm_amdgpu_targets}": ",".join(

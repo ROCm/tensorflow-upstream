@@ -68,6 +68,7 @@ class AutoMixedPrecisionLists {
           "CudnnRNN", "CudnnRNNBackprop", "CudnnRNNBackpropV2",
           "CudnnRNNBackpropV3", "CudnnRNNV2", "CudnnRNNV3", "GRUBlockCell",
           "GRUBlockCellGrad", "LSTMBlockCell", "LSTMBlockCellGrad",
+          "Dropout", "DropoutGrad",
           // TODO(benbarsdell): Enable these when fast and safe fp16 kernels are
           // available for depthwise convolutions.
           // "DepthwiseConv2dNative",
@@ -75,8 +76,12 @@ class AutoMixedPrecisionLists {
           // "DepthwiseConv2dNativeBackpropInput",
           "MatMul",
     };
+#if TENSORFLOW_USE_ROCM
+    if (true) {
+#else
     if (cuda_version >= 9010) {
       // Fp16 BatchMatMul is slow before CUDA 9.1.
+#endif
       list.insert("BatchMatMul");
       list.insert("BatchMatMulV2");
     }

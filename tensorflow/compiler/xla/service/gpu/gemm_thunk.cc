@@ -115,16 +115,18 @@ static bool DoGemmWithAlgorithm(
     // Autotuning is disabled for batch_size != 1.
     CHECK_EQ(1, batch_size);
     return stream
-        ->ThenBlasGemmWithAlgorithm(
+        ->ThenBlasGemm(
+          se::blas::GemmCallContext<Element>{
             lhs_transpose, rhs_transpose, output_matrix.num_rows,
             output_matrix.num_cols,
             /*size of reduce dim=*/k,
-            /*alpha=*/static_cast<Element>(alpha), lhs_data,
-            /*leading dim of LHS=*/lhs_matrix.num_rows, rhs_data,
-            /*leading dim of RHS=*/rhs_matrix.num_rows,
-            /*beta=*/static_cast<Element>(beta), &output_data,
-            /*leading dim of output=*/output_matrix.num_rows, computation_type,
-            *algorithm, output_profile_result)
+            /*alpha=*/alpha,
+            /*beta=*/beta,
+            &lhs_data,/*leading dim of LHS=*/lhs_matrix.num_rows, 
+            &rhs_data,/*leading dim of RHS=*/rhs_matrix.num_rows,
+            &output_data, /*leading dim of output=*/output_matrix.num_rows, 
+            se::blas::CallContext::kNone, -1, -1, -1, 1, 
+            computation_type, output_profile_result, *algorithm})
         .ok();
   }
 
@@ -133,25 +135,33 @@ static bool DoGemmWithAlgorithm(
     int64 rhs_stride = rhs_matrix.num_rows * rhs_matrix.num_cols;
     int64 output_stride = output_matrix.num_rows * output_matrix.num_cols;
     return stream
-        ->ThenBlasGemmStridedBatched(
+        ->ThenBlasGemm(
+          se::blas::GemmCallContext<Element>{
             lhs_transpose, rhs_transpose, output_matrix.num_rows,
-            output_matrix.num_cols, /*size of reduce dim=*/k,
-            /*alpha=*/alpha, lhs_data,
-            /*leading dim of LHS=*/lhs_matrix.num_rows, lhs_stride, rhs_data,
-            /*leading dim of RHS=*/rhs_matrix.num_rows, rhs_stride,
-            /*beta=*/beta, &output_data,
-            /*leading dim of output=*/output_matrix.num_rows, output_stride,
-            batch_size)
+            output_matrix.num_cols,
+            /*size of reduce dim=*/k,
+            /*alpha=*/alpha,
+            /*beta=*/beta,
+            &lhs_data,/*leading dim of LHS=*/lhs_matrix.num_rows, 
+            &rhs_data,/*leading dim of RHS=*/rhs_matrix.num_rows,
+            &output_data, /*leading dim of output=*/output_matrix.num_rows, 
+            se::blas::CallContext::kNone, lhs_stride, rhs_stride, output_stride, batch_size, 
+            computation_type})
         .ok();
   }
 
   return stream
       ->ThenBlasGemm(
-          lhs_transpose, rhs_transpose, output_matrix.num_rows,
-          output_matrix.num_cols, /*size of reduce dim=*/k, /*alpha=*/alpha,
-          lhs_data, /*leading dim of LHS=*/lhs_matrix.num_rows, rhs_data,
-          /*leading dim of RHS=*/rhs_matrix.num_rows, /*beta=*/beta,
-          &output_data, /*leading dim of output=*/output_matrix.num_rows)
+          se::blas::GemmCallContext<Element>{
+            lhs_transpose, rhs_transpose, output_matrix.num_rows,
+            output_matrix.num_cols,
+            /*size of reduce dim=*/k,
+            /*alpha=*/alpha,
+            /*beta=*/beta,
+            &lhs_data,/*leading dim of LHS=*/lhs_matrix.num_rows, 
+            &rhs_data,/*leading dim of RHS=*/rhs_matrix.num_rows,
+            &output_data, /*leading dim of output=*/output_matrix.num_rows
+            })
       .ok();
 }
 
@@ -182,6 +192,13 @@ Status RunGemm(const HloInstruction *gemm,
   int64 col_dim = dim_nums.lhs_batch_dimensions_size() + 1;
 
   int64 batch_size = backend_config.batch_size();
+  se::blas::CallContext call_context = se::blas::CallContext::kNone;
+  if (backend_config.grad_x()) {
+    call_context = se::blas::CallContext::kBackpropInput1;
+  }
+  if (backend_config.grad_y()) {
+    call_context = se::blas::CallContext::kBackpropInput2;
+  }
 
   // Check that the batch dims don't cover the last two dims.
   for (int64 batch_dim : dim_nums.lhs_batch_dimensions()) {

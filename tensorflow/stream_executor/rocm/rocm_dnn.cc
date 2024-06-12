@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "third_party/eigen3/Eigen/Core"
 #include "rocm/include/miopen/miopen.h"
+#include "rocm/rocm_config.h"
 #include "tensorflow/core/lib/hash/hash.h"
 #include "tensorflow/stream_executor/dnn.h"
 #include "tensorflow/stream_executor/gpu/gpu_activation.h"
@@ -249,6 +250,12 @@ namespace wrap {
 // clang-format on
 
 MIOPEN_DNN_ROUTINE_EACH(STREAM_EXECUTOR_MIOPEN_WRAP)
+
+#if TF_ROCM_VERSION >= 50000
+
+STREAM_EXECUTOR_MIOPEN_WRAP(miopenSetConvolutionAttribute)
+
+#endif
 
 #undef MIOPEN_DNN_ROUTINE_EACH
 
@@ -1539,6 +1546,8 @@ miopenDataType_t ToMIOpenDataType(
   switch (data_type) {
     case dnn::DataType::kFloat:
       return miopenFloat;
+    case dnn::DataType::kBFloat16:
+      return miopenBFloat16;
     case dnn::DataType::kHalf:
       return miopenHalf;
     case dnn::DataType::kDouble:
@@ -1597,6 +1606,8 @@ int MIOpenDataTypeToByteSize(miopenDataType_t data_type) {
       return sizeof(float);
     case miopenHalf:
       return sizeof(Eigen::half);
+    case dnn::DataType::kBFloat16:
+      return sizeof(tensorflow::bfloat16);
     default:
       LOG(FATAL) << "Invalid DNN data type: " << static_cast<int>(data_type);
   }
@@ -1613,6 +1624,7 @@ dnn::DataType GetConvAccumulatorType(dnn::DataType data_type) {
     case dnn::DataType::kDouble:
       return data_type;
     case dnn::DataType::kHalf:
+    case dnn::DataType::kBFloat16:
       // FIXME: Check if MIOpen can switch dynamically change accumulator type
       return dnn::DataType::kFloat;
     case dnn::DataType::kInt8:
@@ -2873,6 +2885,7 @@ port::Status MIOpenSupport::DoConvolve(
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::AlgorithmDesc algorithm_desc, DeviceMemory<uint8> scratch_memory,
+    dnn::CallContext call_context,
     dnn::ProfileResult* output_profile_result) {
   auto miopen = miopen_->GetHandle(parent_, stream);
   ScopedTensorDescriptor input_nd{input_descriptor,
@@ -2907,6 +2920,19 @@ port::Status MIOpenSupport::DoConvolve(
   }
 
   miopenStatus_t status = miopenStatusSuccess;
+
+  bool is_backprop = (call_context == dnn::CallContext::kBackpropData) ||
+                     (call_context == dnn::CallContext::kBackpropFilter);
+
+  bool hasXDLOPS = false, gfx90a = false;
+  GpuDriver::GetMFMASupport(hasXDLOPS, gfx90a);
+
+#if TF_ROCM_VERSION >= 50000
+  if (is_backprop && (ToMIOpenDataType(element_type) == miopenHalf) && gfx90a) {
+    wrap::miopenSetConvolutionAttribute(
+        conv.handle(), MIOPEN_CONVOLUTION_ATTRIB_FP16_ALT_IMPL, 1);
+  }
+#endif
   switch (kind) {
     case dnn::ConvolutionKind::FORWARD: {
       status = wrap::miopenConvolutionForward(
@@ -3408,9 +3434,10 @@ bool MIOpenSupport::DoMatMul(Stream* stream,
     const int64 m = output_dimensions.NodesAcrossFeatureMaps();
     const int64 n = input_dimensions.count();
     const int64 k = input_dimensions.NodesAcrossFeatureMaps();
-    stream->ThenBlasGemm(blas::Transpose::kNoTranspose,
-                         blas::Transpose::kNoTranspose, m, n, k, alpha, weights,
-                         m, input_data, k, beta, output_data, m);
+    stream->ThenBlasGemm(blas::GemmCallContext<float>{blas::Transpose::kNoTranspose,
+      blas::Transpose::kNoTranspose, m, n, k, 
+      alpha, beta, &weights, m, &input_data, k, output_data, m,
+      blas::CallContext::kNone}); // TODO: should callcontext be passed through?
   } else {
     // This is a slower and more complex path that supports output
     // width() * height() > 1, though it only supports the
@@ -3487,10 +3514,11 @@ bool MIOpenSupport::DoMatMul(Stream* stream,
       return ptrs;
     };
 
-    stream->ThenBlasGemmBatched(blas::Transpose::kNoTranspose,
-                                blas::Transpose::kNoTranspose, m, n, k, alpha,
-                                toPtrs(a), lda, toPtrs(b), ldb, beta, toPtrs(c),
-                                ldc, batch_count);
+    port::ArraySlice<DeviceMemory<float>*> aa = toPtrs(a), bb = toPtrs(b), cc = toPtrs(c);
+    stream->ThenBlasGemmBatched(blas::BatchedGemmCallContext<float>{blas::Transpose::kNoTranspose,
+                                blas::Transpose::kNoTranspose, m, n, k, alpha, beta,
+                                &aa, lda, &bb, ldb, &cc,
+                                ldc, batch_count, blas::CallContext::kNone}); // TODO: call context must be passed through
   }
 
   return stream->ok();

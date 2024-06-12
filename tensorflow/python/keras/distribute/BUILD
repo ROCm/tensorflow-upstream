@@ -172,7 +172,7 @@ py_library(
 
 distribute_py_test(
     name = "keras_dnn_correctness_test",
-    size = "medium",
+    size = "large",
     srcs = ["keras_dnn_correctness_test.py"],
     full_precision = True,
     main = "keras_dnn_correctness_test.py",
@@ -181,7 +181,6 @@ distribute_py_test(
     shard_count = 19,
     tags = [
         "multi_and_single_gpu",
-        "no_rocm",  # times out on ROCm
         "no_windows_gpu",
         "notsan",
     ],
@@ -192,14 +191,13 @@ distribute_py_test(
 
 distribute_py_test(
     name = "keras_embedding_model_correctness_test",
-    size = "medium",
+    size = "large",
     srcs = ["keras_embedding_model_correctness_test.py"],
     full_precision = True,
     main = "keras_embedding_model_correctness_test.py",
     shard_count = 4,
     tags = [
         "multi_and_single_gpu",
-        "no_rocm",  # times out on ROCm
         "no_windows_gpu",
         "notsan",
     ],
@@ -210,14 +208,13 @@ distribute_py_test(
 
 distribute_py_test(
     name = "keras_image_model_correctness_test",
-    size = "medium",
+    size = "large",
     srcs = ["keras_image_model_correctness_test.py"],
     full_precision = True,
     main = "keras_image_model_correctness_test.py",
     shard_count = 8,
     tags = [
         "multi_and_single_gpu",
-        "no_rocm",  # times out on ROCm
         "no_windows_gpu",
         "notsan",
     ],
@@ -273,6 +270,7 @@ distribute_py_test(
     shard_count = 4,
     tags = [
         "multi_and_single_gpu",
+        "no_rocm_v2",
         "no_windows_gpu",
         "notsan",
     ],

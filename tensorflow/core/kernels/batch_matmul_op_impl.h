@@ -206,7 +206,8 @@ template <typename Scalar>
 struct LaunchBatchMatMul<CPUDevice, Scalar> {
   static void Launch(OpKernelContext* context, const Tensor& in_x,
                      const Tensor& in_y, bool adj_x, bool adj_y,
-                     const MatMulBCast& bcast, Tensor* out) {
+                     const MatMulBCast& bcast, Tensor* out,
+                     se::blas::CallContext call_context) {
     typedef ParallelMatMulKernel<Scalar, Eigen::NumTraits<Scalar>::IsComplex>
         ParallelMatMulKernel;
     bool conjugate_result = false;
@@ -296,7 +297,10 @@ template <typename Scalar>
 struct LaunchBatchMatMul<GPUDevice, Scalar> {
   static void Launch(OpKernelContext* context, const Tensor& in_x,
                      const Tensor& in_y, bool adj_x, bool adj_y,
-                     const MatMulBCast& bcast, Tensor* out) {
+                     const MatMulBCast& bcast, Tensor* out, 
+                     se::blas::CallContext call_context,
+                     float alpha = 1.0,
+                     float beta = 0.0) {
     constexpr se::blas::Transpose kTranspose =
         is_complex<Scalar>::value ? se::blas::Transpose::kConjugateTranspose
                                   : se::blas::Transpose::kTranspose;
@@ -357,6 +361,11 @@ struct LaunchBatchMatMul<GPUDevice, Scalar> {
 
     typedef Scalar Coefficient;
 
+    if(call_context == se::blas::CallContext::kBackpropInput1)
+      call_context = se::blas::CallContext::kBackpropInput2;
+    else if(call_context == se::blas::CallContext::kBackpropInput2)
+      call_context = se::blas::CallContext::kBackpropInput1;
+
     // Blas does
     // C = A x B
     // where A, B and C are assumed to be in column major.
@@ -380,9 +389,9 @@ struct LaunchBatchMatMul<GPUDevice, Scalar> {
         bool blas_launch_status =
             stream
                 ->ThenBlasGemv(gemv_trans_a, adj_x ? m : k, adj_x ? k : m,
-                               static_cast<Coefficient>(1.0), *(a_ptrs[0]),
+                               static_cast<Coefficient>(alpha), *(a_ptrs[0]),
                                adj_x ? m : k, *(b_ptrs[0]), 1,
-                               static_cast<Coefficient>(0.0), c_ptrs[0], 1)
+                               static_cast<Coefficient>(beta), c_ptrs[0], 1)
                 .ok();
         if (!blas_launch_status) {
           context->SetStatus(errors::Internal(
@@ -391,13 +400,12 @@ struct LaunchBatchMatMul<GPUDevice, Scalar> {
               ", k=", k));
         }
       } else {
-        bool blas_launch_status =
-            stream
-                ->ThenBlasGemm(blas_transpose_b, blas_transpose_a, n, m, k,
-                               static_cast<Coefficient>(1.0), *(b_ptrs[0]),
-                               adj_y ? k : n, *(a_ptrs[0]), adj_x ? m : k,
-                               static_cast<Coefficient>(0.0), c_ptrs[0], n)
-                .ok();
+        se::blas::GemmCallContext<Coefficient> ctx{blas_transpose_b, blas_transpose_a, n, m, k,
+                               static_cast<Coefficient>(alpha), static_cast<Coefficient>(beta),
+                               b_ptrs[0], adj_y ? k : n, a_ptrs[0], adj_x ? m : k,
+                                c_ptrs[0], n, call_context};
+
+        bool blas_launch_status = stream->ThenBlasGemm(ctx).ok();
         if (!blas_launch_status) {
           context->SetStatus(errors::Internal(
               "Blas xGEMM launch failed : a.shape=", in_x.shape().DebugString(),
@@ -407,14 +415,16 @@ struct LaunchBatchMatMul<GPUDevice, Scalar> {
       }
     } else {
       BlasScratchAllocator scratch_allocator(context);
-      bool blas_launch_status =
-          stream
-              ->ThenBlasGemmBatchedWithScratch(
-                  blas_transpose_b, blas_transpose_a, n, m, k,
-                  static_cast<Coefficient>(1.0), b_ptrs, adj_y ? k : n, a_ptrs,
-                  adj_x ? m : k, static_cast<Coefficient>(0.0), c_ptrs, n,
-                  batch_size, &scratch_allocator)
-              .ok();
+      se::port::ArraySlice<se::DeviceMemory<Scalar>* > a_port = a_ptrs;
+      se::port::ArraySlice<se::DeviceMemory<Scalar>* > b_port = b_ptrs;
+      se::port::ArraySlice<se::DeviceMemory<Scalar>* > c_port = c_ptrs;
+      se::blas::BatchedGemmCallContext<Coefficient> ctx{blas_transpose_b, blas_transpose_a, n, m, k,
+                  static_cast<Coefficient>(alpha), static_cast<Coefficient>(beta),
+                  &b_port, adj_y ? k : n,
+                  &a_port, adj_x ? m : k, 
+                  &c_port,
+                  n, batch_size, call_context, &scratch_allocator};
+      bool blas_launch_status = stream->ThenBlasGemmBatched(ctx).ok();
       if (!blas_launch_status) {
         context->SetStatus(errors::Internal(
             "Blas xGEMMBatched launch failed : a.shape=",
@@ -430,7 +440,10 @@ template <>
 struct LaunchBatchMatMul<GPUDevice, Eigen::half> {
   static void Launch(OpKernelContext* context, const Tensor& in_x,
                      const Tensor& in_y, bool adj_x, bool adj_y,
-                     const MatMulBCast& bcast, Tensor* out) {
+                     const MatMulBCast& bcast, Tensor* out, 
+                     se::blas::CallContext call_context,
+                     float alpha = 1.0,
+                     float beta = 0.0) {
     typedef Eigen::half Scalar;
     constexpr perftools::gputools::blas::Transpose kTranspose =
         is_complex<Scalar>::value
@@ -493,6 +506,11 @@ struct LaunchBatchMatMul<GPUDevice, Eigen::half> {
 
     typedef float Coefficient;
 
+    if(call_context == se::blas::CallContext::kBackpropInput1)
+      call_context = se::blas::CallContext::kBackpropInput2;
+    else if(call_context == se::blas::CallContext::kBackpropInput2)
+      call_context = se::blas::CallContext::kBackpropInput1;
+
     // Blas does
     // C = A x B
     // where A, B and C are assumed to be in column major.
@@ -503,13 +521,11 @@ struct LaunchBatchMatMul<GPUDevice, Eigen::half> {
       // This is a regular matrix*matrix or matrix*vector multiply. Avoid the
       // overhead of the scratch allocator and the batch interface.
       // TODO(benbarsdell): Use fp16 Gemv if it becomes supported by CUBLAS
-      bool blas_launch_status =
-          stream
-              ->ThenBlasGemm(blas_transpose_b, blas_transpose_a, n, m, k,
-                             static_cast<Coefficient>(1.0), *(b_ptrs[0]),
-                             adj_y ? k : n, *(a_ptrs[0]), adj_x ? m : k,
-                             static_cast<Coefficient>(0.0), c_ptrs[0], n)
-              .ok();
+      se::blas::GemmCallContext<Eigen::half> ctx{blas_transpose_b, blas_transpose_a, n, m, k,
+                             static_cast<Coefficient>(alpha), static_cast<Coefficient>(beta),
+                             b_ptrs[0], adj_y ? k : n, a_ptrs[0], adj_x ? m : k,
+                              c_ptrs[0], n, call_context};
+      bool blas_launch_status = stream->ThenBlasGemm(ctx).ok();
       if (!blas_launch_status) {
         context->SetStatus(errors::Internal(
             "Blas xGEMM launch failed : a.shape=", in_x.shape().DebugString(),
@@ -518,14 +534,17 @@ struct LaunchBatchMatMul<GPUDevice, Eigen::half> {
       }
     } else {
       BlasScratchAllocator scratch_allocator(context);
+      se::port::ArraySlice<se::DeviceMemory<Scalar>* > a_port = a_ptrs;
+      se::port::ArraySlice<se::DeviceMemory<Scalar>* > b_port = b_ptrs;
+      se::port::ArraySlice<se::DeviceMemory<Scalar>* > c_port = c_ptrs;
+      se::blas::BatchedGemmCallContext<Eigen::half> ctx{blas_transpose_b, blas_transpose_a, n, m, k,
+                  static_cast<Coefficient>(alpha), static_cast<Coefficient>(beta),
+                  &b_port, adj_y ? k : n,
+                  &a_port, adj_x ? m : k, 
+                  &c_port,
+                  n, batch_size, call_context, &scratch_allocator};
       bool blas_launch_status =
-          stream
-              ->ThenBlasGemmBatchedWithScratch(
-                  blas_transpose_b, blas_transpose_a, n, m, k,
-                  static_cast<Coefficient>(1.0), b_ptrs, adj_y ? k : n, a_ptrs,
-                  adj_x ? m : k, static_cast<Coefficient>(0.0), c_ptrs, n,
-                  batch_size, &scratch_allocator)
-              .ok();
+          stream->ThenBlasGemmBatched(ctx).ok();
       if (!blas_launch_status) {
         context->SetStatus(errors::Internal(
             "Blas xGEMMBatched launch failed : a.shape=",
@@ -571,7 +590,8 @@ template <typename Scalar>
 struct LaunchBatchMatMul<SYCLDevice, Scalar> {
   static void Launch(OpKernelContext* context, const Tensor& in_x,
                      const Tensor& in_y, bool adj_x, bool adj_y,
-                     const MatMulBCast& bcast, Tensor* out) {
+                     const MatMulBCast& bcast, Tensor* out,
+                     se::blas::CallContext call_context) {
     // Number of matrix multiplies i.e. size of the batch.
     const int64 batch_size = bcast.output_batch_size();
     ParallelMatMulKernelSYCL<Scalar>::Run(context, in_x, in_y, adj_x, adj_y,
@@ -587,6 +607,8 @@ class BaseBatchMatMulOp : public OpKernel {
       : OpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("adj_x", &adj_x_));
     OP_REQUIRES_OK(context, context->GetAttr("adj_y", &adj_y_));
+    OP_REQUIRES_OK(context, context->GetAttr("grad_x", &grad_x_));
+    OP_REQUIRES_OK(context, context->GetAttr("grad_y", &grad_y_));
   }
 
   ~BaseBatchMatMulOp() override {}
@@ -646,8 +668,13 @@ class BaseBatchMatMulOp : public OpKernel {
                 out_reshaped.CopyFrom(*out, TensorShape({batch_size, d0, d3})),
                 errors::Internal("Failed to reshape output from ",
                                  out->shape().DebugString()));
+    se::blas::CallContext cc = se::blas::CallContext::kNone;
+    if(grad_x_)
+      cc = se::blas::CallContext::kBackpropInput1;
+    else if(grad_y_)
+      cc = se::blas::CallContext::kBackpropInput2;
     LaunchBatchMatMul<Device, Scalar>::Launch(
-        ctx, in0_reshaped, in1_reshaped, adj_x_, adj_y_, bcast, &out_reshaped);
+        ctx, in0_reshaped, in1_reshaped, adj_x_, adj_y_, bcast, &out_reshaped, cc);
   }
 
  protected:
@@ -657,6 +684,7 @@ class BaseBatchMatMulOp : public OpKernel {
  private:
   bool adj_x_;
   bool adj_y_;
+  bool grad_x_, grad_y_;
 };
 
 // BatchMatMul Op implementation which disallows broadcasting.

@@ -50,6 +50,21 @@ limitations under the License.
 #include "tensorflow/compiler/xla/window_util.h"
 #include "tensorflow/core/lib/core/errors.h"
 
+namespace {
+
+static llvm::Value* MayAddrSpaceCastArg(llvm::Value* arg, llvm::IRBuilder<>& builder) {
+  llvm::Type* arg_type = arg->getType();
+  CHECK_EQ(true, arg_type->isPointerTy());
+  if (arg_type->getPointerAddressSpace() != 0) {
+    llvm::Type* generic_arg_type = arg_type->getPointerElementType()->getPointerTo(0);
+    llvm::Value* addrspacecast_arg = builder.CreateAddrSpaceCast(arg, generic_arg_type);
+    return addrspacecast_arg;
+  }
+  return arg;
+}
+
+}
+
 namespace xla {
 
 using llvm_ir::IrName;
@@ -65,8 +80,7 @@ IrEmitter::IrEmitter(const HloModuleConfig& hlo_module_config,
       bindings_(ir_emitter_context->hlo_module(),
                 &ir_emitter_context->buffer_assignment(), &b_, module_,
                 is_nested),
-      hlo_module_config_(hlo_module_config) {
-}
+      hlo_module_config_(hlo_module_config) {}
 
 Status IrEmitter::DefaultAction(HloInstruction* hlo) {
   ElementalIrEmitter::HloToElementGeneratorMap operand_to_generator;
@@ -164,8 +178,19 @@ Status IrEmitter::EmitCallToNestedComputation(
     emitted_function = ir_emitter_nested.GetEmittedFunction();
   }
 
-  std::vector<llvm::Value*> arguments(operands.begin(), operands.end());
-  arguments.push_back(output);
+  // For AMDGPU target, may need to addrspacecast alloca variables from
+  // addrspace 5 to addrspace 0
+  std::vector<llvm::Value*> arguments;
+  for (auto& arg : operands) {
+    llvm::Value* casted_arg = MayAddrSpaceCastArg(arg, b_);
+    arguments.push_back(casted_arg);
+  }
+
+  llvm::Value* casted_output = MayAddrSpaceCastArg(output, b_);
+  arguments.push_back(casted_output);
+
+  // temp buffer base is always in addrspace 0 so it's not required to
+  // do addrspacecast
   arguments.push_back(bindings_.GetTempBufferBase());
   Call(emitted_function, arguments);
 
@@ -260,7 +285,7 @@ bool IrEmitter::MaybeEmitDirectAtomicOperation(
 //     the new value is copied to old_output, and steps 2. and 3. are repeated
 //     until atomicCAS succeeds.
 //
-// On Nvidia GPUs, atomicCAS can only operate on 32 bit and 64 bit integers. If
+// On AMD GPUs, atomicCAS can only operate on 32 bit and 64 bit integers. If
 // the element type of the binary operation is 32 bits or 64 bits, the integer
 // type of the same size is used for the atomicCAS operation. On the other hand,
 // if the element type is smaller than 32 bits, int32 is used for the atomicCAS
@@ -317,10 +342,10 @@ Status IrEmitter::EmitAtomicOperationUsingCAS(const HloComputation& computation,
   // cas_old_output_address and cas_new_output_address point to the scratch
   // memory where we store the old and new values for the repeated atomicCAS
   // operations.
-  llvm::Value* cas_old_output_address =
-      Alloca(atomic_type, /*ArraySize=*/nullptr, "cas_old_output_address");
-  llvm::Value* cas_new_output_address =
-      Alloca(atomic_type, /*ArraySize=*/nullptr, "cas_new_output_address");
+  llvm::Value* cas_old_output_address = llvm_ir::EmitAllocaAtFunctionEntry(
+      atomic_type, /*ArraySize=nullptr,*/ "cas_old_output_address", &b_);
+  llvm::Value* cas_new_output_address = llvm_ir::EmitAllocaAtFunctionEntry(
+      atomic_type, /*ArraySize=nullptr,*/ "cas_new_output_address", &b_);
 
   // Emit preparation code to the preheader.
   llvm::BasicBlock* loop_preheader_bb = b_.GetInsertBlock();
@@ -343,11 +368,19 @@ Status IrEmitter::EmitAtomicOperationUsingCAS(const HloComputation& computation,
         IntToPtr(atomic_memory_address, atomic_address_type);
     binop_output_address =
         Add(PtrToInt(cas_new_output_address, address_int_type), offset);
-    binop_output_address = IntToPtr(binop_output_address, element_address_type);
+    binop_output_address = IntToPtr(
+        binop_output_address,
+        llvm::PointerType::get(
+            element_type,
+            cas_new_output_address->getType()->getPointerAddressSpace()));
   } else {
-    atomic_memory_address = BitCast(output_address, atomic_address_type);
-    binop_output_address =
-        BitCast(cas_new_output_address, element_address_type);
+    atomic_memory_address =
+        PointerBitCastOrAddrSpaceCast(output_address, atomic_address_type);
+    binop_output_address = PointerBitCastOrAddrSpaceCast(
+        cas_new_output_address,
+        llvm::PointerType::get(
+            element_type,
+            cas_new_output_address->getType()->getPointerAddressSpace()));
   }
 
   // Use the value from the memory that atomicCAS operates on to initialize
@@ -544,7 +577,7 @@ Status IrEmitter::HandleDot(HloInstruction* dot) {
   }
 
   // Create the reduction loop which does the sum of products reduction.
-  std::unique_ptr<llvm_ir::ForLoop> reduction_loop = loop_nest.AddLoop(
+  std::shared_ptr<llvm_ir::ForLoop> reduction_loop = loop_nest.AddLoop(
       /*start_index=*/0,
       /*end_index=*/lhs_shape.dimensions(lhs_reduction_dimension),
       /*suffix=*/"reduction");

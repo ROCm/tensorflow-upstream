@@ -28,6 +28,9 @@ limitations under the License.
 namespace Eigen {
 namespace internal {
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wignored-attributes"
+
 // After we vectorized all loads from the underlying tensor using Packet ops, we
 // have to finalize coefficients that do not fit into a packet.
 template <typename Scalar, typename DataMapper, int packet_size,
@@ -379,6 +382,7 @@ struct gemm_pack_colmajor_block<
     }
   }
 };
+#pragma GCC diagnostic pop
 }  // namespace internal
 }  // namespace Eigen
 #endif  // defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)
