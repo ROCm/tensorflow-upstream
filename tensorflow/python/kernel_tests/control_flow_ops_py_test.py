@@ -4784,9 +4784,12 @@ class AssertTest(test.TestCase):
 
   @test_util.run_deprecated_v1
   def testGuardedAssertDoesNotCopyWhenTrue(self):
-    if test_util.is_gpu_available():
-      self.skipTest("b/128646478 fails in opensource")
-
+    if test.is_built_with_rocm() :
+      # This test depends on the presence of nodes with names "MEMCPYDtoH"
+      # That name assignment currently only happens for tensorflow build with CUDA, 
+      # ROCm support for the same is still in the process of being implemented
+      # Disabling this test for ROCm for the time being
+      self.skipTest("GPU device/stream tracing is not yet fully supported in ROCm")
     with self.session(use_gpu=True) as sess:
       with ops.device(test.gpu_device_name()):
         value = constant_op.constant(1.0)

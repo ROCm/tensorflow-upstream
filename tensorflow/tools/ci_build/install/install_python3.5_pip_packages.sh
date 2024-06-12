@@ -82,7 +82,7 @@ pip3.5 install grpcio
 
 # Eager-to-graph execution needs astor, gast and termcolor:
 pip3.5 install --upgrade astor
-pip3.5 install --upgrade gast
+pip3.5 install --upgrade gast==0.2.2
 pip3.5 install --upgrade termcolor
 
 # Keras

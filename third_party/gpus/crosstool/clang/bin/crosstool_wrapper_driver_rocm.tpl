@@ -34,8 +34,6 @@ HIPCC_ENV = '%{hipcc_env}'
 HIPCC_IS_HIPCLANG = '%{hipcc_is_hipclang}'=="True"
 HIP_RUNTIME_PATH = '%{hip_runtime_path}'
 HIP_RUNTIME_LIBRARY = '%{hip_runtime_library}'
-HCC_RUNTIME_PATH = '%{hcc_runtime_path}'
-HCC_RUNTIME_LIBRARY = '%{hcc_runtime_library}'
 ROCR_RUNTIME_PATH = '%{rocr_runtime_path}'
 ROCR_RUNTIME_LIBRARY = '%{rocr_runtime_library}'
 VERBOSE = '%{crosstool_verbose}'=='1'
@@ -93,8 +91,9 @@ def GetHostCompilerOptions(argv):
     opts += ' -iquote ' + ' -iquote '.join(sum(args.iquote, []))
   if args.g:
     opts += ' -g' + ' -g'.join(sum(args.g, []))
-  #if args.fno_canonical_system_headers:
-  #  opts += ' -fno-canonical-system-headers'
+  if args.fno_canonical_system_headers:
+    opts += ' -no-canonical-prefixes'
+    #opts += ' -fno-canonical-system-headers'
   if args.sysroot:
     opts += ' --sysroot ' + args.sysroot[0]
 
@@ -145,7 +144,7 @@ def InvokeHipcc(argv, log=False):
   undefines = GetOptionValue(argv, 'U')
   undefines = ''.join([' -U' + define for define in undefines])
   std_options = GetOptionValue(argv, 'std')
-  hipcc_allowed_std_options = ["c++11"]
+  hipcc_allowed_std_options = ["c++11", "c++14"]
   std_options = ''.join([' -std=' + define
       for define in std_options if define in hipcc_allowed_std_options])
 
@@ -173,6 +172,13 @@ def InvokeHipcc(argv, log=False):
   out = ' -o ' + out_file[0]
 
   hipccopts = ' '
+  # In hip-clang environment, we need to make sure that hip header is included
+  # before some standard math header like <complex> is included in any source.
+  # Otherwise, we get build error.
+  # Also we need to retain warning about uninitialised shared variable as
+  # warning only, even when -Werror option is specified.
+  if HIPCC_IS_HIPCLANG:
+    hipccopts += ' --include=hip/hip_runtime.h '
   hipccopts += ' ' + hipcc_compiler_options
   # Use -fno-gpu-rdc by default for early GPU kernel finalization
   # This flag would trigger GPU kernels be generated at compile time, instead
@@ -191,7 +197,9 @@ def InvokeHipcc(argv, log=False):
            host_compiler_options +
            ' ' + GCC_HOST_COMPILER_PATH +
            ' -I .' + includes + ' ' + srcs + ' -M -o ' + depfile)
+    cmd = HIPCC_ENV.replace(';', ' ') + ' ' + cmd
     if log: Log(cmd)
+    if VERBOSE: print(cmd)
     exit_status = os.system(cmd)
     if exit_status != 0:
       return exit_status
@@ -243,14 +251,11 @@ def main():
     gpu_linker_flags.append('-L' + ROCR_RUNTIME_PATH)
     gpu_linker_flags.append('-Wl,-rpath=' + ROCR_RUNTIME_PATH)
     gpu_linker_flags.append('-l' + ROCR_RUNTIME_LIBRARY)
-    # do not link with HCC runtime library in case hip-clang toolchain is used
-    if not HIPCC_IS_HIPCLANG:
-      gpu_linker_flags.append('-L' + HCC_RUNTIME_PATH)
-      gpu_linker_flags.append('-Wl,-rpath=' + HCC_RUNTIME_PATH)
-      gpu_linker_flags.append('-l' + HCC_RUNTIME_LIBRARY)
     gpu_linker_flags.append('-L' + HIP_RUNTIME_PATH)
     gpu_linker_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
     gpu_linker_flags.append('-l' + HIP_RUNTIME_LIBRARY)
+    if HIPCC_IS_HIPCLANG:
+      gpu_linker_flags.append("-lrt")
 
     if VERBOSE: print(' '.join([CPU_COMPILER] + gpu_linker_flags))
     return subprocess.call([CPU_COMPILER] + gpu_linker_flags)

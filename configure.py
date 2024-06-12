@@ -107,7 +107,6 @@ def get_input(question):
 
 def symlink_force(target, link_name):
   """Force symlink, equivalent of 'ln -sf'.
-
   Args:
     target: items to link to.
     link_name: name of the link.
@@ -124,7 +123,6 @@ def symlink_force(target, link_name):
 
 def sed_in_place(filename, old, new):
   """Replace old string with new string in file.
-
   Args:
     filename: string for filename.
     old: string to replace.
@@ -271,7 +269,6 @@ def reset_tf_configure_bazelrc():
 
 def cleanup_makefile():
   """Delete any leftover BUILD files from the Makefile build.
-
   These files could interfere with Bazel parsing.
   """
   makefile_download_dir = os.path.join(_TF_WORKSPACE_ROOT, 'tensorflow',
@@ -291,10 +288,8 @@ def get_var(environ_cp,
             yes_reply=None,
             no_reply=None):
   """Get boolean input from user.
-
   If var_name is not set in env, ask user to enable query_item or not. If the
   response is empty, use the default.
-
   Args:
     environ_cp: copy of the os.environ.
     var_name: string for name of environment variable, e.g. "TF_NEED_CUDA".
@@ -304,10 +299,8 @@ def get_var(environ_cp,
     question: optional string for how to ask for user input.
     yes_reply: optional string for reply when feature is enabled.
     no_reply: optional string for reply when feature is disabled.
-
   Returns:
     boolean value of the variable.
-
   Raises:
     UserInputError: if an environment variable is set, but it cannot be
       interpreted as a boolean indicator, assume that the user has made a
@@ -374,10 +367,8 @@ def set_build_var(environ_cp,
                   enabled_by_default,
                   bazel_config_name=None):
   """Set if query_item will be enabled for the build.
-
   Ask user if query_item will be enabled. Default is used if no input is given.
   Set subprocess environment variable and write to .bazelrc if enabled.
-
   Args:
     environ_cp: copy of the os.environ.
     var_name: string for name of environment variable, e.g. "TF_NEED_CUDA".
@@ -410,10 +401,8 @@ def set_action_env_var(environ_cp,
                        no_reply=None,
                        bazel_config_name=None):
   """Set boolean action_env variable.
-
   Ask user if query_item will be enabled. Default is used if no input is given.
   Set environment variable and write to .bazelrc.
-
   Args:
     environ_cp: copy of the os.environ.
     var_name: string for name of environment variable, e.g. "TF_NEED_CUDA".
@@ -438,13 +427,10 @@ def set_action_env_var(environ_cp,
 
 def convert_version_to_int(version):
   """Convert a version number to a integer that can be used to compare.
-
   Version strings of the form X.YZ and X.Y.Z-xxxxx are supported. The
   'xxxxx' part, for instance 'homebrew' on OS/X, is ignored.
-
   Args:
     version: a version to be converted
-
   Returns:
     An integer if converted successfully, otherwise return None.
   """
@@ -463,11 +449,9 @@ def convert_version_to_int(version):
 
 def check_bazel_version(min_version, max_version):
   """Check installed bazel version is between min_version and max_version.
-
   Args:
     min_version: string for minimum bazel version (must exist!).
     max_version: string for maximum bazel version (must exist!).
-
   Returns:
     The bazel version detected.
   """
@@ -510,9 +494,7 @@ def check_bazel_version(min_version, max_version):
 
 def set_cc_opt_flags(environ_cp):
   """Set up architecture-dependent optimization flags.
-
   Also append CC optimization flags to bazel.rc..
-
   Args:
     environ_cp: copy of the os.environ.
   """
@@ -522,7 +504,7 @@ def set_cc_opt_flags(environ_cp):
   elif is_windows():
     default_cc_opt_flags = '/arch:AVX'
   else:
-    default_cc_opt_flags = '-march=native -Wno-sign-compare'
+    default_cc_opt_flags = '-march=haswell -Wno-sign-compare'
   question = ('Please specify optimization flags to use during compilation when'
               ' bazel option "--config=opt" is specified [Default is %s]: '
              ) % default_cc_opt_flags
@@ -532,13 +514,12 @@ def set_cc_opt_flags(environ_cp):
     write_to_bazelrc('build:opt --copt=%s' % opt)
   # It should be safe on the same build host.
   if not is_ppc64le() and not is_windows():
-    write_to_bazelrc('build:opt --host_copt=-march=native')
+    write_to_bazelrc('build:opt --host_copt=-march=haswell')
   write_to_bazelrc('build:opt --define with_default_optimizations=true')
 
 
 def set_tf_cuda_clang(environ_cp):
   """set TF_CUDA_CLANG action_env.
-
   Args:
     environ_cp: copy of the os.environ.
   """
@@ -575,16 +556,13 @@ def set_tf_download_clang(environ_cp):
 def get_from_env_or_user_or_default(environ_cp, var_name, ask_for_var,
                                     var_default):
   """Get var_name either from env, or user or default.
-
   If var_name has been set as environment variable, use the preset value, else
   ask for user input. If no input is provided, the default is used.
-
   Args:
     environ_cp: copy of the os.environ.
     var_name: string for name of environment variable, e.g. "TF_NEED_CUDA".
     ask_for_var: string for how to ask for user input.
     var_default: default value string.
-
   Returns:
     string value for var_name
   """
@@ -629,11 +607,9 @@ def prompt_loop_or_load_from_env(environ_cp,
                                  suppress_default_error=False,
                                  n_ask_attempts=_DEFAULT_PROMPT_ASK_ATTEMPTS):
   """Loop over user prompts for an ENV param until receiving a valid response.
-
   For the env param var_name, read from the environment or verify user input
   until receiving valid input. When done, set var_name in the environ_cp to its
   new value.
-
   Args:
     environ_cp: (Dict) copy of the os.environ.
     var_name: (String) string for name of environment variable, e.g. "TF_MYVAR".
@@ -649,10 +625,8 @@ def prompt_loop_or_load_from_env(environ_cp,
       one from the check_success function.
     n_ask_attempts: (Integer) Number of times to query for valid input before
       raising an error and quitting.
-
   Returns:
     [String] The value of var_name after querying for input.
-
   Raises:
     UserInputError: if a query has been attempted n_ask_attempts times without
       success, assume that the user has made a scripting error, and will
@@ -845,17 +819,14 @@ def set_gcc_host_compiler_path(environ_cp):
 
 def reformat_version_sequence(version_str, sequence_count):
   """Reformat the version string to have the given number of sequences.
-
   For example:
   Given (7, 2) -> 7.0
         (7.0.1, 2) -> 7.0
         (5, 1) -> 5
         (5.0.3.2, 1) -> 5
-
   Args:
       version_str: String, the version string.
       sequence_count: int, an integer.
-
   Returns:
       string, reformatted version string.
   """
@@ -966,10 +937,8 @@ def set_tf_nccl_version(environ_cp):
 
 def get_native_cuda_compute_capabilities(environ_cp):
   """Get native cuda compute capabilities.
-
   Args:
     environ_cp: copy of the os.environ.
-
   Returns:
     string of native cuda compute capabilities, separated by comma.
   """
@@ -1225,7 +1194,7 @@ def system_specific_test_config(env):
       'test --test_tag_filters=-benchmark-test,-no_oss,-oss_serial')
   write_to_bazelrc('test --build_tag_filters=-benchmark-test,-no_oss')
   if is_windows():
-    if env.get('TF_NEED_CUDA', None) == '1':
+    if (env.get('TF_NEED_CUDA', None) == '1') or (env.get('TF_NEED_ROCM', None) == '1'):
       write_to_bazelrc(
           'test --test_tag_filters=-no_windows,-no_windows_gpu,-no_gpu')
       write_to_bazelrc(
@@ -1237,7 +1206,7 @@ def system_specific_test_config(env):
     write_to_bazelrc('test --test_tag_filters=-gpu,-nomac,-no_mac')
     write_to_bazelrc('test --build_tag_filters=-gpu,-nomac,-no_mac')
   elif is_linux():
-    if env.get('TF_NEED_CUDA', None) == '1':
+    if (env.get('TF_NEED_CUDA', None) == '1') or (env.get('TF_NEED_ROCM', None) == '1'):
       write_to_bazelrc('test --test_tag_filters=-no_gpu')
       write_to_bazelrc('test --build_tag_filters=-no_gpu')
       write_to_bazelrc('test --test_env=LD_LIBRARY_PATH')
@@ -1300,7 +1269,6 @@ def config_info_line(name, help_text):
 
 def configure_ios():
   """Configures TensorFlow for iOS builds.
-
   This function will only be executed if `is_macos()` is true.
   """
   if not is_macos():
@@ -1454,6 +1422,9 @@ def main():
       environ_cp.get('LD_LIBRARY_PATH') != '1'):
     write_action_env_to_bazelrc('LD_LIBRARY_PATH',
                                 environ_cp.get('LD_LIBRARY_PATH'))
+
+  if (environ_cp.get('TF_NEED_ROCM') == '1' and environ_cp.get('ROCM_TOOLKIT_PATH')):
+    write_action_env_to_bazelrc('ROCM_TOOLKIT_PATH',environ_cp.get('ROCM_TOOLKIT_PATH'))
 
   environ_cp['TF_NEED_CUDA'] = str(
       int(get_var(environ_cp, 'TF_NEED_CUDA', 'CUDA', False)))

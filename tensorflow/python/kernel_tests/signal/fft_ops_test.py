@@ -260,6 +260,11 @@ class FFTOpsTest(BaseFFTOpsTest):
 
   @test_util.run_deprecated_v1
   def testGrad_Simple(self):
+
+    if test.is_built_with_rocm():
+      self.skipTest("SCAL operation for complex datatype not yet supported in ROCm")
+      return
+
     with spectral_ops_test_util.fft_kernel_label_map():
       for np_type, tol in ((np.float32, 1e-4), (np.float64, 1e-10)):
         for rank in VALID_FFT_RANKS:
@@ -273,6 +278,11 @@ class FFTOpsTest(BaseFFTOpsTest):
 
   @test_util.run_deprecated_v1
   def testGrad_Random(self):
+
+    if test.is_built_with_rocm():
+      self.skipTest("SCAL operation for complex datatype not yet supported in ROCm")
+      return
+
     with spectral_ops_test_util.fft_kernel_label_map():
       for np_type, tol in ((np.float32, 1e-2), (np.float64, 1e-10)):
         for rank in VALID_FFT_RANKS:
@@ -536,6 +546,11 @@ class RFFTOpsTest(BaseFFTOpsTest):
             re = np.ones(shape=(size,) * dims, dtype=np.float32)
             im = -np.ones(shape=(size,) * dims, dtype=np.float32)
             self._checkGradReal(self._tfFFTForRank(rank), re)
+
+            if test.is_built_with_rocm():
+              # SCAL operation for complex datatype not yet supported in ROCm
+              continue;
+
             self._checkGradComplex(
                 self._tfIFFTForRank(rank), re, im, result_is_complex=False)
 
@@ -551,6 +566,11 @@ class RFFTOpsTest(BaseFFTOpsTest):
             re = np.random.rand(*((size,) * dims)).astype(np.float32) * 2 - 1
             im = np.random.rand(*((size,) * dims)).astype(np.float32) * 2 - 1
             self._checkGradReal(self._tfFFTForRank(rank), re)
+
+            if test.is_built_with_rocm():
+              # SCAL operation for complex datatype not yet supported in ROCm
+              continue;
+
             self._checkGradComplex(
                 self._tfIFFTForRank(rank), re, im, result_is_complex=False)
 

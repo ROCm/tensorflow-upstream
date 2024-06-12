@@ -1,27 +1,26 @@
 # This Dockerfile provides a starting point for a ROCm installation of
 # MIOpen and tensorflow.
-FROM ubuntu:xenial
+FROM ubuntu:focal
 MAINTAINER Jeff Poznanovic <jeffrey.poznanovic@amd.com>
 
-ARG DEB_ROCM_REPO=http://repo.radeon.com/rocm/apt/2.6/
-ARG ROCM_PATH=/opt/rocm
+ARG ROCM_DEB_REPO=https://repo.radeon.com/rocm/apt/6.1/
+ARG ROCM_BUILD_NAME=ubuntu
+ARG ROCM_BUILD_NUM=main
+ARG ROCM_PATH=/opt/rocm-6.1.0
+ARG GPU_DEVICE_TARGETS="gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"
 
-ENV DEBIAN_FRONTEND noninteractive
+ARG DEBIAN_FRONTEND=noninteractive
 ENV TF_NEED_ROCM 1
 ENV HOME /root/
-RUN apt update && apt install -y wget software-properties-common
-
-# Add rocm repository
-RUN apt-get clean all
-RUN wget -qO - $DEB_ROCM_REPO/rocm.gpg.key | apt-key add -
-RUN sh -c  "echo deb [arch=amd64] $DEB_ROCM_REPO xenial main > /etc/apt/sources.list.d/rocm.list"
+ENV HIP_PLATFORM=amd
+RUN apt-get --allow-unauthenticated update && apt install -y wget software-properties-common
 
 # Install misc pkgs
 RUN apt-get update --allow-insecure-repositories && DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential \
-  clang-3.8 \
-  clang-format-3.8 \
-  clang-tidy-3.8 \
+  clang-6.0 \
+  clang-format-6.0 \
+  clang-tidy-6.0 \
   cmake \
   cmake-qt-gui \
   ssh \
@@ -46,7 +45,6 @@ RUN apt-get update --allow-insecure-repositories && DEBIAN_FRONTEND=noninteracti
   libnuma-dev \
   pciutils \
   virtualenv \
-  python-pip \
   python3-pip \
   libxml2 \
   libxml2-dev \
@@ -54,32 +52,63 @@ RUN apt-get update --allow-insecure-repositories && DEBIAN_FRONTEND=noninteracti
   apt-get clean && \
   rm -rf /var/lib/apt/lists/*
 
+# Add rocm repository
+RUN apt-get clean all
+RUN wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | apt-key add -;
+RUN wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -;
+RUN bin/bash -c 'if [[ $ROCM_DEB_REPO == https://repo.radeon.com/rocm/*  ]] ; then \
+      echo "deb [arch=amd64] $ROCM_DEB_REPO $ROCM_BUILD_NAME $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/rocm.list; \
+    else \
+      echo "deb [arch=amd64 trusted=yes] $ROCM_DEB_REPO $ROCM_BUILD_NAME $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/rocm.list ; \
+    fi'
+RUN echo "deb [arch=amd64 trusted=yes] http://apt.llvm.org/focal/ llvm-toolchain-focal-17 main" > /etc/apt/sources.list.d/llvm.list
+RUN echo "deb [arch=amd64] https://repo.radeon.com/amdgpu/6.1/ubuntu focal $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/amdgpu.list
+
 # Install rocm pkgs
-RUN apt-get update --allow-insecure-repositories && \
+#RUN apt-get update --allow-insecure-repositories && \
+#    DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated \
+#    rocm-dev rocm-libs rocm-utils rocm-cmake \
+#    rocfft miopen-hip miopengemm rocblas hipblas rocrand rccl && \
+#    apt-get clean && \
+#    rm -rf /var/lib/apt/lists/*
+#    # Install rocm pkgs
+# For precompiled miopen kernels search for all unversioned packages
+# if search fails it will abort so use true to avoid case where search fails
+RUN MIOPENKERNELS=$( \
+                    apt-cache search --names-only miopen-hip-gfx | \
+                    awk '{print $1}' | \
+                    grep -F -v . || \
+                    true \
+    ) && \
+    apt-get update --allow-insecure-repositories && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated \
-    rocm-dev rocm-libs rocm-utils rocm-cmake \
-    rocfft miopen-hip miopengemm rocblas hipblas rocrand rccl \
-    rocm-profiler cxlactivitylogger && \
+    rocm-dev rocm-libs libdrm-amdgpu-dev rccl hipblaslt-dev ${MIOPENKERNELS} && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-ENV HCC_HOME=$ROCM_PATH/hcc
-ENV HIP_PATH=$ROCM_PATH/hip
-ENV OPENCL_ROOT=$ROCM_PATH/opencl
-ENV PATH="$HCC_HOME/bin:$HIP_PATH/bin:${PATH}"
-ENV PATH="$ROCM_PATH/bin:${PATH}"
-ENV PATH="$OPENCL_ROOT/bin:${PATH}"
+# Set up paths
+ENV HIP_PATH=${ROCM_PATH}/hip
+ENV PATH=$HIP_PATH/bin:${ROCM_PATH}/opencl/bin:${ROCM_PATH}/bin:$PATH
+ENV ROCM_TOOLKIT_PATH=${ROCM_PATH}
+ENV TF_CONFIGURE_IOS=0
+ENV TF_NEED_ROCM=1
+
+# Workaround, explicitly add symbolic link to /opt/rocm
+RUN touch ${ROCM_PATH}/.info/version
+RUN bash -c 'ln -s ${ROCM_PATH} /opt/rocm'
 
 # Add target file to help determine which device(s) to build for
-RUN bash -c 'echo -e "gfx803\ngfx900\ngfx906" >> /opt/rocm/bin/target.lst'
+RUN bash -c 'echo -e "gfx906\ngfx908\ngfx90a\ngfx940\ngfx941\ngfx942\ngfx1030\ngfx1100" >> ${ROCM_PATH}/bin/target.lst'
+
+# Upgrade pip.
+RUN pip3 install --upgrade pip
 
 # Copy and run the install scripts.
 COPY install/*.sh /install/
 ARG DEBIAN_FRONTEND=noninteractive
 RUN /install/install_bootstrap_deb_packages.sh
-RUN add-apt-repository -y ppa:openjdk-r/ppa && \
-    add-apt-repository -y ppa:george-edison55/cmake-3.x
 RUN /install/install_deb_packages.sh
+RUN /install/build-py-3.7.sh
 RUN /install/install_pip_packages.sh
 RUN /install/install_bazel.sh
 RUN /install/install_golang.sh
@@ -90,3 +119,7 @@ COPY install/.bazelrc /etc/bazel.bazelrc
 # Configure the build for our ROCm configuration.
 ENV TF_NEED_ROCM 1
 
+# This is a temporary workaround to fix Out-Of-Memory errors we are running into with XLA perf tests
+# By default, HIP runtime "hides" 256MB from the TF Runtime, but with recent changes (update to ROCm2.3, dynamic loading of roc* libs, et al)
+# it seems that we need to up the threshold slightly to 320MB
+ENV HIP_HIDDEN_FREE_MEM=320

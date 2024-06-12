@@ -562,7 +562,7 @@ py_library(
 
 tf_py_test(
     name = "integration_test",
-    size = "medium",
+    size = "large",
     srcs = ["integration_test.py"],
     additional_deps = [
         ":keras",
@@ -777,7 +777,9 @@ tf_py_test(
         "//tensorflow/python:client_testlib",
     ],
     shard_count = 4,
-    tags = ["no_rocm"],
+    tags = [
+	    "no_cuda",
+    ],
 )
 
 cuda_py_test(
@@ -952,10 +954,6 @@ tf_py_test(
         "//tensorflow/python:client_testlib",
     ],
     shard_count = 4,
-    tags = [
-        "no_rocm",
-        "notsan",
-    ],
 )
 
 tf_py_test(
@@ -1027,6 +1025,7 @@ tf_py_test(
         "//tensorflow/python:client_testlib",
     ],
     shard_count = 10,
+    tags = ["no_rocm"],
 )
 
 cuda_py_test(
@@ -1489,7 +1488,6 @@ tf_py_test(
         "//tensorflow/python:client_testlib",
     ],
     tags = [
-        "no_rocm",
         "nomac",  # TODO(mihaimaruseac): b/127695564
     ],
 )
@@ -1557,7 +1555,6 @@ tf_py_test(
         "//tensorflow/python:client_testlib",
     ],
     tags = [
-        "no_rocm",
         "nomac",  # TODO(mihaimaruseac): b/127695564
         "notsan",
     ],
@@ -1651,6 +1648,7 @@ tf_py_test(
     shard_count = 8,
     tags = [
         "no-internal-py3",
+        "no_rocm",
         "nomac",  # TODO(mihaimaruseac): b/127695564
     ],
 )
@@ -1667,6 +1665,7 @@ tf_py_test(
     ],
     shard_count = 8,
     tags = [
+        "no_cuda",
         "no_rocm",
         "nomac",  # TODO(mihaimaruseac): b/127695564
     ],
@@ -1737,6 +1736,7 @@ tf_py_test(
 tf_py_test(
     name = "backend_test",
     size = "medium",
+    tags = ["no_rocm"],
     srcs = ["backend_test.py"],
     additional_deps = [
         ":keras",

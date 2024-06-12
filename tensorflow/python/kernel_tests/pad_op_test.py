@@ -233,10 +233,12 @@ class PadOpTest(test.TestCase):
 
   @test_util.run_deprecated_v1
   def testFloatTypes(self):
-    for t in [np.float32, np.float64]:
+    for t in [np.float16, np.float32, np.float64]:
       self._testAll(np.random.rand(2, 5).astype(t), [[1, 0], [2, 0]], 0.0)
       self._testAll(np.random.rand(2, 3, 4).astype(t),
-                    [[0, 0], [0, 0], [0, 0]], -1234.0)
+                    [[0, 0], [0, 0], [0, 0]], -12.34)
+      self._testAll(np.random.rand(12, 13, 14).astype(t),
+                    [[0, 0], [3, 3], [3, 3]], 1.41)
       self._testAll(np.random.rand(0, 3, 4).astype(t),
                     [[0, 0], [2, 1], [2, 3]], 0.0)
 
