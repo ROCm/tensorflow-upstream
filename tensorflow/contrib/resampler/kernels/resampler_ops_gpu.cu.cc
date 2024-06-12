@@ -24,6 +24,7 @@
 #include "tensorflow/contrib/resampler/kernels/resampler_ops.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/util/gpu_kernel_helper.h"
+#include "tensorflow/core/util/gpu_launch_config.h"
 
 namespace tensorflow {
 
@@ -43,7 +44,7 @@ __global__ void Resampler2DKernel(const T* __restrict__ data,
                                   const int data_channels,
                                   const int num_sampling_points) {
   const int output_data_size = batch_size * num_sampling_points * data_channels;
-  CUDA_1D_KERNEL_LOOP(index, output_data_size) {
+  GPU_1D_KERNEL_LOOP(index, output_data_size) {
     const int out_index = index;
 
     // Get (idxSample, channel, point) from the index.
@@ -149,7 +150,7 @@ __global__ void ResamplerGrad2DKernel(
     const int num_sampling_points) {
   const int resampler_output_size =
       batch_size * num_sampling_points * data_channels;
-  CUDA_1D_KERNEL_LOOP(index, resampler_output_size) {
+  GPU_1D_KERNEL_LOOP(index, resampler_output_size) {
     const int out_index = index;
 
     // Get (idxSample, channel, point) from the index.

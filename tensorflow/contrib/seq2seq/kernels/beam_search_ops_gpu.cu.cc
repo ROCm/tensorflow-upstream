@@ -31,7 +31,7 @@ __global__ void GatherTreeOpKernel(const int32 batch_size, const int32 max_time,
                                    const T* parent_ids,
                                    const int32* max_sequence_lengths,
                                    const T end_token, T* beams) {
-  CUDA_1D_KERNEL_LOOP(i, batch_size * beam_width) {
+  GPU_1D_KERNEL_LOOP(i, batch_size * beam_width) {
     const int32 batch = i / beam_width;
     const int32 beam = i % beam_width;
 
