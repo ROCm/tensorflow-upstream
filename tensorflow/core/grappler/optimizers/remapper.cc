@@ -288,6 +288,10 @@ bool IsCpuCompatible(const RemapperContext& ctx, const Pattern& matched) {
 // Checks if we can rewrite a pattern to the `_FusedConv2D` on GPU device.
 bool IsGpuCompatible(const RemapperContext& ctx,
                      const ContractionWithBiasAddAndActivation& matched) {
+#if TENSORFLOW_USE_ROCM
+  // _FusedConv2D is not currently supported on the ROCm platform
+  return false;
+#endif
   const GraphDef* graph = ctx.graph_view.graph();
   const NodeDef& contraction_node = graph->node(matched.contraction);
   if (!IsConv2D(contraction_node)) return false;

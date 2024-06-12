@@ -81,7 +81,12 @@ std::set<string> GetOpsFormatSupported() {
       "MaxPoolGradV2",
       "MaxPoolGradGradV2",
       "SpaceToDepth",
-      "DepthToSpace"};
+      "DepthToSpace",
+      "_ROCmFusedConvolutionBiasActivation",
+      "_ROCmFusedBatchNormActivationInference",
+      "_ROCmFusedBatchNormActivationForward",
+      "_ROCmFusedBatchNormActivationBackward",
+  };
   return ops_format_supported;
 }
 
@@ -297,6 +302,11 @@ bool IsMaxPoolGradGradV1(const NodeDef& node) {
 bool IsMaxPoolGradGradV2(const NodeDef& node) {
   const auto& op = node.op();
   return op == "MaxPoolGradGradV2";
+}
+
+bool IsROCmFusedBatchNormActivationBackward(const NodeDef& node) {
+  const auto& op = node.op();
+  return op == "_ROCmFusedBatchNormActivationBackward";
 }
 
 bool IsUnaryGrad(const NodeDef& node) {
@@ -1224,6 +1234,16 @@ class FusedBatchNormGradProcessor : public NodeProcessor {
   }
 };
 
+class ROCmFusedBatchNormActivationBackwardProcessor : public NodeProcessor {
+ public:
+  explicit ROCmFusedBatchNormActivationBackwardProcessor(
+      const OptimizeContext& opt_cxt)
+      : NodeProcessor(opt_cxt) {}
+
+ protected:
+  std::vector<int> GetInputPos() const override { return {0, 1, 2}; }
+};
+
 class MaxPoolGradProcessor : public NodeProcessor {
  public:
   explicit MaxPoolGradProcessor(const OptimizeContext& opt_cxt)
@@ -2086,6 +2106,9 @@ class DataLayoutOptimizer : GraphProcessor {
           node_processor.reset(new MaxPoolGradProcessor(opt_cxt));
         } else if (IsMaxPoolGradV2(*node) || IsMaxPoolGradGradV2(*node)) {
           node_processor.reset(new MaxPoolGradV2Processor(opt_cxt));
+        } else if (IsROCmFusedBatchNormActivationBackward(*node)) {
+          node_processor.reset(
+              new ROCmFusedBatchNormActivationBackwardProcessor(opt_cxt));
         } else {
           node_processor.reset(new NodeProcessor(opt_cxt));
         }

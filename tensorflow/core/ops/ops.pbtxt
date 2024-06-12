@@ -3479,6 +3479,64 @@ op {
   }
 }
 op {
+  name: "BatchGemm"
+  input_arg {
+    name: "x"
+    type_attr: "T"
+  }
+  input_arg {
+    name: "y"
+    type_attr: "T"
+  }
+  input_arg {
+    name: "z"
+    type_attr: "T"
+  }
+  output_arg {
+    name: "output"
+    type_attr: "T"
+  }
+  attr {
+    name: "T"
+    type: "type"
+    allowed_values {
+      list {
+        type: DT_HALF
+        type: DT_FLOAT
+        type: DT_DOUBLE
+      }
+    }
+  }
+  attr {
+    name: "transpose_a"
+    type: "bool"
+    default_value {
+      b: false
+    }
+  }
+  attr {
+    name: "transpose_b"
+    type: "bool"
+    default_value {
+      b: false
+    }
+  }
+  attr {
+    name: "alpha"
+    type: "float"
+    default_value {
+      f: 1
+    }
+  }
+  attr {
+    name: "beta"
+    type: "float"
+    default_value {
+      f: 0
+    }
+  }
+}
+op {
   name: "BatchIFFT"
   input_arg {
     name: "input"
@@ -3567,6 +3625,20 @@ op {
       b: false
     }
   }
+  attr {
+    name: "grad_x"
+    type: "bool"
+    default_value {
+      b: false
+    }
+  }
+  attr {
+    name: "grad_y"
+    type: "bool"
+    default_value {
+      b: false
+    }
+  }
 }
 op {
   name: "BatchMatMulV2"
@@ -3607,6 +3679,20 @@ op {
   }
   attr {
     name: "adj_y"
+    type: "bool"
+    default_value {
+      b: false
+    }
+  }
+  attr {
+    name: "grad_x"
+    type: "bool"
+    default_value {
+      b: false
+    }
+  }
+  attr {
+    name: "grad_y"
     type: "bool"
     default_value {
       b: false
@@ -20813,6 +20899,20 @@ op {
         type: DT_COMPLEX64
         type: DT_COMPLEX128
       }
+    }
+  }
+  attr {
+    name: "grad_a"
+    type: "bool"
+    default_value {
+      b: false
+    }
+  }
+  attr {
+    name: "grad_b"
+    type: "bool"
+    default_value {
+      b: false
     }
   }
 }
