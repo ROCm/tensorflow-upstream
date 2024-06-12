@@ -65,7 +65,7 @@ limitations under the License.
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #if GOOGLE_CUDA
 #include "tensorflow/stream_executor/cuda/ptxas_utils.h"
-#include "tensorflow/stream_executor/cuda/redzone_allocator.h"
+#include "tensorflow/stream_executor/redzone_allocator.h"
 #include "tensorflow/stream_executor/tf_allocator_adapter.h"
 #endif  // GOOGLE_CUDA
 
@@ -653,11 +653,11 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
                                 output->template flat<T>().size());
 
     auto no_transpose = se::blas::Transpose::kNoTranspose;
-    bool blas_launch_status =
-        stream
-            ->ThenBlasGemm(no_transpose, no_transpose, n, m, k, 1.0f, b_ptr, n,
-                           a_ptr, k, 0.0f, &c_ptr, n)
-            .ok();
+    se::blas::GemmCallContext<T> gemm_call{no_transpose, no_transpose, 
+      n, m, k, 1.0f, 0.0f, &b_ptr, n,
+      &a_ptr, k, &c_ptr, n,
+      stream_executor::blas::CallContext::kForward};
+    bool blas_launch_status = stream->ThenBlasGemm(gemm_call).ok();
     if (!blas_launch_status) {
       ctx->SetStatus(errors::Internal("Blas SGEMM launch failed : m=", m,
                                       ", n=", n, ", k=", k));
@@ -681,11 +681,11 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
                                 output->template flat<T>().size());
 
     auto no_transpose = se::blas::Transpose::kNoTranspose;
-    bool blas_launch_status =
-        stream
-            ->ThenBlasGemm(no_transpose, no_transpose, n, m, k, 1.0f, b_ptr, n,
-                           a_ptr, k, 0.0f, &c_ptr, n)
-            .ok();
+    se::blas::GemmCallContext<T> gemm_call{no_transpose, no_transpose, 
+      n, m, k, 1.0f, 0.0f, &b_ptr, n,
+      &a_ptr, k, &c_ptr, n,
+      stream_executor::blas::CallContext::kForward};
+    bool blas_launch_status = stream->ThenBlasGemm(gemm_call).ok();
     if (!blas_launch_status) {
       ctx->SetStatus(errors::Internal("Blas SGEMM launch failed : m=", m,
                                       ", n=", n, ", k=", k));
@@ -693,11 +693,16 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
     return;
   }
 
+#if GOOGLE_CUDA
   // Tensor Core (NVIDIA Volta+ GPUs) supports efficient convolution with fp16
   // in NHWC data layout. In all other configurations it's more efficient to
   // run computation in NCHW data format.
   const bool compute_in_nhwc =
       DataTypeToEnum<T>::value == DT_HALF && IsVoltaOrLater(*stream->parent());
+#else
+  // fast NHWC implementation is a CUDA only feature
+  const bool compute_in_nhwc = false;
+#endif
 
   // We only do one directional conversion: NHWC->NCHW. We never convert in the
   // other direction. Grappler layout optimizer selects preferred layout and
@@ -913,6 +918,49 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
       AsDeviceMemory(transformed_output.template flat<T>().data(),
                      transformed_output.template flat<T>().size());
 
+  Tensor bfloat16_input, bfloat16_filter, bfloat16_output;
+  se::DeviceMemory<bfloat16> bfloat16_input_ptr, bfloat16_filter_ptr,
+      bfloat16_output_ptr;
+
+  if (TestMIOpenBFloat16Support<T>()) {
+    TensorShape input_shape =
+        ShapeFromFormat(FORMAT_NCHW, in_batch, in_rows, in_cols, in_depths);
+    VLOG(3) << "Allocate temporary memory for bfloat16 input";
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_temp(DT_BFLOAT16, input_shape, &bfloat16_input));
+    functor::ConvertToBFloat16<GPUDevice, T, 4>()(
+        ctx->eigen_device<GPUDevice>(),
+        const_cast<const Tensor&>(input).tensor<T, 4>(),
+        bfloat16_input.tensor<bfloat16, 4>());
+
+    TensorShape filter_shape =
+        TensorShape({filter.dim_size(3), filter.dim_size(2), filter.dim_size(0),
+                     filter.dim_size(1)});
+    VLOG(3) << "Allocate temporary memory for bfloat16 filter";
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_temp(DT_BFLOAT16, filter_shape, &bfloat16_filter));
+    functor::ConvertToBFloat16<GPUDevice, T, 4>()(
+        ctx->eigen_device<GPUDevice>(),
+        const_cast<const Tensor&>(transformed_filter).tensor<T, 4>(),
+        bfloat16_filter.tensor<bfloat16, 4>());
+
+    TensorShape output_shape =
+        ShapeFromFormat(FORMAT_NCHW, out_batch, out_rows, out_cols, out_depths);
+    VLOG(3) << "Allocate temporary memory for bfloat16 output";
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_temp(DT_BFLOAT16, output_shape, &bfloat16_output));
+
+    bfloat16_input_ptr =
+        AsDeviceMemory(bfloat16_input.template flat<bfloat16>().data(),
+                       bfloat16_input.template flat<bfloat16>().size());
+    bfloat16_filter_ptr =
+        AsDeviceMemory(bfloat16_filter.template flat<bfloat16>().data(),
+                       bfloat16_filter.template flat<bfloat16>().size());
+    bfloat16_output_ptr =
+        AsDeviceMemory(bfloat16_output.template flat<bfloat16>().data(),
+                       bfloat16_output.template flat<bfloat16>().size());
+  }
+
   static int64 ConvolveScratchSize = GetDnnWorkspaceLimit(
       // default value is in bytes despite the name of the environment variable
       "TF_CUDNN_WORKSPACE_LIMIT_IN_MB", 1LL << 32  // 4GB
@@ -955,8 +1003,8 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
 
     se::TfAllocatorAdapter tf_allocator_adapter(ctx->device()->GetAllocator({}),
                                                 stream);
-    se::cuda::RedzoneAllocator rz_allocator(stream, &tf_allocator_adapter,
-                                            se::cuda::PtxCompilationOptions());
+    se::RedzoneAllocator rz_allocator(stream, &tf_allocator_adapter,
+                                      se::cuda::PtxCompilationOptions());
     se::DeviceMemory<T> output_tensor(
         WrapRedzoneBestEffort(&rz_allocator, output_ptr));
 
@@ -964,9 +1012,8 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
     for (auto profile_algorithm : algorithms) {
       // TODO(zhengxq): profile each algorithm multiple times to better
       // accuracy.
-      se::cuda::RedzoneAllocator rz_scratch_allocator(
-          stream, &tf_allocator_adapter, se::cuda::PtxCompilationOptions(),
-          /*memory_limit=*/ConvolveScratchSize);
+      se::RedzoneAllocator rz_scratch_allocator(
+          stream, &tf_allocator_adapter, se::cuda::PtxCompilationOptions());
       DnnScratchAllocator scratch_allocator(ConvolveScratchSize, ctx);
       se::ScratchAllocator* allocator_used =
           !RedzoneCheckDisabled()
@@ -1007,14 +1054,24 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
 #elif TENSORFLOW_USE_ROCM
     DnnScratchAllocator scratch_allocator(ConvolveScratchSize, ctx);
     ProfileResult best_result;
-    bool miopen_find_status =
-        stream
-            ->ThenConvolveWithAlgorithm(input_desc, input_ptr, filter_desc,
-                                        filter_ptr, conv_desc, output_desc,
-                                        &output_ptr, &scratch_allocator,
-                                        AlgorithmConfig(), &best_result)
-            .ok();
-
+    bool miopen_find_status = false;
+    if (TestMIOpenBFloat16Support<T>()) {
+      miopen_find_status = stream
+                               ->ThenConvolveWithAlgorithm(
+                                   input_desc, bfloat16_input_ptr, filter_desc,
+                                   bfloat16_filter_ptr, conv_desc, output_desc,
+                                   &bfloat16_output_ptr, &scratch_allocator,
+                                   AlgorithmConfig(), &best_result)
+                               .ok();
+    } else {
+      miopen_find_status =
+          stream
+              ->ThenConvolveWithAlgorithm(input_desc, input_ptr, filter_desc,
+                                          filter_ptr, conv_desc, output_desc,
+                                          &output_ptr, &scratch_allocator,
+                                          AlgorithmConfig(), &best_result)
+              .ok();
+    }
     OP_REQUIRES(ctx, miopen_find_status && best_result.is_valid(),
                 errors::NotFound("Failed to find conv algorithm!"));
 
@@ -1030,18 +1087,37 @@ void LaunchConv2DOp<GPUDevice, T>::operator()(
           << algorithm_config.algorithm()->tensor_ops_enabled();
 
   DnnScratchAllocator scratch_allocator(ConvolveScratchSize, ctx);
-  bool cudnn_launch_status =
-      stream
-          ->ThenConvolveWithAlgorithm(input_desc, input_ptr, filter_desc,
-                                      filter_ptr, conv_desc, output_desc,
-                                      &output_ptr, &scratch_allocator,
-                                      algorithm_config, nullptr)
-          .ok();
+  bool cudnn_launch_status = false;
+  if (TestMIOpenBFloat16Support<T>()) {
+    cudnn_launch_status = stream
+                              ->ThenConvolveWithAlgorithm(
+                                  input_desc, bfloat16_input_ptr, filter_desc,
+                                  bfloat16_filter_ptr, conv_desc, output_desc,
+                                  &bfloat16_output_ptr, &scratch_allocator,
+                                  algorithm_config, nullptr)
+                              .ok();
+  } else {
+    cudnn_launch_status =
+        stream
+            ->ThenConvolveWithAlgorithm(input_desc, input_ptr, filter_desc,
+                                        filter_ptr, conv_desc, output_desc,
+                                        &output_ptr, &scratch_allocator,
+                                        algorithm_config, nullptr)
+            .ok();
+  }
 
   if (!cudnn_launch_status) {
     ctx->SetStatus(errors::Internal(
         "cuDNN launch failure : input shape(", input.shape().DebugString(),
         ") filter shape(", filter.shape().DebugString(), ")"));
+  }
+
+  if (TestMIOpenBFloat16Support<T>()) {
+    VLOG(3) << "Convert the output tensor back from bfloat16 to float.";
+    functor::ConvertFromBFloat16<GPUDevice, T, 4>()(
+        ctx->eigen_device<GPUDevice>(),
+        const_cast<const Tensor&>(bfloat16_output).tensor<bfloat16, 4>(),
+        transformed_output.tensor<T, 4>());
   }
 
   if (data_format == FORMAT_NHWC && compute_data_format == FORMAT_NCHW) {

@@ -276,7 +276,9 @@ struct BlockLSTMBprop : public LSTMBlockCell {
     typename TTypes<T>::ConstMatrix const_dgates(dgates.data(),
                                                  dgates.dimensions());
     TensorBlasGemm<Device, T, USE_CUBLAS>::compute(
-        ctx, d, false, true, 1.f, const_dgates, w, 0.f, xh_grad);
+        ctx, d, false, true, 1.f, const_dgates, w, 0.f, xh_grad, 
+        se::blas::CallContext::kBackpropInput1
+        );
 
     // xh.
     xh.slice(xh_x_offsets(), xh_x_extents()).device(d) = x;
@@ -289,7 +291,9 @@ struct BlockLSTMBprop : public LSTMBlockCell {
 
     // w_grad.
     TensorBlasGemm<Device, T, USE_CUBLAS>::compute(
-        ctx, d, true, false, 1.f, const_xh, const_dgates, 1.f, w_grad);
+        ctx, d, true, false, 1.f, const_xh, const_dgates, 1.f, w_grad,
+        se::blas::CallContext::kBackpropInput2
+        );
 
     // b_grad.
     b_grad.device(d) += dgates.sum(Eigen::array<int, 1>({0}));

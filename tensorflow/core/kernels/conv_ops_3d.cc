@@ -39,7 +39,7 @@ using stream_executor::dnn::DimIndex;
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #if GOOGLE_CUDA
 #include "tensorflow/stream_executor/cuda/ptxas_utils.h"
-#include "tensorflow/stream_executor/cuda/redzone_allocator.h"
+#include "tensorflow/stream_executor/redzone_allocator.h"
 #include "tensorflow/stream_executor/tf_allocator_adapter.h"
 #endif  // GOOGLE_CUDA
 
@@ -263,11 +263,10 @@ struct LaunchConvOp<GPUDevice, T> {
                                   output->template flat<T>().size());
 
       auto no_transpose = se::blas::Transpose::kNoTranspose;
-      bool blas_launch_status =
-          stream
-              ->ThenBlasGemm(no_transpose, no_transpose, n, m, k, 1.0f, b_ptr,
-                             n, a_ptr, k, 0.0f, &c_ptr, n)
-              .ok();
+      se::blas::GemmCallContext<T> gemm_call{no_transpose, no_transpose, n, m, k, 1.0f, 0.0f,
+        &b_ptr, n, &a_ptr, k, &c_ptr, n,
+        stream_executor::blas::CallContext::kForward};
+      bool blas_launch_status = stream->ThenBlasGemm(gemm_call).ok();
       if (!blas_launch_status) {
         ctx->SetStatus(errors::Internal("Blas SGEMM launch failed : m=", m,
                                         ", n=", n, ", k=", k));
@@ -290,11 +289,10 @@ struct LaunchConvOp<GPUDevice, T> {
                                   output->template flat<T>().size());
 
       auto no_transpose = se::blas::Transpose::kNoTranspose;
-      bool blas_launch_status =
-          stream
-              ->ThenBlasGemm(no_transpose, no_transpose, n, m, k, 1.0f, b_ptr,
-                             n, a_ptr, k, 0.0f, &c_ptr, n)
-              .ok();
+      se::blas::GemmCallContext<T> gemm_call{no_transpose, no_transpose, n, m, k, 1.0f, 0.0f,
+        &b_ptr, n, &a_ptr, k, &c_ptr, n,
+        stream_executor::blas::CallContext::kForward};
+      bool blas_launch_status = stream->ThenBlasGemm(gemm_call).ok();
       if (!blas_launch_status) {
         ctx->SetStatus(errors::Internal("Blas SGEMM launch failed : m=", m,
                                         ", n=", n, ", k=", k));
@@ -424,7 +422,7 @@ struct LaunchConvOp<GPUDevice, T> {
         "TF_CUDNN_WORKSPACE_LIMIT_IN_MB", 1LL << 32);  // 4GB by default
 
     int device_id = stream->parent()->device_ordinal();
-    DataType dtype = input.dtype();
+    DataType dtype = DataTypeToEnum<T>::value;
     ConvParameters conv_parameters = {
         in_batch,
         in_depth,
@@ -450,8 +448,8 @@ struct LaunchConvOp<GPUDevice, T> {
 #if GOOGLE_CUDA
       se::TfAllocatorAdapter tf_allocator_adapter(
           ctx->device()->GetAllocator({}), stream);
-      se::cuda::RedzoneAllocator rz_allocator(
-          stream, &tf_allocator_adapter, se::cuda::PtxCompilationOptions());
+      se::RedzoneAllocator rz_allocator(stream, &tf_allocator_adapter,
+                                        se::cuda::PtxCompilationOptions());
       se::DeviceMemory<T> output_ptr_rz(
           WrapRedzoneBestEffort(&rz_allocator, output_ptr));
       std::vector<AlgorithmDesc> algorithms;
@@ -470,7 +468,7 @@ struct LaunchConvOp<GPUDevice, T> {
         // TODO(zhengxq): profile each algorithm multiple times to better
         // accuracy.
         DnnScratchAllocator scratch_allocator(ConvolveScratchSize, ctx);
-        se::cuda::RedzoneAllocator rz_scratch_allocator(
+        se::RedzoneAllocator rz_scratch_allocator(
             stream, &tf_allocator_adapter, se::cuda::PtxCompilationOptions(),
             /*memory_limit=*/ConvolveScratchSize);
         se::ScratchAllocator* allocator_used =

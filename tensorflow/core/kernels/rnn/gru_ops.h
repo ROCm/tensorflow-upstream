@@ -90,7 +90,7 @@ struct GRUBlockCellFprop : public GRUCell {
     TensorBlasGemm<Device, T, USE_CUBLAS>::compute(
         ctx, d, false, false, typename gemm_compute_type<T>::type(1.f),
         const_x_h_prev, w_ru, typename gemm_compute_type<T>::type(0.f),
-        r_u_bar);
+        r_u_bar, se::blas::CallContext::kNone);
 
     // Creating a bias matrix for adding by broadcasting 'b_ru'
     Eigen::array<Eigen::DenseIndex, 2> broadcast_shape({batch_size_, 1});
@@ -110,7 +110,8 @@ struct GRUBlockCellFprop : public GRUCell {
                                                     x_h_prevr.dimensions());
     TensorBlasGemm<Device, T, USE_CUBLAS>::compute(
         ctx, d, false, false, typename gemm_compute_type<T>::type(1.f),
-        const_x_h_prevr, w_c, typename gemm_compute_type<T>::type(0.f), c);
+        const_x_h_prevr, w_c, typename gemm_compute_type<T>::type(0.f), c,
+        se::blas::CallContext::kNone);
 
     Eigen::array<Eigen::DenseIndex, 2> b_c_shape({1, b_c.dimensions()[0]});
     c.device(d) += (b_c.reshape(b_c_shape).broadcast(broadcast_shape));
@@ -154,7 +155,7 @@ struct GRUBlockCellBprop : public GRUCell {
     TensorBlasGemm<Device, T, USE_CUBLAS>::compute(
         ctx, d, false, true, typename gemm_compute_type<T>::type(1.f),
         const_d_c_bar, w_c, typename gemm_compute_type<T>::type(0.f),
-        d_x_comp2_and_h_prevr);
+        d_x_comp2_and_h_prevr, se::blas::CallContext::kBackpropInput1);
 
     d_hr.device(d) = d_x_comp2_and_h_prevr.slice(h_offsets(), h_extends());
     d_r_bar.device(d) = (d_hr * h_prev * r) * (r.constant(T(1)) - r);
@@ -170,7 +171,7 @@ struct GRUBlockCellBprop : public GRUCell {
     TensorBlasGemm<Device, T, USE_CUBLAS>::compute(
         ctx, d, false, true, typename gemm_compute_type<T>::type(1.f),
         const_d_r_bar_u_bar, w_ru, typename gemm_compute_type<T>::type(0.f),
-        d_x_comp1_and_h_prev_comp1);
+        d_x_comp1_and_h_prev_comp1, se::blas::CallContext::kBackpropInput1);
 
     // d_x = d_x_comp1 + d_x_comp2
     d_x.device(d) = (d_x_comp1_and_h_prev_comp1 + d_x_comp2_and_h_prevr)
