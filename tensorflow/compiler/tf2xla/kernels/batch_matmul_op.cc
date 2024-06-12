@@ -27,17 +27,21 @@ class BatchMatMulOp : public XlaOpKernel {
   explicit BatchMatMulOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("adj_x", &adj_x_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("adj_y", &adj_y_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("grad_x", &grad_x_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("grad_y", &grad_y_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
     auto result = xla::BatchDot(MaybeConjugate(ctx->Input(0), adj_x_), adj_x_,
-                                MaybeConjugate(ctx->Input(1), adj_y_), adj_y_);
+                                MaybeConjugate(ctx->Input(1), adj_y_), adj_y_                                     );
     ctx->SetOutput(0, result);
   }
 
  private:
   bool adj_x_;
   bool adj_y_;
+  bool grad_x_;
+  bool grad_y_;
 };
 
 REGISTER_XLA_OP(Name("BatchMatMul"), BatchMatMulOp);

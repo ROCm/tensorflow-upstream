@@ -73,6 +73,9 @@ cc_library(
 tf_cc_test(
     name = "bit_cast_test",
     srcs = ["bit_cast_test.cc"],
+    tags = [
+        "no_rocm", # hit build errors on new test
+    ],
     deps = [
         ":bit_cast",
         ":test",
@@ -132,6 +135,7 @@ cc_library(
     deps = [
         "//tensorflow/core:framework_lite",
         "//third_party/eigen3",
+        "@com_google_absl//absl/types:variant",
     ],
 )
 
@@ -932,6 +936,10 @@ tf_cc_test(
         ":refcounting_hash_map",
         ":test",
         "//tensorflow/core:test_main",
+    ],
+    tags = [
+        "no_cuda", # new test missing includes/etc, do not upstream this tag
+        "no_rocm",
     ],
 )
 

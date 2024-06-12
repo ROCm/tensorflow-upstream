@@ -168,7 +168,8 @@ Status ValidateEinsumNumericDimensions(absl::Span<const int64> x_config,
 xla::XlaOp Einsum(xla::XlaOp x, absl::Span<const int64> x_config, xla::XlaOp y,
                   absl::Span<const int64> y_config,
                   absl::Span<const int64> output_config,
-                  xla::PrecisionConfig::Precision precision) {
+                  xla::PrecisionConfig::Precision precision,
+                  bool grad_x, bool grad_y) {
   XlaBuilder* builder = x.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(
@@ -257,7 +258,14 @@ xla::XlaOp Einsum(xla::XlaOp x, absl::Span<const int64> x_config, xla::XlaOp y,
     PrecisionConfig precision_proto;
     precision_proto.add_operand_precision(precision);
     precision_proto.add_operand_precision(precision);
-    return Transpose(DotGeneral(x, y, dnums, &precision_proto), transpose_dims);
+    auto dot = DotGeneral(x, y, dnums, &precision_proto);
+
+// does not work in 1.15
+//    builder->SetInstructionFrontendAttribute(dot, "grad_x",
+//                                             (grad_x ? "true" : "false"));
+//    builder->SetInstructionFrontendAttribute(dot, "grad_y",
+//                                             (grad_y ? "true" : "false"));
+    return Transpose(dot, transpose_dims);
   });
 }
 
@@ -266,7 +274,8 @@ XlaOp BatchDot(XlaOp x, XlaOp y, PrecisionConfig::Precision precision) {
 }
 
 XlaOp BatchDot(XlaOp x, bool transpose_x, XlaOp y, bool transpose_y,
-               PrecisionConfig::Precision precision) {
+               PrecisionConfig::Precision precision,
+               bool grad_x, bool grad_y) {
   XlaBuilder* builder = x.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(Shape x_shape, builder->GetShape(x));
@@ -342,7 +351,8 @@ XlaOp BatchDot(XlaOp x, bool transpose_x, XlaOp y, bool transpose_y,
           y_shape);
       y = Reshape(y, y_shape.dimensions());
     }
-    return Einsum(x, x_config, y, y_config, output_config, precision);
+    return Einsum(x, x_config, y, y_config, output_config, precision,
+      grad_x, grad_y);
   });
 }
 
@@ -393,13 +403,13 @@ StatusOr<std::array<std::vector<int64>, 3>> ParseEinsumString(
 }
 
 XlaOp Einsum(XlaOp x, XlaOp y, absl::string_view einsum_config,
-             PrecisionConfig::Precision precision) {
+             PrecisionConfig::Precision precision, bool grad_x, bool grad_y) {
   XlaBuilder* builder = x.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto einsum_config_numeric,
                         ParseEinsumString(einsum_config));
     return Einsum(x, einsum_config_numeric[0], y, einsum_config_numeric[1],
-                  einsum_config_numeric[2], precision);
+                  einsum_config_numeric[2], precision, grad_x, grad_y);
   });
 }
 

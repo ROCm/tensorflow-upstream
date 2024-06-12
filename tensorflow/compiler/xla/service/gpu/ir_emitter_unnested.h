@@ -146,6 +146,7 @@ class IrEmitterUnnested : public IrEmitter,
   IrEmitterUnnested(const HloModuleConfig& hlo_module_config,
                     const HloComputation* hlo_computation,
                     IrEmitterContext* ir_emitter_context);
+
   IrEmitterUnnested(const IrEmitterUnnested&) = delete;
   IrEmitterUnnested& operator=(const IrEmitterUnnested&) = delete;
 

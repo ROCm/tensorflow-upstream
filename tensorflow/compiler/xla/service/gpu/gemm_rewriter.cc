@@ -67,6 +67,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       *gemm_config.mutable_dot_dimension_numbers() =
           instr->dot_dimension_numbers();
       gemm_config.set_batch_size(batch_size);
+      //auto attributes = instr->frontend_attributes().map();
+      //gemm_config.set_grad_x(attributes["grad_x"] == "true");
+      //gemm_config.set_grad_y(attributes["grad_y"] == "true");
       TF_RETURN_IF_ERROR(gemm_call->set_backend_config(gemm_config));
       TF_RETURN_IF_ERROR(
           ReplaceWithNewInstruction(instr, std::move(gemm_call)));

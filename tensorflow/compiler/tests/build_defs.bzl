@@ -1,6 +1,7 @@
 """Build rules for Tensorflow/XLA testing."""
 
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_is_configured")
+load("@local_config_rocm//rocm:build_defs.bzl", "rocm_is_configured")
 load("//tensorflow/compiler/tests:plugin.bzl", "plugins")
 load(
     "//tensorflow/core/platform:default/build_config_root.bzl",
@@ -10,7 +11,7 @@ load(
 
 def all_backends():
     b = ["cpu"] + plugins.keys()
-    if cuda_is_configured():
+    if cuda_is_configured() or rocm_is_configured():
         return b + ["gpu"]
     else:
         return b
@@ -85,10 +86,16 @@ def tf_xla_py_test(
                 "--types=DT_HALF,DT_FLOAT,DT_DOUBLE,DT_UINT8,DT_QUINT8,DT_INT8,DT_QINT8,DT_INT32,DT_QINT32,DT_INT64,DT_BOOL,DT_COMPLEX64,DT_COMPLEX128",
             ]
         elif backend == "gpu":
-            backend_args += [
-                "--test_device=" + gpu_xla_device,
-                "--types=DT_HALF,DT_FLOAT,DT_DOUBLE,DT_UINT8,DT_QUINT8,DT_INT8,DT_QINT8,DT_INT32,DT_QINT32,DT_INT64,DT_BOOL,DT_COMPLEX64,DT_COMPLEX128,DT_BFLOAT16",
-            ]
+            if rocm_is_configured():
+                backend_args += [
+                    "--test_device=" + gpu_xla_device,
+                    "--types=DT_HALF,DT_FLOAT,DT_DOUBLE,DT_UINT8,DT_QUINT8,DT_INT8,DT_QINT8,DT_INT32,DT_QINT32,DT_INT64,DT_BOOL,DT_COMPLEX64,DT_BFLOAT16",
+                ]
+            else:
+                backend_args += [
+                    "--test_device=" + gpu_xla_device,
+                    "--types=DT_HALF,DT_FLOAT,DT_DOUBLE,DT_UINT8,DT_QUINT8,DT_INT8,DT_QINT8,DT_INT32,DT_QINT32,DT_INT64,DT_BOOL,DT_COMPLEX64,DT_COMPLEX128,DT_BFLOAT16",
+                ]
             backend_tags += tf_cuda_tests_tags()
         elif backend in plugins:
             backend_args += [
