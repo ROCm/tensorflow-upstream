@@ -131,7 +131,8 @@ class CUDABlas : public blas::BlasSupport {
       Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
       uint64 n, uint64 k, const ParamType &alpha, const DeviceMemory<T> &a,
       int lda, const DeviceMemory<T> &b, int ldb, const ParamType &beta,
-      DeviceMemory<T> *c, int ldc, blas::ProfileResult *output_profile_result);
+      DeviceMemory<T> *c, int ldc, blas::ProfileResult *output_profile_result,
+      blas::CallContext context);
 
   // Helper function for implementing DoBlasGemvWithProfiling.
   template <typename T>

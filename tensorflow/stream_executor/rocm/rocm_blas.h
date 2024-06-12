@@ -112,16 +112,13 @@ class ROCMBlas : public blas::BlasSupport {
 
   // A helper allocation funciton to convert raw pointers memory layout to
   // strided flavor
-  template <typename T>
+  template <typename T, typename U>
   port::Status AllocateStridedBuffer(
-      const std::vector<typename RocBlasTypeConversionHelper<T>::mapped_type *>
-          &raw_ptrs,
-      int batch_count, uint64_t batch_stride,
-      ScratchAllocator *scratch_allocator, Stream *stream,
-      std::unique_ptr<TemporaryDeviceMemory<
-          typename RocBlasTypeConversionHelper<T>::mapped_type>> *temp_memory,
-      DeviceMemory<typename RocBlasTypeConversionHelper<T>::mapped_type>
-          *device_memory);
+    const std::vector<U*> &raw_ptrs,
+    int batch_count, uint64_t batch_stride, ScratchAllocator *scratch_allocator,
+    Stream *stream,
+    std::unique_ptr<TemporaryDeviceMemory<U> > *temp_memory,
+    DeviceMemory<U> *device_memory);
 
   // A helper function to implement DoBlasGemmBatched interfaces for generic
   // types.
@@ -139,6 +136,9 @@ class ROCMBlas : public blas::BlasSupport {
   // matrix is created by broadcasting from a smaller matrix. When it happens,
   // It will take advantage of the AllocateStridedBuffer subroutine to
   // reallocate the memory layout to be strided batched.
+  template <class T, class V>
+  bool DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContext<T> ctx, V strided_fun);
+/*
   template <typename T, typename FuncT>
   port::Status DoBlasGemmBatchedInternal(
       FuncT rocblas_func, Stream *stream, blas::Transpose transa,
@@ -146,31 +146,9 @@ class ROCMBlas : public blas::BlasSupport {
       const port::ArraySlice<DeviceMemory<T> *> &a_ptrs_to_wrappers, int lda,
       const port::ArraySlice<DeviceMemory<T> *> &b_ptrs_to_wrappers, int ldb,
       T beta, const port::ArraySlice<DeviceMemory<T> *> &c_ptrs_to_wrappers,
-      int ldc, int batch_count, ScratchAllocator *scratch_allocator);
-
-  // Helper function for implementing DoBlasGemmWithAlgorithm.
-  //
-  // We take alpha and beta by const reference because T might be Eigen::half,
-  // and we want to avoid pulling in a dependency on Eigen.  When we pass the
-  // references to rocBLAS, we essentially reinterpret_cast to __half, which is
-  // safe because Eigen::half inherits from __half.
-  template <typename InT, typename OutT, typename CompT>
-  bool DoBlasGemmWithAlgorithmImpl(
-      Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-      uint64 n, uint64 k, const CompT &alpha, const DeviceMemory<InT> &a,
-      int lda, const DeviceMemory<InT> &b, int ldb, const CompT &beta,
-      DeviceMemory<OutT> *c, int ldc, blas::ComputationType computation_type,
-      blas::AlgorithmType algorithm,
-      blas::ProfileResult *output_profile_result);
-
-  // Helper function for implementing DoBlasGemmWithProfiling.
-  template <typename T, typename ParamType>
-  bool DoBlasGemmWithProfilingImpl(
-      Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-      uint64 n, uint64 k, const ParamType &alpha, const DeviceMemory<T> &a,
-      int lda, const DeviceMemory<T> &b, int ldb, const ParamType &beta,
-      DeviceMemory<T> *c, int ldc, blas::ProfileResult *output_profile_result);
-
+      int ldc, int batch_count, ScratchAllocator *scratch_allocator,
+      blas::CallContext context);
+*/
   // Helper function for implementing DoBlasGemvWithProfiling.
   template <typename T>
   bool DoBlasGemvWithProfilingImpl(Stream *stream, blas::Transpose trans,
@@ -179,6 +157,22 @@ class ROCMBlas : public blas::BlasSupport {
                                    const DeviceMemory<T> &x, int incx,
                                    const T &beta, DeviceMemory<T> *y, int incy,
                                    blas::ProfileResult *output_profile_result);
+
+  bool DoBlasGemm(Stream *stream, blas::Transpose transa,
+                          blas::Transpose transb, uint64 m, uint64 n, uint64 k,
+                          float alpha, const DeviceMemory<Eigen::half> &a,
+                          int lda, const DeviceMemory<Eigen::half> &b, int ldb,
+                          float beta, DeviceMemory<Eigen::half> *c, int ldc,
+                          blas::CallContext context);
+  bool DoBlasGemm(Stream *stream, blas::Transpose transa,
+                          blas::Transpose transb, uint64 m, uint64 n, uint64 k,
+                          float alpha, const DeviceMemory<float> &a, int lda,
+                          const DeviceMemory<float> &b, int ldb, float beta,
+                          DeviceMemory<float> *c, int ldc);
+
+  template <class T, class V, class W>
+  bool DoBlasGemmImpl(Stream *stream, blas::GemmCallContext<T> ctx, V strided_fun, W fun);
+
 
   // mutex that guards the rocBLAS handle for this device.
   absl::Mutex mu_;

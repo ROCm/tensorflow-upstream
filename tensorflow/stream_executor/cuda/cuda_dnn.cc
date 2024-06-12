@@ -2867,7 +2867,7 @@ port::Status CudnnSupport::DoConvolve(
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::AlgorithmDesc algorithm_desc, DeviceMemory<uint8> scratch_memory,
-    dnn::ProfileResult* output_profile_result) {
+    dnn::CallContext call_context, dnn::ProfileResult* output_profile_result) {
   cudnnDataType_t cudnn_type = ToCudnnDataType(element_type);
   CudnnTensorDescriptor input_nd(input_descriptor, cudnn_type);
   CudnnTensorDescriptor output_nd(output_descriptor,
@@ -3958,7 +3958,8 @@ bool CudnnSupport::DoMatMul(Stream* stream,
     const int64 k = input_dimensions.NodesAcrossFeatureMaps();
     stream->ThenBlasGemm(blas::Transpose::kNoTranspose,
                          blas::Transpose::kNoTranspose, m, n, k, alpha, weights,
-                         m, input_data, k, beta, output_data, m);
+                         m, input_data, k, beta, output_data, m,
+                         blas::CallContext::kNone);
   } else {
     // This is a slower and more complex path that supports output
     // width() * height() > 1, though it only supports the
@@ -4038,7 +4039,7 @@ bool CudnnSupport::DoMatMul(Stream* stream,
     stream->ThenBlasGemmBatched(blas::Transpose::kNoTranspose,
                                 blas::Transpose::kNoTranspose, m, n, k, alpha,
                                 toPtrs(a), lda, toPtrs(b), ldb, beta, toPtrs(c),
-                                ldc, batch_count);
+                                ldc, batch_count, blas::CallContext::kNone);
   }
 
   return stream->ok();
