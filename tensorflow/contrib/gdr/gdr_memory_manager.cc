@@ -47,6 +47,8 @@ bool IsGDRAvailable() {
   return false;
 #elif defined(PLATFORM_WINDOWS)
   return false;
+#elif TENSORFLOW_USE_ROCM
+  return true;
 #else
   std::ifstream ifs("/proc/modules");
   string line;

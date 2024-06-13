@@ -1280,6 +1280,9 @@ cuda_py_test(
         "//tensorflow/python:math_ops",
         "//tensorflow/python:platform_test",
     ],
+    tags = [
+        "no_oss",  # b/135063918
+    ],
 )
 
 cuda_py_test(
