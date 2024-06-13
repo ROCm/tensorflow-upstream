@@ -126,25 +126,28 @@ void InitializePasses(llvm::PassRegistry* pass_registry) {
   llvm::initializeCodeGenPreparePass(*pass_registry);
 }
 
-// Returns the TargetMachine, given a triple.
+// returns the targetmachine, given a triple.
 std::unique_ptr<llvm::TargetMachine> GetTargetMachine(
     llvm::Triple triple, absl::string_view cpu_name,
     const HloModuleConfig& hlo_module_config, absl::string_view feature_str) {
   std::string error;
   const llvm::Target* target = TargetRegistry::lookupTarget("", triple, error);
   if (target == nullptr) {
-    LOG(FATAL) << "Unable to find Target for triple '" << triple.str() << "'"
+    LOG(FATAL) << "unable to find target for triple '" << triple.str() << "'"
                << " -- " << error;
     return nullptr;
   }
 
   TargetOptions target_options = InitTargetOptionsFromCodeGenFlags();
 
-  // Set the verbose assembly options.
+  // enable fma synthesis.
+  target_options.AllowFPOpFusion = FPOpFusion::Fast;
+
+  // set the verbose assembly options.
   target_options.MCOptions.AsmVerbose = false;
 
-  // The selection of codegen optimization level is copied from function
-  // GetCodeGenOptLevel in //third_party/llvm/llvm/tools/opt/opt.cpp.
+  // the selection of codegen optimization level is copied from function
+  // getcodegenoptlevel in //external/llvm/tools/opt/opt.cpp.
   CodeGenOpt::Level codegen_opt_level;
   switch (hlo_module_config.debug_options().xla_backend_optimization_level()) {
     case 1:
@@ -326,12 +329,13 @@ Status NVPTXTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
   TF_RETURN_IF_ERROR(LinkLibdeviceIfNecessary(module, *compute_capability,
                                               device_bitcode_dir_path));
 
-  // Set the flush-denormals-to-zero flag on the module so the NVVM reflect pass
-  // can access it.
+  // Set the flush-denormals-to-zero flag on the module so the NVVM reflect
+  // pass can access it.
   module->addModuleFlag(llvm::Module::Override, "nvvm-reflect-ftz",
                         hlo_module_config.debug_options().xla_gpu_ftz());
 
-  // If ftz is enabled, set it as an attribute on every function in the module.
+  // If ftz is enabled, set it as an attribute on every function in the
+  // module.
   if (hlo_module_config.debug_options().xla_gpu_ftz()) {
     for (llvm::Function& fn : *module) {
       fn.addFnAttr("nvptx-f32ftz", "true");
@@ -542,10 +546,9 @@ static std::vector<string> GetROCDLPaths(int amdgpu_version,
                                          const string& rocdl_dir_path) {
   // AMDGPU version-neutral bitcodes.
   static std::vector<string>* rocdl_filenames = new std::vector<string>(
-      {"hc.amdgcn.bc", "opencl.amdgcn.bc", "ocml.amdgcn.bc", "ockl.amdgcn.bc",
-       "oclc_finite_only_off.amdgcn.bc", "oclc_daz_opt_off.amdgcn.bc",
-       "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
-       "oclc_unsafe_math_off.amdgcn.bc"});
+      {"opencl.bc", "ocml.bc", "ockl.bc", "oclc_finite_only_off.bc",
+       "oclc_daz_opt_off.bc", "oclc_correctly_rounded_sqrt_on.bc",
+       "oclc_unsafe_math_off.bc", "oclc_wavefrontsize64_on.bc"});
 
   // Construct full path to ROCDL bitcode libraries.
   std::vector<string> result;
@@ -556,7 +559,7 @@ static std::vector<string> GetROCDLPaths(int amdgpu_version,
   // Add AMDGPU version-specific bitcodes.
   result.push_back(tensorflow::io::JoinPath(
       rocdl_dir_path,
-      absl::StrCat("oclc_isa_version_", amdgpu_version, ".amdgcn.bc")));
+      absl::StrCat("oclc_isa_version_", amdgpu_version, ".bc")));
   return result;
 }
 
@@ -620,8 +623,10 @@ StatusOr<std::vector<uint8>> EmitModuleToHsaco(
   // Locate lld.
   // TODO(whchung@gmail.com): change to tensorflow::ROCmRoot() after
   // ROCm-Device-Libs PR.
-  std::string lld_path = tensorflow::io::JoinPath("/opt/rocm", "hcc/bin");
-  auto lld_program = llvm::sys::findProgramByName("ld.lld", {lld_path});
+  std::string lld_path_1 = tensorflow::io::JoinPath("/opt/rocm", "hcc/bin");
+  std::string lld_path_2 = tensorflow::io::JoinPath("/opt/rocm", "llvm/bin");
+  auto lld_program =
+      llvm::sys::findProgramByName("ld.lld", {lld_path_1, lld_path_2});
   if (!lld_program) {
     return xla::InternalError("unable to find ld.lld in PATH: %s",
                               lld_program.getError().message());
@@ -685,7 +690,7 @@ std::unique_ptr<llvm::TargetMachine> AMDGPUGetTargetMachine(
     llvm::Triple target_triple, int amdgpu_version,
     const HloModuleConfig& hlo_module_config) {
   return GetTargetMachine(target_triple, absl::StrCat("gfx", amdgpu_version),
-                          hlo_module_config, "-code-object-v3");
+                          hlo_module_config, "+code-object-v3");
 }
 
 void AMDGPUBackendInit(const HloModuleConfig& hlo_module_config) {

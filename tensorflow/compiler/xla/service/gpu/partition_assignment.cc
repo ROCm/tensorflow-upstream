@@ -52,7 +52,7 @@ int64 ThreadsPerBlockLimit(const se::DeviceDescription& device_desc) {
     threads_per_block = device_desc.threads_per_warp();
     if (threads_per_block == 0) {
       // Fall back to *something* if we can't even get num threads per warp.
-      threads_per_block = 32;
+      threads_per_block = 64;
     }
   }
   return threads_per_block;

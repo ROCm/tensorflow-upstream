@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/buffer_comparator.h"
-
 #include <algorithm>
 #include <cmath>
 
 #include "absl/strings/str_replace.h"
+#include "tensorflow/compiler/xla/service/gpu/buffer_comparator.h"
 #include "tensorflow/compiler/xla/service/gpu/partition_assignment.h"
 #include "tensorflow/compiler/xla/service/gpu/stream_executor_util.h"
 #include "tensorflow/compiler/xla/service/hlo_module_config.h"
 #include "tensorflow/compiler/xla/shape_util.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/util.h"
+#include "tensorflow/stream_executor/cuda/ptxas_utils.h"
 #include "tensorflow/stream_executor/device_memory.h"
 #include "tensorflow/stream_executor/kernel.h"
 #include "tensorflow/stream_executor/stream_executor_pimpl.h"
@@ -366,7 +366,7 @@ static StatusOr<bool> DeviceCompare(se::Stream* stream,
   TF_ASSIGN_OR_RETURN(absl::Span<const uint8> compiled_ptx,
                       se::cuda::CompilePtxOrGetCached(
                           executor->device_ordinal(), buffer_compare_ptx,
-                          PtxOptsFromConfig(config)));
+                          GpuAsmOptsFromConfig(config)));
 
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<ComparisonKernelT<ElementT>> comparison_kernel,

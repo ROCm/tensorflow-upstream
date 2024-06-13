@@ -47,7 +47,7 @@ cc_library(
         "@llvm//:ipo",
         "@llvm//:ir_reader",
         "@llvm//:linker",
-        "@llvm//:nvptx_code_gen",  # buildcleaner: keep
+        "@llvm//:nvptx_code_gen",
         "@llvm//:objc_arc",  # buildcleaner: keep
         "@llvm//:scalar",
         "@llvm//:support",
