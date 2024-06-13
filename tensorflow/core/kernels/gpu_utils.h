@@ -50,8 +50,8 @@ bool RedzoneCheckDisabled();
 // Returns `buffer` if RedzoneCheckDisabled() is true.
 //
 // On error, return `buffer`, and log an error message (once).
-se::DeviceMemoryBase WrapRedzoneBestEffort(se::RedzoneAllocator* rz_allocator,
-                                           se::DeviceMemoryBase buffer);
+se::DeviceMemoryBase WrapRedzoneBestEffort(
+    se::RedzoneAllocator* rz_allocator, se::DeviceMemoryBase buffer);
 
 // Check the passed allocator for redzone violations.
 // If violations have occurred, mark the corresponding autotune result

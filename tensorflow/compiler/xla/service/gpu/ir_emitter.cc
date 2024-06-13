@@ -80,7 +80,8 @@ IrEmitter::IrEmitter(const HloModuleConfig& hlo_module_config,
       bindings_(ir_emitter_context->hlo_module(),
                 &ir_emitter_context->buffer_assignment(), &b_, module_,
                 is_nested),
-      hlo_module_config_(hlo_module_config) {}
+      hlo_module_config_(hlo_module_config) {
+}
 
 Status IrEmitter::DefaultAction(HloInstruction* hlo) {
   ElementalIrEmitter::HloToElementGeneratorMap operand_to_generator;

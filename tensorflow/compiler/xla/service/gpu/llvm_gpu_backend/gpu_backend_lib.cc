@@ -65,7 +65,6 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-
 namespace {
 
 // Inline threshold value to use in LLVM AMDGPU backend.

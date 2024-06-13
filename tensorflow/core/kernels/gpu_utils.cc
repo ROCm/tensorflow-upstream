@@ -35,8 +35,8 @@ bool RedzoneCheckDisabled() {
   return disable_rz_str != nullptr && std::strcmp(disable_rz_str, "1") == 0;
 }
 
-se::DeviceMemoryBase WrapRedzoneBestEffort(se::RedzoneAllocator* rz_allocator,
-                                           se::DeviceMemoryBase buffer) {
+se::DeviceMemoryBase WrapRedzoneBestEffort(
+    se::RedzoneAllocator* rz_allocator, se::DeviceMemoryBase buffer) {
   if (RedzoneCheckDisabled()) {
     return buffer;
   }

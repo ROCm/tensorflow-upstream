@@ -1,5 +1,5 @@
-/* Copyright 201ed
-:/Emit The TensorFlow Authors. All Rights Reserved.
+
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -140,8 +140,8 @@ IrArray::Index KernelMappingScheme::GetUnnormalizedIndex(
 }
 
 IrArray::Index KernelMappingScheme::EmitBlockIndex(llvm::Type* index_ty) {
-  llvm::Value* block_id =
-      gpu::EmitCallToTargetIntrinsic(gpu::TargetIntrinsicID::kBlockIdx, {}, {},b_);
+  llvm::Value* block_id = gpu::EmitCallToTargetIntrinsic(
+      gpu::TargetIntrinsicID::kBlockIdx, {}, {}, b_);
   llvm_ir::AddRangeMetadata(0, GetNumberOfBlocks(),
                             llvm::cast<llvm::Instruction>(block_id));
   llvm::Value* linear_block_id =

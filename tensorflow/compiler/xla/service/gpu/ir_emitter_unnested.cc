@@ -143,7 +143,6 @@ void UpdateLaunchDimensions(const LaunchDimensions& launch_dims, Thunk* thunk,
 IrEmitterUnnested::IrEmitterUnnested(const HloModuleConfig& hlo_module_config,
                                      const HloComputation* hlo_computation,
                                      IrEmitterContext* ir_emitter_context)
-
     : IrEmitter(hlo_module_config, ir_emitter_context, /*is_nested=*/false),
       hlo_computation_(hlo_computation) {
   // Initialize thunk_sequence_ to an empty list of thunks.

@@ -151,9 +151,8 @@ Status EmitTiledCompareLoop(
     const EmitCallToNestedComputationCallback& emit_compare_callback,
     llvm::IRBuilder<>* b) {
   KernelSupportLibrary ksl(b);
-  llvm::Value* thread_id =
-      gpu::EmitCallToTargetIntrinsic(gpu::TargetIntrinsicID::kThreadIdx, {}, {},
-                                     b);
+  llvm::Value* thread_id = gpu::EmitCallToTargetIntrinsic(
+      gpu::TargetIntrinsicID::kThreadIdx, {}, {}, b);
   llvm_ir::AddRangeMetadata(0, tile_size / 2,
                             llvm::cast<llvm::Instruction>(thread_id));
   thread_id = b->CreateIntCast(thread_id, tiled_keys_index.GetType(),
@@ -204,8 +203,7 @@ Status EmitTiledCompareLoop(
     });
   }
   // Wait until all reads have happened.
-  gpu::EmitCallToTargetIntrinsic(gpu::TargetIntrinsicID::kBarrierId, {}, {},
-                                 b);
+  gpu::EmitCallToTargetIntrinsic(gpu::TargetIntrinsicID::kBarrierId, {}, {}, b);
 
   // Now emit the bodies of the comparison loops.
   auto element_address = [&](int64 operand, llvm::Value* index) {
