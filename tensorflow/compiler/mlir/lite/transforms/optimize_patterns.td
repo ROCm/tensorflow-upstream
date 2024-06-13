@@ -27,7 +27,7 @@ def F32ElementsAttr : ElementsAttrBase<
 //===----------------------------------------------------------------------===//
 // Multi-pattern consisting of matching stand-alone convolution op followed by
 // activation op.
-multiclass FuseActFnIntoConvOpPat<dag ActFnOp, dag ActFnAttr> {
+multiclass FuseActFnIntoConvOpPat<TFL_Op ActFnOp, StrEnumAttrCase ActFnAttr> {
   def : Pat<(ActFnOp (TFL_Conv2DOp $input, $filter, $bias,
                                    $h_factor, $w_factor, TFL_AF_None,
                                    $padding, $stride_h, $stride_w)),
@@ -46,14 +46,12 @@ multiclass FuseActFnIntoConvOpPat<dag ActFnOp, dag ActFnAttr> {
 
 // TODO(hinsu): Also fuse ops corresponding to RELU_N1_TO_1 and SIGN_BIT fused
 // activation functions.
-//foreach actFnPair = [
-//[TFL_ReluOp, TFL_AF_Relu],
-//[TFL_Relu6Op, TFL_AF_Relu6],
-//[TFL_TanhOp, TFL_AF_Tanh]
-//         ] in
-//  defm : FuseActFnIntoConvOpPat<actFnPair[0], actFnPair[1]>;
 
 defm : FuseActFnIntoConvOpPat<TFL_ReluOp, TFL_AF_Relu>;
+defm : FuseActFnIntoConvOpPat<TFL_Relu6Op, TFL_AF_Relu6>;
+defm : FuseActFnIntoConvOpPat<TFL_TanhOp, TFL_AF_Tanh>;
+
+//defm : FuseActFnIntoConvOpPat<TFL_ReluOp, TFL_AF_Relu>;
 
 // If we see an add op adding a constant value to a convolution op with constant
 // bias, we can fuse the add into the convolution op by constant folding the

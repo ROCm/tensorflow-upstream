@@ -187,6 +187,139 @@ gentbl(
 )
 
 gentbl(
+    name = "aarch64_enums_gen",
+    tbl_outs = [(
+        "-gen-intrinsic-enums -intrinsic-prefix=aarch64",
+        "include/llvm/IR/IntrinsicsAArch64.h",
+    )],
+    tblgen = ":llvm-tblgen",
+    td_file = "include/llvm/IR/Intrinsics.td",
+    td_srcs = glob([
+        "include/llvm/CodeGen/*.td",
+        "include/llvm/IR/Intrinsics*.td",
+    ]),
+)
+
+gentbl(
+    name = "amdgcn_enums_gen",
+    tbl_outs = [(
+        "-gen-intrinsic-enums -intrinsic-prefix=amdgcn",
+        "include/llvm/IR/IntrinsicsAMDGPU.h",
+    )],
+    tblgen = ":llvm-tblgen",
+    td_file = "include/llvm/IR/Intrinsics.td",
+    td_srcs = glob([
+        "include/llvm/CodeGen/*.td",
+        "include/llvm/IR/Intrinsics*.td",
+    ]),
+)
+
+gentbl(
+    name = "arm_enums_gen",
+    tbl_outs = [(
+        "-gen-intrinsic-enums -intrinsic-prefix=arm",
+        "include/llvm/IR/IntrinsicsARM.h",
+    )],
+    tblgen = ":llvm-tblgen",
+    td_file = "include/llvm/IR/Intrinsics.td",
+    td_srcs = glob([
+        "include/llvm/CodeGen/*.td",
+        "include/llvm/IR/Intrinsics*.td",
+    ]),
+)
+
+
+gentbl(
+    name = "nvvm_enums_gen",
+    tbl_outs = [(
+        "-gen-intrinsic-enums -intrinsic-prefix=nvvm",
+        "include/llvm/IR/IntrinsicsNVPTX.h",
+    )],
+    tblgen = ":llvm-tblgen",
+    td_file = "include/llvm/IR/Intrinsics.td",
+    td_srcs = glob([
+        "include/llvm/CodeGen/*.td",
+        "include/llvm/IR/Intrinsics*.td",
+    ]),
+)
+
+gentbl(
+    name = "ppc_enums_gen",
+    tbl_outs = [(
+        "-gen-intrinsic-enums -intrinsic-prefix=ppc",
+        "include/llvm/IR/IntrinsicsPowerPC.h",
+    )],
+    tblgen = ":llvm-tblgen",
+    td_file = "include/llvm/IR/Intrinsics.td",
+    td_srcs = glob([
+        "include/llvm/CodeGen/*.td",
+        "include/llvm/IR/Intrinsics*.td",
+    ]),
+)
+
+gentbl(
+    name = "r600_enums_gen",
+    tbl_outs = [(
+        "-gen-intrinsic-enums -intrinsic-prefix=r600",
+        "include/llvm/IR/IntrinsicsR600.h",
+    )],
+    tblgen = ":llvm-tblgen",
+    td_file = "include/llvm/IR/Intrinsics.td",
+    td_srcs = glob([
+        "include/llvm/CodeGen/*.td",
+        "include/llvm/IR/Intrinsics*.td",
+    ]),
+)
+
+gentbl(
+    name = "x86_enums_gen",
+    tbl_outs = [(
+        "-gen-intrinsic-enums -intrinsic-prefix=x86",
+        "include/llvm/IR/IntrinsicsX86.h",
+    )],
+    tblgen = ":llvm-tblgen",
+    td_file = "include/llvm/IR/Intrinsics.td",
+    td_srcs = glob([
+        "include/llvm/CodeGen/*.td",
+        "include/llvm/IR/Intrinsics*.td",
+    ]),
+)
+
+gentbl(
+    name = "wasm_enums_gen",
+    tbl_outs = [(
+        "-gen-intrinsic-enums -intrinsic-prefix=wasm",
+        "include/llvm/IR/IntrinsicsWebAssembly.h",
+    )],
+    tblgen = ":llvm-tblgen",
+    td_file = "include/llvm/IR/Intrinsics.td",
+    td_srcs = glob([
+        "include/llvm/CodeGen/*.td",
+        "include/llvm/IR/Intrinsics*.td",
+    ]),
+)
+
+set(LLVM_TARGET_DEFINITIONS COFFOptions.td)
+tablegen(LLVM COFFOptions.inc -gen-opt-parser-defs)
+
+
+
+gentbl(
+    name = "coff_options_gen",
+    tbl_outs = [(
+        "-gen-opt-parser-defs",
+        "COFFOptions.inc",
+    )],
+    tblgen = ":llvm-tblgen",
+    td_file = "lib/ExecutionEngine/JITLink/COFFOptions.td",
+    td_srcs = glob([
+        "include/llvm/CodeGen/*.td",
+        "include/llvm/IR/Intrinsics*.td",
+    ]),
+)
+
+
+gentbl(
     name = "intrinsics_impl_gen",
     tbl_outs = [("-gen-intrinsic-impl", "include/llvm/IR/IntrinsicImpl.inc")],
     tblgen = ":llvm-tblgen",
@@ -196,6 +329,7 @@ gentbl(
         "include/llvm/IR/Intrinsics*.td",
     ]),
 )
+
 
 # Binary targets used by Tensorflow.
 cc_binary(
@@ -867,6 +1001,7 @@ cc_library(
         "include/llvm/Target/ARM/*.def",
         "include/llvm/Target/ARM/*.inc",
         "lib/Target/ARM/*.h",
+
     ]),
     copts = llvm_copts + ["-Iexternal/llvm/lib/Target/ARM"],
     deps = [
@@ -885,6 +1020,7 @@ cc_library(
         ":support",
         ":target",
         ":transform_utils",
+	":arm_enums_gen",
     ],
 )
 
@@ -939,6 +1075,8 @@ cc_library(
         ":config",
         ":mc_disassembler",
         ":support",
+	":arm_enums_gen"
+
     ],
 )
 
@@ -1151,6 +1289,7 @@ cc_library(
         ":object",
         ":profile_data",
         ":support",
+	":aarch64_enums_gen"
     ],
 )
 
@@ -1478,6 +1617,13 @@ cc_library(
         ":intrinsics_impl_gen",
         ":remarks",
         ":support",
+        ":aarch64_enums_gen",
+        ":amdgcn_enums_gen",
+        ":arm_enums_gen",
+        ":nvvm_enums_gen",
+        ":ppc_enums_gen",
+        ":r600_enums_gen",
+        ":x86_enums_gen",
     ],
 )
 
@@ -2032,6 +2178,7 @@ cc_library(
         ":config",
         ":object",
         ":support",
+	":coff_options_gen",
     ],
 )
 
@@ -2660,6 +2807,7 @@ cc_library(
         ":target",
         ":transform_utils",
         ":vectorize",
+	":nvptx_enums_gen",
     ],
 )
 
@@ -3665,6 +3813,7 @@ cc_library(
         ":config",
         ":core",
         ":support",
+	":wasm_enums_gen",
     ],
 )
 

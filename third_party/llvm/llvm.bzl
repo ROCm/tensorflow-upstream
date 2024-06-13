@@ -49,7 +49,7 @@ def gentbl(name, tblgen, td_file, td_srcs, tbl_outs, library = True, **kwargs):
         td_srcs += [td_file]
     includes = []
     for (opts, out) in tbl_outs:
-        outdir = out[:out.rindex("/")]
+        outdir = out[:out.rfind("/")]
         if outdir not in includes:
             includes.append(outdir)
         rule_suffix = "_".join(opts.replace("-", "_").replace("=", "_").split(" "))
@@ -59,10 +59,10 @@ def gentbl(name, tblgen, td_file, td_srcs, tbl_outs, library = True, **kwargs):
             outs = [out],
             tools = [tblgen],
             message = "Generating code from table: %s" % td_file,
-            cmd = (("$(location %s) " + "-I external/llvm/include " +
+            cmd = (("%s " + "-I external/llvm/include " +
                     "-I external/llvm/tools/clang/include " +
                     "-I $$(dirname $(location %s)) " + "%s $(location %s) -o $@") % (
-                tblgen,
+                "/root/llvm-project/build/bin/llvm-tblgen",
                 td_file,
                 opts,
                 td_file,

@@ -197,7 +197,7 @@ def : Pat<(TF_LogicalAndOp $l, $r), (TFL_LogicalAndOp $l, $r)>;
 def : Pat<(TF_LogicalOrOp $l, $r), (TFL_LogicalOrOp $l, $r)>;
 
 // Multi-pattern consisting of matching stand-alone op or op followed by relu.
-multiclass FusedBinaryActivationFuncOpPat<dag FromOp, dag ToOp> {
+multiclass FusedBinaryActivationFuncOpPat<TF_Op FromOp, TFL_Op ToOp> {
   def : Pat<(FromOp AnyTensor:$l, AnyTensor:$r),
             (ToOp $l, $r, TFL_AF_None)>;
   foreach actFnPair = [[TF_ReluOp, TFL_AF_Relu],
@@ -211,13 +211,11 @@ multiclass FusedBinaryActivationFuncOpPat<dag FromOp, dag ToOp> {
 }
 
 // Instantiated FusedBinary patterns for the from-to pairs of ops.
-foreach fromToPair = [[TF_AddOp, TFL_AddOp],
-                      [TF_AddV2Op, TFL_AddOp],
-                      [TF_DivOp, TFL_DivOp],
-                      [TF_MulOp, TFL_MulOp],
-                      [TF_RealDivOp, TFL_DivOp],
-                      [TF_SubOp, TFL_SubOp]] in
-  defm : FusedBinaryActivationFuncOpPat<fromToPair[0], fromToPair[1]>;
+defm : FusedBinaryActivationFuncOpPat<TF_AddOp, TFL_AddOp>;
+defm : FusedBinaryActivationFuncOpPat<TF_AddV2Op, TFL_AddOp>;
+defm : FusedBinaryActivationFuncOpPat<TF_DivOp, TFL_DivOp>;
+defm : FusedBinaryActivationFuncOpPat<TF_MulOp, TFL_MulOp>;
+defm : FusedBinaryActivationFuncOpPat<TF_SubOp, TFL_SubOp>;
 
 def : Pat<(TF_BiasAddOp F32Tensor:$l, F32Tensor:$r,
                         IsDataFormatNHWC:$data_format),

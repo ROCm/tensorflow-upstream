@@ -33,6 +33,9 @@ load("//third_party/opencl_headers:workspace.bzl", opencl_headers = "repo")
 load("//third_party/kissfft:workspace.bzl", kissfft = "repo")
 load("//third_party/keras_applications_archive:workspace.bzl", keras_applications = "repo")
 load("//third_party/pasta:workspace.bzl", pasta = "repo")
+#load("//third_party/llvm:setup.bzl", "llvm_setup")
+#load("//third_party/llvm:workspace.bzl", llvm = "repo")
+
 
 def initialize_third_party():
     """ Load third party repositories.  See above load() statements. """
@@ -76,7 +79,9 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
     syslibs_configure(name = "local_config_syslibs")
     python_configure(name = "local_config_python")
     rocm_configure(name = "local_config_rocm")
+    print("Running mlir_configure...")
     mlir_configure(name = "local_config_mlir")
+    print("Done running mlir_configure...")
     remote_execution_configure(name = "local_config_remote_execution")
 
     initialize_third_party()
@@ -547,6 +552,15 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
         name = "llvm",
         path = "/root/llvm-project/llvm/",
     )
+
+    #print("Loading the local MLIR repo")
+    #native.local_repository(
+    #    name = "mlir",
+    #    path = "/dockerx/llvm-project/mlir/",
+    #p)
+
+    #llvm("llvm-raw")
+    #llvm_setup(name = "llvm-project")
 
     # TODO(phawkins): currently, this rule uses an unofficial LLVM mirror.
     # Switch to an official source of snapshots if/when possible.
@@ -1024,3 +1038,4 @@ def tf_bind():
         name = "zlib",
         actual = "@zlib_archive//:zlib",
     )
+
