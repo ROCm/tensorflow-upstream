@@ -259,8 +259,6 @@ cuda_py_test(
         "//tensorflow/python:training",
     ],
     tags = [
-        "no_mac",  # fails on this branch
-        "no_rocm",
         "no_windows",  #TODO(b/139745667)
     ],
     xla_enable_strict_auto_jit = True,
@@ -705,6 +703,7 @@ tf_xla_py_test(
     srcs = ["def_function_xla_test.py"],
     tags = [
         "no_pip",
+        "no_cuda",
         "no_windows",
         "nomac",
     ],

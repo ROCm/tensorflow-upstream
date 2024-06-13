@@ -929,6 +929,8 @@ class AnalyzerCLISimpleMulAddTest(test_util.TensorFlowTestCase):
 
     test_attr_key_val_pairs = [("transpose_a", "b: false"),
                                ("transpose_b", "b: false"),
+                               ('grad_a', 'b: false'),
+                               ('grad_b', 'b: false'),
                                ("T", "type: DT_DOUBLE")]
     if test_util.IsMklEnabled():
       test_attr_key_val_pairs.append(("_kernel", 's: "MklNameChangeOp"'))

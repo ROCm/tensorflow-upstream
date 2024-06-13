@@ -19,7 +19,7 @@ set -e
 set -x
 
 N_JOBS=$(grep -c ^processor /proc/cpuinfo)
-N_GPUS=$(lspci|grep 'VGA'|grep 'AMD/ATI'|wc -l)
+N_GPUS=$(lspci|grep 'controller'|grep 'AMD/ATI'|wc -l)
 
 echo ""
 echo "Bazel will use ${N_JOBS} concurrent build job(s) and ${N_GPUS} concurrent test job(s)."
@@ -32,7 +32,7 @@ export CC_OPT_FLAGS='-mavx'
 export TF_NEED_ROCM=1
 export TF_GPU_COUNT=${N_GPUS}
 
-yes "" | $PYTHON_BIN_PATH configure.py
+yes "" | TF_NEED_ROCM=1 $PYTHON_BIN_PATH configure.py
 
 # Run bazel test command. Double test timeouts to avoid flakes.
 bazel test --config=rocm --test_tag_filters=-no_oss,-oss_serial,-no_gpu,-no_rocm,-benchmark-test -k \
@@ -40,4 +40,4 @@ bazel test --config=rocm --test_tag_filters=-no_oss,-oss_serial,-no_gpu,-no_rocm
     --build_tests_only --test_output=errors --local_test_jobs=${TF_GPU_COUNT} --config=opt \
     --test_sharding_strategy=disabled \
     --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute -- \
-    //tensorflow/... -//tensorflow/compiler/... -//tensorflow/contrib/...
+    //tensorflow/... -//tensorflow/compiler/... -//tensorflow/contrib/... \

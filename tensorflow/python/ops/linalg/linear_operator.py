@@ -1082,6 +1082,8 @@ def _matmul(  # pylint:disable=missing-docstring
     adjoint_b=False,
     a_is_sparse=False,
     b_is_sparse=False,
+    grad_a=False,
+    grad_b=False,
     name=None):
   if transpose_a or transpose_b:
     raise ValueError("Transposing not supported at this time.")

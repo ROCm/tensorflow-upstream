@@ -8,9 +8,9 @@ load(
     "if_static",
     "tf_additional_grpc_deps_py",
     "tf_additional_xla_deps_py",
+    "tf_gpu_tests_tags",
     "tf_cuda_tests_tags",
     "tf_exec_compatible_with",
-    "tf_gpu_tests_tags",
     "tf_sycl_tests_tags",
 )
 load(
@@ -292,6 +292,7 @@ def tf_copts(
         ]) +
         (if_not_windows(["-fno-exceptions"]) if not allow_exceptions else []) +
         if_cuda(["-DGOOGLE_CUDA=1"]) +
+        if_rocm(["-DTENSORFLOW_USE_ROCM=1"]) +
         if_tensorrt(["-DGOOGLE_TENSORRT=1"]) +
         if_mkl(["-DINTEL_MKL=1", "-DEIGEN_USE_VML"]) +
         if_mkl_open_source_only(["-DINTEL_MKL_DNN_ONLY"]) +
@@ -1138,6 +1139,7 @@ def tf_gpu_only_cc_test(
             clean_dep("//tensorflow/core:cuda"),
             clean_dep("//tensorflow/core:gpu_lib"),
         ]) + if_rocm_is_configured([
+            clean_dep("//tensorflow/core:rocm"),
             clean_dep("//tensorflow/core:gpu_lib"),
         ]),
         linkopts = if_not_windows(["-lpthread", "-lm"]) + linkopts + _rpath_linkopts(name),
@@ -1316,11 +1318,11 @@ def _cuda_copts(opts = []):
 def tf_gpu_kernel_library(
         srcs,
         copts = [],
-        cuda_copts = [],
+        gpu_copts = [],
         deps = [],
         hdrs = [],
         **kwargs):
-    copts = copts + tf_copts() + _cuda_copts(opts = cuda_copts) + rocm_copts(opts = cuda_copts)
+    copts = copts + tf_copts() + _cuda_copts(opts = gpu_copts) + rocm_copts(opts = gpu_copts)
     kwargs["features"] = kwargs.get("features", []) + ["-use_header_modules"]
 
     native.cc_library(
@@ -1331,6 +1333,7 @@ def tf_gpu_kernel_library(
             clean_dep("//tensorflow/stream_executor/cuda:cudart_stub"),
             clean_dep("//tensorflow/core:gpu_lib"),
         ]) + if_rocm_is_configured([
+            clean_dep("//tensorflow/core:rocm"),
             clean_dep("//tensorflow/core:gpu_lib"),
         ]),
         alwayslink = 1,
@@ -1371,6 +1374,7 @@ def tf_gpu_library(deps = None, cuda_deps = None, copts = tf_copts(), **kwargs):
             clean_dep("//tensorflow/stream_executor/cuda:cudart_stub"),
             "@local_config_cuda//cuda:cuda_headers",
         ]) + if_rocm_is_configured(cuda_deps + [
+            clean_dep("//tensorflow/core:rocm"),
             "@local_config_rocm//rocm:rocm_headers",
         ]),
         copts = (copts + if_cuda(["-DGOOGLE_CUDA=1"]) + if_rocm(["-DTENSORFLOW_USE_ROCM=1"]) + if_mkl(["-DINTEL_MKL=1"]) + if_mkl_open_source_only(["-DINTEL_MKL_DNN_ONLY"]) + if_enable_mkl(["-DENABLE_MKL"]) + if_tensorrt(["-DGOOGLE_TENSORRT=1"])),
@@ -1794,7 +1798,7 @@ def tf_custom_op_library(name, srcs = [], gpu_srcs = [], deps = [], linkopts = [
         native.cc_library(
             name = basename + "_gpu",
             srcs = gpu_srcs,
-            copts = copts + _cuda_copts() + if_tensorrt(["-DGOOGLE_TENSORRT=1"]),
+            copts = copts + _cuda_copts() + rocm_copts() + if_tensorrt(["-DGOOGLE_TENSORRT=1"]),
             features = if_cuda(["-use_header_modules"]),
             deps = deps + if_cuda_is_configured_compat(cuda_deps) + if_rocm_is_configured(rocm_deps),
             **kwargs

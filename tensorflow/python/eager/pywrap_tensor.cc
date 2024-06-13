@@ -839,7 +839,7 @@ static PyTypeObject _EagerTensorType = {
     sizeof(EagerTensor),                /* tp_basicsize */
     0,                                  /* tp_itemsize */
     (destructor)EagerTensor_dealloc,    /* tp_dealloc */
-    nullptr,                            /* tp_print */
+    NULL,                               /* tp_print */
     nullptr,                            /* tp_getattr */
     nullptr,                            /* tp_setattr */
     nullptr,                            /* tp_compare */

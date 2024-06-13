@@ -16,6 +16,7 @@ def rocm_default_copts():
     """Default options for all ROCm compilations."""
     return if_rocm(["-x", "rocm"] + %{rocm_extra_copts})
 
+
 def rocm_copts(opts = []):
     """Gets the appropriate set of copts for (maybe) ROCm compilation.
 

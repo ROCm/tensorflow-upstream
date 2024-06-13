@@ -1,0 +1,34 @@
+From 15b6fbeaf47d801d2747dff099f84ea97b59f201 Mon Sep 17 00:00:00 2001
+From: Jason Furmanek <Jason.Furmanek@amd.com>
+Date: Tue, 19 Sep 2023 14:42:26 +0000
+Subject: [PATCH] Patch for numpy/py38
+
+---
+ tensorflow/python/lib/core/bfloat16.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/tensorflow/python/lib/core/bfloat16.cc b/tensorflow/python/lib/core/bfloat16.cc
+index e0da0f43c98..911815f1b11 100644
+--- a/tensorflow/python/lib/core/bfloat16.cc
++++ b/tensorflow/python/lib/core/bfloat16.cc
+@@ -490,7 +490,7 @@ bool RegisterBfloat16Cast(int numpy_type, bool cast_is_safe) {
+ }
+ 
+ template <typename InType, typename OutType, typename Functor>
+-void BinaryUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
++void BinaryUFunc(char** args, const npy_intp* dimensions, const npy_intp* steps,
+                  void* data) {
+   const char* i0 = args[0];
+   const char* i1 = args[1];
+@@ -506,7 +506,7 @@ void BinaryUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
+ }
+ 
+ template <typename Functor>
+-void CompareUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
++void CompareUFunc(char** args, const npy_intp* dimensions, const npy_intp* steps,
+                   void* data) {
+   BinaryUFunc<bfloat16, npy_bool, Functor>(args, dimensions, steps, data);
+ }
+-- 
+2.17.1
+

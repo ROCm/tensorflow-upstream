@@ -511,6 +511,7 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
     # WARNING: make sure ncteisen@ and vpai@ are cc-ed on any CL to change the below rule
     tf_http_archive(
         name = "grpc",
+        patch_file = clean_dep("//third_party:grpc_gettid.patch"),
         sha256 = "67a6c26db56f345f7cee846e681db2c23f919eba46dd639b09462d1b6203d28c",
         strip_prefix = "grpc-4566c2a29ebec0835643b972eb99f4306c4234a3",
         system_build_file = clean_dep("//third_party/systemlibs:grpc.BUILD"),
@@ -736,17 +737,6 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
         urls = [
             "https://storage.googleapis.com/mirror.tensorflow.org/github.com/NVlabs/cub/archive/1.8.0.zip",
             "https://github.com/NVlabs/cub/archive/1.8.0.zip",
-        ],
-    )
-
-    tf_http_archive(
-        name = "rocprim_archive",
-        build_file = clean_dep("//third_party:rocprim.BUILD"),
-        sha256 = "3c178461ead70ce6adb60c836a35a52564968af31dfa81f4157ab72b5f14d31f",
-        strip_prefix = "rocPRIM-4a33d328f8352df1654271939da66914f2334424",
-        urls = [
-            "https://mirror.bazel.build/github.com/ROCmSoftwarePlatform/rocPRIM/archive/4a33d328f8352df1654271939da66914f2334424.tar.gz",
-            "https://github.com/ROCmSoftwarePlatform/rocPRIM/archive/4a33d328f8352df1654271939da66914f2334424.tar.gz",
         ],
     )
 
