@@ -1119,7 +1119,15 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
   hipDeviceProp_t props;
   hipError_t result = tensorflow::wrap::hipGetDeviceProperties(&props, device);
   if (result == hipSuccess) {
-    *version = props.gcnArch;
+    std::string gcnName = props.gcnArchName;
+    std::vector<std::string> tokens = absl::StrSplit(gcnName, ':');
+    std::string amdgpu_version = gcnName;
+    if (!tokens.empty() && tokens[0].size() >= 3) {
+      amdgpu_version = tokens[0].substr(3);
+    }
+    *version = stoi(amdgpu_version);
+    if (*version == 90)
+	    *version=909;
     return port::Status::OK();
   }
   *version = 0;
@@ -1127,6 +1135,48 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
       port::error::INTERNAL,
       absl::StrFormat("failed to determine AMDGpu ISA version for device %d",
                       device)};
+}
+
+/* static */ port::Status GpuDriver::GetGpuGCNArchName(
+    hipDevice_t device, std::string* gcnArchName) {
+  hipDeviceProp_t props;
+  hipError_t result = tensorflow::wrap::hipGetDeviceProperties(&props, device);
+  if (result == hipSuccess) {
+    *gcnArchName = props.gcnArchName;
+    return port::Status::OK();
+  }
+  *gcnArchName = "";
+  return port::Status{
+      port::error::INTERNAL,
+      absl::StrFormat("failed to determine AMDGpu GCN Arch Name for device %d",
+                      device)};
+}
+
+/* static */ port::Status GpuDriver::GetMFMASupport(bool& supported, bool& gfx90a) {
+  supported = false;
+  gfx90a = false;
+  hipDeviceProp_t props;
+  int dev = 0;
+  hipError_t result = hipGetDevice(&dev);
+  result = tensorflow::wrap::hipGetDeviceProperties(&props, dev);
+  if (result == hipSuccess) {
+    std::string gcnArchName = props.gcnArchName;
+    VLOG(1)<<"GCN arch name " << gcnArchName;
+    auto pos = gcnArchName.find(":");
+    if(pos!=string::npos)
+       gcnArchName = gcnArchName.substr(0, pos);
+    pos = gcnArchName.find("gfx");
+    if(pos!=string::npos)
+       gcnArchName = gcnArchName.substr(pos+3);
+    VLOG(1)<<"GCN arch name (stripped) " << gcnArchName;
+    supported = (gcnArchName=="908" || gcnArchName=="910" || gcnArchName=="90a");
+    gfx90a = (gcnArchName=="910" || gcnArchName=="90a");
+    return port::Status::OK();
+  }
+  return port::Status{
+      port::error::INTERNAL,
+      absl::StrFormat("failed to determine AMDGpu GCN Arch Name for device %d",
+                      dev)};
 }
 
 // Helper function that turns the integer output of hipDeviceGetAttribute to

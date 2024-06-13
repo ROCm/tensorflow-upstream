@@ -19,7 +19,6 @@ limitations under the License.
 #define TENSORFLOW_STREAM_EXECUTOR_GPU_GPU_DRIVER_H_
 
 #include <stddef.h>
-
 #include "tensorflow/stream_executor/device_options.h"
 #include "tensorflow/stream_executor/gpu/gpu_types.h"
 #include "tensorflow/stream_executor/lib/status.h"
@@ -397,6 +396,17 @@ class GpuDriver {
   // Returns Gpu ISA version for the device; i.e 803, 900.
   // (supported on ROCm only)
   static port::Status GetGpuISAVersion(int* version, GpuDeviceHandle device);
+
+  // Return the full GCN Architecture Name for the the device
+  // for eg: amdgcn-amd-amdhsa--gfx908:sramecc+:xnack-
+  // (supported on ROCm only)
+  static port::Status GetGpuGCNArchName(GpuDeviceHandle device,
+                                        std::string* gcnArchName);
+
+#if TENSORFLOW_USE_ROCM
+  // tests the current device for MFMA insn support (ROCm only)
+  static port::Status GetMFMASupport(bool& support, bool& extra);
+#endif
 
   // Returns the number of multiprocessors on the device (note that the device
   // may be multi-GPU-per-board).

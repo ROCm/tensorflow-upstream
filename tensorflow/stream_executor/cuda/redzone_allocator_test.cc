@@ -15,7 +15,7 @@ limitations under the License.
 
 #ifdef GOOGLE_CUDA
 
-#include "tensorflow/stream_executor/cuda/redzone_allocator.h"
+#include "tensorflow/stream_executor/redzone_allocator.h"
 
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/platform/test.h"
@@ -50,8 +50,10 @@ TEST(RedzoneAllocatorTest, WriteToRedzone) {
   // Allocate 32MiB + 1 byte (to make things misaligned)
   constexpr int64 kAllocSize = (1 << 25) + 1;
 
+  // XXX FIXME devise a way to cope with multiple platforms
   Platform* platform =
-      MultiPlatformManager::PlatformWithName("cuda").ValueOrDie();
+      MultiPlatformManager::PlatformWithName(tensorflow::GpuPlatformName())
+          .ValueOrDie();
   StreamExecutor* stream_exec = platform->ExecutorForDevice(0).ValueOrDie();
   cuda::PtxCompilationOptions opts;
   StreamExecutorMemoryAllocator se_allocator(platform, {stream_exec});
@@ -126,7 +128,8 @@ TEST(RedzoneAllocatorTest, VeryLargeRedzone) {
   // Make sure the redzone size would require grid dimension > 65535.
   constexpr int64 kRedzoneSize = 65535 * 1024 + 1;
   Platform* platform =
-      MultiPlatformManager::PlatformWithName("cuda").ValueOrDie();
+      MultiPlatformManager::PlatformWithName(tensorflow::GpuPlatformName())
+          .ValueOrDie();
   StreamExecutor* stream_exec = platform->ExecutorForDevice(0).ValueOrDie();
   cuda::PtxCompilationOptions opts;
   StreamExecutorMemoryAllocator se_allocator(platform, {stream_exec});

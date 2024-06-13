@@ -48,7 +48,7 @@ port::StatusOr<void*> GetNvInferPluginDsoHandle();
 
 port::StatusOr<void*> GetRocblasDsoHandle();
 port::StatusOr<void*> GetMiopenDsoHandle();
-port::StatusOr<void*> GetRocfftDsoHandle();
+port::StatusOr<void*> GetHipfftDsoHandle();
 port::StatusOr<void*> GetRocrandDsoHandle();
 port::StatusOr<void*> GetHipDsoHandle();
 
@@ -80,7 +80,7 @@ port::StatusOr<void*> GetCudnnDsoHandle();
 
 port::StatusOr<void*> GetRocblasDsoHandle();
 port::StatusOr<void*> GetMiopenDsoHandle();
-port::StatusOr<void*> GetRocfftDsoHandle();
+port::StatusOr<void*> GetHipfftDsoHandle();
 port::StatusOr<void*> GetRocrandDsoHandle();
 port::StatusOr<void*> GetHipDsoHandle();
 }  // namespace CachedDsoLoader
