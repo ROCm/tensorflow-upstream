@@ -255,7 +255,7 @@ void LSTMBlockCellFpropWithCUDA(
   typename TTypes<T>::ConstMatrix const_xh(xh.data(), xh.dimensions());
   TensorBlasGemm<GPUDevice, T, true /* USE_CUBLAS */>::compute(
       ctx, d, false, false, typename gemm_compute_type<T>::type(1.f), const_xh,
-      w, typename gemm_compute_type<T>::type(0.f), gates);
+      w, typename gemm_compute_type<T>::type(0.f), gates, se::blas::CallContext::kNone);
 
   // Add bias, apply non-linearities and gating.
   //

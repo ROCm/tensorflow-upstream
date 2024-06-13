@@ -122,7 +122,8 @@ struct LaunchMatMulBase {
   static void launch(
       OpKernelContext* ctx, const Tensor& a, const Tensor& b,
       const Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1>& dim_pair,
-      std::vector<AlgorithmType>* algorithms, bool use_aututone, Tensor* out) {
+      std::vector<AlgorithmType>* algorithms, bool use_aututone, 
+      bool grad_a, bool grad_b, Tensor* out) {
 #ifndef TENSORFLOW_USE_SYCL
     // An explicit vector-matrix multiply is much better optimized than an
     // implicit one and this is a bottleneck during non-batched inference.
@@ -255,7 +256,8 @@ struct LaunchMatMul<GPUDevice, T, true /* USE_CUBLAS */> {
   static void launch(
       OpKernelContext* ctx, const Tensor& a, const Tensor& b,
       const Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1>& dim_pair,
-      std::vector<int64>* algorithms, bool use_autotune, Tensor* out) {
+      std::vector<int64>* algorithms, bool use_autotune, 
+      bool grad_a, bool grad_b, Tensor* out) {
     using se::blas::AlgorithmConfig;
     using se::blas::ComputationType;
     using se::blas::kDefaultAlgorithm;
@@ -282,8 +284,6 @@ struct LaunchMatMul<GPUDevice, T, true /* USE_CUBLAS */> {
                                 b.template flat<T>().size());
     auto c_ptr = AsDeviceMemory(out->template flat<T>().data(),
                                 out->template flat<T>().size());
-    auto alpha = static_cast<T>(1.0);
-    auto beta = static_cast<T>(0.0);
 
     int device_id = stream->parent()->device_ordinal();
     DataType dtype = a.dtype();
@@ -295,6 +295,18 @@ struct LaunchMatMul<GPUDevice, T, true /* USE_CUBLAS */> {
     ComputationType computation_type;
     bool compute_type_supported =
         GetCublasAutotuneComputationType(dtype, &computation_type);
+    typedef typename std::conditional<std::is_same<T, Eigen::half>::value, float, T>::type AlphaT;
+    se::blas::GemmCallContext<T> arg{blas_transpose_b, blas_transpose_a,
+        n, m, k, 1.0, 0.0, &b_ptr,
+        transpose_b ? k : n, &a_ptr, transpose_a ? m : k, 
+        &c_ptr, n};
+
+    // reversed because we swap inputs
+    if(grad_a)
+      arg.context = se::blas::CallContext::kBackpropInput2;
+    else if(grad_b)
+      arg.context = se::blas::CallContext::kBackpropInput1;
+
     if (use_autotune && compute_type_supported && !algorithms->empty()) {
       ProfileResult best_result;
       // TODO(yangzihao): Unify this code with conv autotuning.
@@ -307,14 +319,10 @@ struct LaunchMatMul<GPUDevice, T, true /* USE_CUBLAS */> {
           // where A, B and C are assumed to be in column major.
           // We want the output to be in row-major, so we can compute
           // C' = B' x A' (' stands for transpose)
-          bool cublas_launch_status =
-              stream
-                  ->ThenBlasGemmWithAlgorithm(
-                      blas_transpose_b, blas_transpose_a, n, m, k, alpha, b_ptr,
-                      transpose_b ? k : n, a_ptr, transpose_a ? m : k, beta,
-                      &c_ptr, n, computation_type, profile_algorithm,
-                      &profile_result)
-                  .ok();
+          arg.type = computation_type;
+          arg.algorithm = profile_algorithm;
+          arg.output_profile_result = &profile_result;
+          bool cublas_launch_status = stream->ThenBlasGemm(arg).ok();
           if (cublas_launch_status) {
             if (profile_result.is_valid()) {
               if (profile_result.elapsed_time_in_ms() <
@@ -325,13 +333,10 @@ struct LaunchMatMul<GPUDevice, T, true /* USE_CUBLAS */> {
           }
         }
         // Try BlasGemmWithProfiling
-        bool cublas_launch_status =
-            stream
-                ->ThenBlasGemmWithProfiling(
-                    blas_transpose_b, blas_transpose_a, n, m, k, 1.0, b_ptr,
-                    transpose_b ? k : n, a_ptr, transpose_a ? m : k, 0.0,
-                    &c_ptr, n, &profile_result)
-                .ok();
+        arg.type = se::blas::ComputationType::kUndefined;
+        arg.algorithm = se::blas::kDefaultGemmAlgo;
+        arg.output_profile_result = &profile_result;
+        bool cublas_launch_status = stream->ThenBlasGemm(arg).ok();
         if (cublas_launch_status) {
           if (profile_result.is_valid()) {
             if (profile_result.elapsed_time_in_ms() <
@@ -366,14 +371,10 @@ struct LaunchMatMul<GPUDevice, T, true /* USE_CUBLAS */> {
       if (algorithm_config.algorithm() != kNoAlgorithm &&
           algorithm_config.algorithm() != kDefaultBlasGemm &&
           algorithm_config.algorithm() != kDefaultBlasGemv) {
-        bool cublas_launch_status =
-            stream
-                ->ThenBlasGemmWithAlgorithm(
-                    blas_transpose_b, blas_transpose_a, n, m, k, alpha, b_ptr,
-                    transpose_b ? k : n, a_ptr, transpose_a ? m : k, beta,
-                    &c_ptr, n, computation_type, algorithm_config.algorithm(),
-                    nullptr)
-                .ok();
+        arg.type = computation_type;
+        arg.algorithm = algorithm_config.algorithm();
+        arg.output_profile_result = nullptr;
+        bool cublas_launch_status = stream->ThenBlasGemm(arg).ok();
         if (!cublas_launch_status) {
           ctx->SetStatus(errors::Internal(
               "Blas GEMM with algorithm launch failed : a.shape=(",
@@ -408,12 +409,10 @@ struct LaunchMatMul<GPUDevice, T, true /* USE_CUBLAS */> {
                                    a_ptr, b_ptr, &c_ptr, nullptr);
       } else {
         // Use C' = B' x A' (' stands for transpose)
-        bool blas_launch_status =
-            stream
-                ->ThenBlasGemm(blas_transpose_b, blas_transpose_a, n, m, k,
-                               1.0f, b_ptr, transpose_b ? k : n, a_ptr,
-                               transpose_a ? m : k, 0.0f, &c_ptr, n)
-                .ok();
+        arg.type = se::blas::ComputationType::kUndefined;
+        arg.algorithm = se::blas::kDefaultGemmAlgo;
+        arg.output_profile_result = nullptr;
+        bool blas_launch_status = stream->ThenBlasGemm(arg).ok();
         if (!blas_launch_status) {
           ctx->SetStatus(errors::Internal(
               "Blas GEMM launch failed : a.shape=(", a.dim_size(0), ", ",
@@ -444,6 +443,8 @@ class MatMulOp : public OpKernel {
       : OpKernel(ctx), algorithms_set_already_(false) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("transpose_a", &transpose_a_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("transpose_b", &transpose_b_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("grad_a", &grad_a_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("grad_b", &grad_b_));
 
     LaunchMatMul<Device, T, USE_CUBLAS>::GetBlasGemmAlgorithm(
         ctx, &algorithms_, &algorithms_set_already_);
@@ -512,12 +513,14 @@ class MatMulOp : public OpKernel {
 
       LaunchMatMul<Device, float, USE_CUBLAS>::launch(
           ctx, a_float, b_float, dim_pair, &algorithms_, use_autotune_,
+          grad_a_, grad_b_,
           &out_float);
       FloatToBFloat16(out_float.flat<float>().data(),
                       out->flat<bfloat16>().data(), out->NumElements());
     } else {
       LaunchMatMul<Device, T, USE_CUBLAS>::launch(
-          ctx, a, b, dim_pair, &algorithms_, use_autotune_, out);
+          ctx, a, b, dim_pair, &algorithms_, use_autotune_, 
+          grad_a_, grad_b_, out);
     }
   }
 
@@ -527,6 +530,7 @@ class MatMulOp : public OpKernel {
   bool use_autotune_;
   bool transpose_a_;
   bool transpose_b_;
+  bool grad_a_, grad_b_;
 };
 
 namespace functor {

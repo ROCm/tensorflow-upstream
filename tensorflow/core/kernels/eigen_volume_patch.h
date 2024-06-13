@@ -20,6 +20,9 @@ limitations under the License.
 
 namespace Eigen {
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wignored-attributes"
+
 // Changes the interpretation of padding in TensorVolumePatchOp to be compatible
 // with the rest of TensorFlow (odd padding is split so that more padding is put
 // on the right end of the tensor).
@@ -651,6 +654,7 @@ OVERRIDE_EVALUATOR(Eigen::ThreadPoolDevice);
 OVERRIDE_EVALUATOR(Eigen::DefaultDevice);
 
 #undef OVERRIDE_EVALUATOR
+#pragma GCC diagnostic pop
 
 };  // namespace Eigen
 

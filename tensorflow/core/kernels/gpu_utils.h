@@ -30,9 +30,7 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 
 namespace stream_executor {
-namespace cuda {
 class RedzoneAllocator;
-}
 }  // namespace stream_executor
 
 namespace tensorflow {
@@ -53,12 +51,12 @@ bool RedzoneCheckDisabled();
 //
 // On error, return `buffer`, and log an error message (once).
 se::DeviceMemoryBase WrapRedzoneBestEffort(
-    se::cuda::RedzoneAllocator* rz_allocator, se::DeviceMemoryBase buffer);
+    se::RedzoneAllocator* rz_allocator, se::DeviceMemoryBase buffer);
 
 // Check the passed allocator for redzone violations.
 // If violations have occurred, mark the corresponding autotune result
 // as a failure.
-void CheckRedzones(const se::cuda::RedzoneAllocator& rz_allocator,
+void CheckRedzones(const se::RedzoneAllocator& rz_allocator,
                    tensorflow::AutotuneResult* autotune_result);
 
 template <typename T>
