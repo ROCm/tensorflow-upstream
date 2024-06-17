@@ -13,7 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "rocm/include/rocblas.h"
+#include "rocm/rocm_config.h"
+#include "rocm/include/rocblas/rocblas.h"
 
 #include "tensorflow/stream_executor/rocm/rocm_blas.h"
 

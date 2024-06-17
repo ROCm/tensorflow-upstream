@@ -78,7 +78,7 @@ toolchain {
   unfiltered_cxx_flag: "-D__DATE__=\"redacted\""
   unfiltered_cxx_flag: "-D__TIMESTAMP__=\"redacted\""
   unfiltered_cxx_flag: "-D__TIME__=\"redacted\""
-  unfiltered_cxx_flag: "-D__HIP_PLATFORM_HCC__"
+  unfiltered_cxx_flag: "-D__HIP_PLATFORM_AMD__"
   # The macro EIGEN_USE_HIP is used to tell Eigen to use the HIP platform headers
   # It needs to be always set when compiling Eigen headers
   # (irrespective of whether the source file is being compiled via HIPCC)

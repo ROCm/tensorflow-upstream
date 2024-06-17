@@ -473,6 +473,7 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
 
     tf_http_archive(
         name = "grpc",
+	patch_file = clean_dep("//third_party:grpc_gettid.patch"),
         sha256 = "50db9cf2221354485eb7c3bd55a4c27190caef7048a2a1a15fbe60a498f98b44",
         strip_prefix = "grpc-1.13.0",
         system_build_file = clean_dep("//third_party/systemlibs:grpc.BUILD"),
@@ -884,11 +885,11 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
     tf_http_archive(
         name = "rccl_archive",
         build_file = clean_dep("//third_party:rccl.BUILD"),
-        sha256 = "774cb0d6dcd7747ea04366c139eb16729c6e4406ddcd2e6f30c6d092d951b714",
-        strip_prefix = "rccl-0.6.0-rc2",
+        sha256 = "c6308f6883cbd63dceadbe4ee154cc6fa9e6bdccbd2f0fda295b564b0cf01e9a",
+        strip_prefix = "rccl-rocm-6.1.0",
         urls = [
-            "https://mirror.bazel.build/github.com/ROCmSoftwarePlatform/rccl/archive/0.6.0-rc2.tar.gz",
-            "https://github.com/ROCmSoftwarePlatform/rccl/archive/0.6.0-rc2.tar.gz",
+            "https://mirror.bazel.build/github.com/ROCmSoftwarePlatform/rccl/archive/rocm-6.1.0.tar.gz",
+            "https://github.com/ROCmSoftwarePlatform/rccl/archive/rocm-6.1.0.tar.gz",
         ],
     )
 

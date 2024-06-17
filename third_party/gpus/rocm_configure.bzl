@@ -167,20 +167,20 @@ def _rocm_include_path(repository_ctx, rocm_config):
     inc_dirs.append("/opt/rocm/include/hip/hcc_detail")
 
     # Add rocrand and hiprand headers
-    inc_dirs.append("/opt/rocm/rocrand/include")
-    inc_dirs.append("/opt/rocm/hiprand/include")
+    inc_dirs.append("/opt/rocm/include/rocrand")
+    inc_dirs.append("/opt/rocm/include/hiprand")
 
     # Add rocfft headers
-    inc_dirs.append("/opt/rocm/rocfft/include")
+    inc_dirs.append("/opt/rocm/include/rocfft")
 
     # Add rocBLAS headers
-    inc_dirs.append("/opt/rocm/rocblas/include")
+    inc_dirs.append("/opt/rocm/include/rocblas")
 
     # Add MIOpen headers
-    inc_dirs.append("/opt/rocm/miopen/include")
+    inc_dirs.append("/opt/rocm/include/miopen")
 
     # Add hcc headers
-    inc_dirs.append("/opt/rocm/hcc/include")
+    inc_dirs.append("/opt/rocm/include/hcc")
     inc_dirs.append("/opt/rocm/hcc/compiler/lib/clang/7.0.0/include/")
     inc_dirs.append("/opt/rocm/hcc/lib/clang/7.0.0/include")
 
@@ -191,6 +191,9 @@ def _rocm_include_path(repository_ctx, rocm_config):
     # Support hcc based off clang 9.0.0.
     inc_dirs.append("/opt/rocm/hcc/compiler/lib/clang/9.0.0/include/")
     inc_dirs.append("/opt/rocm/hcc/lib/clang/9.0.0/include")
+
+    # Support hcc based off clang 17.0.0.
+    inc_dirs.append("/opt/rocm/lib/llvm/lib/clang/17/include")
 
     inc_entries = []
     for inc_dir in inc_dirs:
@@ -366,35 +369,35 @@ def _find_libs(repository_ctx, rocm_config):
     """
     cpu_value = rocm_config.cpu_value
     return {
-        "hip": _find_rocm_lib(
-            "hip_hcc",
-            repository_ctx,
-            cpu_value,
-            rocm_config.rocm_toolkit_path,
-        ),
+        #"hip": _find_rocm_lib(
+        #    "hip_hcc",
+        #    repository_ctx,
+        #    cpu_value,
+        #    rocm_config.rocm_toolkit_path,
+        #),
         "rocblas": _find_rocm_lib(
             "rocblas",
             repository_ctx,
             cpu_value,
-            rocm_config.rocm_toolkit_path + "/rocblas",
+            rocm_config.rocm_toolkit_path,
         ),
         "rocfft": _find_rocm_lib(
             "rocfft",
             repository_ctx,
             cpu_value,
-            rocm_config.rocm_toolkit_path + "/rocfft",
+            rocm_config.rocm_toolkit_path,
         ),
         "hiprand": _find_rocm_lib(
             "hiprand",
             repository_ctx,
             cpu_value,
-            rocm_config.rocm_toolkit_path + "/hiprand",
+            rocm_config.rocm_toolkit_path,
         ),
         "miopen": _find_rocm_lib(
             "MIOpen",
             repository_ctx,
             cpu_value,
-            rocm_config.rocm_toolkit_path + "/miopen",
+            rocm_config.rocm_toolkit_path,
         ),
     }
 
@@ -641,27 +644,28 @@ def _create_local_rocm_repository(repository_ctx):
     # rocm_toolkit_path
     rocm_toolkit_path = rocm_config.rocm_toolkit_path
     rocm_include_path = rocm_toolkit_path + "/include"
+    #genrules = [_symlink_genrule_for_dir(
+    #    repository_ctx,
+    #    rocm_include_path,
+    #    "rocm/include",
+    #    "rocm-include",
+    #)]
+    #genrules.append(_symlink_genrule_for_dir(
     genrules = [_symlink_genrule_for_dir(
         repository_ctx,
-        rocm_include_path,
-        "rocm/include",
-        "rocm-include",
+        rocm_include_path + "/rocfft",
+        "rocm/include/rocfft",
+        "rocfft-include",
     )]
     genrules.append(_symlink_genrule_for_dir(
         repository_ctx,
-        rocm_toolkit_path + "/rocfft/include",
-        "rocm/include/rocfft",
-        "rocfft-include",
-    ))
-    genrules.append(_symlink_genrule_for_dir(
-        repository_ctx,
-        rocm_toolkit_path + "/rocblas/include",
+        rocm_include_path + "/rocblas",
         "rocm/include/rocblas",
         "rocblas-include",
     ))
     genrules.append(_symlink_genrule_for_dir(
         repository_ctx,
-        rocm_toolkit_path + "/miopen/include",
+        rocm_include_path + "/miopen",
         "rocm/include/miopen",
         "miopen-include",
     ))
@@ -702,14 +706,13 @@ def _create_local_rocm_repository(repository_ctx):
         repository_ctx,
         "rocm:BUILD",
         {
-            "%{hip_lib}": rocm_libs["hip"].file_name,
+            #"%{hip_lib}": rocm_libs["hip"].file_name,
             "%{rocblas_lib}": rocm_libs["rocblas"].file_name,
             "%{rocfft_lib}": rocm_libs["rocfft"].file_name,
             "%{hiprand_lib}": rocm_libs["hiprand"].file_name,
             "%{miopen_lib}": rocm_libs["miopen"].file_name,
             "%{rocm_include_genrules}": "\n".join(genrules),
-            "%{rocm_headers}": ('":rocm-include",\n' +
-                                '":rocfft-include",\n' +
+            "%{rocm_headers}": ('":rocfft-include",\n' +
                                 '":rocblas-include",\n' +
                                 '":miopen-include",'),
         },

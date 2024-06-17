@@ -74,7 +74,8 @@ def GetHostCompilerOptions(argv):
   parser.add_argument('-iquote', nargs='*', action='append')
   parser.add_argument('--sysroot', nargs=1)
   parser.add_argument('-g', nargs='*', action='append')
-  parser.add_argument('-fno-canonical-system-headers', action='store_true')
+  #parser.add_argument('-fno-canonical-system-headers', action='store_true')
+  parser.add_argument('-no-canonical-prefixes', action='store_true')
 
   args, _ = parser.parse_known_args(argv)
 
@@ -247,7 +248,7 @@ def main():
                              if not flag.startswith(('--rocm_log'))]
 
   # XXX: SE codes need to be built with gcc, but need this macro defined
-  cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")
+  cpu_compiler_flags.append("-D__HIP_PLATFORM_AMD__")
   if VERBOSE: print(' '.join([CPU_COMPILER] + cpu_compiler_flags))
   return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
 

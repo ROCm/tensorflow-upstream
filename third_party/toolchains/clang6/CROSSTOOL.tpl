@@ -112,7 +112,7 @@ toolchain {
   compiler_flag: "-Wthread-safety-analysis"
 
   # Python extensions unfortunately make this go wild.
-  compiler_flag: "-Wno-writable-strings"
+  #compiler_flag: "-Wno-writable-strings"
 
   # GCC's warning produces too many false positives:
   cxx_flag: "-Woverloaded-virtual"
