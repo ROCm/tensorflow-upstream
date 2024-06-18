@@ -24,7 +24,7 @@ limitations under the License.
 #include "tensorflow/stream_executor/platform/port.h"
 #include "tensorflow/stream_executor/plugin_registry.h"
 #include "tensorflow/stream_executor/scratch_allocator.h"
-#include "rocm/include/rocfft/hipfft.h"
+#include "rocm/include/hipfft/hipfft.h"
 
 namespace stream_executor {
 

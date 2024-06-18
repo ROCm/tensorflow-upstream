@@ -26,6 +26,20 @@ _DEFAULT_MIOPEN_VERSION = ""
 _DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm"
 _DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx803", "gfx900"]
 
+def to_list_of_strings(elements):
+    """Convert the list of ["a", "b", "c"] into '"a", "b", "c"'.
+
+    This is to be used to put a list of strings into the bzl file templates
+    so it gets interpreted as list of strings in Starlark.
+
+    Args:
+      elements: list of string elements
+
+    Returns:
+      single string of elements wrapped in quotes separated by a comma."""
+    quoted_strings = ["\"" + element + "\"" for element in elements]
+    return ", ".join(quoted_strings)
+
 def find_cc(repository_ctx):
     """Find the C++ compiler."""
 
@@ -197,6 +211,9 @@ def _rocm_include_path(repository_ctx, rocm_config):
 
     # Support hcc based off clang 17.0.0.
     inc_dirs.append("/opt/rocm/lib/llvm/lib/clang/17/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/17/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/17/include")
+
 
     inc_entries = []
     for inc_dir in inc_dirs:
@@ -396,6 +413,12 @@ def _find_libs(repository_ctx, rocm_config):
             cpu_value,
             rocm_config.rocm_toolkit_path,
         ),
+        "rocrand": _find_rocm_lib(
+            "rocrand",
+            repository_ctx,
+            cpu_value,
+            rocm_config.rocm_toolkit_path,
+        ),
         "miopen": _find_rocm_lib(
             "MIOpen",
             repository_ctx,
@@ -500,7 +523,8 @@ def _create_dummy_repository(repository_ctx):
 
     # Create dummy files for the ROCm toolkit since they are still required by
     # tensorflow/core/platform/default/build_config:rocm.
-    repository_ctx.file("rocm/hip/include/hip/hip_runtime.h", "")
+    #repository_ctx.file("rocm/hip/include/hip/hip_runtime.h", "")
+    repository_ctx.file("rocm/include/hip/hip_runtime.h", "")
 
     # Set up rocm_config.h, which is used by
     # tensorflow/stream_executor/dso_loader.cc.
@@ -669,6 +693,12 @@ def _create_local_rocm_repository(repository_ctx):
     )]
     genrules.append(_symlink_genrule_for_dir(
         repository_ctx,
+        rocm_include_path + "/hipfft",
+        "rocm/include/hipfft",
+        "hipfft-include",
+    ))
+    genrules.append(_symlink_genrule_for_dir(
+        repository_ctx,
         rocm_include_path + "/rocblas",
         "rocm/include/rocblas",
         "rocblas-include",
@@ -681,9 +711,27 @@ def _create_local_rocm_repository(repository_ctx):
     ))
     genrules.append(_symlink_genrule_for_dir(
         repository_ctx,
+        rocm_include_path + "/hiprand",
+        "rocm/include/hiprand",
+        "hiprand-include",
+    ))
+    genrules.append(_symlink_genrule_for_dir(
+        repository_ctx,
+        rocm_include_path + "/rocrand",
+        "rocm/include/rocrand",
+        "rocrand-include",
+    ))
+    genrules.append(_symlink_genrule_for_dir(
+        repository_ctx,
         rocm_include_path + "/rccl",
         "rocm/include/rccl",
         "rccl-include",
+    ))
+    genrules.append(_symlink_genrule_for_dir(
+        repository_ctx,
+        rocm_include_path + "/hip",
+        "rocm/include/hip",
+        "hip-include",
     ))
 
     rocm_libs = _find_libs(repository_ctx, rocm_config)
@@ -730,8 +778,12 @@ def _create_local_rocm_repository(repository_ctx):
             "%{rccl_lib}": rocm_libs["rccl"].file_name,
             "%{rocm_include_genrules}": "\n".join(genrules),
             "%{rocm_headers}": ('":rocfft-include",\n' +
+                                '":hipfft-include",\n' +
                                 '":rocblas-include",\n' +
+                                '":hiprand-include",\n' +
+                                '":rocrand-include",\n' +
                                 '":miopen-include",\n' +
+                                '":hip-include",\n' +
                                 '":rccl-include",'),
         },
     )
@@ -740,6 +792,7 @@ def _create_local_rocm_repository(repository_ctx):
     _tpl(repository_ctx, "crosstool:BUILD", {"%{linker_files}": ":empty", "%{win_linker_files}": ":empty"})
     cc = find_cc(repository_ctx)
     host_compiler_includes = _host_compiler_includes(repository_ctx, cc)
+    host_compiler_prefix = "/usr/bin"
     rocm_defines = {
         "%{rocm_include_path}": _rocm_include_path(
             repository_ctx,
@@ -747,6 +800,17 @@ def _create_local_rocm_repository(repository_ctx):
         ),
         "%{host_compiler_includes}": host_compiler_includes,
         "%{clang_path}": str(cc),
+	"%{host_compiler_prefix}": host_compiler_prefix,
+	"%{linker_bin_path}": rocm_config.rocm_toolkit_path + "/bin",
+	"%{extra_no_canonical_prefixes_flags}": "\"-fno-canonical-system-headers\"",
+	"%{unfiltered_compile_flags}": to_list_of_strings([
+            "-DTENSORFLOW_USE_ROCM=1",
+            "-D__HIP_PLATFORM_AMD__",
+            "-DEIGEN_USE_HIP",
+	    "-DTENSORFLOW_COMPILER_IS_HIP_CLANG=1",
+	 ]),
+	"%{host_compiler_path}": "clang/bin/crosstool_wrapper_driver_is_not_gcc",
+	"%{linker_files}": "clang/bin/crosstool_wrapper_driver_is_not_gcc",
     }
 
     _tpl(repository_ctx, "crosstool:CROSSTOOL_hipcc", rocm_defines, out = "crosstool/CROSSTOOL")
