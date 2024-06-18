@@ -381,6 +381,7 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
 
     tf_http_archive(
         name = "protobuf_archive",
+	patch_file = clean_dep("//third_party:protobuf.patch"),
         sha256 = PROTOBUF_SHA256,
         strip_prefix = PROTOBUF_STRIP_PREFIX,
         urls = PROTOBUF_URLS,
@@ -879,17 +880,6 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
         urls = [
             "https://mirror.bazel.build/github.com/NervanaSystems/ngraph-tf/archive/v0.6.1.tar.gz",
             "https://github.com/NervanaSystems/ngraph-tf/archive/v0.6.1.tar.gz",
-        ],
-    )
-
-    tf_http_archive(
-        name = "rccl_archive",
-        build_file = clean_dep("//third_party:rccl.BUILD"),
-        sha256 = "c6308f6883cbd63dceadbe4ee154cc6fa9e6bdccbd2f0fda295b564b0cf01e9a",
-        strip_prefix = "rccl-rocm-6.1.0",
-        urls = [
-            "https://mirror.bazel.build/github.com/ROCmSoftwarePlatform/rccl/archive/rocm-6.1.0.tar.gz",
-            "https://github.com/ROCmSoftwarePlatform/rccl/archive/rocm-6.1.0.tar.gz",
         ],
     )
 
