@@ -55,12 +55,25 @@ namespace TFL {
 //===----------------------------------------------------------------------===//
 // The actual Optimize Pass.
 namespace {
+#define GEN_PASS_DEF_OPTIMIZEPASS
+#include "tensorflow/compiler/mlir/lite/transforms/passes.h.inc"
 
 using ::llvm::cast;
 
 // Optimize TFLite operations in functions.
-struct Optimize : public FunctionPass<Optimize> {
-  void runOnFunction() override;
+class OptimizePass : public impl::OptimizePassBase<OptimizePass> {
+ public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(OptimizePass)
+
+  OptimizePass() = default;
+  OptimizePass(const OptimizePass &) {}
+  explicit OptimizePass(bool enable_canonicalization,
+                        bool disable_fuse_mul_and_fc = false) {
+    this->enable_canonicalization_ = enable_canonicalization;
+    this->disable_fuse_mul_and_fc_ = disable_fuse_mul_and_fc;
+  }
+
+  void runOnOperation() override;
 };
 
 // Returns whether the given type `a` is broadcast-compatible with `b`.
@@ -81,26 +94,26 @@ bool IsBroadcastableElementsAttrs(Attribute a, Attribute b) {
 struct FuseFullyConnectedAndAdd : public OpRewritePattern<TFL::AddOp> {
   using OpRewritePattern<TFL::AddOp>::OpRewritePattern;
 
-  PatternMatchResult matchAndRewrite(TFL::AddOp add_op,
+  LogicalResult matchAndRewrite(TFL::AddOp add_op,
                                      PatternRewriter &rewriter) const override {
     // Add.
     DenseElementsAttr added_value;
-    Value *constant_val = add_op.rhs();
+    Value *constant_val = add_op.getRhs();
     if (!matchPattern(constant_val, m_Constant(&added_value)))
-      return matchFailure();
+      return failure();
 
     // Fully Connected.
     auto fc_op =
         dyn_cast_or_null<TFL::FullyConnectedOp>(add_op.lhs()->getDefiningOp());
-    if (!fc_op) return matchFailure();
+    if (!fc_op) return failure();
 
     Value *filter = fc_op.filter();
     Value *bias = fc_op.bias();
     ElementsAttr bias_value;
     const bool is_none_bias = bias->getType().isa<NoneType>();
     if (!is_none_bias && !matchPattern(bias, m_Constant(&bias_value)))
-      return matchFailure();
-    if (fc_op.fused_activation_function() != "NONE") return matchFailure();
+      return failure();
+    if (fc_op.getFusedActivationFunction() != "NONE") return failure();
 
     // Rewrite
     Location loc = fc_op.getLoc();
@@ -117,11 +130,11 @@ struct FuseFullyConnectedAndAdd : public OpRewritePattern<TFL::AddOp> {
         /*filter=*/filter,
         /*bias=*/bias,
         /*fused_activation_function=*/
-        rewriter.getStringAttr(add_op.fused_activation_function()),
+        rewriter.getStringAttr(add_op.getFusedActivationFunction()),
         /*weights_format=*/rewriter.getStringAttr(fc_op.weights_format()),
         /*keep_num_dims=*/rewriter.getBoolAttr(fc_op.keep_num_dims()));
 
-    return matchSuccess();
+    return success();
   }
 };
 
@@ -129,25 +142,25 @@ struct FuseFullyConnectedAndAdd : public OpRewritePattern<TFL::AddOp> {
 struct FuseFullyConnectedAndRelu : public OpRewritePattern<TFL::ReluOp> {
   using OpRewritePattern<TFL::ReluOp>::OpRewritePattern;
 
-  PatternMatchResult matchAndRewrite(TFL::ReluOp relu_op,
+  LogicalResult matchAndRewrite(TFL::ReluOp relu_op,
                                      PatternRewriter &rewriter) const override {
     Operation *input = relu_op.getOperand()->getDefiningOp();
-    if (!isa_and_nonnull<FullyConnectedOp>(input)) return matchFailure();
+    if (!isa_and_nonnull<FullyConnectedOp>(input)) return failure();
     auto fully_connected_op = cast<FullyConnectedOp>(input);
-    if (fully_connected_op.fused_activation_function() != "NONE")
-      return matchFailure();
+    if (fully_connected_op.getFusedActivationFunction() != "NONE")
+      return failure();
 
     auto new_activation_func = rewriter.getStringAttr("RELU");
     auto new_weights_format =
-        rewriter.getStringAttr(fully_connected_op.weights_format());
+        rewriter.getStringAttr(fully_connected_op.getWeightsFormat());
     auto new_keep_num_dims =
-        rewriter.getBoolAttr(fully_connected_op.keep_num_dims());
+        rewriter.getBoolAttr(fully_connected_op.getKeepNumDims());
     rewriter.replaceOpWithNewOp<FullyConnectedOp>(
-        relu_op, relu_op.getType(), fully_connected_op.input(),
-        fully_connected_op.filter(), fully_connected_op.bias(),
+        relu_op, relu_op.getType(), fully_connected_op.getInput(),
+        fully_connected_op.getFilter(), fully_connected_op.getBias(),
         new_activation_func, new_weights_format, new_keep_num_dims);
 
-    return matchSuccess();
+    return success();
   }
 };
 
@@ -156,25 +169,25 @@ struct FuseFullyConnectedAndRelu : public OpRewritePattern<TFL::ReluOp> {
 struct FuseFullyConnectedAndMul : public OpRewritePattern<TFL::MulOp> {
   using OpRewritePattern<TFL::MulOp>::OpRewritePattern;
 
-  PatternMatchResult matchAndRewrite(TFL::MulOp mul_op,
+  LogicalResult matchAndRewrite(TFL::MulOp mul_op,
                                      PatternRewriter &rewriter) const override {
     // Mul.
     DenseElementsAttr cst;
-    Value *constant_val = mul_op.rhs();
-    if (!matchPattern(constant_val, m_Constant(&cst))) return matchFailure();
+    Value *constant_val = mul_op.getRhs();
+    if (!matchPattern(constant_val, m_Constant(&cst))) return failure();
 
     // Fully Connected.
     auto fc_op =
         dyn_cast_or_null<TFL::FullyConnectedOp>(mul_op.lhs()->getDefiningOp());
-    if (!fc_op) return matchFailure();
+    if (!fc_op) return failure();
     Value *filter = fc_op.filter();
     Value *bias = fc_op.bias();
     ElementsAttr cst_tmp;
-    if (!matchPattern(filter, m_Constant(&cst_tmp))) return matchFailure();
+    if (!matchPattern(filter, m_Constant(&cst_tmp))) return failure();
     if (!bias->getType().isa<NoneType>() &&
         !matchPattern(bias, m_Constant(&cst_tmp)))
-      return matchFailure();
-    if (fc_op.fused_activation_function().equals("None")) return matchFailure();
+      return failure();
+    if (fc_op.getFusedActivationFunction().equals("None")) return failure();
 
     // Broadcast the constant operand of Mul if it isn't compatible to the
     // filter input. We only support broadcasting the operand along the depth
@@ -189,7 +202,7 @@ struct FuseFullyConnectedAndMul : public OpRewritePattern<TFL::MulOp> {
           normalized_shape, cst.getType().getElementType()));
       Type new_type = new_cst.getType();
       if (!IsBroadcastableElementsAttrAndType(new_type, filter->getType())) {
-        return matchFailure();
+        return failure();
       }
       auto new_op =
           rewriter.create<ConstantOp>(mul_op.getLoc(), new_type, new_cst);
@@ -213,11 +226,11 @@ struct FuseFullyConnectedAndMul : public OpRewritePattern<TFL::MulOp> {
         /*filter=*/new_filter,
         /*bias=*/bias,
         /*fused_activation_function=*/
-        rewriter.getStringAttr(mul_op.fused_activation_function()),
+        rewriter.getStringAttr(mul_op.getFusedActivationFunction()),
         /*weights_format=*/rewriter.getStringAttr(fc_op.weights_format()),
         /*keep_num_dims=*/rewriter.getBoolAttr(fc_op.keep_num_dims()));
 
-    return matchSuccess();
+    return success();
   }
 };
 
@@ -243,14 +256,14 @@ struct PadStridedSliceDims : public RewritePattern {
                        {"tfl.strided_slice", "tfl.strided_slice"}, 2, context) {
   }
 
-  PatternMatchResult matchAndRewrite(Operation *strided_slice_op,
+  LogicalResult matchAndRewrite(Operation *strided_slice_op,
                                      PatternRewriter &rewriter) const override {
     // TODO(renjieliu): Consider expand the transformation for ellipsis & shrink
     // mask as well.
     TFL::StridedSliceOp strided_slice =
         llvm::cast<TFL::StridedSliceOp>(strided_slice_op);
     const uint64_t new_axis_mask = strided_slice.new_axis_mask().getZExtValue();
-    if (new_axis_mask == 0) return matchFailure();
+    if (new_axis_mask == 0) return failure();
 
     // Insert a new reshape op.
     Value *original_input = strided_slice.input();
@@ -291,21 +304,21 @@ struct PadStridedSliceDims : public RewritePattern {
     auto attribute_type = rewriter.getIntegerType(32);
     rewriter.replaceOpWithNewOp<TFL::StridedSliceOp>(
         strided_slice_op, strided_slice.getType(), reshape,
-        strided_slice.begin(), strided_slice.end(), strided_slice.strides(),
+        strided_slice.getBegin(), strided_slice.getEnd(), strided_slice.getStrides(),
         rewriter.getIntegerAttr(attribute_type, new_begin_mask),
         rewriter.getIntegerAttr(attribute_type, new_end_mask),
-        rewriter.getIntegerAttr(attribute_type, strided_slice.ellipsis_mask()),
+        rewriter.getIntegerAttr(attribute_type, strided_slice.getEllipsisMask()),
         rewriter.getI32IntegerAttr(0),
         rewriter.getIntegerAttr(attribute_type,
-                                strided_slice.shrink_axis_mask()));
-    return matchSuccess();
+                                strided_slice.getShrinkAxisMask()));
+    return success();
   }
 };
 
-void Optimize::runOnFunction() {
+void Optimize::runOnOperation() {
   OwningRewritePatternList patterns;
   auto *ctx = &getContext();
-  auto func = getFunction();
+  auto func = getOperation();
 
   // Add the generated patterns to the list.
   TFL::populateWithGenerated(ctx, &patterns);
@@ -320,9 +333,6 @@ void Optimize::runOnFunction() {
 std::unique_ptr<FunctionPassBase> CreateOptimizePass() {
   return std::make_unique<Optimize>();
 }
-
-static PassRegistration<Optimize> pass(
-    "tfl-optimize", "Optimize within the TensorFlow Lite dialect");
 
 }  // namespace TFL
 }  // namespace mlir

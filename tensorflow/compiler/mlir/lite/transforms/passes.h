@@ -19,6 +19,8 @@ limitations under the License.
 #include <memory>
 
 #include "llvm/ADT/ArrayRef.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 
 namespace mlir {
 class FunctionPassBase;
@@ -27,43 +29,62 @@ class ModulePassBase;
 namespace TFL {
 
 // Creates an instance of the TensorFlow Lite dialect LegalizeTF pass.
-std::unique_ptr<FunctionPassBase> CreateLegalizeTFPass();
+std::unique_ptr<OperationPass<func::FuncOp>> CreateLegalizeTFPass();
 
 // Creates an instance of the TensorFlow Lite dialect Optimize pass.
-std::unique_ptr<FunctionPassBase> CreateOptimizePass();
+std::unique_ptr<OperationPass<func::FuncOp>> CreateOptimizePass();
 
 // Creates an instance of the TensorFlow Lite dialect PrepareTF pass.
-std::unique_ptr<FunctionPassBase> CreatePrepareTFPass();
+std::unique_ptr<OperationPass<func::FuncOp>> CreatePrepareTFPass();
 
 // Creates an instance of the TensorFlow Lite dialect LowerStaticTensorList
 // pass.
-std::unique_ptr<ModulePassBase> CreateLowerStaticTensorListPass();
+std::unique_ptr<OperationPass<ModuleOp>> CreateLowerStaticTensorListPass();
 
 // Creates an instance of the TensorFlow Lite dialect Quantize pass.
-std::unique_ptr<FunctionPassBase> CreateQuantizePass();
+std::unique_ptr<OperationPass<func::FuncOp>> CreateQuantizePass();
 
 // Creates an instance of the TensorFlow Lite dialect PrepareQuantize pass.
 // When `quantize_sign` is true, constant tensors will use int8 quantization
 // scheme.
 // TODO(fengliuai): make the bit width configurable.
-std::unique_ptr<FunctionPassBase> CreatePrepareQuantizePass(bool quantize_sign);
+std::unique_ptr<OperationPass<func::FuncOp>> CreatePrepareQuantizePass();
+std::unique_ptr<OperationPass<func::FuncOp>> CreatePrepareQuantizePass(bool quantize_sign);
 
 // Creates a instance of the TensorFlow Lite dialect PostQuantize pass.
-std::unique_ptr<FunctionPassBase> CreatePostQuantizePass(
+std::unique_ptr<OperationPass<func::FuncOp>> CreatePostQuantizePass();
+std::unique_ptr<OperationPass<func::FuncOp>> CreatePostQuantizePass(
     bool emit_quant_adaptor_ops);
 
 // Creates an instance of the TensorFlow Lite dialect TrimFunctions
 // pass.
-std::unique_ptr<ModulePassBase> CreateTrimFunctionsPass(
+std::unique_ptr<OperationPass<ModuleOp>> CreateTrimFunctionsPass();
+std::unique_ptr<OperationPass<ModuleOp>> CreateTrimFunctionsPass(
     llvm::ArrayRef<std::string> trim_funcs_whitelist);
 
 // Creates an instance of the TensorFlow Lite dialect PrepareCompositeFunctions
 // pass.
-std::unique_ptr<FunctionPassBase> CreatePrepareCompositeFunctionsPass();
+std::unique_ptr<OperationPass<ModuleOp>> CreatePrepareCompositeFunctionsPass();
 
 // Creates a instance of the TensorFlow Lite dialect ExtractOphint pass.
-std::unique_ptr<ModulePassBase> CreateExtractOphintPass();
+std::unique_ptr<OperationPass<ModuleOp>> CreateExtractOphintPass();
 
+#define GEN_PASS_DECL_DEFAULTQUANTPARAMSPASS
+#define GEN_PASS_DECL_DENSETOSPARSEPASS
+#define GEN_PASS_DECL_LEGALIZETFPASS
+#define GEN_PASS_DECL_MODIFYIONODESPASS
+#define GEN_PASS_DECL_OPTIMIZEPASS
+#define GEN_PASS_DECL_POSTQUANTIZEPASS
+#define GEN_PASS_DECL_PREPARECOMPOSITEFUNCTIONSPASS
+#define GEN_PASS_DECL_PREPAREDYNAMICRANGEQUANTIZEPASS
+#define GEN_PASS_DECL_PREPAREQUANTIZEPASS
+#define GEN_PASS_DECL_PREPARETFPASS
+#define GEN_PASS_DECL_QUANTIZEPASS
+#define GEN_PASS_DECL_RAISECUSTOMOPSPASS
+#define GEN_PASS_DECL_TRIMFUNCTIONSPASS
+#define GEN_PASS_DECL_EXTRACTOPHINTPASS
+#define GEN_PASS_REGISTRATION
+#include "tensorflow/compiler/mlir/lite/transforms/passes.h.inc"
 }  // namespace TFL
 
 }  // namespace mlir

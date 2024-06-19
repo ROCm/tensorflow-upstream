@@ -110,7 +110,7 @@ void ForLoop::Emit(llvm::IRBuilder<>* b) {
   // Emit the loop conditional branch. Load and compare indvar with ending
   // index and jump to loop exit if equal. Jump to body otherwise.
   b->SetInsertPoint(header_bb_);
-  indvar_ = b->CreateLoad(indvar_address, GetQualifiedName("indvar"));
+  indvar_ = b->CreateLoad(start_index_->getType(), indvar_address, GetQualifiedName("indvar"));
   llvm::Value* exit_cond = b->CreateICmpUGE(indvar_, end_index_);
   b->CreateCondBr(/*Cond=*/exit_cond,
                   /*True=*/exit_bb_, /*False=*/body_bb_);
@@ -129,7 +129,7 @@ void ForLoop::Emit(llvm::IRBuilder<>* b) {
   std::vector<llvm::Metadata*> loop_metadata = GetLoopMetadata(b);
   if (!loop_metadata.empty()) {
     llvm::LLVMContext* ctx = &start_index_->getContext();
-    auto temp_node = llvm::MDNode::getTemporary(*ctx, llvm::None);
+    auto temp_node = llvm::MDNode::getTemporary(*ctx, std::nullopt);
     loop_metadata.insert(loop_metadata.begin(), temp_node.get());
     auto loop_id = llvm::MDNode::get(*ctx, loop_metadata);
     loop_id->replaceOperandWith(0, loop_id);

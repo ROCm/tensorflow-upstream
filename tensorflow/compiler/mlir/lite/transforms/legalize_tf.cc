@@ -53,10 +53,14 @@ namespace TFL {
 //===----------------------------------------------------------------------===//
 // The actual LegalizeTF Pass.
 namespace {
+#define GEN_PASS_DEF_LEGALIZETFPASS
+#include "tensorflow/compiler/mlir/lite/transforms/passes.h.inc"
 
 // Legalize operations in functions.
-struct LegalizeTF : public FunctionPass<LegalizeTF> {
-  void runOnFunction() override;
+struct LegalizeTF : public impl::LegalizeTFPassBase<LegalizeTF> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LegalizeTF)
+
+  void runOnOperation() override;
 };
 
 #include "tensorflow/compiler/mlir/lite/transforms/generated_legalize_tf.inc"
@@ -65,7 +69,7 @@ struct LegalizeTF : public FunctionPass<LegalizeTF> {
   struct ConvertTF##tf_op##Op : public RewritePattern {                    \
     explicit ConvertTF##tf_op##Op(MLIRContext* context)                    \
         : RewritePattern(TF::tf_op##Op::getOperationName(), 1, context) {} \
-    PatternMatchResult matchAndRewrite(                                    \
+    LogicalResult matchAndRewrite(                                    \
         Operation* op, PatternRewriter& rewriter) const override;          \
   }
 
@@ -82,42 +86,42 @@ DECL_CONVERT_OP(Unpack);
 
 #undef DECL_CONVERT_OP
 
-PatternMatchResult ConvertTFConcatOp::matchAndRewrite(
+LogicalResult ConvertTFConcatOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
   auto tf_concat_op = cast<TF::ConcatOp>(op);
 
-  SmallVector<Value*, 4> values(tf_concat_op.values());
-  auto output_type = tf_concat_op.output()->getType();
+  SmallVector<Value*, 4> values(tf_concat_op.getValues());
+  auto output_type = tf_concat_op.getOutput()->getType();
   // Extract axis attribute from constant concat_dims tensor
   ElementsAttr axis;
-  if (!matchPattern(tf_concat_op.concat_dim(), m_Constant(&axis)))
-    return matchFailure();
+  if (!matchPattern(tf_concat_op.getConcatDim(), m_Constant(&axis)))
+    return failure();
 
   StringAttr fused_activation_function =
-      StringAttr::get("NONE", rewriter.getContext());
+      StringAttr::get(rewriter.getContext(), "NONE");
   rewriter.replaceOpWithNewOp<TFL::ConcatenationOp>(
       op, output_type, values, mlir::TFL::ExtractSingleElementAsInteger(axis),
       fused_activation_function);
-  return matchSuccess();
+  return success();
 }
 
-PatternMatchResult ConvertTFConcatV2Op::matchAndRewrite(
+LogicalResult ConvertTFConcatV2Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
   auto tf_concat_op = cast<TF::ConcatV2Op>(op);
 
-  SmallVector<Value*, 4> values(tf_concat_op.values());
-  auto output_type = tf_concat_op.output()->getType();
+  SmallVector<Value*, 4> values(tf_concat_op.getValues());
+  auto output_type = tf_concat_op.getOutput().getType();
   // Extract axis attribute from constant axis tensor
   ElementsAttr axis;
-  if (!matchPattern(tf_concat_op.axis(), m_Constant(&axis)))
-    return matchFailure();
+  if (!matchPattern(tf_concat_op.getAxis(), m_Constant(&axis)))
+    return failure();
 
   StringAttr fused_activation_function =
-      StringAttr::get("NONE", rewriter.getContext());
+      StringAttr::get(rewriter.getContext(), "NONE");
   rewriter.replaceOpWithNewOp<ConcatenationOp>(
       op, output_type, values, ExtractSingleElementAsInteger(axis),
       fused_activation_function);
-  return matchSuccess();
+  return success();
 }
 
 // The following is effectively:
@@ -126,87 +130,87 @@ PatternMatchResult ConvertTFConcatV2Op::matchAndRewrite(
 //      ConstBoolAttrTrue:$transpose_b),
 //   (TFL_FullyConnectedOp:$__0 $a, $b,
 //     NoInput.pattern, TFL_AF_None, TFL_FCWO_Default, ConstBoolAttrFalse)>;
-PatternMatchResult ConvertTFMatMulOp::matchAndRewrite(
+LogicalResult ConvertTFMatMulOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
   auto tf_matmul_op = cast<TF::MatMulOp>(op);
-  if (tf_matmul_op.transpose_a()) return matchFailure();
-  if (!tf_matmul_op.transpose_b()) return matchFailure();
+  if (tf_matmul_op.getTransposeA()) return failure();
+  if (!tf_matmul_op.getTransposeB()) return failure();
 
-  Type output_type = tf_matmul_op.getResult()->getType();
+  Type output_type = tf_matmul_op.getResult().getType();
   // TODO(jpienaar): Follow up post shuffle discussion.
-  auto no_input = rewriter.create<ConstantOp>(
+  auto no_input = rewriter.create<TFL::NoValueOp>(
       op->getLoc(), rewriter.getNoneType(), rewriter.getUnitAttr());
   auto fc_op = rewriter.create<FullyConnectedOp>(
       op->getLoc(), ArrayRef<Type>{output_type}, op->getOperand(0),
       op->getOperand(1), no_input, rewriter.getStringAttr("NONE"),
       rewriter.getStringAttr("DEFAULT"), rewriter.getBoolAttr(false));
   rewriter.replaceOp(op, {fc_op.getResult(0)});
-  return matchSuccess();
+  return success();
 }
 
-PatternMatchResult ConvertTFPackOp::matchAndRewrite(
+LogicalResult ConvertTFPackOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
   auto tf_pack_op = cast<TF::PackOp>(op);
 
-  SmallVector<Value*, 4> values(tf_pack_op.values());
-  auto output_type = tf_pack_op.output()->getType();
-  auto values_count = rewriter.getI32IntegerAttr(tf_pack_op.N().getZExtValue());
+  SmallVector<Value*, 4> values(tf_pack_op.getValues());
+  auto output_type = tf_pack_op.getOutput().getType();
+  auto values_count = rewriter.getI32IntegerAttr(tf_pack_op.getN());
   // Axis can be negative.
-  auto axis = rewriter.getI32IntegerAttr(tf_pack_op.axis().getSExtValue());
+  auto axis = rewriter.getI32IntegerAttr(tf_pack_op.getAxis());
 
   rewriter.replaceOpWithNewOp<PackOp>(op, output_type, values, values_count,
                                       axis);
-  return matchSuccess();
+  return success();
 }
 
-PatternMatchResult ConvertTFSplitOp::matchAndRewrite(
+LogicalResult ConvertTFSplitOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
   auto tf_split_op = cast<TF::SplitOp>(op);
 
   auto output_types = functional::map([](Value* v) { return v->getType(); },
-                                      tf_split_op.output());
+                                      tf_split_op.getOutput());
   // Number of splits cannot be negative.
   auto num_split =
-      rewriter.getI32IntegerAttr(tf_split_op.num_split().getZExtValue());
+      rewriter.getI32IntegerAttr(tf_split_op.getNumSplit());
 
   rewriter.replaceOpWithNewOp<TFL::SplitOp>(op, output_types,
-                                            tf_split_op.split_dim(),
-                                            tf_split_op.value(), num_split);
-  return matchSuccess();
+                                            tf_split_op.getSplitDim(),
+                                            tf_split_op.getValue(), num_split);
+  return success();
 }
 
-PatternMatchResult ConvertTFSplitVOp::matchAndRewrite(
+LogicalResult ConvertTFSplitVOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
   auto tf_splitv_op = cast<TF::SplitVOp>(op);
 
   auto output_types = functional::map([](Value* v) { return v->getType(); },
-                                      tf_splitv_op.output());
+                                      tf_splitv_op.getOutput());
   // Number of splits cannot be negative.
   auto num_split =
-      rewriter.getI32IntegerAttr(tf_splitv_op.num_split().getZExtValue());
+      rewriter.getI32IntegerAttr(tf_splitv_op.getNumSplit());
 
   rewriter.replaceOpWithNewOp<TFL::SplitVOp>(
-      op, output_types, tf_splitv_op.value(), tf_splitv_op.size_splits(),
-      tf_splitv_op.split_dim(), num_split);
-  return matchSuccess();
+      op, output_types, tf_splitv_op.value(), tf_splitv_op.getSizeSplits(),
+      tf_splitv_op.getSplitDim(), num_split);
+  return success();
 }
 
-PatternMatchResult ConvertTFUnpackOp::matchAndRewrite(
+LogicalResult ConvertTFUnpackOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
   auto tf_unpack_op = cast<TF::UnpackOp>(op);
 
-  auto* input = tf_unpack_op.value();
+  auto* input = tf_unpack_op.getValue();
   auto output_types = functional::map([](Value* v) { return v->getType(); },
-                                      tf_unpack_op.output());
-  auto num = rewriter.getI32IntegerAttr(tf_unpack_op.num().getZExtValue());
+                                      tf_unpack_op.getOutput());
+  auto num = rewriter.getI32IntegerAttr(tf_unpack_op.getNum());
   // Axis can be negative.
-  auto axis = rewriter.getI32IntegerAttr(tf_unpack_op.axis().getSExtValue());
+  auto axis = rewriter.getI32IntegerAttr(tf_unpack_op.getAxis());
 
   rewriter.replaceOpWithNewOp<UnpackOp>(op, output_types, input, num, axis);
-  return matchSuccess();
+  return success();
 }
 
-void LegalizeTF::runOnFunction() {
+void LegalizeTF::runOnOperation() {
   OwningRewritePatternList patterns;
   auto* ctx = &getContext();
   auto func = getFunction();
@@ -222,12 +226,9 @@ void LegalizeTF::runOnFunction() {
 }  // namespace
 
 // Creates an instance of the TensorFlow Lite dialect LegalizeTF pass.
-std::unique_ptr<FunctionPassBase> CreateLegalizeTFPass() {
+std::unique_ptr<mlir::Pass> CreateLegalizeTFPass() {
   return std::make_unique<LegalizeTF>();
 }
-
-static PassRegistration<LegalizeTF> pass(
-    "tfl-legalize-tf", "Legalize from TensorFlow to TensorFlow Lite dialect");
 
 }  // namespace TFL
 }  // namespace mlir

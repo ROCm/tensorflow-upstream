@@ -67,10 +67,16 @@ limitations under the License.
 
 #define DEBUG_TYPE "tf-tfl-legalization"
 
+using mlir::func::FuncOp;
 //===----------------------------------------------------------------------===//
 // The actual LowerStaticTensorList Pass.
 //
 namespace mlir {
+
+#define GEN_PASS_DECL_LOWERSTATICTENSORLISTPASS
+#define GEN_PASS_DEF_LOWERSTATICTENSORLISTPASS
+#include "tensorflow/compiler/mlir/lite/transforms/passes.h.inc"
+
 namespace {
 
 class TensorListPatternRewriter : public PatternRewriter {
@@ -86,9 +92,22 @@ class TensorListPatternRewriter : public PatternRewriter {
 /// Lower TensorList ops in functions for subsequent legalization.
 // TODO(haoliang): Use DialectConversion infra to simplify the rewriting
 // process.
+
 struct LowerStaticTensorListPass
-    : public ModulePass<LowerStaticTensorListPass> {
-  void runOnModule() override;
+    : public impl::LowerStaticTensorListPassBase<LowerStaticTensorListPass> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerStaticTensorListPass)
+
+  LowerStaticTensorListPass() = default;
+  LowerStaticTensorListPass(const LowerStaticTensorListPass &) {}
+  explicit LowerStaticTensorListPass(bool allow_tensorlist_pass_through,
+                                     bool default_to_single_batch,
+                                     bool enable_dynamic_update_slice) {
+    this->allow_tensorlist_pass_through_ = allow_tensorlist_pass_through;
+    this->default_to_single_batch_ = default_to_single_batch;
+    this->enable_dynamic_update_slice_ = enable_dynamic_update_slice;
+  }
+
+  void runOnOperation() override;
 
   // Apply type and op changes within a function.
   LogicalResult RewriteFunction(FuncOp func,
@@ -130,7 +149,7 @@ struct ConvertTFTensorListSetItem
   //        (Slice $input, [0, 0, ...], (Concat (ExpandDims $index, expand_dim =
   //        0), [-1, -1, ...])), (ExpandDims $item, expand_dim = 0), (Slice
   //        $input, [$index + 1, 0, 0, ...], [-1, -1, ...]))>;
-  PatternMatchResult matchAndRewrite(TF::TensorListSetItemOp op,
+  LogicalResult matchAndRewrite(TF::TensorListSetItemOp op,
                                      PatternRewriter &rewriter) const override {
     auto input = op.input_handle();
     auto shape_dtype = rewriter.getIntegerType(32);
@@ -206,7 +225,7 @@ struct ConvertTFTensorListSetItem
         ArrayRef<Value *>({slice1, expanded_item, slice2}),
         rewriter.getI64IntegerAttr(3));
 
-    return matchSuccess();
+    return success();
   }
 };
 
@@ -225,11 +244,11 @@ struct ConvertTFTensorListInitOp : public OpRewritePattern<OpT> {
   // Rewrites the original op into `tf.fill`. The result tensor shape is
   // [num_element, element_shape]. All the values in the result tensor will be
   // initialized to 0.
-  PatternMatchResult matchAndRewrite(OpT op,
+  LogicalResult matchAndRewrite(OpT op,
                                      PatternRewriter &rewriter) const override {
-    auto element_shape = op.element_shape();
-    auto shape_dtype = getElementTypeOrSelf(element_shape->getType());
-    Type element_dtype = op.element_dtype();
+    auto element_shape = op.getElementShape();
+    auto shape_dtype = getElementTypeOrSelf(element_shape.getType());
+    Type element_dtype = op.getElementDtype();
 
     int64_t result_rank = -1;  // -1 means unknown result rank.
     Type result_type = rewriter.getTensorType(element_dtype);
@@ -268,7 +287,7 @@ struct ConvertTFTensorListInitOp : public OpRewritePattern<OpT> {
     auto zero = rewriter.create<ConstantOp>(op.getLoc(), zero_type, zero_attr);
 
     rewriter.replaceOpWithNewOp<TF::FillOp>(op, result_type, list_shape, zero);
-    return Pattern::matchSuccess();
+    return success();
   }
 };
 
@@ -309,11 +328,11 @@ struct ConvertTFTensorListPushBack : public RewritePattern {
       : RewritePattern(TF::TensorListPushBackOp::getOperationName(), 1,
                        context) {}
 
-  PatternMatchResult matchAndRewrite(Operation *op,
+  LogicalResult matchAndRewrite(Operation *op,
                                      PatternRewriter &rewriter) const override {
     TF::TensorListPushBackOp push_back_op = cast<TF::TensorListPushBackOp>(op);
-    Value *item = push_back_op.tensor();
-    Type dtype = getElementTypeOrSelf(*item);
+    Value item = push_back_op.getTensor();
+    Type dtype = getElementTypeOrSelf(item);
 
     // Returns a new type by prepending the specified dimension to the shape of
     // the given type if it is a ranked type.
@@ -329,7 +348,7 @@ struct ConvertTFTensorListPushBack : public RewritePattern {
 
     // Expand the shape of the item so that it will have rank same as the input
     // tensor and it is compatible for the Concat Op.
-    Type expanded_item_type = with_leading_dim(1, item->getType());
+    Type expanded_item_type = with_leading_dim(1, item.getType());
     auto scalar_zero = CreateI32SplatConst(op, &rewriter, {}, 0);
     auto expanded_item = rewriter.create<TF::ExpandDimsOp>(
         op->getLoc(), expanded_item_type, item, scalar_zero);
@@ -351,7 +370,7 @@ struct ConvertTFTensorListPushBack : public RewritePattern {
         op, result_type, scalar_zero,
         ArrayRef<Value *>({push_back_op.input_handle(), expanded_item}),
         rewriter.getI64IntegerAttr(2));
-    return matchSuccess();
+    return success();
   }
 };
 
@@ -368,7 +387,7 @@ LogicalResult LowerStaticTensorListPass::UpdateWhileFunctionType(
   SmallVector<Type, 8> unranked_argument_types;
   for (const auto &operand : op.getOperands()) {
     unranked_argument_types.push_back(
-        UnrankedTensorType::get(getElementTypeOrSelf(operand->getType())));
+        UnrankedTensorType::get(getElementTypeOrSelf(operand.getType())));
   }
 
   auto *context = &getContext();
@@ -383,7 +402,7 @@ LogicalResult LowerStaticTensorListPass::UpdateWhileFunctionType(
     // Change the argument type for the first block.
     Block &cond_first_bb = cond_func.front();
     for (int i = 0; i < cond_first_bb.getNumArguments(); ++i) {
-      cond_first_bb.getArgument(i)->setType(unranked_argument_types[i]);
+      cond_first_bb.getArgument(i).setType(unranked_argument_types[i]);
     }
   }
 
@@ -413,10 +432,10 @@ LogicalResult LowerStaticTensorListPass::UpdateWhileFunctionType(
   for (int i = 0; i < op.getNumOperands(); ++i) {
     auto operand = op.getOperand(i);
     auto result = op.getResult(i);
-    if (getElementTypeOrSelf(result->getType()).isa<TF::VariantType>()) {
+    if (getElementTypeOrSelf(result.getType()).isa<TF::VariantType>()) {
       // If we notice the result type is a DT_VARIANT, we change the
       // corresponding result type to unranked tensor type.
-      result->setType(
+      result.setType(
           UnrankedTensorType::get(getElementTypeOrSelf(operand->getType())));
     }
   }
@@ -441,12 +460,12 @@ LogicalResult LowerStaticTensorListPass::RewriteFunction(
         rewriter->setInsertionPoint(op);
         c.matchAndRewrite(op, *rewriter);
       } else if (auto tf_op = llvm::dyn_cast<TF::TensorListReserveOp>(op)) {
-        if (!(tf_op.element_dtype().isF16() || tf_op.element_dtype().isF32() ||
-              tf_op.element_dtype().isF64() ||
-              tf_op.element_dtype().isInteger(8) ||
-              tf_op.element_dtype().isInteger(16) ||
-              tf_op.element_dtype().isInteger(32) ||
-              tf_op.element_dtype().isInteger(64))) {
+        if (!(tf_op.getElementDtype().isF16() || tf_op.getElementDtype().isF32() ||
+              tf_op.getElementDtype().isF64() ||
+              tf_op.getElementDtype().isInteger(8) ||
+              tf_op.getElementDtype().isInteger(16) ||
+              tf_op.getElementDtype().isInteger(32) ||
+              tf_op.getElementDtype().isInteger(64))) {
           return tf_op.emitError(
               "requires element_dtype to be 8-bit/16-bit/32-bit/64-bit integer "
               "or 16-bit/32-bit/64-bit "
@@ -480,21 +499,35 @@ LogicalResult LowerStaticTensorListPass::RewriteFunction(
         UpdateWhileFunctionType(tf_op);
       } else if (auto tf_op = llvm::dyn_cast<TF::IdentityOp>(op)) {
         if (op->getAttr("T")) op->removeAttr(Identifier::get("T", context));
-        tf_op.getResult()->setType(tf_op.getOperand()->getType());
+        tf_op.getResult().setType(tf_op.getOperand()->getType());
       }
     }
   }
   return success();
 }
 
-void LowerStaticTensorListPass::runOnModule() {
+void LowerStaticTensorListPass::runOnOperation() {
+  ModuleOp module = getOperation();
+
+#if 0
+  std::vector<mlir::Operation *> funcs_in_module;
+
+  auto res = mod->walk([&](mlir::Operation *op) -> WalkResult {
+    if (op->getName() == "main") {
+      funcs_in_module.insert(funcs_in_module.begin(), op);
+    } else {
+      funcs_in_module.push_back(func);
+    }
+    return WalkResult::advance();
+  });
+#else  
   // TODO(haoliang): currently we process the `main` function first, and the
   // remaining functions may be processed in arbitrary order. However, this will
   // have a potential issue when one function taking a `DT_VARIANT` is processed
   // before the function that produces the `DT_VARIANT`. We need to carefully
   // order the functions to be processed.
   std::vector<FuncOp> funcs_in_module;
-  for (auto func : getModule().getOps<FuncOp>()) {
+  for (auto func : module.getOps<FuncOp>()) {
     // Always place the main function to be the first in the list.
     if (func.getName() == "main") {
       funcs_in_module.insert(funcs_in_module.begin(), func);
@@ -502,6 +535,7 @@ void LowerStaticTensorListPass::runOnModule() {
       funcs_in_module.push_back(func);
     }
   }
+#endif
   for (auto func : funcs_in_module) {
     TensorListPatternRewriter rewriter(func);
     if (failed(RewriteFunction(func, &rewriter))) {
@@ -509,16 +543,13 @@ void LowerStaticTensorListPass::runOnModule() {
       return;
     }
   }
+#endif
 }
 
 /// Creates an instance of the TensorFlow Lite dialect LowerStaticTensorList
 /// pass.
-std::unique_ptr<ModulePassBase> TFL::CreateLowerStaticTensorListPass() {
+std::unique_ptr<OperationPass<ModuleOp>> CreateLowerStaticTensorListPass() {
   return std::make_unique<LowerStaticTensorListPass>();
 }
-
-static PassRegistration<LowerStaticTensorListPass> pass(
-    "tfl-lower-static-tensor-list",
-    "Lower TensorList ops within TensorFlow Lite dialect");
 
 }  // namespace mlir

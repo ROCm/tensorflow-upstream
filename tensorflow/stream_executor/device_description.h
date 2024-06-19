@@ -136,7 +136,7 @@ class DeviceDescription {
   // Returns the AMDGPU ISA version if we're running on the ROCm platform.
   // If the information is not available, the version is not modified,
   // and the return value will be false.
-  bool rocm_amdgpu_isa_version(int *version) const;
+  bool rocm_amdgpu_isa_version(std::string *version) const;
 
   // Returns the maximum amount of shared memory present on a single core
   // (i.e. Streaming Multiprocessor on NVIDIA GPUs; Compute Unit for OpenCL
@@ -201,7 +201,7 @@ class DeviceDescription {
   int cuda_compute_capability_minor_;
 
   // ROCM AMDGPU ISA version, 0 if not available.
-  int rocm_amdgpu_isa_version_;
+  std::string rocm_amdgpu_isa_version_;
 
   int numa_node_;
   int core_count_;
@@ -288,7 +288,7 @@ class DeviceDescriptionBuilder {
     device_description_->cuda_compute_capability_minor_ = minor;
   }
 
-  void set_rocm_amdgpu_isa_version(int version) {
+  void set_rocm_amdgpu_isa_version(std::string version) {
     device_description_->rocm_amdgpu_isa_version_ = version;
   }
 

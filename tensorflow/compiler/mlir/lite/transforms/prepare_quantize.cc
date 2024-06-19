@@ -29,14 +29,17 @@ namespace mlir {
 namespace TFL {
 
 namespace {
+#define GEN_PASS_DEF_PREPAREQUANTIZEPASS
+#include "tensorflow/compiler/mlir/lite/transforms/passes.h.inc"
 
 // Applies prepare quantization on the model in TFL dialect. This pass runs
 // before the quantization pass and propagate the quantization parameters
 // across ops. This step is necessary for post-training quantization and also
 // making the quantization rule for some operations in the quantization-aware
 // training quantization simpler.
-class PrepareQuantizePass : public FunctionPass<PrepareQuantizePass> {
+class PrepareQuantizePass : public impl::PrepareQuantizePassBase<PrepareQuantizePass> {
  public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PrepareQuantizePass)
   // Constructor used by the PassRegistration.
   explicit PrepareQuantizePass() : quantize_sign_(false) {}
 
@@ -44,7 +47,7 @@ class PrepareQuantizePass : public FunctionPass<PrepareQuantizePass> {
   explicit PrepareQuantizePass(bool quantize_sign)
       : quantize_sign_(quantize_sign) {}
 
-  void runOnFunction() override;
+  void runOnOperation() override;
 
  private:
   bool quantize_sign_;
@@ -52,7 +55,7 @@ class PrepareQuantizePass : public FunctionPass<PrepareQuantizePass> {
 
 #include "tensorflow/compiler/mlir/lite/utils/generated_op_quant_spec_getters.inc"
 
-void PrepareQuantizePass::runOnFunction() {
+void PrepareQuantizePass::runOnOperation() {
   ApplyQuantizationParamsPropagation(getFunction(), quantize_sign_,
                                      GetOpQuantSpec);
 }
@@ -60,13 +63,14 @@ void PrepareQuantizePass::runOnFunction() {
 }  // namespace
 
 // Creates an instance of the TensorFlow Lite dialect PrepareQuantize pass.
-std::unique_ptr<FunctionPassBase> CreatePrepareQuantizePass(
+std::unique_ptr<OperationPass<func::FuncOp>> CreatePrepareQuantizePass(
     bool quantize_sign) {
   return std::make_unique<PrepareQuantizePass>(quantize_sign);
 }
 
-static PassRegistration<PrepareQuantizePass> pass(
-    "tfl-prepare-quantize", "Prepare TFL dialect for quantization");
+std::unique_ptr<OperationPass<func::FuncOp>> CreatePrepareQuantizePass() {
+    return CreatePrepareQuantizePass(true);
+}
 
 }  // namespace TFL
 }  // namespace mlir

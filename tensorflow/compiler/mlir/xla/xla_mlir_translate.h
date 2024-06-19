@@ -26,7 +26,8 @@ class StringRef;
 
 namespace mlir {
 class MLIRContext;
-class OwningModuleRef;
+//class OwningModuleRef;
+using OwningModuleRef =  OwningOpRef<Operation*>;
 }  // namespace mlir
 
 namespace xla {

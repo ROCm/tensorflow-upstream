@@ -510,7 +510,10 @@ LogicalResult ConvertOphintToStub(StringRef stub_name,
   return success();
 }
 
-struct ExtractOphintPass : public ModulePass<ExtractOphintPass> {
+#define GEN_PASS_DEF_EXTRACTOPHINTPASS
+#include "tensorflow/compiler/mlir/lite/transforms/passes.h.inc"
+
+struct ExtractOphintPass : public impl::ExtractOphintPassBase<ExtractOphintPass> {
   void runOnModule() override;
   void Verify();
 
@@ -584,12 +587,9 @@ void ExtractOphintPass::Verify() {
 
 /// Creates an instance of the TensorFlow Lite dialect ExtractOphintPass
 /// pass.
-std::unique_ptr<ModulePassBase> CreateExtractOphintPass() {
+std::unique_ptr<OperationPass<ModuleOp>> CreateExtractOphintPass() {
   return std::make_unique<ExtractOphintPass>();
 }
-
-static PassRegistration<ExtractOphintPass> pass(
-    "tfl-extract-ophint", "Extract Ophint for TfLite dialect.");
 
 }  // namespace TFL
 }  // namespace mlir

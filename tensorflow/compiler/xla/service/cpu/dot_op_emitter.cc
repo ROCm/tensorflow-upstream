@@ -536,7 +536,7 @@ void DotOpEmitter::EmitNaiveLlvmIrGemm() {
   // - Store into output array.
   SetToFirstInsertPoint(reduction_loop->GetExitBasicBlock(), b_);
 
-  llvm::Value* result = b_->CreateLoad(accum_address);
+  llvm::Value* result = b_->CreateLoad(accum_type, accum_address);
 
   // Create index into target address. The target index is the concatenation of
   // the rhs and lhs indexes with the reduction dimensions removed. The terms
@@ -932,7 +932,7 @@ llvm_ir::IrArray CollapseFirstNDims(llvm::IRBuilder<>* b,
   llvm::Value* new_value = b->CreateBitCast(
       array.GetBasePointer(),
       llvm_ir::ShapeToIrType(new_shape, module)->getPointerTo());
-  return llvm_ir::IrArray(new_value, std::move(new_shape));
+  return llvm_ir::IrArray(new_shape.element_type(), new_value, std::move(new_shape));
 }
 
 Status ValidateDotDimensionNumbers(const DotDimensionNumbers& dim_numbers) {
@@ -963,7 +963,8 @@ llvm_ir::IrArray SliceOutInnerArray(llvm_ir::IrArray outer_array,
   llvm::Value* slice_ptr = outer_array.EmitArrayElementAddress(slice_index, b);
   llvm::Type* slice_ptr_type =
       llvm_ir::ShapeToIrType(inner_shape, module)->getPointerTo();
-  return llvm_ir::IrArray(b->CreateBitCast(slice_ptr, slice_ptr_type),
+  return llvm_ir::IrArray(inner_shape.element_type(), 
+                          b->CreateBitCast(slice_ptr, slice_ptr_type),
                           std::move(inner_shape));
 }
 

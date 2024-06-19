@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 #include <vector>
+#include <optional>
 
 #include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
@@ -72,13 +73,13 @@ using llvm::cast;
 using llvm::dyn_cast;
 using llvm::formatv;
 using llvm::isa;
-using llvm::Optional;
+using Optional = std::optional;
 using llvm::StringRef;
 using llvm::Twine;
 using mlir::Block;
 using mlir::Dialect;
 using mlir::ElementsAttr;
-using mlir::FuncOp;
+using mlir::func::FuncOp;
 using mlir::MLIRContext;
 using mlir::ModuleOp;
 using mlir::NoneType;
@@ -326,6 +327,7 @@ static std::unique_ptr<::tensorflow::NodeDef> getTensorFlowNodeDef(
   return std::move(status_or_node_def.ValueOrDie());
 }
 
+namespace mlir {
 namespace {
 
 // Translates an MLIR module in TFLite dialect to TFLite FlatBuffer.
@@ -1112,5 +1114,25 @@ static mlir::LogicalResult MlirToFlatBufferFileTranslateFunction(
   return mlir::success();
 }
 
+
+static TranslateToMLIRRegistration FlatBufferFileToMlirTransReg(
+    "tflite-flatbuffer-to-mlir", "tflite-flatbuffer-to-mlir",
+    [](llvm::SourceMgr& source_mgr, MLIRContext* context) {
+      return FlatBufferFileToMlirTrans(
+          &source_mgr, context, use_external_constant,
+          experimental_prune_unreachable_nodes_unconditionally);
+    });
+
 static TranslateFromMLIRRegistration MLIRToFlatBufferTranslate(
-    "mlir-to-tflite-flatbuffer", MlirToFlatBufferFileTranslateFunction);
+    "mlir-to-tflite-flatbuffer", "mlir-to-tflite-flatbuffer",
+    MlirToFlatBufferFileTranslateFunction, [](DialectRegistry& registry) {
+      registry.insert<quant::QuantizationDialect,
+                      quantfork::QuantizationForkDialect>();
+      mlir::RegisterAllTensorFlowDialects(registry);
+      registry.insert<TFL::TensorFlowLiteDialect>();
+      registry.insert<arith::ArithDialect>();
+      registry.insert<func::FuncDialect>();
+      registry.insert<mlir::vhlo::VhloDialect>();
+      registry.insert<mlir::stablehlo::StablehloDialect>();
+    });
+} // namespace mlir

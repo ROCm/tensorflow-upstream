@@ -86,9 +86,26 @@ Type GetFirstResultType(TF::ReshapeOp op) { return op.getType(); }
 // NOLINTNEXTLINE
 Type GetFirstResultType(Value *val) { return val->getType(); }
 
+#define GEN_PASS_DEF_PREPARETFPASS
+#include "tensorflow/compiler/mlir/lite/transforms/passes.h.inc"
+
 // Prepare TF operations in functions for subsequent legalization.
-struct PrepareTFPass : public FunctionPass<PrepareTFPass> {
-  void runOnFunction() override;
+class PrepareTFPass : public impl::PrepareTFPassBase<PrepareTFPass> {
+ public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PrepareTFPass)
+
+  PrepareTFPass() = default;
+  PrepareTFPass(const PrepareTFPass &) {}
+  explicit PrepareTFPass(bool unfold_batch_matmul,
+                         bool allow_bf16_and_f16_type_legalization,
+                         bool use_fake_quant_num_bits = false) {
+    this->unfold_batch_matmul_ = unfold_batch_matmul;
+    this->allow_bf16_and_f16_type_legalization_ =
+        allow_bf16_and_f16_type_legalization;
+    this->use_fake_quant_num_bits_ = use_fake_quant_num_bits;
+  }
+
+  void runOnOperation() override;
 };
 
 // TODO(fengliuai): move this rule to PreparePatterns.td
@@ -395,7 +412,7 @@ class ConvertTFDepthwiseConv2dNative
 
 #include "tensorflow/compiler/mlir/lite/transforms/generated_prepare_tf.inc"
 
-void PrepareTFPass::runOnFunction() {
+void PrepareTFPass::runOnOperation() {
   OwningRewritePatternList patterns;
   auto func = getFunction();
   // This pattern was intented to uses TFL QDQs to preserve the quantization

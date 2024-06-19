@@ -1642,13 +1642,13 @@ Status BaseGPUDeviceFactory::GetValidDeviceIds(
               << " memoryClockRate(GHz): " << description->clock_rate_ghz()
               << "\npciBusID: " << description->pci_bus_id();
 #elif TENSORFLOW_USE_ROCM
-    int isa_version;
+    std::string isa_version;
     if (!description->rocm_amdgpu_isa_version(&isa_version)) {
       // Logs internally on failure.
-      isa_version = 0;
+      isa_version = "<unknown>";
     }
     LOG(INFO) << "Found device " << i << " with properties: "
-              << "\nname: " << description->name() << "\nAMDGPU ISA: gfx"
+              << "\nname: " << description->name() << "\nAMDGPU ISA: "
               << isa_version << "\nmemoryClockRate (GHz) "
               << description->clock_rate_ghz() << "\npciBusID "
               << description->pci_bus_id();
@@ -1727,10 +1727,11 @@ Status BaseGPUDeviceFactory::GetValidDeviceIds(
       continue;
     }
 #elif TENSORFLOW_USE_ROCM
-    int device_isa;
+    std::string device_isa;
     if (!desc->rocm_amdgpu_isa_version(&device_isa)) {
       continue;
     }
+#if 0
     // Only GPUs with no less than the minimum supported compute capability is
     // accepted.
     if (device_isa < min_supported_isa) {
@@ -1742,6 +1743,7 @@ Status BaseGPUDeviceFactory::GetValidDeviceIds(
                 << min_supported_isa << ".";
       continue;
     }
+#endif
 #endif
 
     // Filter out slow GPUs. By default, GPUs with a lower multiprocessor

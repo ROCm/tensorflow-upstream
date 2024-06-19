@@ -171,6 +171,7 @@ CpuCompiler::CpuCompiler() {
   LLVMInitializeX86TargetMC();
   LLVMInitializeX86AsmPrinter();
   LLVMInitializeX86Disassembler();
+#if 0  
   LLVMInitializeARMTarget();
   LLVMInitializeARMTargetInfo();
   LLVMInitializeARMTargetMC();
@@ -181,6 +182,7 @@ CpuCompiler::CpuCompiler() {
   LLVMInitializeAArch64TargetMC();
   LLVMInitializeAArch64AsmPrinter();
   LLVMInitializeAArch64Disassembler();
+#endif  
 }
 
 namespace {
@@ -631,7 +633,7 @@ StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   auto llvm_context = absl::make_unique<llvm::LLVMContext>();
   auto llvm_module =
       absl::make_unique<llvm::Module>("__compute_module", *llvm_context);
-
+/*
   auto jit = absl::make_unique<SimpleOrcJIT>(
       CompilerTargetOptions(module->config()),
       CodeGenOptLevel(module->config()),
@@ -639,6 +641,20 @@ StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
       module->config().debug_options().xla_llvm_disable_expensive_passes(),
       pre_optimization_ir_hook, post_optimization_ir_hook,
       OrcJITPostCompilationHook::Create(module.get()));
+*/
+  auto jit = SimpleOrcJIT::Create(
+      CompilerTargetOptions(module->config()),
+      CodeGenOptLevel(module->config()),
+      options::OptimizeForSizeRequested(module->config()),
+      module->config().debug_options().xla_llvm_disable_expensive_passes(),
+      //options::SlpVectorizerDisabled(module->config()),
+      //llvm_ir::GetCpuFastMathFlags(module->config()),
+      /*pre_optimization_hook=*/nullptr, /*post_optimization_hook=*/nullptr,
+      /*post_codegen_hook=*/nullptr);
+  if (!jit) {
+    return InternalError("Creating JIT failed");//, llvm::toString(jit.takeError())
+  }
+
   llvm_module->setDataLayout(jit->data_layout());
   llvm_module->setTargetTriple(jit->target_triple().getTriple());
 
@@ -733,7 +749,8 @@ StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   TF_RETURN_IF_ERROR(VerifyLlvmModule(*llvm_module));
 
   // JIT compile the LLVM IR module to in-memory machine code.
-  jit->AddModule(std::move(llvm_module));
+  cantFail(jit->AddModule(llvm::orc::ThreadSafeModule(
+        std::move(llvm_module), std::move(llvm_context))));
   cpu_executable.reset(new CpuExecutable(
       std::move(jit), std::move(assignment), std::move(module), function_name,
       std::move(hlo_profile_printer_data), std::move(hlo_profile_index_map)));
@@ -954,7 +971,7 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
         module->config().debug_options().xla_llvm_disable_expensive_passes(),
         pre_optimization_ir_hook, post_optimization_ir_hook, post_codegen_hook);
     std::unique_ptr<llvm::MemoryBuffer> object_file =
-        compiler_functor(llvm_module);
+        llvm::cantFail(compiler_functor(llvm_module));
     ObjectFileData object_file_data(object_file->getBufferStart(),
                                     object_file->getBufferEnd());
 

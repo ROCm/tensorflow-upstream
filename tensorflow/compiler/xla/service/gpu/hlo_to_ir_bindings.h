@@ -70,7 +70,7 @@ class HloToIrBindings {
 
   // A helper method that returns the base pointer of the IrArray containing the
   // output of "inst".at the given ShapeIndex.
-  llvm::Value* GetBasePointer(const HloInstruction& hlo,
+  std::pair<llvm::Value*,llvm::Type*> GetBasePointer(const HloInstruction& hlo,
                               ShapeIndexView shape_index = {}) const {
     auto it = base_ptrs_.find(&hlo);
     CHECK(it != base_ptrs_.end()) << hlo.ToString();
@@ -111,7 +111,7 @@ class HloToIrBindings {
   // For an instruction that generates multiple outputs, the root will be a
   // tuple shape. The IrArray for each element output is stored in the subnode
   // in the ShapeTree.
-  absl::flat_hash_map<const HloInstruction*, ShapeTree<llvm::Value*>>
+  absl::flat_hash_map<const HloInstruction*, ShapeTree<std::pair<llvm::Value*,llvm::Type*>>>
       base_ptrs_;
 
   // The address of the memory block that contains all temporary buffers.

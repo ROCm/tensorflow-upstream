@@ -31,56 +31,28 @@ include "mlir/Interfaces/LoopLikeInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 include "mlir/Dialect/Math/IR/MathOps.td"
-include "mlir/Dialect/Arith/IR/ArithOps.td"
+//include "mlir/Dialect/Arith/IR/ArithOps.td"
 
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 //include "mlir/Interfaces/InferShapedTypeOpInterface.td"
 
+include "tensorflow/compiler/mlir/lite/ir/tfl_op_base.td"
 include "tensorflow/compiler/mlir/lite/quantization/quantization.td"
-
-def TFL_Dialect : Dialect {
-  let name = "tfl";
-
-  let description = [{
-    The TensorFlow Lite dialect.
-
-    This dialect maps to TensorFlow Lite operations.
-
-    Invariants:
-
-    * All values are of Tensor type (in particular, scalars are
-      represented using zero-dimentional tensors);
-  }];
-
-  let cppNamespace = "::mlir::TFL";
-}
 
 //===----------------------------------------------------------------------===//
 // TFLite dialect string type - uses the TF string type as implementation
 //===----------------------------------------------------------------------===//
-def TFL_Str : Type<CPred<"$_self.isa<mlir::TF::StringType>()">,
+def TFL_Str : Type<CPred<"$_self.isa<::mlir::TF::StringType>()">,
                   "TFLite string type">,
-             BuildableType<"getType<mlir::TF::StringType>()">;
+             BuildableType<"getType<::mlir::TF::StringType>()">;
 
 //===----------------------------------------------------------------------===//
 // TFLite dialect uint8 type - uses the TF uint8 type as implementation
 //===----------------------------------------------------------------------===//
-def TFL_Uint8 : Type<CPred<"$_self.isa<mlir::TF::Uint8Type>()">,
+def TFL_Uint8 : Type<CPred<"$_self.isa<::mlir::TF::Uint8Type>()">,
                     "TFLite uint8 type">,
-              BuildableType<"getType<mlir::TF::Uint8Type>()">;
-
-// A string attribute whose value are one of the values in `cases`.
-// Referred TF_AnyStrAttrOf in tensorflow/compiler/mlir/tensorflow/ir/tf_op_base.td
-class TFL_AnyStrAttrOf<list<string> cases> : StringBasedAttr<
-  CPred<!foldl(
-      "$_self.cast<StringAttr>().getValue() == \"" # !head(cases) # "\"",
-      !foreach(case, !tail(cases),
-               "$_self.cast<StringAttr>().getValue() == \"" # case # "\""),
-      prev, cur, prev # " || " # cur)>,
-  "string attribute whose value is " #
-    !foldl(/*init*/!head(cases), /*list*/!tail(cases),
-           prev, cur, prev # ", or " # cur)>;
+              BuildableType<"getType<::mlir::TF::Uint8Type>()">;
 
 //===----------------------------------------------------------------------===//
 // Activation function enum definitions.
@@ -108,32 +80,6 @@ def TFL_AF_Relu6 : ConstantStrAttr<TFL_AFAttr, TFL_AFEnum_Relu6.symbol>;
 def TFL_AF_Tanh  : ConstantStrAttr<TFL_AFAttr, TFL_AFEnum_Tanh.symbol>;
 def TFL_AF_Sign  : ConstantStrAttr<TFL_AFAttr, TFL_AFEnum_Sign.symbol>;
 
-
-//===----------------------------------------------------------------------===//
-// Padding enum definitions.
-//===----------------------------------------------------------------------===//
-
-// Allowed padding cases
-// These should match the padding enum in TFLite schema.
-def TFL_PADEnum_Same  : I32EnumAttrCase<"SAME", 0>;
-def TFL_PADEnum_Valid : I32EnumAttrCase<"VALID", 1>;
-def TFL_PaddingAttr : TFL_AnyStrAttrOf<[
-      TFL_PADEnum_Same.symbol, TFL_PADEnum_Valid.symbol
-    ]>;
-def TFL_PAD_Same  : ConstantStrAttr<TFL_PaddingAttr, TFL_PADEnum_Same.symbol>;
-def TFL_PAD_Valid : ConstantStrAttr<TFL_PaddingAttr, TFL_PADEnum_Valid.symbol>;
-
-// MirrorPadding type attributes
-def TFL_MIRRORPAD_Reflect : I32EnumAttrCase<"REFLECT", 0>;
-def TFL_MIRRORPAD_Symmetric : I32EnumAttrCase<"SYMMETRIC", 1>;
-def TFL_MirrorPaddingType : I32EnumAttr<"MirrorPaddingType", "mirror_pad_enum", [
-      TFL_MIRRORPAD_Reflect, TFL_MIRRORPAD_Symmetric
-    ]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::TFL";
-}
-def TFL_MirrorPaddingAttr : EnumAttr<TFL_Dialect, TFL_MirrorPaddingType,
-    "mirror_pad_attr">;
 
 //===----------------------------------------------------------------------===//
 // TensorType attribute definitions.
@@ -172,28 +118,35 @@ def TFL_FpOrI32OrI64Tensor : TensorOf<[AnyFloat, TFL_Int32Or64]>;
 // Rank/Shape helpers.
 //===----------------------------------------------------------------------===//
 
+class TFL_OperandIsUnrankedPred<int n> :
+  CPred<"$_op.getOperand(" # n # ").getType().isa<UnrankedTensorType>()">;
+
 // TODO: Some of these could be generalized and/or moved to more general
 // location.
 // Returns true if the n-th operand has unknown rank or has rank m.
 class TFL_OperandHasRank<int n, int m> :
   PredOpTrait<"operand " # n # " is " # m # "-D",
-    Or<[CPred<"$_op.getOperand(" # n # ")->getType().isa<UnrankedTensorType>()">,
+    Or<[TFL_OperandIsUnrankedPred<n>,
       CPred<"$_op.getOperand(" # n #
-      ")->getType().cast<ShapedType>().getRank() == " # m>]>>;
+      ").getType().cast<ShapedType>().getRank() == " # m>]>>;
 
 // Returns true if the n-th operand has unknown rank or at least rank m.
 class TFL_OperandHasAtleastRank<int n, int m> :
   PredOpTrait<"operand " # n # " is " # m # "-D",
-    Or<[CPred<"$_op.getOperand(" # n # ")->getType().isa<UnrankedTensorType>()">,
+    Or<[CPred<"$_op.getOperand(" # n # ").getType().isa<UnrankedTensorType>()">,
       CPred<"$_op.getOperand(" # n #
-        ")->getType().cast<ShapedType>().getRank() >= " # m>]>>;
+        ").getType().cast<ShapedType>().getRank() >= " # m>]>>;
 
 class TFL_OperandRankEquals1DimOfOperand<int x, int y> :
   PredOpTrait<"operand " # x # "'s rank equals operand " # y # "'s size",
-    CPred<"$_op.getOperand(" # x #
-      ")->getType().cast<ShapedType>().getRank() == "
-      "$_op.getOperand(" # y #
-      ")->getType().cast<ShapedType>().getShape()[0]">>;
+    Or<[TFL_OperandIsUnrankedPred<x>,
+        TFL_OperandIsUnrankedPred<y>,
+        CPred<"!$_op.getOperand(" # y #
+          ").getType().cast<ShapedType>().hasStaticShape()">,
+        CPred<"$_op.getOperand(" # x #
+          ").getType().cast<ShapedType>().getRank() == "
+          "$_op.getOperand(" # y #
+          ").getType().cast<ShapedType>().getShape()[0]">]>>;
 
 // This is a quantization-aware version of TCresVTEtIsSameAsOp
 class TFL_TCresVTEtIsSameAsOp<int i, int j> : And<[
@@ -270,6 +223,8 @@ class TFL_Op<string mnemonic, list<Trait> traits = []> :
 
   // Whether the TFLite operator has options in the schema representation.
   bit hasOptions = 0b0;
+  // Whether the TFLite operator has options2 in the schema representation.
+  bit hasOptions2 = 0b0;
 
   // Use to specify a custom options type for TFLite operators where
   // the option's name does not match the TFLite operator's name.
@@ -534,6 +489,19 @@ def TFL_ConstOp : Op<TFL_Dialect, "pseudo_const", [NoMemoryEffect,
   let results = (outs AnyTensor:$output);
 
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
+
+  let builders = [
+    OpBuilder<(ins "TypedAttr":$value),
+    [{
+      $_state.addAttribute("value", value);
+      $_state.addTypes(value.getType());
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    static bool isCompatibleReturnTypes(TypeRange l, TypeRange r);
+  }];
 }
 
 def TFL_Conv2DOp : TFL_ConvOp<"conv_2d", "Convolution">;
@@ -618,7 +586,7 @@ def TFL_GatherOp : TFL_Op<"gather", [
     //OpBuilder<"Builder *builder, OperationState *result, "
     //  "Value *params, Value *indices, IntegerAttr axis",
     OpBuilder<(ins "Value":$params, "Value":$indices, "IntegerAttr":$axis),
-          [{ BuildGatherOp(&$_builder, $_state, result, params, indices, axis); }]>
+          [{ BuildGatherOp(&$_builder, $_state, params, indices, axis); }]>
   ];
 
   let results = (outs
@@ -626,6 +594,7 @@ def TFL_GatherOp : TFL_Op<"gather", [
   );
 
   let hasOptions = 1;
+  let hasVerifier = 1;
 }
 
 def TFL_GatherNdOp : TFL_Op<"gather_nd", [NoMemoryEffect]> {
@@ -1500,10 +1469,13 @@ def TFL_PackOp : TFL_Op<"pack", [NoMemoryEffect]> {
     TensorOf<[F32, I8, I16, I32, I64]>:$output
   );
 
-  // let verifier = [{ return Verify(*this); }];
+  let hasVerifier = 1;
+
+  let hasCanonicalizer = 1;
 
   let hasOptions = 1;
 }
+
 
 def TFL_PadOp : TFL_Op<"pad", [
     NoMemoryEffect,
@@ -1653,7 +1625,9 @@ def TFL_Relu6Op: TFL_Op<"relu6", [NoMemoryEffect,
 }
 
 def TFL_ReshapeOp: TFL_Op<"reshape", [
-    NoMemoryEffect, TFL_SameOperandsAndResultsScale]> {
+    NoMemoryEffect, 
+    TFL_SameOperandsAndResultsScale,
+    DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Reshape operator";
 
   let description = [{
@@ -1661,17 +1635,24 @@ def TFL_ReshapeOp: TFL_Op<"reshape", [
     by the output type.
   }];
 
-  let arguments = (ins AnyTensor:$input);
+  let arguments = (
+    ins AnyTensor:$input,
+    I32Tensor:$shape);
 
   let results = (outs AnyTensor:$output);
 
-  DerivedShapeAttr new_shape = DerivedShapeAttr<[{
-    return getResult()->getType().cast<ShapedType>().getShape();
-  }]>;
+//  DerivedShapeAttr new_shape = DerivedShapeAttr<[{
+//    return getResult()->getType().cast<ShapedType>().getShape();
+//  }]>;
+
+  let extraClassDeclaration = [{
+    static bool isCompatibleReturnTypes(TypeRange l, TypeRange r);
+  }];
 
   let hasOptions = 1;
   let hasCanonicalizer = 0b1;
   let hasFolder = 1;
+  let hasVerifier = 1;
 }
 
 def TFL_ReverseSequenceOp : TFL_Op<"reverse_sequence", [NoMemoryEffect]> {
@@ -1731,7 +1712,7 @@ def TFL_ShapeOp: TFL_Op<"shape", [NoMemoryEffect, TFL_NoQuantizableResult]> {
   let results = (outs AnyTensor:$output);
 
   DerivedTypeAttr out_type = DerivedTypeAttr<[{
-    return getResult()->getType().cast<TensorType>().getElementType();
+    return getResult().getType().cast<TensorType>().getElementType();
   }]>;
 
   let hasOptions = 1;
@@ -2044,7 +2025,11 @@ def TFL_TransposeOp : TFL_Op<"transpose",
   let hasFolder = 1;
 }
 
-def TFL_UnpackOp : TFL_Op<"unpack", [NoMemoryEffect]> {
+def TFL_UnpackOp : TFL_Op<"unpack", [
+    NoMemoryEffect,
+    SameOperandsAndResultElementType,
+    TFL_SameOperandsAndResultsScale,
+    DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Unpacks a tensor along a dimension into multiple tensors";
 
   let description = [{
@@ -2075,7 +2060,9 @@ def TFL_UnpackOp : TFL_Op<"unpack", [NoMemoryEffect]> {
     Variadic<TensorOf<[F32, I8, I32, TFL_QI8, TFL_QUI8]>>:$outputs
   );
 
-  // let verifier = [{ return Verify(*this); }];
+  let extraClassDeclaration = [{
+    static bool isCompatibleReturnTypes(TypeRange l, TypeRange r);
+  }];
 
   let hasOptions = 1;
 }
@@ -2431,7 +2418,7 @@ in the unique output `y`. In other words:
   );
 
   DerivedTFLiteTypeAttr idx_out_type = DerivedTFLiteTypeAttr<[{
-    return getResult(1)->getType().cast<TensorType>().getElementType().
+    return getResult(1).getType().cast<TensorType>().getElementType().
         cast<IntegerType>().getWidth() > 32 ? tflite::TensorType_INT64 :
             tflite::TensorType_INT32;
     }]>;
@@ -2516,19 +2503,6 @@ def TFL_QuantizeOp: TFL_Op<"quantize", [
 //===----------------------------------------------------------------------===//
 // LSTM Ops
 //===----------------------------------------------------------------------===//
-
-// LSTM Kernel Type attributes
-def TFL_LSTM_KT_FULL  : I32EnumAttrCase<"FULL", 0>;
-def TFL_LSTM_KT_BASIC  : I32EnumAttrCase<"BASIC", 1>;
-def TFL_LSTMKernelType : I32EnumAttr<"LSTMKernelType", "lstm_kernel_type",
-   [
-     TFL_LSTM_KT_FULL,  TFL_LSTM_KT_BASIC
-   ]>{
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::TFL";
-}
-def TFL_LSTMKernelTypeAttr : EnumAttr<TFL_Dialect, TFL_LSTMKernelType,
-    "lstm_kernel_type_attr">;
 
 def LstmMandatoryInputsConstraint : PredOpTrait<
   "mandatory operands element types should match",
@@ -2639,7 +2613,7 @@ Ba et al. “Layer Normalization”
     DefaultValuedAttr<F32Attr, "0.0f">:$proj_clip,
     // Since this op is the FULL kernel only, constrain it.
     ConfinedAttr<
-      DefaultValuedAttr<TFL_LSTMKernelTypeAttr, "FULL">,
+      DefaultValuedAttr<TFL_LSTMKernelTypeAttr, "mlir::TFL::LSTMKernelType::FULL">,
       [TFL_LSTM_KT_FULL]>:$kernel_type
   );
 
@@ -2849,6 +2823,67 @@ def TFL_SVDFOp :
   let hasOptions = 1;
 
   // let verifier = [{ return Verify(*this); }];
+}
+
+//
+// The rest of the file is not in 1.x and it was brought over from 2.x
+//
+
+def TFL_YieldOp : TFL_Op<"yield",
+  [Pure,
+   Terminator
+//   , QuantizableResult
+   ]> {
+  let summary = "Yield operation";
+  let description = [{
+    The "yield" operation represents a return operation within the conditional
+    and body of structured control flow (e.g., while), and a terminator for ControlNodeOp.
+    The operation takes a variable number of operands and produces no results.
+    The operand number and types must match the signature of the region that contains the operation.
+  }];
+  let arguments = (ins Variadic<AnyType>);
+
+  // Default builder needed for ensureTerminator
+  let builders = [
+    OpBuilder<(ins),
+    [{
+      build($_builder, $_state, {});
+    }]>
+  ];
+}
+
+def TFL_WhileOp : TFL_Op<"while", [
+    DeclareOpInterfaceMethods<LoopLikeOpInterface, ["isDefinedOutsideOfLoop"]>,
+    SingleBlockImplicitTerminator<"YieldOp">]> {
+  let summary = [{While loop}];
+
+  let description = [{
+    output = input; while (cond(output)) { output = body(output) }
+
+    While loop where all values are passes through arguments with implicit
+    capture.
+
+    input: A list of input tensors whose types are T.
+    output: A list of output tensors whose types are T.
+    cond: A region that takes 'input' and returns a boolean scalar tensor.
+    body: A region that takes a list of tensors and returns another
+          list of tensors. Both lists have the same types.
+  }];
+
+  let arguments = (ins
+    Variadic<AnyTensor>:$input,
+
+    // Used to map StatelessWhile and While op defined in TensorFlow to a common
+    // op.
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$is_stateless
+  );
+  let results = (outs Variadic<AnyTensor>:$output);
+
+  let regions = (region SizedRegion<1>:$cond, SizedRegion<1>:$body);
+
+  let hasVerifier = 1;
+
+  let hasCanonicalizer = 1;
 }
 
 #endif // TFL_OPS

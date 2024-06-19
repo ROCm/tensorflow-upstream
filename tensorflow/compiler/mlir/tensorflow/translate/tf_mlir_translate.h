@@ -21,6 +21,10 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 
+namespace mlir {
+//using OwningModuleRef =  OwningOpRef<ModuleOp>;
+}
+
 namespace tensorflow {
 // TODO(antiagainst): Directly manipulating files in library functions is not
 // a good idea. We should pass in a string/stream here.
@@ -28,7 +32,7 @@ namespace tensorflow {
 // Converts a TensorFlow GraphDef stored in the file with the given
 // `input_filename` into a MLIR module. Creates MLIR entities into the
 // given MLIR `context`.
-mlir::OwningModuleRef GraphdefToMlirTranslateFunction(
+mlir::OwningOpRef<mlir::ModuleOp> GraphdefToMlirTranslateFunction(
     absl::string_view input_filename, absl::string_view debug_info_file,
     absl::string_view input_arrays, absl::string_view input_dtypes,
     absl::string_view input_shapes, absl::string_view output_arrays,
@@ -39,7 +43,7 @@ mlir::OwningModuleRef GraphdefToMlirTranslateFunction(
 
 // Similar as the above function, but replaces all constant tensors
 // with randomly generated splat values.
-mlir::OwningModuleRef GraphdefToSplattedMlirTranslateFunction(
+mlir::OwningOpRef<mlir::ModuleOp> GraphdefToSplattedMlirTranslateFunction(
     absl::string_view input_filename, absl::string_view debug_info_file,
     absl::string_view input_arrays, absl::string_view input_dtypes,
     absl::string_view input_shapes, absl::string_view output_arrays,

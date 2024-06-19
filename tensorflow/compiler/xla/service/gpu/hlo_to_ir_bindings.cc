@@ -91,7 +91,8 @@ void HloToIrBindings::EmitBasePointersForHlos(
         CHECK_NE(nullptr, temp_buffer_base_);
         // Emit IR for GetTupleElement instruction and bind to emitted value.
         llvm::Value* base_ptr =
-            b_->CreateInBoundsGEP(temp_buffer_base_, b_->getInt64(offset));
+            b_->CreateInBoundsGEP(b_->getInt8PtrTy(),
+                temp_buffer_base_, b_->getInt64(offset));
         BindHloToIrValue(*non_io_hlo,
                          EmitGetTupleElement(non_io_hlo, base_ptr));
       }
@@ -131,7 +132,8 @@ void HloToIrBindings::EmitBasePointersForHlos(
             CHECK_NE(nullptr, temp_buffer_base_);
             BindHloToIrValue(
                 *non_io_hlo,
-                b_->CreateInBoundsGEP(temp_buffer_base_, b_->getInt64(offset)),
+                b_->CreateInBoundsGEP(b_->getInt8PtrTy(),
+                temp_buffer_base_, b_->getInt64(offset)),
                 index);
           }
         });
@@ -185,6 +187,7 @@ llvm::Value* HloToIrBindings::GetTypedIrValue(const HloInstruction& hlo,
 
 void HloToIrBindings::BindHloToIrValue(const HloInstruction& hlo,
                                        llvm::Value* ir_value,
+                                       llvm::Type* type,
                                        ShapeIndexView shape_index) {
   VLOG(2) << "Binding " << hlo.ToString();
 
@@ -193,9 +196,9 @@ void HloToIrBindings::BindHloToIrValue(const HloInstruction& hlo,
 
   if (!BoundToIrValue(hlo)) {
     // Set the root of ShapeTree first before assigning the element ir value.
-    InsertOrDie(&base_ptrs_, &hlo, ShapeTree<llvm::Value*>(hlo_shape, nullptr));
+    InsertOrDie(&base_ptrs_, &hlo, ShapeTree<std::pair<llvm::Value*,llvm::Type*>>(hlo_shape, nullptr));
   }
-  *(base_ptrs_[&hlo].mutable_element(shape_index)) = typed_ir_value;
+  *(base_ptrs_[&hlo].mutable_element(shape_index)) = make_pair(typed_ir_value, type);
 }
 
 // Determines whether hlo's buffers are never modified within the execution of
@@ -227,7 +230,7 @@ llvm_ir::IrArray HloToIrBindings::GetIrArray(const HloInstruction& hlo,
   CHECK_NE(base_ptr, nullptr)
       << "Buffer not assigned for shape_index " << shape_index.ToString()
       << " of " << hlo.ToString();
-  llvm_ir::IrArray ir_array(base_ptr,
+  llvm_ir::IrArray ir_array(base_ptr, 
                             ShapeUtil::GetSubshape(hlo.shape(), shape_index));
   alias_analysis_.AddAliasingInformationToIrArray(hlo, &ir_array, shape_index);
 
@@ -249,7 +252,7 @@ void HloToIrBindings::UnbindAllLocalIrValues() {
   std::vector<const HloInstruction*> hlos_to_unbind;
   for (auto& key_value : base_ptrs_) {
     if (!llvm::isa<llvm::GlobalVariable>(
-            (key_value.second.element({}))->stripPointerCasts())) {
+            (key_value.second.element({})).first->stripPointerCasts())) {
       hlos_to_unbind.push_back(key_value.first);
     }
   }

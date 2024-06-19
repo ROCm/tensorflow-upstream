@@ -40,7 +40,7 @@ void EmitTupleSelect(const IrArray& select, const IrArray& pred,
   CHECK(ShapeUtil::IsScalar(pred.GetShape()));
 
   llvm::LoadInst* pred_value =
-      b->CreateLoad(pred.GetBasePointer(), "load_predicate_value");
+      b->CreateLoad(pred.GetBasePointeeType(), pred.GetBasePointer(), "load_predicate_value");
   llvm::Value* pred_cond = b->CreateICmpNE(
       pred_value,
       llvm::ConstantInt::get(PrimitiveTypeToIrType(PRED, module), 0),
@@ -54,7 +54,7 @@ void EmitTupleSelect(const IrArray& select, const IrArray& pred,
   llvm::Value* dst = select.GetBasePointer();
   int64 table_size = ShapeUtil::ByteSizeOfTupleIndexTable(
       select.GetShape(), module->getDataLayout().getPointerSize());
-  b->CreateMemCpy(dst, /*DstAlign=*/1, src, /*SrcAlign=*/1,
+  b->CreateMemCpy(dst, /*DstAlign=*/std::nullopt, src, /*SrcAlign=*/std::nullopt,
                   b->getInt64(table_size));
 }
 
@@ -64,7 +64,7 @@ void EmitTuple(const IrArray& tuple, absl::Span<llvm::Value* const> operands,
   for (size_t i = 0; i < operands.size(); ++i) {
     auto* store = b->CreateStore(
         b->CreatePointerCast(operands[i], PrimitiveTypeToIrType(TUPLE, module)),
-        b->CreateInBoundsGEP(tuple.GetBasePointer(),
+        b->CreateInBoundsGEP(operands[i]->getType(), tuple.GetBasePointer(),
                              {b->getInt64(0), b->getInt64(i)}));
     tuple.AnnotateLoadStoreInstructionWithMetadata(store);
   }
@@ -111,8 +111,8 @@ llvm::Value* EmitGetTupleElement(const Shape& target_shape, int64 index,
                                  llvm::IRBuilder<>* b) {
   llvm::Module* module = getModuleFromBuilder(b);
   llvm::Value* element_ptr =
-      b->CreateInBoundsGEP(operand, {b->getInt64(0), b->getInt64(index)});
-  llvm::LoadInst* src_buffer = b->CreateLoad(element_ptr);
+      b->CreateInBoundsGEP(operand->getType(), operand, {b->getInt64(0), b->getInt64(index)});
+  llvm::LoadInst* src_buffer = b->CreateLoad(operand->getType(), element_ptr);
 
   // Mark the loaded pointer as dereferenceable if we know its shape.
   if (!target_shape.IsOpaque()) {

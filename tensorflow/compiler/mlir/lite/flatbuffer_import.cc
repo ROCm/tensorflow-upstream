@@ -66,7 +66,7 @@ limitations under the License.
 #include "tensorflow/lite/schema/schema_generated.h"
 
 using mlir::Builder;
-using mlir::FuncOp;
+using mlir::func::FuncOp;
 using mlir::Location;
 using mlir::MLIRContext;
 using mlir::OpBuilder;
@@ -109,7 +109,7 @@ StatusOr<mlir::Type> GetTensorElementType(const TensorT& tensor,
   }
   return errors::OutOfRange("Unknown tensor type");
 }
-
+/*
 StatusOr<mlir::Type> GetTensorType(const TensorT& tensor, Builder builder) {
   TF_ASSIGN_OR_RETURN(auto elem_type, GetTensorElementType(tensor, builder));
   if (IsScalar(tensor)) {
@@ -126,7 +126,7 @@ StatusOr<mlir::Type> GetTensorType(const TensorT& tensor, Builder builder) {
 
   return builder.getTensorType(elem_type);
 }
-
+*/
 }  // namespace
 
 OwningModuleRef tflite::FlatBufferToMlir(absl::string_view buffer,
@@ -144,7 +144,7 @@ OwningModuleRef tflite::FlatBufferToMlir(absl::string_view buffer,
   auto module = mlir::ModuleOp::create(base_loc);
 
   // TODO(krzysd): Actually account for the FlatBuffer schema version
-  module.setAttr("tfl.schema_version",
+  module->setAttr("tfl.schema_version",
                  builder.getI32IntegerAttr(model->version));
 
   for (auto& subgraph : model->subgraphs) {
@@ -152,7 +152,7 @@ OwningModuleRef tflite::FlatBufferToMlir(absl::string_view buffer,
     llvm::SmallVector<mlir::Type, 4> input_types;
 
     for (auto input : subgraph->inputs) {
-      auto type_or_err = GetTensorType(*subgraph->tensors[input], builder);
+      auto type_or_err = tfl::GetTensorType(*subgraph->tensors[input], builder);
       if (!type_or_err.ok()) {
         return emitError(base_loc, type_or_err.status().ToString()), nullptr;
       }
@@ -177,6 +177,8 @@ OwningModuleRef tflite::FlatBufferToMlir(absl::string_view buffer,
   return OwningModuleRef(module);
 }
 
+#if 0
+
 static OwningModuleRef FlatBufferFileToMlirTrans(llvm::StringRef filename,
                                                  MLIRContext* context) {
   std::string error;
@@ -193,3 +195,5 @@ static OwningModuleRef FlatBufferFileToMlirTrans(llvm::StringRef filename,
 
 static mlir::TranslateToMLIRRegistration FlatBufferFileToMlirTransReg(
     "tflite-flatbuffer-to-mlir", FlatBufferFileToMlirTrans);
+
+#endif

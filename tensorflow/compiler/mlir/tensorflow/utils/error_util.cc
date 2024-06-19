@@ -43,7 +43,7 @@ Status BaseScopedDiagnosticHandler::ConsumeStatus() {
 
   // TODO(jpienaar) This should be combining status with one previously built
   // up.
-  Status s = InternalError(diag_str_);
+  Status s = tensorflow::errors::Unknown(diag_str_);
   diag_str_.clear();
   return s;
 }
@@ -58,10 +58,9 @@ Status BaseScopedDiagnosticHandler::Combine(Status status) {
   // Append the diagnostics reported to the status. This repeats the behavior of
   // TensorFlow's AppendToMessage without the additional formatting inserted
   // there.
-  std::string str_status_message(status.message());
-  status = Status(status.code(), str_status_message + diag_str_);
+  status = ::tensorflow::Status(
+      status.code(), absl::StrCat(status.error_message(), diag_str_));
   diag_str_.clear();
-
   return status;
 }
 
@@ -87,6 +86,7 @@ StatusScopedDiagnosticHandler::StatusScopedDiagnosticHandler(
     : BaseScopedDiagnosticHandler(context, propagate, filter_stack) {
   if (filter_stack) {
     this->shouldShowLocFn = [](Location loc) -> bool {
+#if 0      
       // For a Location to be surfaced in the stack, it must evaluate to true.
       // For any Location that is a FileLineColLoc:
       if (FileLineColLoc fileLoc = loc.dyn_cast<FileLineColLoc>()) {
@@ -96,6 +96,9 @@ StatusScopedDiagnosticHandler::StatusScopedDiagnosticHandler(
         // If this is a non-FileLineColLoc, go ahead and include it.
         return true;
       }
+#else
+      return true;
+#endif
     };
   }
 

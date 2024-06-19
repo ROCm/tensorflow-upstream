@@ -104,13 +104,14 @@ IrArray::Index::Index(absl::Span<llvm::Value* const> multidim,
       << " should have a layout.";
 }
 
-IrArray::IrArray(llvm::Value* base_ptr, Shape shape)
-    : base_ptr_(base_ptr), shape_(std::move(shape)) {
+IrArray::IrArray(llvm::Value* base_ptr, llvm::Type* pointee_type, Shape shape)
+    : base_ptr_(base_ptr),
+      pointee_type_(pointee_type),
+      shape_(std::move(shape)) {
   TF_CHECK_OK(ShapeUtil::ValidateShape(shape));
   CHECK(base_ptr_->getType()->isPointerTy());
   int depth = 0;
-  element_type_ =
-      llvm::cast<llvm::PointerType>(base_ptr_->getType())->getElementType();
+  element_type_ = pointee_type;
   while (llvm::ArrayType* array_type =
              llvm::dyn_cast<llvm::ArrayType>(element_type_)) {
     element_type_ = array_type->getElementType();
@@ -346,7 +347,7 @@ llvm::Value* IrArray::EmitArrayElementAddress(const IrArray::Index& index,
   if (use_linear_index && index.LinearValidOnShape(shape_)) {
     llvm::Module* module = b->GetInsertBlock()->getParent()->getParent();
     llvm::Type* element_type = PrimitiveTypeToIrType(shape_.element_type(), module);
-    return b->CreateInBoundsGEP(
+    return b->CreateInBoundsGEP(element_type,
         b->CreatePointerBitCastOrAddrSpaceCast(base_ptr_,
                              element_type->getPointerTo()),
         {index.linear()}, llvm_ir::AsStringRef(name));
@@ -374,7 +375,7 @@ llvm::Value* IrArray::EmitArrayElementAddress(const IrArray::Index& index,
     int64 dimension = LayoutUtil::Major(shape_.layout(), i);
     gep_indices.push_back(actual_index[dimension]);
   }
-  return b->CreateInBoundsGEP(base_ptr_, gep_indices,
+  return b->CreateInBoundsGEP(pointee_type_, base_ptr_, gep_indices,
                               llvm_ir::AsStringRef(name));
 }
 
@@ -396,7 +397,14 @@ llvm::Value* IrArray::EmitReadArrayElement(const Index& index,
                                            bool use_linear_index) const {
   llvm::Value* element_address =
       EmitArrayElementAddress(index, b, name, use_linear_index);
-  llvm::LoadInst* load = b->CreateLoad(element_address->getAllocatedType(), element_address);
+  /*
+  llvm::Type* load_type =
+      primitive_util::IsSubByteNonPredType(shape_.element_type())
+          ? b->getInt8Ty()
+          : element_type_;
+  */
+  llvm::Type* load_type = element_type_;
+  llvm::LoadInst* load = b->CreateLoad(element_type_, element_address, llvm_ir::AsStringRef(name));
   AnnotateLoadStoreInstructionWithMetadata(load);
   return load;
 }
@@ -414,8 +422,7 @@ IrArray IrArray::CastToShape(const Shape& new_shape,
                              llvm::IRBuilder<>* b) const {
   llvm::Module* module = b->GetInsertBlock()->getParent()->getParent();
   llvm::Type* new_ir_type = llvm_ir::ShapeToIrType(new_shape, module);
-  IrArray new_irarray(
-      b->CreatePointerCast(base_ptr_, new_ir_type->getPointerTo()), new_shape);
+  IrArray new_irarray(base_ptr_, new_ir_type, new_shape);
   new_irarray.metadata_ = metadata_;
   return new_irarray;
 }

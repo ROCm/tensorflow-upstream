@@ -19,8 +19,8 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"  // TF:local_config_mlir
 #include "mlir/IR/Builders.h"  // TF:local_config_mlir
 #include "mlir/IR/Dialect.h"  // TF:local_config_mlir
-#include "mlir/IR/DialectHooks.h"  // TF:local_config_mlir
-#include "mlir/IR/StandardTypes.h"  // TF:local_config_mlir
+//#include "mlir/IR/DialectHooks.h"  // TF:local_config_mlir
+//#include "mlir/IR/StandardTypes.h"  // TF:local_config_mlir
 #include "mlir/IR/Types.h"  // TF:local_config_mlir
 #include "mlir/Support/LogicalResult.h"  // TF:local_config_mlir
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
@@ -30,6 +30,7 @@ limitations under the License.
 #include "tensorflow/stream_executor/lib/statusor.h"
 #include "tensorflow/stream_executor/stream_executor.h"
 
+#if 0
 namespace mlir {
 namespace {
 
@@ -63,3 +64,4 @@ class TensorFlowHooks : public DialectHooks {
 static DialectHooksRegistration<TensorFlowHooks> tf_hooks_registration("tf");
 
 }  // namespace mlir
+#endif

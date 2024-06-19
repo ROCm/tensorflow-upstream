@@ -43,10 +43,11 @@ namespace tensorflow {
 using llvm::ArrayRef;
 using llvm::SmallVector;
 using mlir::Builder;
+using mlir::RankedTensorType;
 using mlir::DenseFPElementsAttr;
 using mlir::DenseIntElementsAttr;
 using mlir::ElementsAttr;
-using mlir::OpaqueElementsAttr;
+//using mlir::OpaqueElementsAttr;
 using mlir::ShapedType;
 using mlir::Type;
 using tensorflow::errors::InvalidArgument;
@@ -109,7 +110,7 @@ StatusOr<ElementsAttr> ConvertTensor(const Tensor& input_tensor,
   TF_RETURN_IF_ERROR(ConvertDataType(input_dtype, *builder, &elt_type));
   SmallVector<int64_t, 4> shape;
   ConvertToMlirShape(input_shape, &shape);
-  auto type = builder->getTensorType(shape, elt_type);
+  auto type = RankedTensorType::get(shape, elt_type);
 
 #define CONVERT_FLAT(DTYPE, CTYPE) \
   case DTYPE:                      \
@@ -124,9 +125,11 @@ StatusOr<ElementsAttr> ConvertTensor(const Tensor& input_tensor,
     default:
       // TODO(shpeisman): restructure code to reuse dialect pointer across
       // calls.
-      auto* dialect = builder->getContext()->getRegisteredDialect("tf");
-      return builder->getOpaqueElementsAttr(dialect, type,
-                                            MangleTensor(input_tensor));
+//      auto* dialect = builder->getContext()->getRegisteredDialect("tf");
+//      return builder->getOpaqueElementsAttr(dialect, type,
+//                                            MangleTensor(input_tensor));
+      return ElementsAttr(
+          mlir::DenseElementsAttr::get(type, MangleTensor(input_tensor)));
   }
 
 #undef CONVERT_FLAT
@@ -148,16 +151,18 @@ Status ConvertToTensorShapeProto(ArrayRef<int64_t> shape,
   return Status::OK();
 }
 
+
 // Converts an MLIR opaque elements attribute to a TensorFlow tensor proto.
 Status ConvertOpaqueElementsAttr(const ElementsAttr attr,
                                  TensorProto* output_tensor) {
-  if (attr.isa<OpaqueElementsAttr>()) {
-    auto mangled_tensor = attr.cast<OpaqueElementsAttr>().getValue();
-    absl::string_view tensor_view(mangled_tensor.data(), mangled_tensor.size());
+  if (auto elts = attr.dyn_cast<mlir::DenseElementsAttr>()) {
+    absl::string_view tensor_view(elts.getRawData().data(),
+                          elts.getRawData().size());
     return mangling_util::DemangleTensor(tensor_view, output_tensor);
   }
-  return InvalidArgument("Unexpected elements attribute type from MLIR.");
+  return InvalidArgument("Unexpected elements attr");
 }
+
 
 // Converts an MLIR elements attribute to a TensorFlow tensor proto
 // with the float_val field updated.
@@ -179,17 +184,30 @@ Status ConvertFloatElementsAttr(const ElementsAttr attr,
 // with the half_val field updated.
 Status ConvertHalfElementsAttr(const ElementsAttr attr,
                                TensorProto* output_tensor) {
+#if 0
+  if (attr.isSplat()) {
+    if (attr.getSplatValue<Eigen::half>() != Eigen::half(0))
+      output_tensor->add_half_val(
+          Eigen::numext::bit_cast<uint16_t>(attr.getSplatValue<Eigen::half>()));
+  } else {
+    output->Reserve(attr.getNumElements());
+    for (const Eigen::half value : attr.getValues<Eigen::half>())
+      output->AddAlreadyReserved(Eigen::numext::bit_cast<uint16_t>(value));
+  }
+  return Status::OK();
+#else  
   if (auto elts = attr.dyn_cast<DenseFPElementsAttr>()) {
     if (elts.isSplat()) {
       output_tensor->add_half_val(
           (*elts.begin()).bitcastToAPInt().getSExtValue());
     } else {
-      for (auto value : elts.getFloatValues())
-        output_tensor->add_half_val(value.bitcastToAPInt().getSExtValue());
+      for (const Eigen::half value : attr.getValues<Eigen::half>())
+        output_tensor->add_half_val(Eigen::numext::bit_cast<uint16_t>(value));
     }
     return Status::OK();
   }
   return ConvertOpaqueElementsAttr(attr, output_tensor);
+#endif
 }
 
 // Converts an MLIR elements attribute to a TensorFlow tensor proto
@@ -237,7 +255,7 @@ Status ConvertBoolElementsAttr(const mlir::ElementsAttr attr,
 
 Status ConvertToTensorProto(const ElementsAttr attr,
                             TensorProto* output_tensor) {
-  auto type = attr.getType();
+  auto type = attr.getShapedType();
   auto shape = type.getShape();
   DataType output_dtype;
   TF_RETURN_IF_ERROR(ConvertToDataType(type, &output_dtype));
@@ -264,7 +282,7 @@ Status ConvertToTensorProto(const ElementsAttr attr,
     case DT_BOOL:
       return ConvertBoolElementsAttr(attr, output_tensor);
     default:
-      return ConvertOpaqueElementsAttr(attr.cast<OpaqueElementsAttr>(),
+      return ConvertOpaqueElementsAttr(attr,
                                        output_tensor);
   }
 }
@@ -276,16 +294,6 @@ Status ConvertToTensor(const mlir::ElementsAttr attr, Tensor* output_tensor) {
     return InvalidArgument("Couldn't convert tensor proto to tensor.");
   }
   return Status::OK();
-}
-
-StatusOr<mlir::ElementsAttr> DecodeOpaqueTensor(
-    const mlir::OpaqueElementsAttr input_attr, mlir::Builder builder) {
-  // TODO(antiagainst): The following logic, albeit simple, involves copying the
-  // tensor content multiple times, which is bad. Figure out a better way to
-  // achieve the purpose.
-  Tensor tensor;
-  TF_RETURN_IF_ERROR(ConvertToTensor(input_attr, &tensor));
-  return ConvertTensor(tensor, &builder);
 }
 
 }  // namespace tensorflow

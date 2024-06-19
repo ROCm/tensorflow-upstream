@@ -47,10 +47,10 @@ namespace tensorflow {
 
 using mlir::MLIRContext;
 using mlir::ModuleOp;
-using mlir::OwningModuleRef;
+//using mlir::OwningModuleRef;
 using stream_executor::port::StatusOr;
 
-StatusOr<OwningModuleRef> LoadFromGraphdefOrMlirSource(
+StatusOr<OwningOpRef<mlir::ModuleOp>> LoadFromGraphdefOrMlirSource(
     const std::string &input_filename, bool input_mlir,
     bool use_splatted_constant, const std::vector<std::string> &extra_tf_opdefs,
     absl::string_view debug_info_file, absl::string_view input_arrays,
@@ -69,7 +69,7 @@ StatusOr<OwningModuleRef> LoadFromGraphdefOrMlirSource(
     }
 
     source_mgr->AddNewSourceBuffer(std::move(file), llvm::SMLoc());
-    return OwningModuleRef(mlir::parseSourceFile(*source_mgr, context));
+    return OwningOpRef<mlir::ModuleOp>(mlir::parseSourceFile(*source_mgr, context));
   }
   for (const auto &tf_opdefs_string : extra_tf_opdefs) {
     tensorflow::OpDef opdef;

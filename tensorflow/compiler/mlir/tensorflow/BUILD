@@ -310,7 +310,7 @@ cc_library(
 cc_library(
     name = "export_tf_dialect_op",
     srcs = [
-        "translate/derived_attr_populator.inc",
+        #"translate/derived_attr_populator.inc",
         "translate/export_tf_dialect_op.cc",
     ],
     hdrs = [
@@ -327,6 +327,7 @@ cc_library(
         "//tensorflow/stream_executor/lib",
         "@llvm//:support",
         "@local_config_mlir//:IR",
+        "@local_config_mlir//:DerivedAttributeOpInterface",
     ],
 )
 
@@ -614,35 +615,35 @@ tf_cc_test(
     ],
 )
 
-tf_native_cc_binary(
-    name = "derived_attr_populator_gen",
-    srcs = [
-        "translate/derived_attr_populator_gen.cc",
-    ],
-    deps = [
-        "@llvm//:support",
-        "@llvm//:tablegen",
-        "@local_config_mlir//:TableGen",
-    ],
-)
-
-genrule(
-    name = "derived_attr_populator_inc",
-    srcs = [
-        "@local_config_mlir//:include/mlir/IR/OpBase.td",
-        "ir/tf_generated_ops.td",
-        "ir/tf_op_base.td",
-        "ir/tf_ops.td",
-    ],
-    outs = [
-        "translate/derived_attr_populator.inc",
-    ],
-    cmd = ("$(location :derived_attr_populator_gen) " +
-           "-I external/local_config_mlir/include " +
-           "-I external/org_tensorflow " +
-           "$(location //tensorflow/compiler/mlir/tensorflow:ir/tf_ops.td) " + " -o $@"),
-    tools = [":derived_attr_populator_gen"],
-)
+#tf_native_cc_binary(
+#    name = "derived_attr_populator_gen",
+#    srcs = [
+#        "translate/derived_attr_populator_gen.cc",
+#    ],
+#    deps = [
+#        "@llvm//:support",
+#        "@llvm//:tablegen",
+#        "@local_config_mlir//:TableGen",
+#    ],
+#)
+#
+#genrule(
+#    name = "derived_attr_populator_inc",
+#    srcs = [
+#        "@local_config_mlir//:include/mlir/IR/OpBase.td",
+#        "ir/tf_generated_ops.td",
+#        "ir/tf_op_base.td",
+#        "ir/tf_ops.td",
+#    ],
+#    outs = [
+#        "translate/derived_attr_populator.inc",
+#    ],
+#    cmd = ("$(location :derived_attr_populator_gen) " +
+#           "-I external/local_config_mlir/include " +
+#           "-I external/org_tensorflow " +
+#           "$(location //tensorflow/compiler/mlir/tensorflow:ir/tf_ops.td) " + " -o $@"),
+#    tools = [":derived_attr_populator_gen"],
+#)
 
 filegroup(
     name = "tensorflow_optimize_td_files",

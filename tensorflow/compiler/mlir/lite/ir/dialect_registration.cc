@@ -16,4 +16,5 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 
 // Static initialization for TensorFlow Lite op registration.
-static mlir::DialectRegistration<mlir::TFL::TensorFlowLiteDialect> tfl_ops;
+// FIXME
+//static ::mlir::DialectRegistration<::mlir::TFL::TensorFlowLiteDialect> tfl_ops;

@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -45,12 +45,10 @@ namespace cpu {
 // Supports JIT-ing multiple modules but without cross-module linking.
 // Implements eager compilation - the module is lowered to binary as soon as
 // it's added to the JIT.
-class SimpleOrcJIT {
+class SimpleOrcJIT : public llvm::JITEventListener {
  public:
-  using ObjLayerT = llvm::orc::LegacyRTDyldObjectLinkingLayer;
-  using CompileFtor = std::function<ObjLayerT::ObjectPtr(llvm::Module&)>;
-  using CompileLayerT = llvm::orc::LegacyIRCompileLayer<ObjLayerT, CompileFtor>;
-  using VModuleKeyT = llvm::orc::VModuleKey;
+  using ObjLayerT = llvm::orc::RTDyldObjectLinkingLayer;
+  using CompileLayerT = llvm::orc::IRCompileLayer;
 
   // Create a new JIT, targeting the host architecture.
   //
@@ -58,29 +56,45 @@ class SimpleOrcJIT {
   // LLVM IR-level optimizations.  post_codegen_hook is invoked after
   // compiling to machine code.
   SimpleOrcJIT(
+      std::unique_ptr<llvm::orc::ExecutorProcessControl> target_process_control,
+      std::unique_ptr<llvm::orc::ExecutionSession> execution_session,
       const llvm::TargetOptions& target_options,
       llvm::CodeGenOpt::Level opt_level, bool optimize_for_size,
-      bool disable_expensive_passes,
+      bool disable_expensive_passes, 
+      //bool disable_slp_vectorizer,
+      //llvm::FastMathFlags fast_math_flags,
       LLVMCompiler::ModuleHook pre_optimization_hook,
       LLVMCompiler::ModuleHook post_optimization_hook,
-      std::function<void(const llvm::object::ObjectFile&)> post_codegen_hook);
+      std::function<void(const llvm::object::ObjectFile&)>
+          post_codegen_hook);
+
+  static std::unique_ptr<SimpleOrcJIT> Create(
+      const llvm::TargetOptions& target_options,
+      llvm::CodeGenOpt::Level opt_level, bool optimize_for_size,
+      bool disable_expensive_passes, 
+      //bool disable_slp_vectorizer,
+      //llvm::FastMathFlags fast_math_flags,
+      LLVMCompiler::ModuleHook pre_optimization_hook,
+      LLVMCompiler::ModuleHook post_optimization_hook,
+      std::function<void(const llvm::object::ObjectFile&)>
+          post_codegen_hook);
+
+  ~SimpleOrcJIT() override;
 
   const llvm::DataLayout& data_layout() const { return data_layout_; }
 
-  const llvm::Triple& target_triple() const {
-    return target_machine_->getTargetTriple();
-  }
+  const llvm::Triple& target_triple() const { return target_triple_; }
 
-  // Add a module to the JIT. Returns an opaque key that can be used to later
-  // remove this module.
-  VModuleKeyT AddModule(std::unique_ptr<llvm::Module> module);
+  llvm::Error AddObjFile(std::unique_ptr<llvm::MemoryBuffer> obj_file);
+  llvm::Error AddModule(llvm::orc::ThreadSafeModule module);
 
-  // Remove a module from the JIT and free the memory associated with it.
-  void RemoveModule(VModuleKeyT key);
+  // Discards objects we no longer need once we are done compiling.
+  void DoneCompiling();
 
   // Get the runtime address of the compiled symbol whose name is given. Returns
   // nullptr if the symbol cannot be found.
-  llvm::JITSymbol FindCompiledSymbol(const std::string& name);
+  llvm::Expected<llvm::orc::ExecutorSymbolDef> FindCompiledSymbol(
+      const std::string& name);
 
   llvm::TargetMachine* target_machine() const { return target_machine_.get(); }
 
@@ -90,21 +104,28 @@ class SimpleOrcJIT {
       const llvm::TargetOptions& target_options,
       llvm::CodeGenOpt::Level opt_level);
 
+  int64_t SizeOfGeneratedCodeInBytes() const {
+    return size_of_generated_code_in_bytes_;
+  }
+
  private:
-  llvm::JITSymbol ResolveRuntimeSymbol(const std::string& name);
+  llvm::orc::ExecutorSymbolDef ResolveRuntimeSymbol(llvm::StringRef name);
 
-  void NotifyObjectFinalized(
+  void notifyObjectLoaded(
+      llvm::JITEventListener::ObjectKey key,
       const llvm::object::ObjectFile& object,
-      const llvm::RuntimeDyld::LoadedObjectInfo& object_info);
-  void NotifyObjectFreed(const llvm::object::ObjectFile& object);
+      const llvm::RuntimeDyld::LoadedObjectInfo& object_info) override;
+  void notifyFreeingObject(llvm::JITEventListener::ObjectKey key) override;
 
-  std::vector<VModuleKeyT> module_keys_;
   std::unique_ptr<llvm::TargetMachine> target_machine_;
+  llvm::Triple target_triple_;
   const llvm::DataLayout data_layout_;
-  llvm::orc::ExecutionSession execution_session_;
-  std::shared_ptr<llvm::orc::SymbolResolver> symbol_resolver_;
+  std::unique_ptr<llvm::orc::ExecutorProcessControl> target_process_control_;
+  std::unique_ptr<llvm::orc::ExecutionSession> execution_session_;
   ObjLayerT object_layer_;
   CompileLayerT compile_layer_;
+  llvm::orc::JITDylib* main_jit_dylib_;
+  int64_t size_of_generated_code_in_bytes_ = 0;
 
   // Non owning pointer to a JIT event listener that registers the JIT events
   // with an attached GDB.
@@ -114,7 +135,11 @@ class SimpleOrcJIT {
   // free this, but the function is poorly named and really just returns a
   // pointer to a static object.
   llvm::JITEventListener* gdb_jit_event_listener_;
+
+  llvm::JITEventListener* perf_jit_event_listener_;
 };
+
+std::vector<std::string> DetectMachineAttributes();
 
 }  // namespace cpu
 }  // namespace xla

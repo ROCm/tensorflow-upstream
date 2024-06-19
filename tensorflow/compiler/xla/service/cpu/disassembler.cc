@@ -31,15 +31,20 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/types.h"
 
+
+// Gone from 2.x
+
 namespace xla {
 namespace cpu {
 
 Disassembler::Disassembler(const llvm::TargetMachine& target_machine)
     : subtarget_info_(*target_machine.getMCSubtargetInfo()) {
   objfile_info_.reset(new llvm::MCObjectFileInfo());
-  mc_context_.reset(new llvm::MCContext(target_machine.getMCAsmInfo(),
+  mc_context_.reset(new llvm::MCContext(target_machine.getTargetTriple(),
+                                        target_machine.getMCAsmInfo(),
                                         target_machine.getMCRegisterInfo(),
-                                        objfile_info_.get()));
+                                        target_machine.getMCSubtargetInfo()));
+  mc_context_.setObjectFileInfo(objfile_info_.get());
   disassembler_.reset(target_machine.getTarget().createMCDisassembler(
       subtarget_info_, *mc_context_));
   inst_printer_.reset(target_machine.getTarget().createMCInstPrinter(
@@ -166,8 +171,8 @@ StatusOr<DisassemblerResult> Disassembler::DisassembleObjectFile(
               annotation = absl::StrFormat("[0x%08lx]", target);
             }
           }
-          inst_printer_->printInst(&instruction, ostream, annotation.c_str(),
-                                   subtarget_info_);
+          inst_printer_->printInst(&instruction, section_address + index, annotation.c_str(),
+                                   subtarget_info_, ostream);
         } else {
           ostream << " <unknown>";
         }

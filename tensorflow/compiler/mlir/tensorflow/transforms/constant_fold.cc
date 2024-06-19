@@ -20,16 +20,47 @@ limitations under the License.
 #include "tensorflow/c/eager/c_api.h"
 #include "tensorflow/c/tf_status.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/eval_util.h"
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_traits.h"
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 
 namespace mlir {
 namespace TF {
 
+
+bool CanBeFolded(Operation* inst) {
+  // Instructions with side effects should not be constant folded to preserve
+  // the original semantics. Ops that have no side effect and zero results but
+  // could be folded should have a custom folder instead of relying on the
+  // TensorFlow folding hook.
+  if (inst == nullptr || inst->getNumResults() == 0 ||
+      inst->hasTrait<::mlir::OpTrait::TF::NoConstantFold>() ||
+      inst->getNumRegions() != 0 || !isMemoryEffectFree(inst)) {
+    return false;
+  }
+
+  // If any of the result types are variants, don't try to constant fold them.
+  // This creates opaque variant constants which lose information and would
+  // require "raising" later.
+  for (const Type type : inst->getResultTypes()) {
+    if (const TensorType tensor_type = mlir::dyn_cast<TensorType>(type)) {
+      if (mlir::isa<VariantType>(tensor_type.getElementType())) {
+        return false;
+      }
+    }
+  }
+
+  // Operations that execute function calls shouldn't be constant folded.
+  if (llvm::isa<TF::WhileOp, TF::CaseOp, TF::IfOp, CallOpInterface>(inst)) {
+    return false;
+  }
+
+  return true;
+}
+
 LogicalResult ConstantFoldFallbackHook(
     Operation* inst, ArrayRef<Attribute> operands,
     SmallVectorImpl<Attribute>& results) {  // NOLINT
-  // Instructions with side effects should not be constant folded to preserve
-  // the original semantics.
-  if (!inst->hasNoSideEffect()) return failure();
+  if (!CanBeFolded(inst)) return failure();
 
   // TODO(jpienaar): Currently this persists the entire program execution. This
   // should instead be per module/set from the Graph being executed in TF (if

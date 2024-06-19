@@ -327,7 +327,7 @@ llvm::Value* EmitPrintf(absl::string_view fmt,
   for (size_t i = 0; i < arguments.size(); ++i) {
     builder->CreateStore(
         arguments[i],
-        builder->CreateGEP(arguments_ptr,
+        builder->CreateGEP(arguments_type, arguments_ptr,
                            {builder->getInt64(0), builder->getInt32(i)}));
   }
   return builder->CreateCall(
@@ -399,7 +399,7 @@ llvm::Value* EmitFullWarpShuffleDown(llvm::Value* value, llvm::Value* offset,
       builder->CreateZExt(
           builder->CreateBitCast(value, builder->getIntNTy(bit_width)),
           builder->getIntNTy(32 * num_segments)),
-      llvm::VectorType::get(builder->getInt32Ty(), num_segments));
+      llvm::VectorType::get(builder->getInt32Ty(), num_segments, false));
   for (int i = 0; i < num_segments; ++i) {
     llvm::Value* insert_val;
     if (target_triple.isNVPTX()) {

@@ -16,16 +16,15 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/translate/tf_mlir_translate.h"
 
 #include "absl/memory/memory.h"
-#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/Attributes.h"  // TF:local_config_mlir
-#include "mlir/IR/Function.h"  // TF:local_config_mlir
-#include "mlir/IR/Identifier.h"  // TF:local_config_mlir
-#include "mlir/IR/MLIRContext.h"  // TF:local_config_mlir
-#include "mlir/IR/Module.h"  // TF:local_config_mlir
-#include "mlir/IR/Operation.h"  // TF:local_config_mlir
-#include "mlir/IR/StandardTypes.h"  // TF:local_config_mlir
-#include "mlir/Parser.h"  // TF:local_config_mlir
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/Parser/Parser.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/translate/import_model.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/mlir_roundtrip_flags.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/error_util.h"
@@ -35,12 +34,14 @@ limitations under the License.
 #include "tensorflow/core/platform/protobuf.h"
 #include "tensorflow/core/protobuf/graph_debug_info.pb.h"
 
+using mlir::func::FuncOp;
+
 namespace tensorflow {
 
 using stream_executor::port::Status;
 using stream_executor::port::StatusOr;
 
-static StatusOr<mlir::OwningModuleRef> GraphdefToMlirImport(
+static StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> GraphdefToMlirImport(
     absl::string_view input_filename, absl::string_view debug_info_file,
     absl::string_view input_arrays, absl::string_view input_dtypes,
     absl::string_view input_shapes, absl::string_view output_arrays,
@@ -68,7 +69,7 @@ static StatusOr<mlir::OwningModuleRef> GraphdefToMlirImport(
   return ConvertGraphdefToMlir(graphdef, debug_info, specs, context);
 }
 
-mlir::OwningModuleRef GraphdefToMlirTranslateFunction(
+mlir::OwningOpRef<mlir::ModuleOp> GraphdefToMlirTranslateFunction(
     absl::string_view input_filename, absl::string_view debug_info_file,
     absl::string_view input_arrays, absl::string_view input_dtypes,
     absl::string_view input_shapes, absl::string_view output_arrays,
@@ -88,7 +89,7 @@ mlir::OwningModuleRef GraphdefToMlirTranslateFunction(
   return module_or.ConsumeValueOrDie();
 }
 
-mlir::OwningModuleRef GraphdefToSplattedMlirTranslateFunction(
+mlir::OwningOpRef<mlir::ModuleOp> GraphdefToSplattedMlirTranslateFunction(
     absl::string_view input_filename, absl::string_view debug_info_file,
     absl::string_view input_arrays, absl::string_view input_dtypes,
     absl::string_view input_shapes, absl::string_view output_arrays,
@@ -106,7 +107,7 @@ mlir::OwningModuleRef GraphdefToSplattedMlirTranslateFunction(
   }
   auto& module = module_or.ValueOrDie();
   std::srand(0);
-  for (auto fn : module->getOps<mlir::FuncOp>()) {
+  for (auto fn : module->getOps<FuncOp>()) {
     for (auto& bb : fn) {
       for (auto& inst : bb) {
         auto attr_id = mlir::Identifier::get("value", context);

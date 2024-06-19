@@ -46,17 +46,23 @@ namespace TFL {
 // The actual Quantize Pass.
 //
 namespace {
+#define GEN_PASS_DEF_QUANTIZEPASS
+#include "tensorflow/compiler/mlir/lite/transforms/passes.h.inc"
 
 // Applies quantization on the model in TFL dialect.
-struct QuantizePass : public FunctionPass<QuantizePass> {
-  void runOnFunction() override;
+
+class QuantizePass : public impl::QuantizePassBase<QuantizePass> {
+ public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(QuantizePass)
+
+  void runOnOperation() override;
 };
 
 #include "tensorflow/compiler/mlir/lite/transforms/generated_quantize.inc"
 
-void QuantizePass::runOnFunction() {
+void QuantizePass::runOnOperation() {
   OwningRewritePatternList patterns;
-  auto func = getFunction();
+  auto func = getOperation();
   auto* ctx = func.getContext();
   TFL::populateWithGenerated(ctx, &patterns);
   patterns.insert<mlir::TFL::GenericFullQuantizationPattern<
@@ -66,12 +72,9 @@ void QuantizePass::runOnFunction() {
 }  // namespace
 
 // Creates an instance of the TensorFlow Lite dialect QuantizeTFL pass.
-std::unique_ptr<FunctionPassBase> CreateQuantizePass() {
+std::unique_ptr<OperationPass<func::FuncOp>> CreateQuantizePass() {
   return std::make_unique<QuantizePass>();
 }
-
-static PassRegistration<QuantizePass> pass(
-    "tfl-quantize", "Apply quantization on models in TensorFlow Lite dialect");
 
 }  // namespace TFL
 }  // namespace mlir

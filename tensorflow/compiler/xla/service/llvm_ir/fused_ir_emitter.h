@@ -63,13 +63,16 @@ class FusedIrEmitter : public DfsHloVisitorWithDefault {
                  ElementalIrEmitter* elemental_emitter,
                  llvm::Value* tile_param_x = nullptr,
                  llvm::Value* tile_param_y = nullptr,
-                 absl::Span<llvm::Value* const> param_shmem_buffers = {})
+                 absl::Span<llvm::Value* const> param_shmem_buffers = {},
+                 absl::Span<llvm::Type* const> param_shmem_types= {}
+                 )
       : operand_arrays_(),
         operand_arrays_generator_(std::move(operand_arrays_generator)),
         tile_param_x_(tile_param_x),
         tile_param_y_(tile_param_y),
         param_shmem_buffers_(param_shmem_buffers.begin(),
                              param_shmem_buffers.end()),
+        param_shmem_types_(param_shmem_types.begin(), param_shmem_types.end()),
         elemental_emitter_(elemental_emitter),
         b_(elemental_emitter->b()),
         module_(elemental_emitter->module()) {}
@@ -129,6 +132,7 @@ class FusedIrEmitter : public DfsHloVisitorWithDefault {
   // Param_buffers_[i] stores the tile buffer for the ith parameter or nullptr
   // if the parameter is not tiled.
   std::vector<llvm::Value*> param_shmem_buffers_;
+  std::vector<llvm::Type*> param_shmem_types_;
 
   ElementalIrEmitter* elemental_emitter_;
 

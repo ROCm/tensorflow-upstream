@@ -1285,7 +1285,7 @@ class HloInstruction {
   // to the newly cloned nodes.
   void ReplaceCalledComputations(
       std::function<HloComputation*(HloComputation*)> map_function) {
-    for (int64 i = 0; i < called_computations_.size(); ++i) {
+    for (uint64 i = 0; i < called_computations_.size(); ++i) {
       called_computations_[i] = map_function(called_computations_[i]);
     }
   }

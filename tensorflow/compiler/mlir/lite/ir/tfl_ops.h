@@ -25,40 +25,50 @@ limitations under the License.
 #include "mlir/IR/Dialect.h"  // from @llvm-project
 #include "mlir/IR/DialectImplementation.h"  // from @llvm-project
 #include "mlir/IR/OpImplementation.h"  // from @llvm-project
+#include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/Interfaces/DerivedAttributeOpInterface.h"  // from @llvm-project
 #include "mlir/Interfaces/InferTypeOpInterface.h"  // from @llvm-project
+#include "mlir/Interfaces/InferIntRangeInterface.h"  // from @llvm-project
 #include "mlir/Interfaces/LoopLikeInterface.h"  // from @llvm-project
 #include "mlir/Interfaces/SideEffectInterfaces.h"  // from @llvm-project
+#include "mlir/Interfaces/CastInterfaces.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/TypeID.h"  // from @llvm-project
+
+#include "tensorflow/compiler/mlir/lite/ir/tfl_ops_dialect.h.inc"
+
 #include "tensorflow/compiler/mlir/lite/ir/tfl_traits.h"
 #include "tensorflow/compiler/mlir/lite/quantization/quantization_traits.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
+#include "tensorflow/compiler/mlir/lite/ir/attributes_enum.h.inc"
 #define GET_ATTRDEF_CLASSES
-#include "mlir/Dialect/Arith/IR/ArithOpsEnums.h.inc"
-#include "mlir/Dialect/Arith/IR/ArithOpsAttributes.h.inc"
-
-namespace mlir {
-namespace TFL {
-
-class TensorFlowLiteDialect : public Dialect {
- public:
-  explicit TensorFlowLiteDialect(MLIRContext *context);
-
-  // Registered hook to materialize a constant operation from a given attribute
-  // value with the desired resultant type.
-  Operation *materializeConstant(OpBuilder &builder, Attribute value, Type type,
-                                 Location loc) override;
-};
-
-}  // end namespace TFL
-}  // end namespace mlir
-
-using namespace mlir;
+#include "tensorflow/compiler/mlir/lite/ir/attributes.h.inc"
 
 #define GET_OP_CLASSES
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h.inc"
 
+namespace mlir {
+namespace TFL {
+
+// The Control type is a token-like value that models control dependencies
+class ControlType : public Type::TypeBase<ControlType, Type, TypeStorage> {
+ public:
+  using Base::Base;
+  static constexpr StringLiteral name = "tfl.control";
+};
+
+#include "tensorflow/compiler/mlir/lite/ir/tfl_ops_interface.h.inc"
+
+}  // end namespace TFL
+}  // end namespace mlir
+
+namespace mlir {
+namespace TFL {
+typedef TFLDialect TensorFlowLiteDialect;
+}
+}
 
 #endif  // TENSORFLOW_COMPILER_MLIR_LITE_IR_TFL_OPS_H_

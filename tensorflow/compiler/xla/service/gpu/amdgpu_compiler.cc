@@ -115,12 +115,11 @@ AMDGPUCompiler::AMDGPUCompiler()
                   amdgpu::kDataLayout) {}
 
 GpuVersion AMDGPUCompiler::GetGpuVersion(se::StreamExecutor* stream_exec) {
-  int isa_version = 0;
+  std::string isa_version = "gfx942";
   if (!stream_exec->GetDeviceDescription().rocm_amdgpu_isa_version(
           &isa_version)) {
     LOG(WARNING)
         << "Couldn't get AMDGPU ISA version for device; assuming gfx803.";
-    isa_version = 803;
   }
 
   return isa_version;

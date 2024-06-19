@@ -26,19 +26,34 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/Dialect/StandardOps/Ops.h"  // TF:local_config_mlir
-#include "mlir/IR/Attributes.h"  // TF:local_config_mlir
-#include "mlir/IR/Builders.h"  // TF:local_config_mlir
-#include "mlir/IR/Function.h"  // TF:local_config_mlir
-#include "mlir/IR/Identifier.h"  // TF:local_config_mlir
-#include "mlir/IR/Location.h"  // TF:local_config_mlir
-#include "mlir/IR/MLIRContext.h"  // TF:local_config_mlir
-#include "mlir/IR/Module.h"  // TF:local_config_mlir
-#include "mlir/IR/Types.h"  // TF:local_config_mlir
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Diagnostics.h"  // from @llvm-project
+#include "mlir/IR/Location.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/OpDefinition.h"  // from @llvm-project
+#include "mlir/IR/SymbolTable.h"  // from @llvm-project
+#include "mlir/IR/Types.h"  // from @llvm-project
+#include "mlir/IR/Verifier.h"  // from @llvm-project
+#include "mlir/IR/Visitors.h"  // from @llvm-project
+#include "mlir/Pass/PassManager.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/compiler/jit/shape_inference_helpers.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/control_flow_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.h"
@@ -173,7 +188,7 @@ class ImporterBase {
   }
 
   // Converts func name in graphdef to mlir::SymbolRefAttribute.
-  StatusOr<mlir::SymbolRefAttr> ConvertFunctionCallName(
+  StatusOr<mlir::FlatSymbolRefAttr> ConvertFunctionCallName(
       const std::string& func_name);
 
   // Converts the given non-function-call AttrValue to an MLIR Attribute.
@@ -701,12 +716,13 @@ Status ImporterBase::ConvertFunctionCallAttribute(
   return Status::OK();
 }
 
-StatusOr<mlir::SymbolRefAttr> ImporterBase::ConvertFunctionCallName(
+StatusOr<mlir::FlatSymbolRefAttr> ImporterBase::ConvertFunctionCallName(
     const std::string& func_name) {
+  if (func_name.empty()) return mlir::FlatSymbolRefAttr();
+
   TF_RETURN_IF_ERROR(ConvertLibFunction(func_name));
   auto mlir_func_name = (*tf_name_to_mlir_name_)[func_name];
-  auto func = module_.lookupSymbol<mlir::FuncOp>(mlir_func_name);
-  return builder_->getSymbolRefAttr(func);
+  return mlir::SymbolRefAttr::get(builder_.getContext(), mlir_func_name);
 }
 
 StatusOr<mlir::Attribute> ImporterBase::ConvertAttributeValue(
@@ -999,6 +1015,7 @@ Status ImporterBase::ConvertFunctionArgAndRets(
 
   // Terminate the function by adding a Fetch operation to terminate the graph
   // and a return operation to return the Graph results.
+#if 0
   builder_->setInsertionPointToEnd(&graph_op.body().front());
   builder_->create<mlir::tf_executor::FetchOp>(graph_op.getLoc(),
                                                inst_to_return);
@@ -1007,6 +1024,23 @@ Status ImporterBase::ConvertFunctionArgAndRets(
   builder_->setInsertionPointToEnd(bb);
   builder_->create<mlir::ReturnOp>(mlir::UnknownLoc::get(context_),
                                    inst_to_return);
+#else
+  builder_->setInsertionPointToEnd(&graph_op.getBody().front());
+  builder_->create<mlir::tf_executor::FetchOp>(graph_op.getLoc(),
+                                              inst_to_return);
+  builder_->setInsertionPointToEnd(bb);
+  builder_->create<mlir::func::ReturnOp>(mlir::UnknownLoc::get(context_),
+                                        graph_op.getResults());
+
+  func.setAllArgAttrs(
+      llvm::to_vector<4>(llvm::map_range(arg_attrs, [&](NamedAttrList& list) {
+        return list.getDictionary(context_);
+      })));
+  func.setAllResultAttrs(
+      llvm::to_vector<4>(llvm::map_range(ret_attrs, [&](NamedAttrList& list) {
+        return list.getDictionary(context_);
+      })));
+#endif
   return Status::OK();
 }
 

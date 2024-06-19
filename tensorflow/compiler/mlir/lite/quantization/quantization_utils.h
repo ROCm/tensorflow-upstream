@@ -96,10 +96,10 @@ struct GenericFullQuantizationPattern : public RewritePattern {
   explicit GenericFullQuantizationPattern(MLIRContext* context)
       : RewritePattern(Q::getOperationName(), 1, context) {}
 
-  PatternMatchResult matchAndRewrite(Operation* op,
+  LogicalResult matchAndRewrite(Operation* op,
                                      PatternRewriter& rewriter) const override {
     if (op->getNumResults() != 1) {
-      return matchFailure();
+      return failure();
     }
     auto quantize_op = cast<Q>(op);
     Operation* quantized_op = quantize_op.input()->getDefiningOp();
@@ -107,28 +107,28 @@ struct GenericFullQuantizationPattern : public RewritePattern {
     // shouldn't rewrite this op.
     if (!quantized_op || llvm::isa<Q>(quantized_op) ||
         llvm::isa<DQ>(quantized_op)) {
-      return matchFailure();
+      return failure();
     }
 
     // Collect all the quantized inputs and "clone" the matched op by these
     // inputs.
-    SmallVector<Value*, 4> inputs;
+    SmallVector<Value, 4> inputs;
     inputs.reserve(quantized_op->getNumOperands());
     for (auto operand : quantized_op->getOperands()) {
-      auto tensor_type = operand->getType().dyn_cast<TensorType>();
+      auto tensor_type = operand.getType().dyn_cast<TensorType>();
       if (!tensor_type) {
         // There are none type values.
-        return matchFailure();
+        return failure();
       }
       auto operand_ele_type = tensor_type.getElementType();
-      if (auto op_inst = dyn_cast_or_null<DQ>(operand->getDefiningOp())) {
+      if (auto op_inst = dyn_cast_or_null<DQ>(operand.getDefiningOp())) {
         inputs.push_back(op_inst.input());
       } else if (operand_ele_type.isa<IntegerType>()) {
         // If the operand is an integer tensor, then it doesn't require the
         // DQ op in the pattern.
         inputs.push_back(operand);
       } else {
-        return matchFailure();
+        return failure();
       }
     }
 
@@ -138,7 +138,7 @@ struct GenericFullQuantizationPattern : public RewritePattern {
     SmallVector<Type, 4> output_types;
     output_types.reserve(quantized_op->getNumResults());
     for (auto result : llvm::enumerate(quantized_op->getResults())) {
-      if (!result.value()->hasOneUse()) return matchFailure();
+      if (!result.value()->hasOneUse()) return failure();
       auto result_ele_type =
           result.value()->getType().template cast<TensorType>().getElementType();
       if (auto user = dyn_cast_or_null<Q>(*result.value()->user_begin())) {
@@ -150,7 +150,7 @@ struct GenericFullQuantizationPattern : public RewritePattern {
         outputs_replaced.insert({result.value(), result.index()});
         output_types.push_back(result_ele_type);
       } else {
-        return matchFailure();
+        return failure();
       }
     }
 
@@ -159,12 +159,12 @@ struct GenericFullQuantizationPattern : public RewritePattern {
     OperationState new_state(quantized_op->getLoc(),
                              quantized_op->getName().getStringRef(), inputs,
                              output_types, quantized_op->getAttrs());
-    Operation* new_op = builder.createOperation(new_state);
+    Operation* new_op = rewriter.create(new_state);
     for (auto output : outputs_replaced) {
       output.getFirst()->replaceAllUsesWith(
           new_op->getResult(output.getSecond()));
     }
-    return matchSuccess();
+    return success();
   }
 };
 
@@ -217,7 +217,7 @@ quant::QuantizedType GetUniformQuantizedTypeForBias(
 // quantization parameters are stored as adjacent quantize and dequantize ops
 // and the propagation results are materialized by inserting pairs of quantize
 // and dequantize ops to this function.
-void ApplyQuantizationParamsPropagation(mlir::FuncOp func, bool is_signed,
+void ApplyQuantizationParamsPropagation(mlir::func::FuncOp func, bool is_signed,
                                         OpQuantSpecGetter op_quant_spec_getter);
 
 }  // end namespace TFL

@@ -83,7 +83,7 @@ Status FusedIrEmitter::DefaultAction(HloInstruction* hlo) {
 Status FusedIrEmitter::HandleConstant(HloInstruction* constant) {
   unsigned global_address_space =
       llvm_ir::GetGlobalMemoryAddressSpace(*module_);
-  indexed_generators_[constant] = [=](const IrArray::Index& index) {
+  indexed_generators_[constant] = [=](const IrArray::Index& index) -> StatusOr<llvm::Value*> {
     const Literal& literal = constant->literal();
     llvm::Constant* initializer =
         llvm_ir::ConvertLiteralToIrConstant(literal, module_);
@@ -102,7 +102,9 @@ Status FusedIrEmitter::HandleConstant(HloInstruction* constant) {
         llvm::ConstantExpr::getPointerBitCastOrAddrSpaceCast(
             global,
             llvm_ir::ShapeToIrType(literal.shape(), module_)->getPointerTo());
-    return IrArray(shape_constant, constant->shape())
+    return IrArray(shape_constant, 
+        llvm_ir::ShapeToIrType(literal.shape(), module_),
+        constant->shape())
         .EmitReadArrayElement(index, b_);
   };
 
@@ -138,9 +140,11 @@ Status FusedIrEmitter::HandleGetTupleElement(
     indexed_generators_[get_tuple_element] =
         [=](const IrArray::Index& index) -> StatusOr<llvm::Value*> {
       // TODO(b/34080002) Add aliasing information to tuple element IrArray.
+      auto shape = get_tuple_element->shape();
       TF_ASSIGN_OR_RETURN(llvm::Value * tuple_element_ptr,
                           emit_tuple_element_ptr());
-      return IrArray(tuple_element_ptr, get_tuple_element->shape())
+      return IrArray(tuple_element_ptr, 
+          llvm_ir::ShapeToIrType(shape, module_), shape)
           .EmitReadArrayElement(index, b_);
     };
   } else {
@@ -160,8 +164,9 @@ Status FusedIrEmitter::HandleParameter(HloInstruction* parameter) {
         // want the AA info to be present before address spaces are inferred
         // (which is pretty late in the pipeline), so even if we had
         // address-space-based AA in LLVM, it wouldn't help us much here.
-        return b_->CreateLoad(
-            b_->CreateGEP(param_tile_buffer, {index.GetConstantWithIndexType(0),
+        return b_->CreateLoad(param_shmem_types_[param_num],
+            b_->CreateGEP(param_shmem_types_[param_num],
+              param_tile_buffer, {index.GetConstantWithIndexType(0),
                                               tile_param_x_, tile_param_y_}),
             "tiled_buffer");
       }

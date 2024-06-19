@@ -24,21 +24,24 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
-#include "mlir/Dialect/StandardOps/Ops.h"  // TF:local_config_mlir
-#include "mlir/IR/Attributes.h"  // TF:local_config_mlir
-#include "mlir/IR/Builders.h"  // TF:local_config_mlir
-#include "mlir/IR/Function.h"  // TF:local_config_mlir
-#include "mlir/IR/Identifier.h"  // TF:local_config_mlir
-#include "mlir/IR/Module.h"  // TF:local_config_mlir
-#include "mlir/IR/Operation.h"  // TF:local_config_mlir
-#include "mlir/IR/Types.h"  // TF:local_config_mlir
-#include "mlir/Pass/Pass.h"  // TF:local_config_mlir
-#include "mlir/Pass/PassManager.h"  // TF:local_config_mlir
-#include "mlir/Support/DebugStringHelper.h"  // TF:local_config_mlir
-#include "mlir/Support/LogicalResult.h"  // TF:local_config_mlir
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/Location.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/SymbolTable.h"  // from @llvm-project
+#include "mlir/IR/Types.h"  // from @llvm-project
+#include "mlir/Pass/Pass.h"  // from @llvm-project
+#include "mlir/Pass/PassManager.h"  // from @llvm-project
+#include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/control_flow_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/export_tf_dialect_op.h"
@@ -111,7 +114,7 @@ class Exporter {
   // definition library
   static Status ConvertLibFunction(const ExporterConfigs& configs,
                                    const Dialect* tf_dialect,
-                                   mlir::FuncOp function,
+                                   mlir::func::FuncOp function,
                                    FunctionDefLibrary* flib);
   // Converts the given FuncOp to a Graph. The arguments and returns of
   // function are added to the graph with special op names kArgOp and kRetOp.
@@ -119,21 +122,24 @@ class Exporter {
   // another graph.
   static StatusOr<std::unique_ptr<Graph>> Convert(
       const ExporterConfigs& configs, const Dialect* tf_dialect,
-      mlir::FuncOp function, FunctionDefLibrary* flib);
+      mlir::func::FuncOp function, FunctionDefLibrary* flib);
 
  private:
   explicit Exporter(Graph* graph, const Dialect* tf_dialect)
       : graph_(graph), tf_dialect_(tf_dialect) {}
 
   Status AddArgumentNode(mlir::BlockArgument* arg, unsigned index);
-  Status AddInstructionNode(mlir::Operation* inst);
-  Status AddNextIterationNode(mlir::Operation* inst);
+  Status AddInstructionNode(mlir::func::FuncOp function, mlir::Operation* inst);
+  Status AddNextIterationNode(mlir::func::FuncOp function, mlir::Operation* inst);
   Status AddEdge(mlir::Operation* inst);
 
   StatusOr<std::unique_ptr<NodeDef>> GetArgumentNode(mlir::BlockArgument* arg,
                                                      unsigned index);
-  StatusOr<std::unique_ptr<NodeDef>> GetReturnNode(mlir::Operation* inst,
-                                                   unsigned index);
+//  StatusOr<std::unique_ptr<NodeDef>> GetReturnNode(mlir::Operation* inst,
+//                                                   unsigned index);
+  StatusOr<std::unique_ptr<NodeDef>> GetReturnNode(
+    FuncOp function, Value operand, unsigned index, llvm::StringRef name);
+
   // Adds one edge between src_node and dst_node. If it is not a control edge,
   // an index is used to find out the right operand of the dst_node.
   Status AddEdgeBetweenNodes(mlir::Value* src, Node* dst_node,
@@ -210,7 +216,7 @@ StatusOr<std::unique_ptr<NodeDef>> Exporter::GetArgumentNode(
     mlir::BlockArgument* arg, unsigned index) {
   auto node_def = absl::make_unique<NodeDef>();
   node_def->set_name(UniqueName(
-      arg->getParentRegion()->getParentOfType<mlir::FuncOp>().getName().str()));
+      arg->getParentRegion()->getParentOfType<mlir::func::FuncOp>().getName().str()));
   node_def->set_op(FunctionLibraryDefinition::kArgOp);
   DataType dtype;
   TF_RETURN_IF_ERROR(ConvertToDataType(
@@ -225,11 +231,46 @@ StatusOr<std::unique_ptr<NodeDef>> Exporter::GetArgumentNode(
 }
 
 StatusOr<std::unique_ptr<NodeDef>> Exporter::GetReturnNode(
+    FuncOp function, Value operand, unsigned index, llvm::StringRef name) {
+  auto node_def = std::make_unique<NodeDef>();
+  if (!name.empty())
+    node_def->set_name(std::string(ParseTensorName(name.str()).node()));
+  else
+    node_def->set_name(
+        std::string(op_to_name_.GetUniqueName(function.getName().str())));
+
+  node_def->set_op(FunctionLibraryDefinition::kRetOp);
+  DataType dtype;
+  TF_RETURN_IF_ERROR(ConvertToDataType(
+      mlir::cast<mlir::TensorType>(operand.getType()).getElementType(),
+      &dtype));
+  AttrValue type_attr;
+  type_attr.set_type(dtype);
+  (*node_def->mutable_attr())["T"] = type_attr;
+  AttrValue index_attr;
+  index_attr.set_i(index);
+  (*node_def->mutable_attr())["index"] = index_attr;
+
+  if (auto device_attr =
+          function.getResultAttrOfType<mlir::StringAttr>(index, kDeviceAttr))
+    *node_def->mutable_device() = device_attr.getValue().str();
+
+  llvm::ArrayRef<mlir::NamedAttribute> func_res_i_attrs =
+      function.getResultAttrs(index);
+  absl::flat_hash_set<absl::string_view> attrs_to_ignore = {kDeviceAttr};
+  TF_RETURN_IF_ERROR(ConvertAttributes(func_res_i_attrs, attrs_to_ignore,
+                                       /*remove_ref_type=*/false,
+                                       node_def->mutable_attr()));
+
+  return node_def;
+}
+/*
+StatusOr<std::unique_ptr<NodeDef>> Exporter::GetReturnNode(
     mlir::Operation* inst, unsigned index) {
   auto node_def = absl::make_unique<NodeDef>();
   auto* inst_op = inst->getOperand(index);
   node_def->set_name(
-      UniqueName(inst->getParentOfType<mlir::FuncOp>().getName().str()));
+      UniqueName(inst->getParentOfType<mlir::func::FuncOp>().getName().str()));
   node_def->set_op(FunctionLibraryDefinition::kRetOp);
   DataType dtype;
   TF_RETURN_IF_ERROR(ConvertToDataType(
@@ -242,10 +283,10 @@ StatusOr<std::unique_ptr<NodeDef>> Exporter::GetReturnNode(
   (*node_def->mutable_attr())["index"] = index_attr;
   return node_def;
 }
-
+*/
 Status Exporter::AddEdgeBetweenNodes(mlir::Value* src, Node* dst_node,
                                      unsigned dst_index) {
-  if (auto* input_result = dyn_cast<mlir::OpResult>(src)) {
+  if (auto* input_result = dyn_cast<mlir::OpResult>(*src)) {
     auto* input_inst = input_result->getOwner();
     // replaces the input node by the sink one if it is an NextIteration source:
     auto it = source_to_sink_.find(input_inst);
@@ -289,7 +330,7 @@ Status Exporter::AddEdge(mlir::Operation* inst) {
   return Status::OK();
 }
 
-Status Exporter::AddInstructionNode(mlir::Operation* inst) {
+Status Exporter::AddInstructionNode(mlir::func::FuncOp function, mlir::Operation* inst) {
   Status status;
   if (!inst->isKnownTerminator()) {
     std::unique_ptr<NodeDef> node_def;
@@ -312,8 +353,13 @@ Status Exporter::AddInstructionNode(mlir::Operation* inst) {
     TF_RETURN_IF_ERROR(status);
     nodes_[inst] = node;
   } else if (isa<mlir::ReturnOp>(inst)) {
-    for (int index = 0, end = inst->getNumOperands(); index != end; index++) {
-      TF_ASSIGN_OR_RETURN(auto node_def, GetReturnNode(inst, index));
+    //for (int index = 0, end = inst->getNumOperands(); index != end; index++) {
+    for (auto operand_and_idx : llvm::enumerate(inst->getOperands())) {
+      //TF_ASSIGN_OR_RETURN(auto node_def, GetReturnNode(inst, index));
+      TF_ASSIGN_OR_RETURN(auto node_def, GetReturnNode(function, operand_and_idx.value(),
+                      operand_and_idx.index(),
+                      names.empty() ? "" : names[operand_and_idx.index()]));
+
       Node* node = graph_->AddNode(*node_def, &status);
       TF_RETURN_IF_ERROR(status);
       if (returns_.find(inst) == returns_.end()) {
@@ -332,7 +378,7 @@ Status Exporter::AddArgumentNode(mlir::BlockArgument* arg, unsigned index) {
   // is an input node. We recover the original input node and skip adding the
   // argument node. The new input node will be handled as normal in the
   // following steps.
-  if (arg->getParentRegion()->getParentOfType<mlir::FuncOp>().getName() ==
+  if (arg->getParentRegion()->getParentOfType<mlir::func::FuncOp>().getName() ==
       "main") {
     if (!arg->hasOneUse()) {
       return errors::FailedPrecondition(
@@ -377,19 +423,19 @@ Status Exporter::AddArgumentNode(mlir::BlockArgument* arg, unsigned index) {
 //   map by using its name attribute;
 // - NextIteration "sink" is paired with the "source" with the name attribute.
 //   It is added to the graph like the other operations.
-Status Exporter::AddNextIterationNode(mlir::Operation* inst) {
+Status Exporter::AddNextIterationNode(mlir::func::FuncOp function, mlir::Operation* inst) {
   auto name = GetName(inst);
   if (inst->getName().getStringRef().endswith(".source")) {
     name_to_inst_[name] = inst;
     return Status::OK();
   }
   source_to_sink_[name_to_inst_[name]] = inst;
-  return AddInstructionNode(inst);
+  return AddInstructionNode(function, inst);
 }
 
 StatusOr<std::unique_ptr<Graph>> Exporter::Convert(const ExporterConfigs& confs,
                                                    const Dialect* tf_dialect,
-                                                   mlir::FuncOp function,
+                                                   mlir::func::FuncOp function,
                                                    FunctionDefLibrary* flib) {
   if (function.getBlocks().size() != 1) {
     return errors::FailedPrecondition(
@@ -480,7 +526,7 @@ StatusOr<std::unique_ptr<Graph>> Exporter::Convert(const ExporterConfigs& confs,
       // TODO(prakalps): If two functions have cyclic dependence, this will
       // introduce an infinite loop.
       auto func =
-          function.getParentOfType<mlir::ModuleOp>().lookupSymbol<mlir::FuncOp>(
+          function.getParentOfType<mlir::ModuleOp>().lookupSymbol<mlir::func::FuncOp>(
               op_name.ValueOrDie());
       if (func != nullptr) {
         TF_RETURN_IF_ERROR(ConvertLibFunction(confs, tf_dialect, func, flib));
@@ -499,9 +545,9 @@ StatusOr<std::unique_ptr<Graph>> Exporter::Convert(const ExporterConfigs& confs,
     }
 
     if (inst.getName().getStringRef().contains("NextIteration")) {
-      TF_RETURN_IF_ERROR(exporter.AddNextIterationNode(&inst));
+      TF_RETURN_IF_ERROR(exporter.AddNextIterationNode(function, &inst));
     } else {
-      TF_RETURN_IF_ERROR(exporter.AddInstructionNode(&inst));
+      TF_RETURN_IF_ERROR(exporter.AddInstructionNode(function, &inst));
     }
   }
   // Adds edges between the argument, operation and return nodes.
@@ -516,7 +562,7 @@ StatusOr<std::unique_ptr<Graph>> Exporter::Convert(const ExporterConfigs& confs,
 
 Status Exporter::ConvertLibFunction(const ExporterConfigs& configs,
                                     const Dialect* tf_dialect,
-                                    mlir::FuncOp function,
+                                    mlir::func::FuncOp function,
                                     FunctionDefLibrary* flib) {
   // First look for the function in the current function library. If found,
   // nothing needs to be done.
@@ -545,7 +591,7 @@ Status Exporter::ConvertLibFunction(const ExporterConfigs& configs,
   auto grad_string = mlir::TF::TensorFlowDialect::GetGradientAttrName();
   if (auto attr = function.getAttrOfType<mlir::SymbolRefAttr>(grad_string)) {
     auto grad_func =
-        function.getParentOfType<mlir::ModuleOp>().lookupSymbol<mlir::FuncOp>(
+        function.getParentOfType<mlir::ModuleOp>().lookupSymbol<mlir::func::FuncOp>(
             attr.getValue());
     TF_RETURN_IF_ERROR(
         ConvertLibFunction(configs, tf_dialect, grad_func, flib));
@@ -576,10 +622,10 @@ Status Exporter::Convert(mlir::ModuleOp module, const ExporterConfigs& configs,
                          FunctionLibraryDefinition* flib_def) {
   mlir::Identifier entry_func_id =
       mlir::Identifier::get("main", module.getContext());
-  absl::optional<mlir::FuncOp> entry_func;
+  absl::optional<mlir::func::FuncOp> entry_func;
   FunctionDefLibrary flib;
   auto tf_dialect = module.getContext()->getRegisteredDialect("tf");
-  for (auto function : module.getOps<mlir::FuncOp>()) {
+  for (auto function : module.getOps<mlir::func::FuncOp>()) {
     if (function.isExternal())
       return errors::FailedPrecondition("External functions not supported");
 

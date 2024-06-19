@@ -2,7 +2,7 @@ load("//tensorflow:tensorflow.bzl", "tf_cc_binary", "tf_native_cc_binary")
 load("@local_config_mlir//:mlir_configure.bzl", "is2019")
 load(
     "@local_config_mlir//:tblgen.bzl",
-    "gentbl",
+    "gentbl", "gentbl_cc_library", "td_library",
 )
 
 package(
@@ -27,8 +27,29 @@ filegroup(
     name = "tensorflow_lite_ops_td_files",
     srcs = [
         "ir/tfl_ops.td",
+        "ir/tfl_op_base.td",
+        "ir/attributes.td",
         "//tensorflow/compiler/mlir/lite/quantization:quantization_td_files",
         "@local_config_mlir//:OpBaseTdFiles",
+    ],
+)
+
+gentbl_cc_library(
+    name = "tensorflow_lite_passes_inc_gen",
+    #compatible_with = get_compatible_with_portable(),
+    tbl_outs = [
+        (
+            [
+                "-gen-pass-decls",
+                "-name=TensorFlowLite",
+            ],
+            "transforms/passes.h.inc",
+        ),
+    ],
+    tblgen = "@local_config_mlir//:mlir-tblgen",
+    td_file = "transforms/passes.td",
+    deps = [
+        "@local_config_mlir//:PassBaseTdFiles",
     ],
 )
 
@@ -54,6 +75,50 @@ gentbl(
         ":tensorflow_lite_ops_td_files",
     ],
 )
+
+gentbl(
+    name = "attributes_inc_gen",
+    tbl_outs = [
+        (
+            "-gen-attrdef-decls -attrdefs-dialect=tfl",
+            "ir/attributes.h.inc",
+        ),
+        (
+            "-gen-attrdef-defs -attrdefs-dialect=tfl",
+            "ir/attributes.cc.inc",
+        ),
+        (
+            "-gen-enum-decls",
+            "ir/attributes_enum.h.inc",
+        ),
+        (
+            "-gen-enum-defs",
+            "ir/attributes_enum.cc.inc",
+        ),
+        (
+            "-gen-dialect-decls -dialect=tfl",
+            "ir/tfl_ops_dialect.h.inc",
+        ),
+        (
+            "-gen-dialect-defs -dialect=tfl",
+            "ir/tfl_ops_dialect.cc.inc",
+        ),
+        (
+            "-gen-op-interface-decls",
+            "ir/tfl_ops_interface.h.inc",
+        ),
+        (
+            "-gen-op-interface-defs",
+            "ir/tfl_ops_interface.cc.inc",
+        ),
+    ],
+    tblgen = "@local_config_mlir//:mlir-tblgen",
+    td_file = "ir/tfl_op_base.td",
+    td_srcs = [
+        ":tensorflow_lite_ops_td_files",
+    ],
+)
+
 
 gentbl(
     name = "tensorflow_lite_prepare_tf_inc_gen",
@@ -173,6 +238,7 @@ cc_library(
     copts = ["-std=c++17"],
     deps = [
         ":tensorflow_lite_ops_inc_gen",
+        ":attributes_inc_gen",
         ":validators",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/lite/schema:schema_fbs",
@@ -184,6 +250,8 @@ cc_library(
         "@local_config_mlir//:QuantOps",
         "@local_config_mlir//:Support",
         "@local_config_mlir//:ArithBaseIncGen",
+        "@local_config_mlir//:MathBaseIncGen",
+        "@local_config_mlir//:MathOpsIncGen",
     ] + (["@local_config_mlir//:StandardOps"] if is2019() else []),
     alwayslink = 1,
 )
@@ -207,6 +275,7 @@ cc_library(
     copts = ["-std=c++17"],
     deps = [
         ":tensorflow_lite",
+        ":tensorflow_lite_passes_inc_gen",
         ":validators",
         "//tensorflow/compiler/mlir/lite/quantization:quantization_lib",
         "//tensorflow/compiler/mlir/tensorflow",
@@ -323,27 +392,47 @@ tf_native_cc_binary(
     ],
 )
 
-genrule(
-    name = "operator_writer_inc",
-    srcs = [
-        "ir/tfl_ops.td",
+gentbl_cc_library(
+    name = "converter_inc",
+    tbl_outs = [
+        (
+            ["--gen-operator-converters"],
+            "operator_converters.inc",
+        ),
+        (
+            ["--gen-runtime-verifiers"],
+            "runtime_verifiers.inc",
+        ),
+    ],
+    tblgen = ":converter-gen",
+    td_file = "ir/tfl_ops.td",
+    test = 1,
+    deps = [
+        ":tensorflow_lite_ops_td_files",
         "//tensorflow/compiler/mlir/lite/quantization:quantization_td_files",
+        "@local_config_mlir//:OpBaseTdFiles",
+        #"//tensorflow/compiler/mlir/quantization/common/quantization_lib:quantization_td_files",
     ],
-    outs = [
-        "operator_writers.inc",
+)
+
+tf_native_cc_binary(
+    name = "converter-gen",
+    srcs = [
+        "converter_gen.cc",
     ],
-    cmd = ("$(location :operator-writer-gen) " +
-           "-I external/local_config_mlir/include " +
-           "-I external/org_tensorflow " +
-           "$(location //tensorflow/compiler/mlir/lite:ir/tfl_ops.td) " + " -o $@"),
-    tools = [":operator-writer-gen"],
+    #compatible_with = get_compatible_with_portable(),
+    deps = [
+        "@llvm//:Support",
+        "@llvm//:TableGen",
+        "@local_config_mlir//:TableGen",
+    ],
 )
 
 cc_library(
     name = "flatbuffer_tflite_operator_lib",
     srcs = [
         "flatbuffer_operator.cc",
-        "operator_writers.inc",
+        "operator_converters.inc",
     ],
     hdrs = [
         "flatbuffer_operator.h",
@@ -351,6 +440,7 @@ cc_library(
     copts = ["-std=c++17"],
     deps = [
         ":tensorflow_lite",
+        ":converter_inc",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_absl//absl/container:flat_hash_map",

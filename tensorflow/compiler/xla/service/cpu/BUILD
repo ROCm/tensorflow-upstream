@@ -175,7 +175,7 @@ cc_library(
 cc_library(
     name = "simple_orc_jit",
     srcs = [
-        "simple_orc_jit.cc",
+        #"simple_orc_jit.cc",
         "windows_compatibility.cc",
         "windows_compatibility.h",
     ],

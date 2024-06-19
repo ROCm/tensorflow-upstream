@@ -40,9 +40,22 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+using mlir::func::FuncOp;
+
 namespace mlir {
 namespace TFL {
 namespace {
+#define GEN_PASS_DEF_PREPARECOMPOSITEFUNCTIONSPASS
+#include "tensorflow/compiler/mlir/lite/transforms/passes.h.inc"
+
+constexpr char kTFAPIImplements[] = "tf.api_implements";
+constexpr char kTFTextAPIPrefix[] = "tftext:";
+constexpr char kCustomSSDPostprocessing[] = "TFLite_Detection_PostProcess";
+constexpr char kTfNMSPadded[] = "non_max_suppression_padded_v2";
+constexpr char kCustomMaxUnpooling[] = "addons:MaxUnpooling2D";
+constexpr char kCustomDenseImageWarp[] = "addons:DenseImageWarp";
+constexpr char kTFLFusableOp[] = "tfl_fusable_op";
 
 // Abstracts the conversion of the embedded lookup composite function.
 class ConvertEmbeddedLookupFunc {
@@ -50,6 +63,7 @@ class ConvertEmbeddedLookupFunc {
   explicit ConvertEmbeddedLookupFunc(FuncOp func) : func_(func) {}
 
   void RewriteFunc() {
+#if 0
     func_.eraseBody();
     func_.addEntryBlock();
     func_.setAttr(
@@ -64,6 +78,19 @@ class ConvertEmbeddedLookupFunc {
         func_.getLoc(), output_type, lookup, value);
 
     builder.create<mlir::ReturnOp>(func_.getLoc(), op.getResult());
+#else
+    func_->setAttr("tf._implements",
+                   StringAttr::get(func_.getContext(), llvm::Twine("fused_tfl_embedding_lookup")));
+    Value lookup = func_.getArgument(1);
+    Value value = func_.getArgument(0);
+    auto output_type = func_.getFunctionType().getResult(0);
+
+    OpBuilder builder(func_.getBody());
+    auto op = builder.create<mlir::TFL::EmbeddingLookupOp>(
+        func_.getLoc(), output_type, lookup, value);
+
+    builder.create<mlir::func::ReturnOp>(func_.getLoc(), op.getResult());
+#endif    
   }
 
   LogicalResult VerifySignature() {
@@ -72,7 +99,7 @@ class ConvertEmbeddedLookupFunc {
              << "Invalid number of arguments in the embedding "
                 "matmal composite function";
     }
-    if (func_.getType().getNumResults() != 1) {
+    if (func_.getFunctionType().getNumResults() != 1) {
       return func_.emitError() << "Invalid number of results in the embedding "
                                   "matmal composite function";
     }
@@ -90,38 +117,38 @@ class ConvertEmbeddedLookupFunc {
 // body with the corresponding fused TFLite op. The replacement need not always
 // be a fused op, though that is the primary use case.
 class PrepareCompositeFunctionsPass
-    : public FunctionPass<PrepareCompositeFunctionsPass> {
+    : public impl::PrepareCompositeFunctionsPassBase<
+          PrepareCompositeFunctionsPass> {
  public:
-  explicit PrepareCompositeFunctionsPass() {}
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PrepareCompositeFunctionsPass)
 
+  explicit PrepareCompositeFunctionsPass() {}
  private:
-  void runOnFunction() override;
+  void runOnOperation() override;
 };
 
-void PrepareCompositeFunctionsPass::runOnFunction() {
+void PrepareCompositeFunctionsPass::runOnOperation() {
   // TODO(ashwinm): Explore if we can generalize this pass by simply taking
   // a map<func annotation, tfl op> and doing the transform. This should be
   // revisited after we add LSTM composite op to this pass.
-  auto func = getFunction();
-  auto attr = func.getAttrOfType<StringAttr>("tf._implements");
-  if (!attr || attr.getValue() != "embedding_matmul") return;
-  // Convert the composite embedding_matmul function body to a
-  // TFLite fused embedding_lookup op.
-  ConvertEmbeddedLookupFunc convert_embedded_lookup(func);
-  if (failed(convert_embedded_lookup.VerifySignature())) {
-    return signalPassFailure();
+  auto module = getOperation();
+  for (auto func : module.getOps<func::FuncOp>()) {
+    auto attr = func->getAttrOfType<StringAttr>("tf._implements");
+    if (!attr || attr.getValue() != "embedding_matmul") return;
+    // Convert the composite embedding_matmul function body to a
+    // TFLite fused embedding_lookup op.
+    ConvertEmbeddedLookupFunc convert_embedded_lookup(func);
+    if (failed(convert_embedded_lookup.VerifySignature())) {
+      return signalPassFailure();
+    }
+    convert_embedded_lookup.RewriteFunc();
   }
-  convert_embedded_lookup.RewriteFunc();
 }
 }  // namespace
 
-std::unique_ptr<FunctionPassBase> CreatePrepareCompositeFunctionsPass() {
+std::unique_ptr<OperationPass<ModuleOp>> CreatePrepareCompositeFunctionsPass() {
   return std::unique_ptr<PrepareCompositeFunctionsPass>();
 }
-
-static PassRegistration<PrepareCompositeFunctionsPass> pass(
-    "tfl-prepare-composite-funcs-tf",
-    "Prepares composite functions in Tensorflow dialect of MLIR ");
 
 }  // namespace TFL
 }  // namespace mlir

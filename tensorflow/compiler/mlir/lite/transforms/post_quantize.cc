@@ -27,18 +27,23 @@ limitations under the License.
 namespace mlir {
 namespace TFL {
 namespace {
+#define GEN_PASS_DEF_POSTQUANTIZEPASS
+#include "tensorflow/compiler/mlir/lite/transforms/passes.h.inc"
+
 
 // Applies all the clean up steps after quantization.
-class PostQuantizePass : public FunctionPass<PostQuantizePass> {
+class PostQuantizePass : public impl::PostQuantizePassBase<PostQuantizePass> {
  public:
-  // Constructor used by the PassRegistration. This will remove the adaptor ops.
-  explicit PostQuantizePass() : emit_quant_adaptor_ops_(false) {}
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PostQuantizePass)
+
+  PostQuantizePass() = default;
+  PostQuantizePass(const PostQuantizePass&) {}
 
   // Constructor used by manually creating the pass.
   explicit PostQuantizePass(bool emit_quant_adaptor_ops)
       : emit_quant_adaptor_ops_(emit_quant_adaptor_ops) {}
 
-  void runOnFunction() override;
+  void runOnOperation() override;
 
  private:
   // Set this flag to true if the inputs and outputs are in floating point. The
@@ -116,9 +121,9 @@ void RemoveQuantizationAdaptorOps(FuncOp func) {
   func.setType(new_func_type);
 }
 
-void PostQuantizePass::runOnFunction() {
+void PostQuantizePass::runOnOperation() {
   if (!emit_quant_adaptor_ops_) {
-    RemoveQuantizationAdaptorOps(getFunction());
+    RemoveQuantizationAdaptorOps(getOperation());
   }
 }
 
@@ -130,8 +135,9 @@ std::unique_ptr<FunctionPassBase> CreatePostQuantizePass(
   return std::make_unique<PostQuantizePass>(emit_quant_adaptor_ops);
 }
 
-static PassRegistration<PostQuantizePass> pass(
-    "tfl-post-quantize", "Apply post quantization clean up after quantization");
+std::unique_ptr<FunctionPassBase> CreatePostQuantizePass() {
+  return CreatePostQuantizePass(true);
+}
 
 }  // namespace TFL
 }  // namespace mlir

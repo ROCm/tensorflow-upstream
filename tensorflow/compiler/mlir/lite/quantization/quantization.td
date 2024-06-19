@@ -91,8 +91,8 @@ class StrJoinInt<list<int> integers, string sep = ", "> :
 
 // The base class of a quantized type.
 class TFL_QuantizedType<string n, list<int> params, bit signed>
-  : Type<And<[CPred<"$_self.isa<mlir::quant::QuantizedType>()">,
-              CPred<"$_self.cast<mlir::quant::QuantizedType>()" #
+  : Type<And<[CPred<"$_self.isa<::mlir::quant::QuantizedType>()">,
+              CPred<"$_self.cast<::mlir::quant::QuantizedType>()" #
                     ".getStorageTypeIntegralWidth() == " # !head(params)>]>,
     "Q" # !if (signed, "I", "UI") # !head(params) # " type"> {
   string name = n;

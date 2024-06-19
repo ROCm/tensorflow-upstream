@@ -285,7 +285,8 @@ class IrEmitterUnnested : public IrEmitter,
       HloInstruction* hlo, const llvm_ir::IrArray::Index& index,
       const KernelCodegenInfo* kernel_info, llvm::Value* y_loc,
       llvm::Value* x_loc, int64 x_iter_num,
-      absl::Span<llvm::Value* const> param_shmem_buffers);
+      absl::Span<llvm::Value* const> param_shmem_buffers,
+      absl::Span<llvm::Type* const> param_shmem_types);
 
   // Emits code to process a tensor element in a tile for the given kLoop fusion
   // HLO containing parameters that are 0-2-1 transpose of its outputs.
@@ -293,7 +294,8 @@ class IrEmitterUnnested : public IrEmitter,
       HloInstruction* hlo, const llvm_ir::IrArray::Index& index,
       const KernelCodegenInfo* kernel_info, llvm::Value* y_loc,
       llvm::Value* x_loc, int64 x_iter_num,
-      absl::Span<llvm::Value* const> param_shmem_buffers);
+      absl::Span<llvm::Value* const> param_shmem_buffers,
+      absl::Span<llvm::Type* const> param_shmem_types);
 
   // Emits code to process a tensor element in a tile for the given input hlo
   // that is either a unnested kReduce or a kInput fusion.

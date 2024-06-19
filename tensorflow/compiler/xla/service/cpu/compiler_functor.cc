@@ -82,6 +82,7 @@ class FilteredPassManager : public llvm::legacy::PassManager {
 
 std::unique_ptr<llvm::MemoryBuffer> CompilerFunctor::operator()(
     llvm::Module& module) const {
+#if 0  
   FilteredPassManager module_passes(disable_expensive_passes_);
   llvm::legacy::FunctionPassManager function_passes(&module);
 
@@ -127,13 +128,90 @@ std::unique_ptr<llvm::MemoryBuffer> CompilerFunctor::operator()(
   bool fast_math_enabled = opts.UnsafeFPMath && opts.NoInfsFPMath &&
                            opts.NoNaNsFPMath && opts.NoSignedZerosFPMath;
   runtime::RewriteIRRuntimeFunctions(&module, fast_math_enabled);
+#else
+  VLOG(2) << "IR before optimizations";
+  XLA_VLOG_LINES(2, llvm_ir::DumpToString(&module));
 
+  if (pre_optimization_hook_) {
+    pre_optimization_hook_(module);
+  }
+
+  llvm::OptimizationLevel opt_level;
+  if (optimize_for_size_) {
+    opt_level = llvm::OptimizationLevel::Os;
+  } else {
+    switch (opt_level_) {
+      case 0:
+        opt_level = llvm::OptimizationLevel::O0;
+        break;
+      case 1:
+        opt_level = llvm::OptimizationLevel::O1;
+        break;
+      case 2:
+        opt_level = llvm::OptimizationLevel::O2;
+        break;
+      case 3:
+        opt_level = llvm::OptimizationLevel::O3;
+        break;
+    }
+  }
+
+  llvm::PipelineTuningOptions pto;
+  pto.LoopVectorization = !optimize_for_size_;
+  pto.SLPVectorization = !optimize_for_size_ && !disable_slp_vectorizer_;
+  pto.LoopUnrolling = false;
+
+  llvm::LoopAnalysisManager lam;
+  llvm::FunctionAnalysisManager fam;
+  llvm::CGSCCAnalysisManager cgam;
+  llvm::ModuleAnalysisManager mam;
+
+  llvm::PassInstrumentationCallbacks pic;
+  llvm::StandardInstrumentations si(module.getContext(), false);
+  si.registerCallbacks(pic, &mam);
+
+  llvm::PassBuilder pb(target_machine_, pto, {}, &pic);
+
+  // Add the appropriate TargetLibraryInfo.
+  llvm::Triple target_triple(target_machine_->getTargetTriple());
+  auto target_library_info_impl =
+      std::make_unique<llvm::TargetLibraryInfoImpl>(target_triple);
+  target_library_info_impl->addVectorizableFunctions(
+      VectorFunctionsForTargetLibraryInfoImpl());
+
+  fam.registerPass(
+      [&] { return llvm::TargetLibraryAnalysis(*target_library_info_impl); });
+
+  pb.registerModuleAnalyses(mam);
+  pb.registerCGSCCAnalyses(cgam);
+  pb.registerFunctionAnalyses(fam);
+  pb.registerLoopAnalyses(lam);
+  pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+  llvm::ModulePassManager pm;
+
+  if (dfsan_enabled_) {
+    pm.addPass(llvm::DataFlowSanitizerPass(dfsan_abi_list_files_));
+  }
+
+  if (opt_level == llvm::OptimizationLevel::O0) {
+    pm.addPass(pb.buildO0DefaultPipeline(opt_level));
+  } else {
+    pm.addPass(pb.buildPerModuleDefaultPipeline(opt_level));
+  }
+
+  CHECK(!llvm::verifyModule(module, &llvm::dbgs()));
+
+  pm.run(module, mam);
+
+  CHECK(!llvm::verifyModule(module, &llvm::dbgs()));
+
+  runtime::RewriteIRRuntimeFunctions(&module, fast_math_flags_);
+#endif
   // Buffer for holding machine code prior to constructing the ObjectFile.
   llvm::SmallVector<char, 0> stream_buffer;
   llvm::raw_svector_ostream ostream(stream_buffer);
-
   VLOG(2) << "IR after optimizations";
-  XLA_VLOG_LINES(2, llvm_ir::DumpModuleToString(module));
 
   if (post_optimization_hook_) {
     post_optimization_hook_(module);
@@ -193,6 +271,7 @@ static std::vector<llvm::VecDesc> VectorFunctionsForTargetLibraryInfoImpl() {
   return result;
 }
 
+#if 0
 void CompilerFunctor::AddTargetInfoPasses(
     llvm::legacy::PassManagerBase* passes) const {
   llvm::Triple target_triple(target_machine_->getTargetTriple());
@@ -234,6 +313,7 @@ void CompilerFunctor::AddOptimizationPasses(
   builder.populateFunctionPassManager(*function_passes);
   builder.populateModulePassManager(*module_passes);
 }
+#endif
 
 }  // namespace cpu
 }  // namespace xla

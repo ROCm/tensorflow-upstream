@@ -83,7 +83,7 @@ Status IrEmitterNested::CodegenNestedComputation() {
        ++arg_no) {
     int64 arg_size = argument_dereferenceable_bytes[arg_no];
     if (arg_size > 0) {
-      function->addDereferenceableAttr(arg_no + 1, arg_size);
+      function->addDereferenceableParamAttr(arg_no, arg_size);
     }
   }
 
@@ -116,16 +116,16 @@ Status IrEmitterNested::CodegenNestedComputation() {
     // TODO(cheshire) Duplication vs. EmitThreadLocalFunctionEpilogue
     const HloInstruction* root_instruction =
         nested_computation_.root_instruction();
-    llvm::Value* root_value = bindings_.GetBasePointer(*root_instruction);
+    std::pair<llvm::Value*, llvm::Type*> root_value = bindings_.GetBasePointer(*root_instruction);
     const Shape& return_shape = root_instruction->shape();
 
     // Second last argument is the out parameter.
     llvm::Argument* out_parameter = std::prev(function->arg_end(), 2);
 
     if (ShapeUtil::IsScalar(return_shape)) {
-      llvm::Value* ret_value = Load(root_value, "load_ret_value");
+      llvm::Value* ret_value = Load(root_value.first, "load_ret_value");
       Store(ret_value,
-            BitCast(out_parameter, root_value->getType(), "bitcast_ret_value"));
+            BitCast(out_parameter, root_value.second, "bitcast_ret_value"));
     } else {
       CHECK(return_shape.IsTuple());
       llvm::Type* tuple_type = llvm_ir::ShapeToIrType(return_shape, module_);
@@ -141,7 +141,7 @@ Status IrEmitterNested::CodegenNestedComputation() {
         llvm::Value* source =
             llvm_ir::EmitGetTupleElement(element_shape,
                                          /*index=*/i,
-                                         /*alignment=*/1, root_value, &b_);
+                                         /*alignment=*/1, root_value.first, &b_);
         Store(Load(source), destination);
       }
     }

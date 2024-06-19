@@ -411,11 +411,13 @@ llvm_ir::ElementGenerator GpuElementalIrEmitter::MakeElementGenerator(
                             operand_to_generator.at(operand)(input_index));
         TF_ASSIGN_OR_RETURN(
             llvm::Value * accum_value,
-            compute_nested_(*hlo->to_apply(), {Load(accum_ptr), input_value}));
+            compute_nested_(*hlo->to_apply(), {Load(
+                llvm::cast<llvm::AllocaInst>(accum_ptr)->getAllocatedType(),
+                accum_ptr), input_value}));
         Store(accum_value, accum_ptr);
 
         SetToFirstInsertPoint(loops.GetOuterLoopExitBasicBlock(), b_);
-        return Load(accum_ptr);
+        return Load(llvm::cast<llvm::AllocaInst>(accum_ptr)->getAllocatedType(), accum_ptr);
       };
     case HloOpcode::kReduce:
       // TODO(b/118332391): This should be supported.
@@ -457,11 +459,11 @@ llvm_ir::ElementGenerator GpuElementalIrEmitter::MakeElementGenerator(
         TF_ASSIGN_OR_RETURN(
             llvm::Value * accum_value,
             compute_nested_(*hlo->to_apply(),
-                            {b()->CreateLoad(accum_ptr->getAllocatedType(),
+                            {b()->CreateLoad(llvm::cast<llvm::AllocaInst>(accum_ptr)->getAllocatedType(),
                               accum_ptr), input_value}));
         b()->CreateStore(accum_value, accum_ptr);
         SetToFirstInsertPoint(loops.GetOuterLoopExitBasicBlock(), b());
-        return b()->CreateLoad(accum_ptr);
+        return b()->CreateLoad(llvm::cast<llvm::AllocaInst>(accum_ptr)->getAllocatedType(), accum_ptr);
       };
     default:
       return ElementalIrEmitter::MakeElementGenerator(hlo,

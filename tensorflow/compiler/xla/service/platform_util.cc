@@ -211,7 +211,8 @@ static bool IsDeviceSupported(se::StreamExecutor* executor) {
       }
     }
   } else if (executor->platform()->id() == se::rocm::kROCmPlatformId) {
-    int isa_version = 0;
+#if 0
+    std::string isa_version;
     if (description.rocm_amdgpu_isa_version(&isa_version)) {
       if (isa_version < kMinAMDGPUISAVersion) {
         LOG(INFO) << "StreamExecutor ROCM device ("
@@ -222,6 +223,7 @@ static bool IsDeviceSupported(se::StreamExecutor* executor) {
         return false;
       }
     }
+#endif
   }
   return true;
 }

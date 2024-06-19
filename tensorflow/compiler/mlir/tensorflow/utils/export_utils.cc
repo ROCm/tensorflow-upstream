@@ -60,7 +60,7 @@ Status ConvertLocation(mlir::Location inst_loc,
                        NodeDef::ExperimentalDebugInfo* debug_info) {
   if (auto call_site = inst_loc.dyn_cast<mlir::CallSiteLoc>()) {
     if (auto name_loc = call_site.getCallee().dyn_cast<mlir::NameLoc>()) {
-      debug_info->add_original_node_names(name_loc.getName().c_str());
+      debug_info->add_original_node_names(name_loc.getName().str());
     }
   } else if (auto fused = inst_loc.dyn_cast<mlir::FusedLoc>()) {
     for (auto loc : fused.getLocations()) {
@@ -117,7 +117,7 @@ Status ConvertAttribute(const mlir::UnitAttr& attr, AttrValue* value) {
   return Status::OK();
 }
 
-Status ConvertAttribute(const mlir::SymbolRefAttr& attr, AttrValue* value) {
+Status ConvertAttribute(const mlir::FlatSymbolRefAttr& attr, AttrValue* value) {
   value->mutable_func()->set_name(attr.getValue().str());
   return Status::OK();
 }
@@ -151,7 +151,7 @@ Status ConvertAttribute(const mlir::ArrayAttr& attr, AttrValue* value) {
       TensorProto tensor;
       TF_RETURN_IF_ERROR(ConvertToTensorProto(attr, &tensor));
       *list->add_tensor() = tensor;
-    } else if (auto attr = a.dyn_cast<mlir::SymbolRefAttr>()) {
+    } else if (auto attr = a.dyn_cast<mlir::FlatSymbolRefAttr>()) {
       AttrValue attrVal;
       TF_RETURN_IF_ERROR(ConvertAttribute(attr, &attrVal));
       *list->add_func() = attrVal.func();
@@ -230,9 +230,10 @@ Status ConvertAttributes(const llvm::ArrayRef<mlir::NamedAttribute> attrs,
                          const absl::flat_hash_set<string>& attrs_to_ignore,
                          AttrValueMap* values) {
   AttrValueMap func_call_attrs;
+  bool remove_ref_type = false;
   for (const mlir::NamedAttribute& named_attr : attrs) {
-    auto name_strref = named_attr.first.str();
-    auto attr = named_attr.second;
+    auto name_strref = named_attr.getName().str();
+    auto attr = named_attr.getValue();
     absl::string_view name(name_strref.data(), name_strref.size());
     if (name == "name" || name == "device" || attrs_to_ignore.contains(name)) {
       // The name, device spec of a TF op or function are not stored as
@@ -246,46 +247,43 @@ Status ConvertAttributes(const llvm::ArrayRef<mlir::NamedAttribute> attrs,
       name = mangling_util::DemangleAttributeName(name);
     }
     AttrValue value;
-    switch (attr.getKind()) {
-      case mlir::StandardAttributes::SymbolRef: {
-        auto func_attr = attr.cast<mlir::SymbolRefAttr>();
-        value.mutable_func()->set_name(func_attr.getValue().str());
-        func_call_attrs[string(name)] = value;
-        continue;
-      }
-      case mlir::StandardAttributes::Bool:
-        TF_RETURN_IF_ERROR(
-            ConvertAttribute(attr.cast<mlir::BoolAttr>(), &value));
-        break;
-      case mlir::StandardAttributes::Integer:
-        TF_RETURN_IF_ERROR(
-            ConvertAttribute(attr.cast<mlir::IntegerAttr>(), &value));
-        break;
-      case mlir::StandardAttributes::Float:
-        TF_RETURN_IF_ERROR(
-            ConvertAttribute(attr.cast<mlir::FloatAttr>(), &value));
-        break;
-      case mlir::StandardAttributes::String:
-        TF_RETURN_IF_ERROR(
-            ConvertAttribute(attr.cast<mlir::StringAttr>(), &value));
-        break;
-      case mlir::StandardAttributes::Array:
-        TF_RETURN_IF_ERROR(
-            ConvertAttribute(attr.cast<mlir::ArrayAttr>(), &value));
-        break;
-      case mlir::StandardAttributes::DenseElements:
-      case mlir::StandardAttributes::OpaqueElements:
-        TF_RETURN_IF_ERROR(
-            ConvertAttribute(attr.cast<mlir::ElementsAttr>(), &value));
-        break;
-      case mlir::StandardAttributes::Unit:
-        TF_RETURN_IF_ERROR(
-            ConvertAttribute(attr.cast<mlir::UnitAttr>(), &value));
-        break;
-      // AffineMap and Type kinds are not implemented.
-      default:
-        return errors::Unimplemented("Unhandled attribute kind");
+    if (auto symbol_ref = mlir::dyn_cast<mlir::SymbolRefAttr>(attr)) {
+      TF_RETURN_IF_ERROR(ConvertAttribute(
+          mlir::cast<mlir::FlatSymbolRefAttr>(symbol_ref), &value));
+      func_call_attrs[string(name)] = std::move(value);
+      continue;
     }
+#if 0    
+    if (auto func_attr = mlir::dyn_cast<mlir::TF::FuncAttr>(attr)) {
+      TF_RETURN_IF_ERROR(ConvertAttribute(func_attr, remove_ref_type, &value));
+      func_call_attrs[string(name)] = std::move(value);
+      continue;
+    }
+#endif    
+    if (mlir::isa<mlir::AffineMapAttr>(attr)) {
+      // AffineMapAttr is not implemented.
+      return errors::Unimplemented("AffineMap attribute (needed for '",
+                                   name_strref, "') unimplemented");
+    }
+    TF_RETURN_IF_ERROR(
+        llvm::TypeSwitch<mlir::Attribute, Status>(attr)
+            .Case<mlir::BoolAttr, mlir::IntegerAttr, mlir::FloatAttr,
+                  mlir::StringAttr, mlir::ElementsAttr, mlir::UnitAttr
+                  // FIXME
+                  //, mlir::TF::ShapeAttr, mlir::TF::PlaceholderAttr
+                  >(
+                [&](auto derived_attr) {
+                  return ConvertAttribute(derived_attr, &value);
+                })
+            .Case<mlir::ArrayAttr, mlir::TypeAttr>([&](auto derived_attr) {
+              return ConvertAttribute(derived_attr, remove_ref_type, &value);
+            })
+            .Default([&](mlir::Attribute) {
+              return errors::Unimplemented(
+                  "Unhandled attribute kind for attribute '", name_strref,
+                  '\'');
+            }));
+
     // According to the NodeDef proto definition, an attribute name from the
     // input TensorFlow GraphDef shouldn't contain '.'. If it does appear in
     // the attribute from MLIR, it is treated as an attribute from function
@@ -295,13 +293,14 @@ Status ConvertAttributes(const llvm::ArrayRef<mlir::NamedAttribute> attrs,
     TF_RET_CHECK(name_tokens.size() <= 2);
     auto it = func_call_attrs.find(name_tokens[0]);
     if (it == func_call_attrs.end()) {
-      (*values)[string(name)] = value;
+      (*values)[string(name)] = std::move(value);
     } else {
-      (*it->second.mutable_func()->mutable_attr())[name_tokens[1]] = value;
+      (*it->second.mutable_func()->mutable_attr())[name_tokens[1]] =
+          std::move(value);
     }
   }
-  for (const auto& it : func_call_attrs) {
-    (*values)[it.first] = it.second;
+  for (auto& it : func_call_attrs) {
+    (*values)[it.first] = std::move(it.second);
   }
   return Status::OK();
 }

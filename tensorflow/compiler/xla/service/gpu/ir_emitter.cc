@@ -56,7 +56,7 @@ static llvm::Value* MayAddrSpaceCastArg(llvm::Value* arg, llvm::IRBuilder<>& bui
   llvm::Type* arg_type = arg->getType();
   CHECK_EQ(true, arg_type->isPointerTy());
   if (arg_type->getPointerAddressSpace() != 0) {
-    llvm::Type* generic_arg_type = arg_type->getPointerElementType()->getPointerTo(0);
+    llvm::Type* generic_arg_type = llvm::PointerType::get(llvm::cast<llvm::PointerType>(arg_type)->getContext(), 0);
     llvm::Value* addrspacecast_arg = builder.CreateAddrSpaceCast(arg, generic_arg_type);
     return addrspacecast_arg;
   }
@@ -202,12 +202,14 @@ bool IrEmitter::MaybeEmitDirectAtomicOperation(
     llvm::Value* source_address) {
   CHECK_EQ(2, computation.num_parameters());
 
+  auto* module = b_.GetInsertBlock()->getModule();
   HloOpcode root_opcode = computation.root_instruction()->opcode();
   PrimitiveType element_type =
       computation.root_instruction()->shape().element_type();
   bool is_atomic_integral = element_type == S32 || element_type == U32 ||
                             element_type == S64 || element_type == U64;
-  llvm::Value* source = Load(source_address, "source");
+  llvm::Value* source = Load(llvm_ir::PrimitiveTypeToIrType(element_type, module),
+    source_address, "source");
 
   // Just passing along RHS -> atomic store.
   if (computation.instruction_count() == 2 &&
@@ -218,7 +220,7 @@ bool IrEmitter::MaybeEmitDirectAtomicOperation(
     store->setAtomic(llvm::AtomicOrdering::Unordered);
     // Derive a minimum alignment from the type. The optimizer can increase it
     // later.
-    store->setAlignment(ShapeUtil::ByteSizeOfPrimitiveType(element_type));
+    store->setAlignment(llvm::Align(ShapeUtil::ByteSizeOfPrimitiveType(element_type)));
     return true;
   }
 
@@ -329,8 +331,12 @@ Status IrEmitter::EmitAtomicOperationUsingCAS(const HloComputation& computation,
       llvm::dyn_cast<llvm::PointerType>(output_address->getType());
   CHECK_NE(output_address_type, nullptr);
 
+  llvm::GetElementPtrInst* gep_inst =
+      llvm::dyn_cast<llvm::GetElementPtrInst>(output_address);
+  CHECK_NE(gep_inst, nullptr);
   // element_type is the data type for the binary operation.
-  llvm::Type* element_type = output_address_type->getPointerElementType();
+  // FIXME: Unsure
+  llvm::Type* element_type = gep_inst->getResultElementType();
   int element_size = llvm_ir::GetSizeInBits(element_type);
   llvm::Type* element_address_type = element_type->getPointerTo();
 
@@ -385,7 +391,8 @@ Status IrEmitter::EmitAtomicOperationUsingCAS(const HloComputation& computation,
 
   // Use the value from the memory that atomicCAS operates on to initialize
   // cas_old_output.
-  llvm::Value* cas_old_output = Load(atomic_memory_address, "cas_old_output");
+  llvm::Value* cas_old_output = Load(atomic_address_type, 
+    atomic_memory_address, "cas_old_output");
   Store(cas_old_output, cas_old_output_address);
 
   llvm::BasicBlock* loop_exit_bb = loop_preheader_bb->splitBasicBlock(
@@ -413,6 +420,7 @@ Status IrEmitter::EmitAtomicOperationUsingCAS(const HloComputation& computation,
   //                                       cas_new_output);
   llvm::Value* ret_value =
       AtomicCmpXchg(atomic_memory_address, cas_old_output, cas_new_output,
+                    llvm::MaybeAlign(),
                     llvm::AtomicOrdering::SequentiallyConsistent,
                     llvm::AtomicOrdering::SequentiallyConsistent);
 
@@ -612,10 +620,10 @@ Status IrEmitter::HandleDot(HloInstruction* dot) {
       &*reduction_loop->GetBodyBasicBlock()->getFirstInsertionPt());
   llvm_ir::IrArray::Index lhs_index(lhs_multi_index, lhs_array.GetShape(),
                                     b_.getInt64Ty());
-  llvm::Value* lhs_element = lhs_array.EmitReadArrayElement(lhs_index, &b_);
+  llvm::Value* lhs_element = lhs_array.EmitReadArrayElement(lhs_index, &b_, lhs_instruction->name());
   llvm_ir::IrArray::Index rhs_index(rhs_multi_index, rhs_array.GetShape(),
                                     b_.getInt64Ty());
-  llvm::Value* rhs_element = rhs_array.EmitReadArrayElement(rhs_index, &b_);
+  llvm::Value* rhs_element = rhs_array.EmitReadArrayElement(rhs_index, &b_, rhs_instruction->name());
   llvm::Value* accum = Load(accum_address);
   llvm::Value* updated_accum;
   if (ShapeUtil::ElementIsComplex(lhs_shape)) {
@@ -777,7 +785,8 @@ Status IrEmitter::HandleReduce(HloInstruction* instr) {
           llvm::Type* return_value_buffer_type =
               llvm_ir::ShapeToIrType(return_shape, module_);
           ret_argument = Alloca(return_value_buffer_type);
-          llvm_ir::IrArray tuple_array(ret_argument, return_shape);
+          llvm_ir::IrArray tuple_array(return_value_buffer_type, 
+            ret_argument, return_shape);
           EmitTuple(tuple_array, accumulator_addrs, &b_);
         }
 

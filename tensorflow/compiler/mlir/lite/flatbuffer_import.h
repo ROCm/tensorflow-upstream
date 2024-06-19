@@ -22,6 +22,10 @@ limitations under the License.
 #include "mlir/IR/Location.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 
+namespace mlir {
+    using OwningModuleRef =  OwningOpRef<Operation*>;
+};
+
 namespace tflite {
 // Converts a TFLite flatbuffer stored in `buffer` to a MLIR module
 // The buffer must live for the duration of the function call,

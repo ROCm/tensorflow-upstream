@@ -938,7 +938,7 @@ GpuExecutor::CreateDeviceDescription(int device_ordinal) {
   builder.set_device_address_bits(64);
 
   builder.set_device_vendor("Advanced Micro Devices, Inc");
-  builder.set_rocm_amdgpu_isa_version(version);
+  builder.set_rocm_amdgpu_isa_version(prop.gcnArchName);
   builder.set_shared_memory_per_core(
       GpuDriver::GetMaxSharedMemoryPerCore(device).ValueOrDie());
   builder.set_shared_memory_per_block(

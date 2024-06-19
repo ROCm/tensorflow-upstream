@@ -24,7 +24,7 @@ include "mlir/Dialect/Func/IR/FuncOps.td"
 include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.td"
 
 def F32ElementsAttr : ElementsAttrBase<
-  CPred<"$_self.cast<ElementsAttr>().getType().getElementType().isF32()">, "float constant tensor">;
+  CPred<"$_self.cast<ElementsAttr>().getShapedType().getElementType().isF32()">, "float constant tensor">;
 
 // Extract the ith int element from an ArrayAttr $0 as an 32-bit IntegerAttr
 // with builder.
@@ -64,7 +64,7 @@ def : Pat<(TF_ConstOp ElementsAttr:$value), (TFL_ConstOp $value)>;
 //===----------------------------------------------------------------------===//
 // Unary ops patterns.
 //===----------------------------------------------------------------------===//
-def IsDataFormatNHWC : ConstantAttr<TF_ConvnetDataFormatAttr, "NHWC">;
+def IsDataFormatNHWC : ConstantAttr<TF_ConvnetDataFormatAttr, "\"NHWC\"">;
 def IsIntList1XY1 : AttrConstraint<CPred<"TFIntListIs1XY1($_self)">>;
 
 def : Pat<(TF_AbsOp $arg), (TFL_AbsOp $arg)>;
@@ -131,8 +131,8 @@ def : Pat<(TF_RangeOp $start, $limit, $delta), (TFL_RangeOp $start, $limit, $del
 def : Pat<(TF_Relu6Op $arg), (TFL_Relu6Op $arg)>;
 def : Pat<(TF_ReluOp $arg), (TFL_ReluOp $arg)>;
 // The second operand is captured in the type for this transform.
-def : Pat<(TF_ReshapeOp:$res AnyStaticShapeTensor:$arg, $ignored),
-          (TFL_ReshapeOp $arg), [(AnyStaticShapeTensor $res)]>;
+//def : Pat<(TF_ReshapeOp:$res AnyStaticShapeTensor:$arg, $ignored),
+//          (TFL_ReshapeOp $arg), [(AnyStaticShapeTensor $res)]>;
 def : Pat<(TF_ReverseSequenceOp $input, $seq_lengths, $seq_dim, $batch_dim),
           (TFL_ReverseSequenceOp $input, $seq_lengths,
            (convertIntAttrTo32Bit $seq_dim),

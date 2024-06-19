@@ -42,6 +42,9 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/quantization/quantization_utils.h"
 #include "tensorflow/core/platform/logging.h"
 
+using ::mlir::func::FuncOp;
+using ::mlir::arith::ConstantOp;
+
 namespace mlir {
 namespace TFL {
 namespace {
@@ -126,8 +129,8 @@ class QuantizationDriver {
   // bias is used immediately by the user. This assumption is always correct
   // after constant folding.
   bool UsedAsBias(ConstantOp cst) {
-    Value *value = cst.getResult();
-    for (auto &use : value->getUses()) {
+    Value value = cst.getResult();
+    for (auto &use : value.getUses()) {
       auto biases = GetQuantSpec(use.getOwner())->biases_params;
       if (biases.find(use.getOperandNumber()) != biases.end()) return true;
     }
@@ -143,14 +146,14 @@ class QuantizationDriver {
 
   // Adds all the users of index-th result of op to the work list.
   void AddUserToList(Operation *op, int index) {
-    for (auto *user : op->getResult(index)->getUsers()) {
+    for (auto *user : op->getResult(index).getUsers()) {
       work_list_.push_back(user);
     }
   }
 
   // Adds the defining op of index-th operand of op to the work list.
   void AddOperandToList(Operation *op, int index) {
-    if (auto *inst = op->getOperand(index)->getDefiningOp()) {
+    if (auto *inst = op->getOperand(index).getDefiningOp()) {
       work_list_.push_back(inst);
     }
   }
@@ -232,12 +235,12 @@ class QuantizationDriver {
   // `as_result` is true or index-th operand if `as_result` is false. The state
   // is immutable if the type is a quantized type. Returns the index of this
   // new state in the state vector.
-  int InitializeState(Operation *op, int index, Value *val, bool as_result);
+  int InitializeState(Operation *op, int index, Value val, bool as_result);
 
   // Sets the state of the index-th operand of the op. If this operand is
   // cached, uses the cached result without creating new entry in the state
   // vector. Otherwise, allocate a new entry in the state vector.
-  void InitializeOperandState(Operation *op, int index, Value *in,
+  void InitializeOperandState(Operation *op, int index, Value in,
                               llvm::DenseMap<Value *, int> *cache,
                               bool is_argument) {
     auto cached = cache->insert({in, 0});
@@ -256,7 +259,7 @@ class QuantizationDriver {
   // Sets the state of the index-th result of the op. If this result is cached,
   // uses the cached result without creating new entry in the state vector.
   // Otherwise, allocate a new entry in the state vector.
-  void InitializeResultState(Operation *op, int index, Value *res,
+  void InitializeResultState(Operation *op, int index, Value res,
                              llvm::DenseMap<Value *, int> *cache) {
     auto cached = cache->insert({res, 0});
     if (!cached.second) {
@@ -308,10 +311,10 @@ bool QuantizationDriver::IsQuantized(Operation *op) {
   return true;
 }
 
-int QuantizationDriver::InitializeState(Operation *op, int index, Value *val,
+int QuantizationDriver::InitializeState(Operation *op, int index, Value val,
                                         bool as_result) {
   QuantParams params =
-      quant::QuantizedType::getQuantizedElementType(val->getType());
+      quant::QuantizedType::getQuantizedElementType(val.getType());
   bool immutable = !EmptyParams(params);
   int next_state_index = states_.size();
   states_.push_back({params, immutable});
@@ -325,7 +328,7 @@ int QuantizationDriver::InitializeState(Operation *op, int index, Value *val,
 
 bool QuantizationDriver::SetConstantResultParams(Operation *op) {
   ElementsAttr attr;
-  Value *res = op->getResult(0);
+  Value res = op->getResult(0);
   if (!matchPattern(res, m_Constant(&attr))) {
     return false;
   }
@@ -394,8 +397,8 @@ bool QuantizationDriver::SetOperandParams(Operation *op, int index,
 void QuantizationDriver::QuantizeOpResult(Operation *op, int index,
                                           QuantParams params) {
   builder_.setInsertionPoint(op->getBlock(), ++Block::iterator(op));
-  Value *original_result = op->getResult(index);
-  QuantizeValue(original_result, params, op->getLoc());
+  Value original_result = op->getResult(index);
+  QuantizeValue(&original_result, params, op->getLoc());
 }
 
 void QuantizationDriver::QuantizeArg(BlockArgument *arg, QuantParams params) {
@@ -412,9 +415,9 @@ void QuantizationDriver::QuantizeValue(Value *value, QuantParams params,
 
   TypeAttr type_attr = builder_.getTypeAttr(new_type);
   auto quantize =
-      builder_.create<TFL::QuantizeOp>(loc, new_type, value, type_attr);
+      builder_.create<TFL::QuantizeOp>(loc, new_type, *value, type_attr);
   auto dequantize = builder_.create<TFL::DequantizeOp>(loc, expressed_type,
-                                                       quantize.output());
+                                                       quantize.getOutput());
   // `original_result` has a use to `quantize`, so this will replace that use
   // by the result of `dequantize`. Remember to reset that use afterwards
   value->replaceAllUsesWith(dequantize);
@@ -425,28 +428,28 @@ void QuantizationDriver::RequantizeOpResult(Operation *op, int index,
                                             RequantizeState *state) {
   if (state->pos == RequantizeState::NO_REQUANTIZE) return;
   builder_.setInsertionPoint(op->getBlock(), ++Block::iterator(op));
-  Value *value = op->getResult(index);
+  Value value = op->getResult(index);
   if (state->pos == RequantizeState::ON_OUTPUT) {
-    Operation *op = value->getUses().begin().getUser();  // `quantize` op
+    Operation *op = value.getUses().begin().getUser();  // `quantize` op
     // The requantize op is inserted between `quantize` and `dequantize` ops.
     value = op->getResult(0);
     builder_.setInsertionPoint(op->getBlock(), ++Block::iterator(op));
   }
-  RequantizeValue(value, state, op->getLoc());
+  RequantizeValue(&value, state, op->getLoc());
 }
 
 void QuantizationDriver::RequantizeArg(BlockArgument *arg,
                                        RequantizeState *state) {
-  Value *value = arg;
+  Value value = *arg;
   builder_.setInsertionPointToStart(arg->getOwner());
-  if (value->hasOneUse()) {
-    auto user = value->use_begin().getUser();
+  if (value.hasOneUse()) {
+    auto user = value.use_begin().getUser();
     if (auto q = llvm::dyn_cast<TFL::QuantizeOp>(user)) {
-      value = q.output();
+      value = q.getOutput();
       builder_.setInsertionPoint(arg->getOwner(), ++Block::iterator(user));
     }
   }
-  RequantizeValue(value, state, builder_.getUnknownLoc());
+  RequantizeValue(&value, state, builder_.getUnknownLoc());
 }
 
 void QuantizationDriver::RequantizeValue(Value *value, RequantizeState *state,
@@ -471,9 +474,9 @@ void QuantizationDriver::RequantizeValue(Value *value, RequantizeState *state,
 
   TypeAttr type_attr = builder_.getTypeAttr(new_type);
   auto requantize_op =
-      builder_.create<TFL::QuantizeOp>(loc, new_type, value, type_attr);
+      builder_.create<TFL::QuantizeOp>(loc, new_type, *value, type_attr);
   value->replaceAllUsesWith(requantize_op);
-  requantize_op.getOperation()->replaceUsesOfWith(requantize_op, value);
+  requantize_op.getOperation()->replaceUsesOfWith(requantize_op, *value);
 }
 
 // A heuristic to get quantization parameters satisfies the same scale
@@ -557,9 +560,9 @@ void QuantizationDriver::Initialize() {
     work_list_.push_back(op);
 
     for (int i = 0, e = op->getNumOperands(); i != e; ++i) {
-      auto *operand = op->getOperand(i);
+      auto operand = op->getOperand(i);
       bool is_argument = true;
-      if (auto *inst = operand->getDefiningOp()) {
+      if (auto *inst = operand.getDefiningOp()) {
         // If the operand comes from a tfl.dequantize op, we use the quantized
         // input of this tfl.dequantize op to set the state.
         if (auto dq = llvm::dyn_cast<TFL::DequantizeOp>(inst)) {
@@ -571,12 +574,12 @@ void QuantizationDriver::Initialize() {
     }
 
     for (int res = 0, e = op->getNumResults(); res != e; ++res) {
-      auto *result = op->getResult(res);
+      auto result = op->getResult(res);
       // If the result has been quantized, it should only be used by a
       // tfl.quantize op. For this case, we uses the quantized result to create
       // the state and mark it immutable.
-      if (result->hasOneUse()) {
-        auto user = result->use_begin().getUser();
+      if (result.hasOneUse()) {
+        auto user = result.use_begin().getUser();
         if (auto q = llvm::dyn_cast<TFL::QuantizeOp>(user)) {
           result = q.output();
         }
@@ -698,7 +701,7 @@ void QuantizationDriver::Run() {
 }
 
 void ApplyQuantizationParamsPropagation(
-    mlir::FuncOp func, bool is_signed, OpQuantSpecGetter op_quant_spec_getter) {
+    mlir::func::FuncOp func, bool is_signed, OpQuantSpecGetter op_quant_spec_getter) {
   QuantizationDriver(func, is_signed, op_quant_spec_getter).Run();
 }
 

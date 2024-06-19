@@ -169,7 +169,8 @@ void IrFunction::Initialize(const string& function_name,
     if (&argument == retval) {
       continue;
     }
-    function_->addAttribute(argument.getArgNo() + 1, llvm::Attribute::NoAlias);
+    //function_->addAttribute(argument.getArgNo() + 1, llvm::Attribute::NoAlias);
+    function_->addParamAttr(argument.getArgNo(), llvm::Attribute::NoAlias);
   }
 
   b_->SetInsertPoint(llvm::BasicBlock::Create(
@@ -181,9 +182,11 @@ void IrFunction::Initialize(const string& function_name,
 llvm::Value* IrFunction::GetDynamicLoopBound(const int64 offset) {
   CHECK_GT(num_dynamic_loop_bounds_, 0);
   CHECK_LT(offset, num_dynamic_loop_bounds_ * 2);
-  string name = absl::StrCat("dynamic_loop_bound_", offset);
-  return b_->CreateLoad(b_->CreateGEP(CHECK_NOTNULL(dynamic_loop_bounds_arg_),
-                                      b_->getInt64(offset), name));
+  llvm::Type* int64_ty = b_->getInt64Ty();
+  auto gep = b_->CreateGEP(int64_ty, CHECK_NOTNULL(dynamic_loop_bounds_arg_),
+                           b_->getInt64(offset));
+  return b_->CreateLoad(int64_ty, gep,
+                        "dynamic_loop_bound_" + llvm::Twine(offset));
 }
 
 // Emits code to allocate an array of parameter address pointers, and store
@@ -210,7 +213,7 @@ std::vector<llvm::Value*> GetArrayFunctionCallArguments(
           parameter_addresses[i], b->getInt8PtrTy(),
           absl::StrCat(name, "_parameter_", i, "_address_as_i8ptr"));
       llvm::Value* slot_in_param_addresses =
-          b->CreateInBoundsGEP(parameter_addresses_buffer, {b->getInt64(i)});
+          b->CreateInBoundsGEP(b->getInt8PtrTy(), parameter_addresses_buffer, {b->getInt64(i)});
       b->CreateStore(parameter_as_i8ptr, slot_in_param_addresses);
     }
   }
