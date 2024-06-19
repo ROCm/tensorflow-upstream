@@ -18,6 +18,7 @@ limitations under the License.
 #include <ctype.h>
 #include <algorithm>
 #include <vector>
+#include <cstring>
 #include "tensorflow/core/lib/strings/numbers.h"
 #include "tensorflow/core/lib/strings/stringprintf.h"
 #include "tensorflow/core/platform/logging.h"

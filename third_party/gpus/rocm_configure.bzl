@@ -193,6 +193,9 @@ def _rocm_include_path(repository_ctx, rocm_config):
     # Add MIOpen headers
     inc_dirs.append("/opt/rocm/include/miopen")
 
+    # Add hipcub headers
+    inc_dirs.append("/opt/rocm/include/hipcub")
+
     # Add RCCL headers
     inc_dirs.append("/opt/rocm/rccl/include")
 
@@ -733,6 +736,12 @@ def _create_local_rocm_repository(repository_ctx):
         "rocm/include/hip",
         "hip-include",
     ))
+    genrules.append(_symlink_genrule_for_dir(
+        repository_ctx,
+        rocm_include_path + "/hipcub",
+        "rocm/include/hipcub",
+        "hipcub-include",
+    ))
 
     rocm_libs = _find_libs(repository_ctx, rocm_config)
     rocm_lib_src = []
@@ -784,6 +793,7 @@ def _create_local_rocm_repository(repository_ctx):
                                 '":rocrand-include",\n' +
                                 '":miopen-include",\n' +
                                 '":hip-include",\n' +
+                                '":hipcub-include",\n' +
                                 '":rccl-include",'),
         },
     )

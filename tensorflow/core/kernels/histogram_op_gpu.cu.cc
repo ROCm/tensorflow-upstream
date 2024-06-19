@@ -20,8 +20,6 @@ limitations under the License.
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #if GOOGLE_CUDA
 #include "third_party/cub/device/device_histogram.cuh"
-#elif TENSORFLOW_USE_ROCM
-#include "external/rocprim_archive/hipcub/include/hipcub/hipcub.hpp"
 #endif
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
@@ -35,6 +33,8 @@ limitations under the License.
 #if GOOGLE_CUDA
 namespace gpuprim = ::cub;
 #elif TENSORFLOW_USE_ROCM
+#include "rocm/include/hipcub/hipcub.hpp"
+#include "rocm/rocm_config.h"
 namespace gpuprim = ::hipcub;
 #endif
 
