@@ -605,13 +605,9 @@ StatusOr<std::vector<uint8>> EmitModuleToHsaco(
   return hsaco;
 }
 
-// Links ROCm-Device-Libs into the given module if the module needs it.
+// Links ROCm-Device-Libs into the given module.
 Status LinkROCDLIfNecessary(llvm::Module* module, int amdgpu_version,
                             const string& rocdl_dir_path, const string& ir_path, const string& linked_ir_path, const string& optimized_ir_path) {
-  if (!CouldNeedDeviceBitcode(*module)) {
-    return Status::OK();
-  }
-
   return LinkWithBitcodeVector(module,
                                GetROCDLPaths(amdgpu_version, rocdl_dir_path), ir_path, linked_ir_path, optimized_ir_path);
 }
