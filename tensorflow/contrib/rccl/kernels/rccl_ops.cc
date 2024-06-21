@@ -64,13 +64,13 @@ class RcclReduceOpBase : public RcclAsyncOpBase {
     string reduction;
     OP_REQUIRES_OK(c, c->GetAttr("reduction", &reduction));
     if (reduction == "min") {
-      reduction_op_ = rcclMin;
+      reduction_op_ = ncclMin;
     } else if (reduction == "max") {
-      reduction_op_ = rcclMax;
+      reduction_op_ = ncclMax;
     } else if (reduction == "sum") {
-      reduction_op_ = rcclSum;
+      reduction_op_ = ncclSum;
     } else if (reduction == "prod") {
-      reduction_op_ = rcclProd;
+      reduction_op_ = ncclProd;
     } else {
       OP_REQUIRES_OK(c,
                      errors::InvalidArgument("Invalid reduction: ", reduction));
