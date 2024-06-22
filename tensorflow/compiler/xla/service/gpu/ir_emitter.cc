@@ -722,7 +722,9 @@ Status IrEmitter::HandleReduce(HloInstruction* instr) {
           PrimitiveType accumulator_type = element_shape.element_type();
           llvm::Type* accumulator_llvm_type =
               llvm_ir::PrimitiveTypeToIrType(accumulator_type, module_);
-          llvm::AllocaInst* accumulator_addr = Alloca(accumulator_llvm_type);
+          llvm::AllocaInst* accumulator_addr = 
+              llvm_ir::EmitAllocaAtFunctionEntry(accumulator_llvm_type,
+                "accumulator", &b_);
           Store(Load(GetBasePointer(*init_value)), accumulator_addr);
           accumulator_addrs.push_back(accumulator_addr);
           accumulator_types.push_back(accumulator_llvm_type);
@@ -776,7 +778,8 @@ Status IrEmitter::HandleReduce(HloInstruction* instr) {
 
           llvm::Type* return_value_buffer_type =
               llvm_ir::ShapeToIrType(return_shape, module_);
-          ret_argument = Alloca(return_value_buffer_type);
+          ret_argument = llvm_ir::EmitAllocaAtFunctionEntry(
+              return_value_buffer_type, "ret_argument", &b_);
           llvm_ir::IrArray tuple_array(ret_argument, return_shape);
           EmitTuple(tuple_array, accumulator_addrs, &b_);
         }
