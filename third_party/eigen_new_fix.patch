@@ -10,3 +10,13 @@ diff -Naur eigen-upstream-14efab92496da81f91dd04d23f1fb67162732df3/Eigen/Core ei
  
    #define EIGEN_VECTORIZE_GPU
    #include <hip/hip_vector_types.h>
+--- eigen-upstream-14efab92496da81f91dd04d23f1fb67162732df3/Eigen/src/Core/arch/GPU/PacketMathHalf.h    2018-09-20 16:00:52.000000000 +0000
++++ eigen-upstream-b/Eigen/src/Core/arch/GPU/PacketMathHalf.h   2024-06-24 19:46:03.529379456 +0000
+@@ -16,7 +16,7 @@
+
+ // Most of the following operations require arch >= 3.0
+ #if (defined(EIGEN_HAS_CUDA_FP16) && defined(EIGEN_CUDACC) && defined(EIGEN_CUDA_ARCH) && EIGEN_CUDA_ARCH >= 300) || \
+-  (defined(EIGEN_HAS_HIP_FP16) && defined(EIGEN_HIPCC) && defined(EIGEN_HIP_DEVICE_COMPILE))
++  (defined(EIGEN_HAS_HIP_FP16) && defined(EIGEN_HIPCC))
+
+ template<> struct is_arithmetic<half2> { enum { value = true }; };
