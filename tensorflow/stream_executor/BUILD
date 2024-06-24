@@ -127,7 +127,7 @@ cc_library(
     ] + if_rocm_is_configured([
         "//tensorflow/core:rocm",
         "@local_config_rocm//rocm:hiprand",
-        "@local_config_rocm//rocm:rocfft",
+        #"@local_config_rocm//rocm:rocfft",
         "@local_config_rocm//rocm:rocblas",
         "@local_config_rocm//rocm:miopen",
     ]),

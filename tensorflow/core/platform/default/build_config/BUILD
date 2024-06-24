@@ -99,11 +99,6 @@ cc_library(
 )
 
 cc_library(
-    name = "rocfft_plugin",
-    srcs = [],
-)
-
-cc_library(
     name = "miopen_plugin",
     srcs = [],
 )

@@ -2884,7 +2884,7 @@ cc_library(
         ":compare_and_bitpack_op",
         ":cross_op",
         ":cwise_op",
-        ":fft_ops",
+        #":fft_ops",
         ":histogram_op",
         ":matmul_op",
         ":population_count_op",
@@ -2969,15 +2969,15 @@ tf_kernel_library(
     deps = MATH_DEPS,
 )
 
-tf_kernel_library(
-    name = "fft_ops",
-    prefix = "fft_ops",
-    deps = MATH_DEPS + [
-        "//tensorflow/core:spectral_ops_op_lib",
-    ] + if_cuda([
-        "//tensorflow/core/platform/default/build_config:cufft_plugin",
-    ]),
-)
+#tf_kernel_library(
+#    name = "fft_ops",
+#    prefix = "fft_ops",
+#    deps = MATH_DEPS + [
+#        "//tensorflow/core:spectral_ops_op_lib",
+#    ] + if_cuda([
+#        "//tensorflow/core/platform/default/build_config:cufft_plugin",
+#    ]),
+#)
 
 tf_kernel_library(
     name = "matmul_op",
