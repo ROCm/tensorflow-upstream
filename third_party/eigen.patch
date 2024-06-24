@@ -1,0 +1,156 @@
+diff -Naur eigen-upstream-14efab92496da81f91dd04d23f1fb67162732df3/Eigen/Core eigen-upstream-a/Eigen/Core
+--- eigen-upstream-14efab92496da81f91dd04d23f1fb67162732df3/Eigen/Core	2018-09-20 16:00:52.000000000 +0000
++++ eigen-upstream-a/Eigen/Core	2024-06-19 05:04:25.738965094 +0000
+@@ -371,9 +371,6 @@
+ 
+ #if defined(EIGEN_HIPCC) && defined(EIGEN_HIP_DEVICE_COMPILE)
+ 
+-  #define EIGEN_VECTORIZE_GPU
+-  #include <hip/hip_vector_types.h>
+-
+   #define EIGEN_HAS_HIP_FP16
+   #include <hip/hip_fp16.h>
+ 
+diff -Naur eigen-upstream-14efab92496da81f91dd04d23f1fb67162732df3/Eigen/src/Core/arch/GPU/PacketMathHalf.h eigen-upstream-a/Eigen/src/Core/arch/GPU/PacketMathHalf.h
+--- eigen-upstream-14efab92496da81f91dd04d23f1fb67162732df3/Eigen/src/Core/arch/GPU/PacketMathHalf.h	2018-09-20 16:00:52.000000000 +0000
++++ eigen-upstream-a/Eigen/src/Core/arch/GPU/PacketMathHalf.h	2024-06-19 04:25:29.967248890 +0000
+@@ -945,10 +945,10 @@
+     AlignedOnScalar = 1,
+     size = 8,
+     HasHalfPacket = 0,
+-    HasAdd    = 1,
+-    HasSub    = 1,
+-    HasMul    = 1,
+-    HasNegate = 1,
++    HasAdd    = 0,
++    HasSub    = 0,
++    HasMul    = 0,
++    HasNegate = 0,
+     HasAbs    = 0,
+     HasAbs2   = 0,
+     HasMin    = 0,
+diff -Naur eigen-upstream-14efab92496da81f91dd04d23f1fb67162732df3/unsupported/Eigen/CXX11/src/Tensor/TensorContractionGpu.h eigen-upstream-a/unsupported/Eigen/CXX11/src/Tensor/TensorContractionGpu.h
+--- eigen-upstream-14efab92496da81f91dd04d23f1fb67162732df3/unsupported/Eigen/CXX11/src/Tensor/TensorContractionGpu.h	2018-09-20 16:00:52.000000000 +0000
++++ eigen-upstream-a/unsupported/Eigen/CXX11/src/Tensor/TensorContractionGpu.h	2024-06-19 15:41:30.734268267 +0000
+@@ -549,12 +549,12 @@
+ #define prefetch_lhs(reg, row, col)                            \
+     if (!CHECK_LHS_BOUNDARY) {                                 \
+       if (col < k_size) {                                      \
+-        reg =lhs.template loadPacket<Unaligned>(row, col);     \
++        reg =lhs.template loadPacket<float4,Unaligned>(row, col);     \
+       }                                                        \
+     } else {                                                   \
+       if (col < k_size) {                                      \
+         if (row + 3 < m_size) {                                \
+-          reg =lhs.template loadPacket<Unaligned>(row, col);   \
++          reg =lhs.template loadPacket<float4,Unaligned>(row, col);   \
+         } else if (row + 2 < m_size) {                         \
+           reg.x =lhs(row + 0, col);                            \
+           reg.y =lhs(row + 1, col);                            \
+@@ -584,7 +584,7 @@
+     if (!CHECK_RHS_BOUNDARY) {
+       if ((rhs_vert + 3) < k_size) {
+         // just CHECK_RHS_BOUNDARY
+-        rhs_pf0 = rhs.template loadPacket<Unaligned>(rhs_vert, rhs_horiz0);
++        rhs_pf0 = rhs.template loadPacket<float4,Unaligned>(rhs_vert, rhs_horiz0);
+       } else if (rhs_vert + 2 < k_size) {
+         // just CHECK_RHS_BOUNDARY
+         rhs_pf0.x = rhs(rhs_vert, rhs_horiz0);
+@@ -599,7 +599,7 @@
+     } else {
+       if (rhs_horiz0 < n_size) {
+         if ((rhs_vert + 3) < k_size) {
+-          rhs_pf0 = rhs.template loadPacket<Unaligned>(rhs_vert, rhs_horiz0);
++          rhs_pf0 = rhs.template loadPacket<float4,Unaligned>(rhs_vert, rhs_horiz0);
+         } else if ((rhs_vert + 2) < k_size) {
+           rhs_pf0.x = rhs(rhs_vert, rhs_horiz0);
+           rhs_pf0.y = rhs(rhs_vert + 1, rhs_horiz0);
+@@ -799,37 +799,37 @@
+ 
+      if (!CHECK_LHS_BOUNDARY) {
+       if ((threadIdx.y/4+k+24) < k_size) {
+-        lhs_pf0 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k));
+-        lhs_pf1 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
+-        lhs_pf2 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+16));
+-        lhs_pf3 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+24));
++        lhs_pf0 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k));
++        lhs_pf1 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
++        lhs_pf2 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+16));
++        lhs_pf3 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+24));
+       } else if ((threadIdx.y/4+k+16) < k_size) {
+-        lhs_pf0 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k));
+-        lhs_pf1 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
+-        lhs_pf2 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+16));
++        lhs_pf0 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k));
++        lhs_pf1 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
++        lhs_pf2 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+16));
+       } else if ((threadIdx.y/4+k+8) < k_size) {
+-        lhs_pf0 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k));
+-        lhs_pf1 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
++        lhs_pf0 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k));
++        lhs_pf1 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
+       } else if ((threadIdx.y/4+k) < k_size) {
+-        lhs_pf0 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k));
++        lhs_pf0 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k));
+       }
+     } else {
+       // just CHECK_LHS_BOUNDARY
+       if (lhs_vert + 3 < m_size) {
+         if ((threadIdx.y/4+k+24) < k_size) {
+-          lhs_pf0 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k));
+-          lhs_pf1 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
+-          lhs_pf2 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+16));
+-          lhs_pf3 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+24));
++          lhs_pf0 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k));
++          lhs_pf1 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
++          lhs_pf2 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+16));
++          lhs_pf3 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+24));
+         } else if ((threadIdx.y/4+k+16) < k_size) {
+-          lhs_pf0 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k));
+-          lhs_pf1 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
+-          lhs_pf2 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+16));
++          lhs_pf0 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k));
++          lhs_pf1 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
++          lhs_pf2 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+16));
+         } else if ((threadIdx.y/4+k+8) < k_size) {
+-          lhs_pf0 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k));
+-          lhs_pf1 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
++          lhs_pf0 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k));
++          lhs_pf1 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k+8));
+         } else if ((threadIdx.y/4+k) < k_size) {
+-          lhs_pf0 =lhs.template loadPacket<Unaligned>(lhs_vert, (threadIdx.y/4+k));
++          lhs_pf0 =lhs.template loadPacket<float4,Unaligned>(lhs_vert, (threadIdx.y/4+k));
+         }
+       } else if (lhs_vert + 2 < m_size) {
+         if ((threadIdx.y/4+k+24) < k_size) {
+@@ -918,8 +918,8 @@
+     if (!CHECK_RHS_BOUNDARY) {
+       if ((rhs_vert + 3) < k_size) {
+         // just CHECK_RHS_BOUNDARY
+-        rhs_pf0 = rhs.template loadPacket<Unaligned>(rhs_vert, rhs_horiz0);
+-        rhs_pf1 = rhs.template loadPacket<Unaligned>(rhs_vert, rhs_horiz1);
++        rhs_pf0 = rhs.template loadPacket<float4,Unaligned>(rhs_vert, rhs_horiz0);
++        rhs_pf1 = rhs.template loadPacket<float4,Unaligned>(rhs_vert, rhs_horiz1);
+       } else if (rhs_vert + 2 < k_size) {
+         // just CHECK_RHS_BOUNDARY
+         rhs_pf0.x = rhs(rhs_vert, rhs_horiz0);
+@@ -941,8 +941,8 @@
+       if (rhs_horiz1 < n_size) {
+         if ((rhs_vert + 3) < k_size) {
+           // just CHECK_RHS_BOUNDARY
+-          rhs_pf0 = rhs.template loadPacket<Unaligned>(rhs_vert, rhs_horiz0);
+-          rhs_pf1 = rhs.template loadPacket<Unaligned>(rhs_vert, rhs_horiz1);
++          rhs_pf0 = rhs.template loadPacket<float4,Unaligned>(rhs_vert, rhs_horiz0);
++          rhs_pf1 = rhs.template loadPacket<float4,Unaligned>(rhs_vert, rhs_horiz1);
+         } else if (rhs_vert + 2 < k_size) {
+           // just CHECK_RHS_BOUNDARY
+           rhs_pf0.x = rhs(rhs_vert, rhs_horiz0);
+@@ -963,7 +963,7 @@
+       } else if (rhs_horiz0 < n_size) {
+         if ((rhs_vert + 3) < k_size) {
+           // just CHECK_RHS_BOUNDARY
+-          rhs_pf0 = rhs.template loadPacket<Unaligned>(rhs_vert, rhs_horiz0);
++          rhs_pf0 = rhs.template loadPacket<float4,Unaligned>(rhs_vert, rhs_horiz0);
+         } else if ((rhs_vert + 2) < k_size) {
+           // just CHECK_RHS_BOUNDARY
+           rhs_pf0.x = rhs(rhs_vert, rhs_horiz0);

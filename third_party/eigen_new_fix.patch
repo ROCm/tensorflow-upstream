@@ -1,0 +1,12 @@
+diff -Naur eigen-upstream-14efab92496da81f91dd04d23f1fb67162732df3/Eigen/Core eigen-upstream-b/Eigen/Core
+--- eigen-upstream-14efab92496da81f91dd04d23f1fb67162732df3/Eigen/Core	2018-09-20 16:00:52.000000000 +0000
++++ eigen-upstream-b/Eigen/Core	2024-06-21 13:13:24.412833736 +0000
+@@ -369,7 +369,7 @@
+   #include <cuda_fp16.h>
+ #endif
+ 
+-#if defined(EIGEN_HIPCC) && defined(EIGEN_HIP_DEVICE_COMPILE)
++#if defined(EIGEN_HIPCC)
+ 
+   #define EIGEN_VECTORIZE_GPU
+   #include <hip/hip_vector_types.h>

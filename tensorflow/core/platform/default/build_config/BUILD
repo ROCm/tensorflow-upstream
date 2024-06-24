@@ -92,6 +92,22 @@ cc_library(
     srcs = [],
 )
 
+# Dummy stream executor rocm plugins.
+cc_library(
+    name = "rocblas_plugin",
+    srcs = [],
+)
+
+cc_library(
+    name = "rocfft_plugin",
+    srcs = [],
+)
+
+cc_library(
+    name = "miopen_plugin",
+    srcs = [],
+)
+
 # OSX framework for device driver access
 cc_library(
     name = "IOKit",
@@ -266,6 +282,7 @@ cc_library(
     data = [],
     linkopts = select({
       "//conditions:default": [
+          "-Wl,-rpath,../local_config_rocm/rocm/rocm/lib",
       ],
     }),
     deps = [],

@@ -496,6 +496,8 @@ Following applies to:
 ./Eigen/src/Core/util/Meta.h
 ./Eigen/src/Core/util/Macros.h
 ./Eigen/src/Core/util/Constants.h
+./Eigen/src/Core/util/DisableStupidWarnings.h
+./Eigen/src/Core/util/ReenableStupidWarnings.h
 ./Eigen/src/Core/CwiseNullaryOp.h
 ./Eigen/src/Core/Block.h
 ./Eigen/src/Core/GeneralProduct.h

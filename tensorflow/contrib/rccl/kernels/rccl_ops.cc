@@ -64,23 +64,23 @@ class RcclReduceOpBase : public RcclAsyncOpBase {
     string reduction;
     OP_REQUIRES_OK(c, c->GetAttr("reduction", &reduction));
     if (reduction == "min") {
-      reduction_op_ = rcclMin;
+      reduction_op_ = ncclMin;
     } else if (reduction == "max") {
-      reduction_op_ = rcclMax;
+      reduction_op_ = ncclMax;
     } else if (reduction == "sum") {
-      reduction_op_ = rcclSum;
+      reduction_op_ = ncclSum;
     } else if (reduction == "prod") {
-      reduction_op_ = rcclProd;
+      reduction_op_ = ncclProd;
     } else {
       OP_REQUIRES_OK(c,
                      errors::InvalidArgument("Invalid reduction: ", reduction));
     }
   }
 
-  rcclRedOp_t reduction_op() const { return reduction_op_; }
+  ncclRedOp_t reduction_op() const { return reduction_op_; }
 
  private:
-  rcclRedOp_t reduction_op_;
+  ncclRedOp_t reduction_op_;
 };
 
 // To execute a single all-reduce, this kernel is called once for each of the
@@ -163,7 +163,7 @@ class RcclReduceRecvKernel : public RcclReduceOpBase {
   }
 
  private:
-  rcclRedOp_t reduction_op_;
+  ncclRedOp_t reduction_op_;
 };
 REGISTER_KERNEL_BUILDER(Name("_RcclReduceRecv").Device(DEVICE_GPU),
                         RcclReduceRecvKernel);

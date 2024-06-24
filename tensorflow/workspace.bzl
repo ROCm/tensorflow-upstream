@@ -130,7 +130,8 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
             "https://github.com/ROCmSoftwarePlatform/eigen-upstream/archive/14efab92496da81f91dd04d23f1fb67162732df3.tar.gz",
             "https://mirror.bazel.build/github.com/ROCmSoftwarePlatform/eigen-upstream/archive/14efab92496da81f91dd04d23f1fb67162732df3.tar.gz",
         ],
-        patch_file = clean_dep("//third_party:eigen_fix.patch"),
+        patch_file = clean_dep("//third_party:eigen_new_fix.patch"),
+        #patch_file = clean_dep("//third_party:eigen_fix.patch"),
     )
 
     tf_http_archive(

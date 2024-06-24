@@ -27,6 +27,8 @@ limitations under the License.
 #if GOOGLE_CUDA
 namespace gpuprim = ::cub;
 #elif TENSORFLOW_USE_ROCM
+#include "rocm/include/hipcub/hipcub.hpp"
+#include "rocm/rocm_config.h"
 namespace gpuprim = ::hipcub;
 #endif
 

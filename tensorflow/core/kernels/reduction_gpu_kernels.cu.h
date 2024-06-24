@@ -28,8 +28,6 @@ limitations under the License.
 #include "third_party/cub/iterator/transform_input_iterator.cuh"
 #include "third_party/cub/warp/warp_reduce.cuh"
 #include "cuda/include/cuComplex.h"
-#elif TENSORFLOW_USE_ROCM
-#include "external/rocprim_archive/hipcub/include/hipcub/hipcub.hpp"
 #endif
 #include "tensorflow/core/kernels/reduction_ops.h"
 #include "tensorflow/core/lib/core/bits.h"
@@ -42,6 +40,8 @@ limitations under the License.
 #if GOOGLE_CUDA
 namespace gpuprim = ::cub;
 #elif TENSORFLOW_USE_ROCM
+#include "rocm/include/hipcub/hipcub.hpp"
+#include "rocm/rocm_config.h"
 namespace gpuprim = ::hipcub;
 #endif
 

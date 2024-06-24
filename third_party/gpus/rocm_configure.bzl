@@ -186,6 +186,7 @@ def _rocm_include_path(repository_ctx, rocm_config):
 
     # Add rocfft headers
     inc_dirs.append("/opt/rocm/include/rocfft")
+    inc_dirs.append("/opt/rocm/include/hipfft")
 
     # Add rocBLAS headers
     inc_dirs.append("/opt/rocm/include/rocblas")
@@ -410,6 +411,12 @@ def _find_libs(repository_ctx, rocm_config):
             cpu_value,
             rocm_config.rocm_toolkit_path,
         ),
+        "hipfft": _find_rocm_lib(
+            "hipfft",
+            repository_ctx,
+            cpu_value,
+            rocm_config.rocm_toolkit_path,
+        ),
         "hiprand": _find_rocm_lib(
             "hiprand",
             repository_ctx,
@@ -518,6 +525,7 @@ def _create_dummy_repository(repository_ctx):
             "%{miopen_lib}": _lib_name("miopen", cpu_value),
             "%{rccl_lib}": _lib_name("rccl", cpu_value),
             "%{rocfft_lib}": _lib_name("rocfft", cpu_value),
+            "%{hipfft_lib}": _lib_name("hipfft", cpu_value),
             "%{hiprand_lib}": _lib_name("hiprand", cpu_value),
             "%{rocm_include_genrules}": "",
             "%{rocm_headers}": "",
@@ -782,6 +790,7 @@ def _create_local_rocm_repository(repository_ctx):
             #"%{hip_lib}": rocm_libs["hip"].file_name,
             "%{rocblas_lib}": rocm_libs["rocblas"].file_name,
             "%{rocfft_lib}": rocm_libs["rocfft"].file_name,
+            "%{hipfft_lib}": rocm_libs["hipfft"].file_name,
             "%{hiprand_lib}": rocm_libs["hiprand"].file_name,
             "%{miopen_lib}": rocm_libs["miopen"].file_name,
             "%{rccl_lib}": rocm_libs["rccl"].file_name,
@@ -818,6 +827,7 @@ def _create_local_rocm_repository(repository_ctx):
             "-D__HIP_PLATFORM_AMD__",
             "-DEIGEN_USE_HIP",
 	    "-DTENSORFLOW_COMPILER_IS_HIP_CLANG=1",
+	    "-DEIGEN_VECTORIZE_GPU=1",
 	 ]),
 	"%{host_compiler_path}": "clang/bin/crosstool_wrapper_driver_is_not_gcc",
 	"%{linker_files}": "clang/bin/crosstool_wrapper_driver_is_not_gcc",

@@ -29,6 +29,7 @@ EIGEN_RESTRICTED_DEPS = [
 
 EIGEN_FILES = [
     "Eigen/**",
+    "Eigen/src/Core/util/DisableStupidWarnings.h",
     "unsupported/Eigen/CXX11/**",
     "unsupported/Eigen/FFT",
     "unsupported/Eigen/KroneckerProduct",
@@ -66,6 +67,8 @@ cc_library(
         "EIGEN_MPL2_ONLY",
         # XXX FIXME figure this out for ROCm
         #"EIGEN_MAX_ALIGN_BYTES=64",
+        "EIGEN_MAX_ALIGN_BYTES=64",
+        "EIGEN_HAS_TYPE_TRAITS=0",
     ],
     includes = ["."],
     visibility = ["//visibility:public"],
