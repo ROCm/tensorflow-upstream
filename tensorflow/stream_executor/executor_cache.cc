@@ -17,9 +17,9 @@ limitations under the License.
 
 #include "tensorflow/core/util/env_var.h"
 
-#ifdef GOOGLE_CUDA
+#ifdef GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/stream_executor/gpu/gpu_driver.h"
-#endif
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #include "absl/base/call_once.h"
 #include "absl/strings/str_format.h"

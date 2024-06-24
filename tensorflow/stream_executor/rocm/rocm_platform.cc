@@ -28,7 +28,10 @@ namespace stream_executor {
 namespace gpu {
 
 ROCmPlatform::ROCmPlatform()
-    : name_("ROCM"), min_numa_node_(0), limit_numa_node_(0) {}
+    : name_("ROCM"),
+      min_numa_node_(0),
+      limit_numa_node_(0),
+      virtual_device_count_(-1) {}
 
 ROCmPlatform::~ROCmPlatform() {}
 
@@ -101,6 +104,19 @@ int ROCmPlatform::VisibleDeviceCount() const {
   return GpuDriver::GetDeviceCount();
 }
 
+int ROCmPlatform::VirtualDeviceCount() const {
+  if (virtual_device_count_ == -1) {
+    return VisibleDeviceCount();
+  } else {
+    return virtual_device_count_;
+  }
+}
+
+port::Status ROCmPlatform::SetVirtualDeviceCount(int count) {
+  virtual_device_count_ = count;
+  return port::Status::OK();
+}
+
 const string& ROCmPlatform::Name() const { return name_; }
 
 port::StatusOr<std::unique_ptr<DeviceDescription>>
@@ -109,17 +125,30 @@ ROCmPlatform::DescriptionForDevice(int ordinal) const {
 }
 
 port::StatusOr<StreamExecutor*> ROCmPlatform::ExecutorForDevice(int ordinal) {
+  return ExecutorForDevice(ordinal, 0);
+}
+
+port::StatusOr<StreamExecutor*> ROCmPlatform::ExecutorForDevice(
+      int ordinal, int virtual_ordinal) {
   StreamExecutorConfig config;
   config.ordinal = ordinal;
+  config.virtual_ordinal = virtual_ordinal;
   config.plugin_config = PluginConfig();
   config.device_options = DeviceOptions::Default();
   return GetExecutor(config);
 }
 
 port::StatusOr<StreamExecutor*> ROCmPlatform::ExecutorForDeviceWithPluginConfig(
-    int device_ordinal, const PluginConfig& plugin_config) {
+  int device_ordinal, const PluginConfig& plugin_config){
+  return ExecutorForDeviceWithPluginConfig(device_ordinal, 0, plugin_config);
+}
+
+port::StatusOr<StreamExecutor*> ROCmPlatform::ExecutorForDeviceWithPluginConfig(
+    int device_ordinal, int virtual_ordinal,
+    const PluginConfig& plugin_config) {
   StreamExecutorConfig config;
   config.ordinal = device_ordinal;
+  config.virtual_ordinal = virtual_ordinal;
   config.plugin_config = plugin_config;
   config.device_options = DeviceOptions::Default();
   return GetExecutor(config);

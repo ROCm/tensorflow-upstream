@@ -246,9 +246,11 @@ PlatformUtil::GetStreamExecutors(
     device_count =
         GetDebugOptionsFromFlags().xla_force_host_platform_device_count();
   }
-  if (platform->id() == se::cuda::kCudaPlatformId) {
+  if (platform->id() == se::cuda::kCudaPlatformId || 
+      platform->id() == se::rocm::kROCmPlatformId) {
     device_count = platform->VirtualDeviceCount();
   }
+  
   std::vector<se::StreamExecutor*> stream_executors(device_count, nullptr);
   VLOG(1) << "Initializing devices";
   {
@@ -272,7 +274,8 @@ PlatformUtil::GetStreamExecutors(
         VLOG(1) << "Started device init " << i;
         int ordinal = i;
         int virtual_ordinal = 0;
-        if (platform->id() == se::cuda::kCudaPlatformId) {
+        if (platform->id() == se::cuda::kCudaPlatformId ||
+            platform->id() == se::rocm::kROCmPlatformId) {
           CHECK(platform->VisibleDeviceCount() > 0);
           int virtual_gpus_per_device =
               device_count / platform->VisibleDeviceCount();

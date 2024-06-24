@@ -61,6 +61,8 @@ class ROCmPlatform : public Platform {
 
   // Returns -1 as a sentinel on internal failure (and logs the error).
   int VisibleDeviceCount() const override;
+  int VisibleDeviceCount() const override;
+  port::Status SetVirtualDeviceCount(int count) override;
 
   const string& Name() const override;
 
@@ -68,9 +70,13 @@ class ROCmPlatform : public Platform {
       int ordinal) const override;
 
   port::StatusOr<StreamExecutor*> ExecutorForDevice(int ordinal) override;
+  port::StatusOr<StreamExecutor*> ExecutorForDevice(
+      int ordinal, int virtual_ordinal) override;
 
   port::StatusOr<StreamExecutor*> ExecutorForDeviceWithPluginConfig(
       int ordinal, const PluginConfig& config) override;
+  port::StatusOr<StreamExecutor*> ExecutorForDeviceWithPluginConfig(
+      int ordinal, int virtual_ordinal, const PluginConfig& config) override;
 
   port::StatusOr<StreamExecutor*> GetExecutor(
       const StreamExecutorConfig& config) override;
@@ -103,7 +109,9 @@ class ROCmPlatform : public Platform {
   // Larger than the NUMA node value for any device managed by this machine
   // manager.
   int limit_numa_node_;
-
+  // Num of GPU virtual devices
+  int virtual_device_count_;
+  
   SE_DISALLOW_COPY_AND_ASSIGN(ROCmPlatform);
 };
 
