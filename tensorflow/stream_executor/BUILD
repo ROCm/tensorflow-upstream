@@ -112,7 +112,10 @@ cc_library(
             [
                 "rocm/*.cc",
             ],
-            exclude = ["rocm/rocm_platform_id.cc"],
+            exclude = [
+                "rocm/rocm_platform_id.cc",
+		"rocm/rocm_fft.cc"
+            ],
         ),
     ),
     linkopts = select({
