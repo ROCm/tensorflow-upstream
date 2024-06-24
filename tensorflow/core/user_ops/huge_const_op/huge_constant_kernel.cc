@@ -20,7 +20,7 @@ limitations under the License.
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
     (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
 #define EIGEN_USE_GPU
-#endif
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/bounds_check.h"
@@ -153,7 +153,8 @@ HugeConstantOp::HugeConstantOp(OpKernelConstruction* ctx)
 void HugeConstantOp::Compute(OpKernelContext* ctx) {
   if (!initialized_) {
 
-#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
+#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
+    (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
     Device* gpu_device = dynamic_cast<Device*>(ctx->device());
     GPUDeviceContext* gpu_device_context = dynamic_cast<GPUDeviceContext*>(ctx->op_device_context());
     if (gpu_device!=nullptr && gpu_device_context!=nullptr) {
@@ -184,7 +185,7 @@ void HugeConstantOp::Compute(OpKernelContext* ctx) {
       if (VLOG_IS_ON(1)) LOG(WARNING) << "Fail to Copy CPU tensor to GPU, ptrs: "
                                       << gpu_device <<" & "<<gpu_device_context;
     }
-#endif
+#endif   // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
     initialized_ = true;
   }
@@ -207,9 +208,9 @@ REGISTER_CPU_KERNEL(int32);
 REGISTER_CPU_KERNEL(int64);
 #undef REGISTER_CPU_KERNEL
 
-#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
+#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
 #define REGISTER_GPU_KERNEL(TYPE)                                      \
-  REGISTER_KERNEL_BUILDER(                                            \
+  REGISTER_KERNEL_BUILDER(                                             \
       Name("HugeConst").Device(DEVICE_GPU).TypeConstraint<TYPE>("dtype"), \
       HugeConstantOp);
 REGISTER_GPU_KERNEL(Eigen::half);
@@ -218,6 +219,6 @@ REGISTER_GPU_KERNEL(double);
 REGISTER_GPU_KERNEL(int32);
 REGISTER_GPU_KERNEL(int64);
 #undef REGISTER_GPU_KERNEL
-#endif
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 } //namespaece tensorflow 
