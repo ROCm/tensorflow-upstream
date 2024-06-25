@@ -1233,6 +1233,7 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
+        "//third_party/eigen3",
     ],
 )
 
@@ -2883,7 +2884,7 @@ cc_library(
         ":compare_and_bitpack_op",
         ":cross_op",
         ":cwise_op",
-        ":fft_ops",
+        #":fft_ops",
         ":histogram_op",
         ":matmul_op",
         ":population_count_op",
@@ -2956,7 +2957,10 @@ tf_kernel_library(
 tf_kernel_library(
     name = "cwise_op",
     prefix = "cwise_op",
-    deps = MATH_DEPS + ["//tensorflow/core:bitwise_ops_op_lib"],
+    deps = MATH_DEPS + [
+	"//tensorflow/core:bitwise_ops_op_lib",
+        #"//third_party/eigen3",
+    ],
 )
 
 tf_kernel_library(
@@ -2965,15 +2969,15 @@ tf_kernel_library(
     deps = MATH_DEPS,
 )
 
-tf_kernel_library(
-    name = "fft_ops",
-    prefix = "fft_ops",
-    deps = MATH_DEPS + [
-        "//tensorflow/core:spectral_ops_op_lib",
-    ] + if_cuda([
-        "//tensorflow/core/platform/default/build_config:cufft_plugin",
-    ]),
-)
+#tf_kernel_library(
+#    name = "fft_ops",
+#    prefix = "fft_ops",
+#    deps = MATH_DEPS + [
+#        "//tensorflow/core:spectral_ops_op_lib",
+#    ] + if_cuda([
+#        "//tensorflow/core/platform/default/build_config:cufft_plugin",
+#    ]),
+#)
 
 tf_kernel_library(
     name = "matmul_op",
@@ -3422,6 +3426,9 @@ tf_kernel_library(
     }) + if_cuda([
         "//tensorflow/core/platform/default/build_config:cublas_plugin",
         "//tensorflow/core/platform/default/build_config:cudnn_plugin",
+    ]) + if_rocm([
+        "//tensorflow/core/platform/default/build_config:rocblas_plugin",
+        "//tensorflow/core/platform/default/build_config:miopen_plugin",
     ]),
 )
 

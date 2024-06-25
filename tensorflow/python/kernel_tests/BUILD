@@ -2591,21 +2591,21 @@ gpu_py_test(
     ],
 )
 
-gpu_py_test(
-    name = "fft_ops_test",
-    size = "medium",
-    srcs = ["fft_ops_test.py"],
-    additional_deps = [
-        "//third_party/py/numpy",
-        "//tensorflow/python:client_testlib",
-        "//tensorflow/python:framework_for_generated_wrappers",
-        "//tensorflow/python:math_ops",
-        "//tensorflow/python:spectral_ops",
-        "//tensorflow/python:spectral_ops_test_util",
-    ],
-    shard_count = 4,
-    tags = ["optonly"],
-)
+#gpu_py_test(
+#    name = "fft_ops_test",
+#    size = "medium",
+#    srcs = ["fft_ops_test.py"],
+#    additional_deps = [
+#        "//third_party/py/numpy",
+#        "//tensorflow/python:client_testlib",
+#        "//tensorflow/python:framework_for_generated_wrappers",
+#        "//tensorflow/python:math_ops",
+#        "//tensorflow/python:spectral_ops",
+#        "//tensorflow/python:spectral_ops_test_util",
+#    ],
+#    shard_count = 4,
+#    tags = ["optonly"],
+#)
 
 gpu_py_test(
     name = "pooling_ops_3d_test",

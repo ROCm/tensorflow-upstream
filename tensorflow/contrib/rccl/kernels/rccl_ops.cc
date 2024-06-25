@@ -77,10 +77,10 @@ class RcclReduceOpBase : public RcclAsyncOpBase {
     }
   }
 
-  rcclRedOp_t reduction_op() const { return reduction_op_; }
+  ncclRedOp_t reduction_op() const { return reduction_op_; }
 
  private:
-  rcclRedOp_t reduction_op_;
+  ncclRedOp_t reduction_op_;
 };
 
 // To execute a single all-reduce, this kernel is called once for each of the
@@ -163,7 +163,7 @@ class RcclReduceRecvKernel : public RcclReduceOpBase {
   }
 
  private:
-  rcclRedOp_t reduction_op_;
+  ncclRedOp_t reduction_op_;
 };
 REGISTER_KERNEL_BUILDER(Name("_RcclReduceRecv").Device(DEVICE_GPU),
                         RcclReduceRecvKernel);

@@ -112,7 +112,10 @@ cc_library(
             [
                 "rocm/*.cc",
             ],
-            exclude = ["rocm/rocm_platform_id.cc"],
+            exclude = [
+                "rocm/rocm_platform_id.cc",
+		"rocm/rocm_fft.cc"
+            ],
         ),
     ),
     linkopts = select({
@@ -127,7 +130,7 @@ cc_library(
     ] + if_rocm_is_configured([
         "//tensorflow/core:rocm",
         "@local_config_rocm//rocm:hiprand",
-        "@local_config_rocm//rocm:rocfft",
+        #"@local_config_rocm//rocm:rocfft",
         "@local_config_rocm//rocm:rocblas",
         "@local_config_rocm//rocm:miopen",
     ]),

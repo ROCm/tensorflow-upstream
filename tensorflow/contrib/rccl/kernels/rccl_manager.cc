@@ -56,9 +56,9 @@ struct RcclManager::CommunicatorMember {
  public:
   CommunicatorMember() {}
   ~CommunicatorMember() {
-    if (rccl_comm != nullptr) rcclCommDestroy(rccl_comm);
+    if (nccl_comm != nullptr) ncclCommDestroy(nccl_comm);
   }
-  rcclComm_t rccl_comm;
+  ncclComm_t nccl_comm;
 
   // Owned by RcclManager::device_to_comm_streams_.
   RcclStream* rccl_stream = nullptr;
@@ -74,20 +74,20 @@ struct RcclManager::Communicator {
 };
 
 namespace {
-rcclDataType_t ToRcclType(DataType t) {
+ncclDataType_t ToRcclType(DataType t) {
   switch (t) {
     case DT_HALF:
-      return rcclHalf;
+      return ncclHalf;
     case DT_FLOAT:
-      return rcclFloat;
+      return ncclFloat;
     case DT_DOUBLE:
-      return rcclDouble;
+      return ncclDouble;
     case DT_INT32:
-      return rcclInt;
+      return ncclInt;
     case DT_INT64:
-      return rcclInt64;
+      return ncclInt64;
     default:
-      return rcclFloat;
+      return ncclFloat;
   }
 }
 }  // namespace
@@ -137,7 +137,7 @@ struct RcclManager::Participant {
 // AllReduce call).
 struct RcclManager::Collective {
   Collective(DataType data_type_in, CollectiveType type_in,
-             rcclRedOp_t reduction_op_in, int num_devices)
+             ncclRedOp_t reduction_op_in, int num_devices)
       : data_type(data_type_in),
         type(type_in),
         reduction_op(reduction_op_in),
@@ -147,7 +147,7 @@ struct RcclManager::Collective {
 
   const DataType data_type;
   const CollectiveType type;
-  const rcclRedOp_t reduction_op;  // applies when <type> is a reduction.
+  const ncclRedOp_t reduction_op;  // applies when <type> is a reduction.
 
   Communicator* communicator = nullptr;
 
@@ -280,39 +280,39 @@ RcclManager::Communicator* RcclManager::GetCommunicator(
   // rank individually.
   hipGetDeviceCount(&device_count);
 #endif
-  std::vector<rcclComm_t> rccl_comms(num_devices);
+  std::vector<ncclComm_t> nccl_comms(num_devices);
   if (num_devices <= device_count) {
     auto result =
-        rcclCommInitAll(rccl_comms.data(), num_devices, devices.data());
-    CHECK_EQ(result, rcclSuccess) << rcclGetErrorString(result);
+        ncclCommInitAll(nccl_comms.data(), num_devices, devices.data());
+    CHECK_EQ(result, ncclSuccess) << ncclGetErrorString(result);
   } else {
     int savedDevice = 0;
     CHECK_EQ(hipGetDevice(&savedDevice), hipSuccess);
-    rcclUniqueId commId;
-    rcclGetUniqueId(&commId);
+    ncclUniqueId commId;
+    ncclGetUniqueId(&commId);
 #if RCCL_MAJOR >= 2
-    CHECK_EQ(rcclGroupStart(), rcclSuccess);
+    CHECK_EQ(rcclGroupStart(), ncclSuccess);
 #endif
     for (int rank = 0; rank < num_devices; ++rank) {
       hipSetDevice(devices[rank]);
       auto result =
-          rcclCommInitRank(rccl_comms.data() + rank, num_devices, commId, rank);
-      CHECK_EQ(result, rcclSuccess) << rcclGetErrorString(result);
+          ncclCommInitRank(nccl_comms.data() + rank, num_devices, commId, rank);
+      CHECK_EQ(result, ncclSuccess) << ncclGetErrorString(result);
     }
 #if RCCL_MAJOR >= 2
-    CHECK_EQ(rcclGroupEnd(), rcclSuccess);
+    CHECK_EQ(rcclGroupEnd(), ncclSuccess);
 #endif
     hipSetDevice(savedDevice);
   }
   for (int rank = 0; rank < num_devices; ++rank) {
-    members[rank].rccl_comm = rccl_comms[rank];
+    members[rank].nccl_comm = nccl_comms[rank];
   }
   communicators_.emplace_back(new Communicator(std::move(members)));
   return communicators_.back().get();
 }
 
 void RcclManager::AddToAllReduce(int num_devices, const string& key,
-                                 rcclRedOp_t reduction_op,
+                                 ncclRedOp_t reduction_op,
                                  se::StreamExecutor* executor,
                                  int gpu_device_id, EventMgr* event_mgr,
                                  se::Stream* tensor_stream, const Tensor* in_t,
@@ -336,7 +336,7 @@ void RcclManager::AddBroadcastSend(int num_devices, const string& key,
                       executor, gpu_device_id, std::move(done_callback)));
   participant->root = true;
   AddParticipant(num_devices, key, std::move(participant), in_t->dtype(),
-                 kBroadcast, rcclSum /* unused */);
+                 kBroadcast, ncclSum /* unused */);
 }
 
 void RcclManager::AddBroadcastRecv(int num_devices, const string& key,
@@ -348,11 +348,11 @@ void RcclManager::AddBroadcastRecv(int num_devices, const string& key,
       new Participant(nullptr /* in_t */, out_t, event_mgr, tensor_stream,
                       executor, gpu_device_id, std::move(done_callback)));
   AddParticipant(num_devices, key, std::move(participant), out_t->dtype(),
-                 kBroadcast, rcclSum /* unused */);
+                 kBroadcast, ncclSum /* unused */);
 }
 
 void RcclManager::AddReduceSend(int num_devices, const string& key,
-                                rcclRedOp_t reduction_op,
+                                ncclRedOp_t reduction_op,
                                 se::StreamExecutor* executor, int gpu_device_id,
                                 EventMgr* event_mgr, se::Stream* tensor_stream,
                                 const Tensor* in_t,
@@ -365,7 +365,7 @@ void RcclManager::AddReduceSend(int num_devices, const string& key,
 }
 
 void RcclManager::AddReduceRecv(int num_devices, const string& key,
-                                rcclRedOp_t reduction_op,
+                                ncclRedOp_t reduction_op,
                                 se::StreamExecutor* executor, int gpu_device_id,
                                 EventMgr* event_mgr, se::Stream* tensor_stream,
                                 const Tensor* in_t, Tensor* out_t,
@@ -382,7 +382,7 @@ void RcclManager::AddParticipant(int num_devices, const string& key,
                                  std::unique_ptr<Participant> participant,
                                  DataType data_type,
                                  CollectiveType collective_type,
-                                 rcclRedOp_t reduction_op) {
+                                 ncclRedOp_t reduction_op) {
   Collective* to_run = nullptr;
   {
     mutex_lock l(mu_);
@@ -480,26 +480,26 @@ void RcclManager::LoopKernelLaunches(RcclStream* rccl_stream) {
     int rank = next_launch.second;
 
     // Launch the rccl kernel.
-    rcclDataType_t data_type = ToRcclType(collective->data_type);
+    ncclDataType_t data_type = ToRcclType(collective->data_type);
     Participant* p = collective->participants[rank].get();
 
-    auto rccl_comm = collective->communicator->members[rank].rccl_comm;
-    rcclResult_t rccl_result = rcclSuccess;
+    auto nccl_comm = collective->communicator->members[rank].nccl_comm;
+    ncclResult_t nccl_result = ncclSuccess;
     switch (collective->type) {
       case kAllReduce: {
         const void* sendbuff = p->in_t->tensor_data().data();
         void* recvbuff = const_cast<char*>(p->out_t->tensor_data().data());
 
-        rccl_result =
-            rcclAllReduce(sendbuff, recvbuff, p->in_t->NumElements(), data_type,
-                          collective->reduction_op, rccl_comm, *cu_stream);
+        nccl_result =
+            ncclAllReduce(sendbuff, recvbuff, p->in_t->NumElements(), data_type,
+                          collective->reduction_op, nccl_comm, *cu_stream);
         break;
       }
       case kBroadcast: {
         const Tensor* buf_t = p->in_t ? p->in_t : p->out_t;
         void* buf = const_cast<char*>(buf_t->tensor_data().data());
-        rccl_result = rcclBcast(buf, buf_t->NumElements(), data_type,
-                                collective->root_rank, rccl_comm, *cu_stream);
+        nccl_result = ncclBcast(buf, buf_t->NumElements(), data_type,
+                                collective->root_rank, nccl_comm, *cu_stream);
         break;
       }
       case kReduce: {
@@ -507,22 +507,22 @@ void RcclManager::LoopKernelLaunches(RcclStream* rccl_stream) {
         void* recvbuff = p->out_t
                              ? const_cast<char*>(p->out_t->tensor_data().data())
                              : nullptr;
-        rccl_result = rcclReduce(sendbuff, recvbuff, p->in_t->NumElements(),
+        nccl_result = ncclReduce(sendbuff, recvbuff, p->in_t->NumElements(),
                                  data_type, collective->reduction_op,
-                                 collective->root_rank, rccl_comm, *cu_stream);
+                                 collective->root_rank, nccl_comm, *cu_stream);
         break;
       }
     }
 
     // Run the done_callback when the rccl kernel finishes running.
-    auto done_callback = [collective, rank, rccl_result]() {
-      if (rccl_result == rcclSuccess) {
+    auto done_callback = [collective, rank, nccl_result]() {
+      if (nccl_result == ncclSuccess) {
         collective->participants[rank]->done_callback(Status::OK());
       } else {
         // Propagate the error, but note that if other members of the collective
         // did launch their kernels, then they are hanging.
         collective->participants[rank]->done_callback(errors::Unknown(
-            "Error invoking RCCL: ", rcclGetErrorString(rccl_result)));
+            "Error invoking RCCL: ", ncclGetErrorString(nccl_result)));
       }
 
       // TODO(cwhipkey): use RefCounted after figuring out how to use in a

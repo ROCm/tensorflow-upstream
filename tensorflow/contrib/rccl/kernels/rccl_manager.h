@@ -62,7 +62,7 @@ class RcclManager {
   // is also the stream that will use the produced data; <done_callback> is
   // not called until the next kernel launched on <stream> would see the data.
   void AddToAllReduce(int num_devices, const string& key,
-                      rcclRedOp_t reduction_op, se::StreamExecutor* executor,
+                      ncclRedOp_t reduction_op, se::StreamExecutor* executor,
                       int gpu_device_id, EventMgr* event_mgr,
                       se::Stream* tensor_stream, const Tensor* in_t,
                       Tensor* out_t, const DoneCallback& done_callback);
@@ -81,12 +81,12 @@ class RcclManager {
   // AddReduceSend and AddReduceRecv combine to sent data from all senders
   // to one receiver.
   void AddReduceSend(int num_devices, const string& key,
-                     rcclRedOp_t reduction_op, se::StreamExecutor* executor,
+                     ncclRedOp_t reduction_op, se::StreamExecutor* executor,
                      int gpu_device_id, EventMgr* event_mgr,
                      se::Stream* tensor_stream, const Tensor* in_t,
                      DoneCallback done_callback);
   void AddReduceRecv(int num_devices, const string& key,
-                     rcclRedOp_t reduction_op, se::StreamExecutor* executor,
+                     ncclRedOp_t reduction_op, se::StreamExecutor* executor,
                      int gpu_device_id, EventMgr* event_mgr,
                      se::Stream* tensor_stream, const Tensor* in_t,
                      Tensor* out_t, DoneCallback done_callback);
@@ -108,7 +108,7 @@ class RcclManager {
   void AddParticipant(int num_devices, const string& key,
                       std::unique_ptr<Participant> participant,
                       DataType data_type, CollectiveType collective_type,
-                      rcclRedOp_t reduction_op);
+                      ncclRedOp_t reduction_op);
 
   // Run <collective>.  This calls takes ownership of <collective>.
   void RunCollective(const string& key, Collective* collective);

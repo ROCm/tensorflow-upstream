@@ -47,18 +47,6 @@ cc_library(
 )
 
 cc_library(
-    name = "rocfft",
-    srcs = ["rocm/lib/%{rocfft_lib}"],
-    data = ["rocm/lib/%{rocfft_lib}"],
-    includes = [
-        ".",
-        "rocm/include",
-    ],
-    linkstatic = 1,
-    visibility = ["//visibility:public"],
-)
-
-cc_library(
     name = "hiprand",
     srcs = ["rocm/lib/%{hiprand_lib}"],
     data = ["rocm/lib/%{hiprand_lib}"],
@@ -102,7 +90,8 @@ cc_library(
         ":rocm_headers",
         ":hip",
         ":rocblas",
-        ":rocfft",
+        #":rocfft",
+        #":hipfft",
         ":hiprand",
         ":miopen",
     ],
