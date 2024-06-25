@@ -18,7 +18,7 @@ struct LaunchIndicatorMatmul {
                   int64 batch_b, int64 paralle_num);
 };
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 template <typename Scalar, typename TIndex>
 struct LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex> {
   void operator()(OpKernelContext* context, bool trans_a, bool trans_b, int64 m,
@@ -27,7 +27,7 @@ struct LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex> {
                   int64 batch_b, int64 paralle_num);
 };
 
-#endif
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 }  // namespace tensorflow
 

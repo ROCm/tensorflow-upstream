@@ -321,7 +321,7 @@ class CoActionIndicatorOp : public OpKernel {
 REGISTER_COACTION_CPU(float);
 REGISTER_COACTION_CPU(Eigen::half);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_COACTION_GPU(TYPE)                                       \
   extern template struct LaunchCoAction<GPUDevice, TYPE>;                 \
   extern template struct LaunchCoActionIndicator<GPUDevice, TYPE, int32>; \
@@ -342,6 +342,6 @@ REGISTER_COACTION_CPU(Eigen::half);
 
 REGISTER_COACTION_GPU(float);
 REGISTER_COACTION_GPU(Eigen::half);
-#endif
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 }  // namespace tensorflow

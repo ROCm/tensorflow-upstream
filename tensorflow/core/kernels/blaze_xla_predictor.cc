@@ -2,10 +2,10 @@
 #include "tensorflow/core/kernels/blaze_xla_predictor.h"
 #include "tensorflow/core/util/env_var.h"
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/kernels/gpu_utils.h"
 using tensorflow::se::Event;
-#endif
+#endif // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace tensorflow {
 const char* const kOutputShape = "_output_shapes";
@@ -202,7 +202,7 @@ Status BlazeXlaPredictor::PadToStaticCPUToGPU(const std::vector<Tensor>& inputs,
       return errors::Internal(
           "Error when getting input address or size");
     }
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
       auto padded_dev_ptr = AsDeviceMemory(padded_ptr, padded_size);
       if (DataTypeIsInteger(inputs[i].dtype())) {
         bool copy_status =
@@ -216,7 +216,7 @@ Status BlazeXlaPredictor::PadToStaticCPUToGPU(const std::vector<Tensor>& inputs,
       if (!copy_status) {
         return errors::Internal("MemcpyH2D for padding inputs failed.");
       }
-#endif
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
     VLOG(1) << "Shape of padded_input " << i << ": "
             << (*padded_inputs)[i].shape().DebugString();
@@ -262,7 +262,7 @@ Status BlazeXlaPredictor::PadToStatic(const std::vector<Tensor>& inputs,
           "Error when getting input address or size");
     }
     if (device_type_ == DEVICE_GPU && ctx->input_memory_type(i) == DEVICE_MEMORY) {
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
       auto* stream = ctx->op_device_context()->stream();
       auto input_dev_ptr = AsDeviceMemory(input_ptr, input_size);
       auto padded_dev_ptr = AsDeviceMemory(padded_ptr, padded_size);
@@ -278,7 +278,7 @@ Status BlazeXlaPredictor::PadToStatic(const std::vector<Tensor>& inputs,
       if (!copy_status) {
         return errors::Internal("MemcpyD2D for padding inputs failed.");
       }
-#endif
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
     } else {
       std::memset(padded_ptr, 0, padded_size);
       std::memcpy(padded_ptr, input_ptr, input_size);
@@ -317,7 +317,7 @@ Status BlazeXlaPredictor::SliceToDynamic(const std::vector<Tensor>& padded_outpu
 Status BlazeXlaPredictor::SliceToDynamicCPU(const std::vector<Tensor>& padded_outputs,
                                          int batchsize, int pad_to_batchsize,
                                          std::vector<Tensor>& outputs, OpKernelContext* ctx) {
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   for (int i = 0; i < padded_outputs.size(); ++i) {
     VLOG(1) << "Shape of padded_output " << i << ": "
             << padded_outputs[i].shape().DebugString();
@@ -353,7 +353,7 @@ Status BlazeXlaPredictor::SliceToDynamicCPU(const std::vector<Tensor>& padded_ou
 
     outputs.push_back(tensor);
   }
-#endif
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   return Status::OK();
 }
 

@@ -607,6 +607,16 @@ port::Status GpuExecutor::WaitForEvent(Stream* stream, Event* event) {
   }
 }
 
+port::Status GpuExecutor::SynchronizeEvent(Event* event) {
+  if (GpuDriver::SynchronizeEvent(context_, AsGpuEvent(event)->gpu_event())) {
+    return port::Status::OK();
+  } else {
+    return port::Status(
+        port::error::INTERNAL,
+        absl::StrFormat("error synchronize ROCm event"));
+  }
+}
+
 Event::Status GpuExecutor::PollForEventStatus(Event* event) {
   return AsGpuEvent(event)->PollForStatus();
 }

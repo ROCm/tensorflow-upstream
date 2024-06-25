@@ -4,11 +4,11 @@
 #include "tensorflow/core/platform/stream_executor.h"
 #include "tensorflow/core/platform/protobuf.h"
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/common_runtime/gpu/gpu_device.h"
 #include "tensorflow/core/kernels/gpu_utils.h"
 using tensorflow::se::Event;
-#endif
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 namespace tensorflow {
 const int kBlazeStartStepId = 1024;
 
@@ -234,7 +234,7 @@ Status BlazePredictor::SetDeviceInfo(OpKernelConstruction* ctx) {
 }
 
 stream_executor::Stream* BlazePredictor::GetStream() const {
-  #if GOOGLE_CUDA
+  #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   TfGpuId tf_gpu_id(vgpu_id_);
   auto* se = GpuIdUtil::ExecutorForTfGpuId(tf_gpu_id).ValueOrDie();
 
@@ -250,7 +250,7 @@ stream_executor::Stream* BlazePredictor::GetStream() const {
 
   #else
     return nullptr;
-  #endif
+  #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 }
 
 Status BlazePredictor::PrepareInputs(const std::vector<Tensor>& inputs,
@@ -278,7 +278,7 @@ Status BlazePredictor::CopyTensorCPUToGPU(const std::vector<Tensor>& inputs,
       return errors::Internal(
           "Error when getting input address or size");
     }
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
       auto real_dev_ptr = AsDeviceMemory(real_ptr, real_size);
       bool copy_status =
           GetStream()->ThenMemcpy(&real_dev_ptr, input_ptr, input_size).ok();
@@ -286,7 +286,7 @@ Status BlazePredictor::CopyTensorCPUToGPU(const std::vector<Tensor>& inputs,
         return errors::Internal("MemcpyH2D for padding inputs failed.");
       }
 #else
-      return errors::Internal("CUDA not suaported");
+      return errors::Internal("CUDA && ROCm not suaported");
 #endif
   }
   return Status::OK();
@@ -305,7 +305,7 @@ Status BlazePredictor::CopyTensorGPUToCPU(const std::vector<Tensor>& gpu_tensors
     std::vector<Tensor>* cpu_tensors,
     OpKernelContext* ctx) {
   for (int i = 0; i < gpu_tensors.size(); ++i) {
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
     TensorShape slice_to_shape = gpu_tensors[i].shape();
     const auto& tmp_tensor = gpu_tensors[i];
     uint8* tmp_ptr = (uint8*)GetTensorAddress(&tmp_tensor);
@@ -327,7 +327,7 @@ Status BlazePredictor::CopyTensorGPUToCPU(const std::vector<Tensor>& gpu_tensors
     stream->ThenRecordEvent(event.get());
     stream->ThenSynchronizeEvent(event.get());
 #else
-    return errors::Internal("cuda not supported");
+    return errors::Internal("CUDA && ROCm not supported");
 #endif
   }
   return Status::OK();

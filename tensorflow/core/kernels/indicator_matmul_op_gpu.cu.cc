@@ -18,7 +18,7 @@
 #include "tensorflow/core/util/work_sharder.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/platform/stream_executor.h"
 #define EIGEN_USE_GPU
 #include "tensorflow/core/util/gpu_kernel_helper.h"
@@ -187,5 +187,5 @@ template struct LaunchIndicatorMatmul<GPUDevice, Eigen::half, int32>;
 template struct LaunchIndicatorMatmul<GPUDevice, float, int64>;
 template struct LaunchIndicatorMatmul<GPUDevice, double, int64>;
 template struct LaunchIndicatorMatmul<GPUDevice, Eigen::half, int64>;
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 }  // namespace tensorflow
