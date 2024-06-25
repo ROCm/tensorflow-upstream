@@ -163,6 +163,7 @@ load(
 )
 
 exports_files(["ops/ops.pbtxt"])
+exports_files(["ops/new_nn_ops.cc"])
 
 # -----------------------------------------------------------------------------
 # Public targets
@@ -1192,6 +1193,7 @@ cc_library(
         ":manip_ops_op_lib",
         ":math_ops_op_lib",
         ":nn_ops_op_lib",
+	":new_nn_ops_op_lib",
         ":no_op_op_lib",
         ":parsing_ops_op_lib",
         ":random_ops_op_lib",
