@@ -61,7 +61,7 @@ class ROCmPlatform : public Platform {
 
   // Returns -1 as a sentinel on internal failure (and logs the error).
   int VisibleDeviceCount() const override;
-  int VisibleDeviceCount(int physical_gpu_id) const override;
+  int VirtualDeviceCount(int physical_gpu_id) const override;
   port::Status SetVirtualDeviceCount(int physical_gpu_id, int virtual_gpu_count) override;
 
   const string& Name() const override;

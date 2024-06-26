@@ -138,17 +138,14 @@ class ROCMBlas : public blas::BlasSupport {
   // reallocate the memory layout to be strided batched.
   template <class T, class V>
   bool DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContext<T> ctx, V strided_fun);
-/*
+
   template <typename T, typename FuncT>
   port::Status DoBlasGemmBatchedInternal(
-      FuncT rocblas_func, Stream *stream, blas::Transpose transa,
+      FuncT rocblas_func, Stream* stream, blas::Transpose transa,
       blas::Transpose transb, uint64 m, uint64 n, uint64 k, T alpha,
-      const port::ArraySlice<DeviceMemory<T> *> &a_ptrs_to_wrappers, int lda,
-      const port::ArraySlice<DeviceMemory<T> *> &b_ptrs_to_wrappers, int ldb,
-      T beta, const port::ArraySlice<DeviceMemory<T> *> &c_ptrs_to_wrappers,
-      int ldc, int batch_count, ScratchAllocator *scratch_allocator,
-      blas::CallContext context);
-*/
+      const T** a_array, int lda, const T** b_array, int ldb, T beta,
+      T** c_array, int ldc, int batch_count);
+
   // Helper function for implementing DoBlasGemvWithProfiling.
   template <typename T>
   bool DoBlasGemvWithProfilingImpl(Stream *stream, blas::Transpose trans,
