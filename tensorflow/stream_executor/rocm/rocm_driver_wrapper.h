@@ -113,10 +113,12 @@ namespace wrap {
   __macro(hipModuleLaunchKernel)                    \
   __macro(hipModuleLoadData)                        \
   __macro(hipModuleUnload)                          \
+  __macro(hipModuleOccupancyMaxActiveBlocksPerMultiprocessor) \
   __macro(hipPointerGetAttributes)                  \
   __macro(hipSetDevice)                             \
   __macro(hipStreamAddCallback)                     \
   __macro(hipStreamCreateWithFlags)                 \
+  __macro(hipStreamCreateWithPriority)              \
   __macro(hipStreamDestroy)                         \
   __macro(hipStreamQuery)                           \
   __macro(hipStreamSynchronize)                     \

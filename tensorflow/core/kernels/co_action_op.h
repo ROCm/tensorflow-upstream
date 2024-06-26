@@ -26,7 +26,7 @@ struct LaunchCoActionIndicator {
                   int64 batch_b, int64 paralle_num, int64 pow_num);
 };
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 template <typename Scalar>
 struct LaunchCoAction<GPUDevice, Scalar> {
   Status operator()(OpKernelContext* context, int64 m, int64 n, int64 k,
@@ -42,7 +42,7 @@ struct LaunchCoActionIndicator<GPUDevice, Scalar, TIndex> {
                   int64 batch_b, int64 paralle_num, int64 pow_num);
 };
 
-#endif
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 }  // namespace tensorflow
 

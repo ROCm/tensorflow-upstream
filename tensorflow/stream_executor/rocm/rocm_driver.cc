@@ -42,6 +42,25 @@ bool FLAGS_gpuexec_rocm_driver_inject_init_error = false;
 bool FLAGS_gpuexec_rocm_sync_around_driver_calls = false;
 bool FLAGS_gpuexec_rocm_device_0_only = false;
 
+#define RETURN_IF_ROCM_ERROR(expr, ...)                                       \
+  do {                                                                        \
+    hipError_t _res = (expr);                                            \
+    if (TF_PREDICT_FALSE(_res != hipSuccess)) {                      \
+      return port::InternalError(absl::StrCat(                         \
+          __VA_ARGS__, ": ", ::stream_executor::gpu::ToString(_res))); \
+    }                                                                         \
+  } while (0)
+
+#define FAIL_IF_ROCM_ERROR(expr, ...)                       \
+  do {                                                      \
+    hipError_t _res = (expr);                               \
+    if (ABSL_PREDICT_FALSE(_res != hipSuccess)) {           \
+      LOG(FATAL) << absl::StrCat(__VA_ARGS__) << ": "       \
+                 << ::stream_executor::gpu::ToString(_res); \
+    }                                                       \
+  } while (0)
+
+
 // Debugging: on each push and pop of a rocm context, verify the current device
 // matches the expected one.
 constexpr bool kVerifyGpuContext = false;
@@ -73,7 +92,7 @@ namespace {
 // Error summaries taken from:
 //
 // TODO(leary) switch to cuGetErrorName when updated rocm.h is available.
-string ToString(hipError_t result) {
+std::string ToString(hipError_t result) {
 #define OSTREAM_ROCM_ERROR(__name) \
   case hipError##__name:           \
     return "HIP_ERROR_" #__name;
@@ -123,7 +142,7 @@ port::ThreadPool* GetDriverExecutor() {
 
 }  // namespace
 
-string MemorySpaceString(MemorySpace memory_space) {
+std::string MemorySpaceString(MemorySpace memory_space) {
   switch (memory_space) {
     case MemorySpace::kHost:
       return "host";
@@ -231,7 +250,7 @@ namespace {
 // Returns a stringified device number associated with pointer, primarily for
 // logging purposes. Returns "?" if the device could not be successfully
 // queried.
-string ROCMPointerToDeviceString(hipDeviceptr_t pointer) {
+std::string ROCMPointerToDeviceString(hipDeviceptr_t pointer) {
   auto value = GpuDriver::GetPointerDevice(pointer);
   if (value.ok()) {
     return absl::StrCat(value.ValueOrDie());
@@ -243,7 +262,7 @@ string ROCMPointerToDeviceString(hipDeviceptr_t pointer) {
 // Returns a stringified memory space associated with pointer, primarily for
 // logging purposes. Returns "?" if the memory space could not be successfully
 // queried.
-string ROCMPointerToMemorySpaceString(hipDeviceptr_t pointer) {
+std::string ROCMPointerToMemorySpaceString(hipDeviceptr_t pointer) {
   auto value = GpuDriver::GetPointerMemorySpace(pointer);
   if (value.ok()) {
     return MemorySpaceString(value.ValueOrDie());
@@ -256,7 +275,7 @@ string ROCMPointerToMemorySpaceString(hipDeviceptr_t pointer) {
 // permitted between the "from" and "to" pointers' associated contexts,
 // primarily for logging purposes. Returns "error" if an error is encountered
 // in the process of querying.
-string ROCMPointersToCanAccessString(hipDeviceptr_t from, hipDeviceptr_t to) {
+std::string ROCMPointersToCanAccessString(hipDeviceptr_t from, hipDeviceptr_t to) {
   hipPointerAttribute_t from_pointerAttributes;
   hipError_t result =
       tensorflow::wrap::hipPointerGetAttributes(&from_pointerAttributes, from);
@@ -324,7 +343,7 @@ static port::Status InternalInit() {
 }
 
 /* static */ bool GpuDriver::GetDeviceName(hipDevice_t device,
-                                           string* device_name) {
+                                           std::string* device_name) {
   static const size_t kCharLimit = 64;
   absl::InlinedVector<char, 4> chars(kCharLimit);
   hipError_t res =
@@ -389,33 +408,16 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
 GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
   hipSharedMemConfig shared_mem_config;
   ScopedActivateContext activation{context};
-  hipError_t result =
-      tensorflow::wrap::hipDeviceGetSharedMemConfig(&shared_mem_config);
-  if (result != hipSuccess) {
-    LOG(ERROR) << "failed to get ROCM device shared memory config. "
-               << "Context device ID: " << context->device_ordinal()
-               << ", result: " << ToString(result);
-    return port::Status{
-        port::error::INTERNAL,
-        absl::StrCat("failed to get shared memory config: ", ToString(result))};
-  }
+  RETURN_IF_ROCM_ERROR(tensorflow::wrap::hipDeviceGetSharedMemConfig(&shared_mem_config),
+                        "Failed to get shared memory config");
   return shared_mem_config;
 }
 
 /* static */ port::Status GpuDriver::ContextSetSharedMemConfig(
     GpuContext* context, hipSharedMemConfig shared_mem_config) {
   ScopedActivateContext activation{context};
-  hipError_t result =
-      tensorflow::wrap::hipDeviceSetSharedMemConfig(shared_mem_config);
-  if (result != hipSuccess) {
-    LOG(ERROR) << "failed to set ROCM device shared memory config. "
-               << "Context device ID: " << context->device_ordinal()
-               << ", config: " << shared_mem_config
-               << ", result: " << ToString(result);
-    return port::Status{
-        port::error::INTERNAL,
-        absl::StrCat("failed to set shared memory config: ", ToString(result))};
-  }
+  RETURN_IF_ROCM_ERROR(tensorflow::wrap::hipDeviceSetSharedMemConfig(shared_mem_config),
+                      "Failed to set shared memory config");
   return port::Status::OK();
 }
 
@@ -603,10 +605,17 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 }
 
 /* static */ bool GpuDriver::CreateStream(GpuContext* context,
-                                          GpuStreamHandle* stream) {
+                                          GpuStreamHandle* stream,
+                                          int priority) {
   ScopedActivateContext activated{context};
-  hipError_t res = tensorflow::wrap::hipStreamCreateWithFlags(
-      stream, hipStreamDefault);  // switch to hipStreamNonBlocking?
+  hipError_t res;
+  if (priority == 0) {
+    res = tensorflow::wrap::hipStreamCreateWithFlags(
+        stream, hipStreamDefault);  // switch to hipStreamNonBlocking?
+  } else {
+    res = tensorflow::wrap::hipStreamCreateWithPriority(
+        stream, hipStreamDefault, priority);  // switch to hipStreamNonBlocking?
+  }
   if (res != hipSuccess) {
     LOG(ERROR) << "could not allocate ROCM stream for device "
                << context->device_ordinal() << ": " << ToString(res);
@@ -811,6 +820,18 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
   if (res != hipSuccess) {
     LOG(ERROR) << "failed to get elapsed time between events: "
                << ToString(res);
+    return false;
+  }
+
+  return true;
+}
+
+/* static */ bool GpuDriver::SynchronizeEvent(GpuContext* context,
+                                              GpuEventHandle event) {
+  ScopedActivateContext activated{context};
+  hipError_t res = tensorflow::wrap::hipEventSynchronize(event);
+  if (res != hipSuccess) {
+    LOG(ERROR) << "failed to synchronize the stop event: " << ToString(res);
     return false;
   }
 
@@ -1336,8 +1357,8 @@ static port::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
   return true;
 }
 
-/* static */ string GpuDriver::GetPCIBusID(hipDevice_t device) {
-  string pci_bus_id;
+/* static */ std::string GpuDriver::GetPCIBusID(hipDevice_t device) {
+  std::string pci_bus_id;
   static const int kBufferSize = 64;
   absl::InlinedVector<char, 4> chars(kBufferSize);
   chars[kBufferSize - 1] = '\0';
@@ -1394,14 +1415,10 @@ static port::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
   ScopedActivateContext activation{context};
 
   int max_blocks = 0;
-  hipError_t result = hipSuccess;
-  // TODO(ROCm) implement this feature in HIP
-  if (result != hipSuccess) {
-    return port::Status{
-        port::error::INTERNAL,
-        absl::StrFormat("failed to calculate occupancy of kernel %p: %s",
-                        kernel, ToString(result).c_str())};
-  }
+  RETURN_IF_ROCM_ERROR(
+      tensorflow::wrap::hipModuleOccupancyMaxActiveBlocksPerMultiprocessor(
+          &max_blocks, kernel, threads_per_block, dynamic_shared_memory_bytes),
+      "Failed to calculate maximal active blocks per SM");
 
   return max_blocks;
 }

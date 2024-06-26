@@ -153,6 +153,7 @@ template <>
 struct ToDataType<tensorflow::bfloat16> {
   static constexpr DataType value = DataType::kBFloat16;
 };
+template <>
 struct ToDataType<std::complex<float>> {
   static constexpr DataType value = DataType::kComplexFloat;
 };
