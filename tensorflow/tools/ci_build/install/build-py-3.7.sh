@@ -33,7 +33,7 @@ export PYTHON_LIB_PATH=/usr/local/lib/python${PYTHON_VERSION}/site-packages
 export PYTHON_BIN_PATH=/usr/local/bin/python${PYTHON_VERSION}
 
 # Install pip and venv
-curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+curl https://bootstrap.pypa.io/pip/3.7/get-pip.py -o get-pip.py
 python3 get-pip.py
 python3 -m pip install --no-cache-dir --upgrade pip
 python3 -m pip install --user virtualenv
