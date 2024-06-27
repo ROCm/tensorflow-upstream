@@ -18,6 +18,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 
+#include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "third_party/eigen3/Eigen/Core"
 #include "rocm/include/miopen/miopen.h"
@@ -68,7 +69,29 @@ namespace gpu {
 
 PLUGIN_REGISTRY_DEFINE_PLUGIN_ID(kMIOpenPlugin);
 
-string ToString(miopenStatus_t status) {
+#define RETURN_MSG_IF_MIOPEN_ERROR(expr)                                 \
+  do {                                                                   \
+    miopenStatus_t _status = expr.get_status();                          \
+    if (!SE_PREDICT_TRUE(_status == miopenStatusSuccess)) {              \
+      std::ostringstream oss;                                            \
+      oss << ToString(_status) << "\nin " << __FILE__ << "(" << __LINE__ \
+          << "): '" << #expr << "' " << expr.get_error();                \
+      return port::Status(port::error::UNKNOWN, oss.str().c_str());      \
+    }                                                                    \
+  } while (false)
+
+#define RETURN_FALSE_IF_MIOPEN_ERROR(expr)                               \
+  do {                                                                   \
+    miopenStatus_t _status = expr.get_status();                          \
+    if (!SE_PREDICT_TRUE(_status == miopenStatusSuccess)) {              \
+      std::ostringstream oss;                                            \
+      oss << ToString(_status) << "\nin " << __FILE__ << "(" << __LINE__ \
+          << "): '" << #expr << "' " << expr.get_error();                \
+      return false;                                                      \
+    }                                                                    \
+  } while (false)
+
+std::string ToString(miopenStatus_t status) {
   switch (status) {
     case miopenStatusSuccess:
       return "miopenStatusSuccess";
@@ -206,6 +229,7 @@ namespace wrap {
   __macro(miopenConvolutionBackwardDataGetWorkSpaceSize)   \
   __macro(miopenCreateRNNDescriptor)                       \
   __macro(miopenSetRNNDescriptor)                          \
+  __macro(miopenSetRNNDescriptor_V2)                       \
   __macro(miopenDestroyRNNDescriptor)                      \
   __macro(miopenGetRNNParamsSize)                          \
   __macro(miopenGetRNNLayerParam)                          \
@@ -221,6 +245,15 @@ namespace wrap {
   __macro(miopenGetRNNLayerBiasOffset)                     \
   __macro(miopenGetRNNLayerBiasSize)                       \
   __macro(miopenGetRNNParamsDescriptor)                    \
+  __macro(miopenCreateDropoutDescriptor)                   \
+  __macro(miopenSetDropoutDescriptor)                      \
+  __macro(miopenGetDropoutDescriptor)                      \
+  __macro(miopenDestroyDropoutDescriptor)                  \
+  __macro(miopenRestoreDropoutDescriptor)                  \
+  __macro(miopenDropoutGetReserveSpaceSize)                \
+  __macro(miopenDropoutGetStatesSize)                      \
+  __macro(miopenDropoutForward)                            \
+  __macro(miopenDropoutBackward)                           \
   __macro(miopenCreateActivationDescriptor)                \
   __macro(miopenSetActivationDescriptor)                   \
   __macro(miopenGetActivationDescriptor)                   \
@@ -245,7 +278,13 @@ namespace wrap {
   __macro(miopenSetOpArgsBatchNormBackward)                \
   __macro(miopenExecuteFusionPlan)                         \
   __macro(miopenDestroyOperatorArgs)                       \
-  __macro(miopenDestroyFusionPlan)
+  __macro(miopenDestroyFusionPlan)                         \
+  __macro(miopenConvolutionBackwardWeightsImmediate)		   \
+  __macro(miopenCreateCTCLossDescriptor)                   \
+  __macro(miopenSetCTCLossDescriptor)				               \
+  __macro(miopenGetCTCLossWorkspaceSize)			             \
+  __macro(miopenCTCLoss)					                         \
+  __macro(miopenDestroyCTCLossDescriptor)  
 
 // clang-format on
 
@@ -1691,6 +1730,68 @@ class MIOpenRnnParamsDescriptor : public MIOpenDescriptorCommon<void> {
   SE_DISALLOW_COPY_AND_ASSIGN(MIOpenRnnParamsDescriptor);
 };
 
+class MIOpenDropoutDescriptor {
+ public:
+  MIOpenDropoutDescriptor(miopenHandle_t miopen_handle, float dropout,
+                          uint64_t seed, ScratchAllocator* state_allocator)
+      : dropout_desc_(nullptr) {
+    auto status = wrap::miopenCreateDropoutDescriptor(&dropout_desc_);
+    if (status != miopenStatusSuccess) {
+      LOG(FATAL) << "call to miopenCreateDropoutDescriptor failed: "
+                 << ToString(status);
+    }
+
+    if (dropout > 0.0f) {
+      DeviceMemory<uint8_t> state_memory;
+      if (state_allocator) {
+        size_t state_sizes_in_bytes = 0;
+        status = wrap::miopenDropoutGetStatesSize(miopen_handle,
+                                                  &state_sizes_in_bytes);
+        if (status != miopenStatusSuccess) {
+          LOG(FATAL) << "call to miopenDropoutGetStatesSize failed: "
+                     << ToString(status);
+        }
+        if (state_sizes_in_bytes > 0) {
+          auto allocated = state_allocator->AllocateBytes(state_sizes_in_bytes);
+          if (!allocated.ok() ||
+              (state_memory = allocated.value()) == nullptr) {
+            LOG(FATAL) << "Failed to allocate dropout state space.";
+          }
+        }
+      }
+
+      bool state_evo = false;  // input placeholder, currently not enabled
+      bool use_mask = true;
+      status = wrap::miopenSetDropoutDescriptor(
+          dropout_desc_ /*dropoutDesc*/, miopen_handle /*handle*/,
+          dropout /*dropout*/, state_memory.opaque() /*states*/,
+          state_memory.size() /*stateSizeInBytes*/, seed /*seed*/,
+          use_mask /*use_mask*/, state_evo /*state_evo*/,
+          MIOPEN_RNG_PSEUDO_XORWOW /*rng_mode*/);
+      if (status != miopenStatusSuccess) {
+        LOG(FATAL) << "call to miopenSetDropoutDescriptor failed: "
+                   << ToString(status);
+      }
+    }
+  }
+
+  ~MIOpenDropoutDescriptor() {
+    auto status = wrap::miopenDestroyDropoutDescriptor(dropout_desc_);
+    if (status != miopenStatusSuccess) {
+      LOG(FATAL) << "call to miopenDestroyDropoutDescriptor failed: "
+                 << ToString(status);
+    }
+  }
+
+  miopenDropoutDescriptor_t handle() const { return dropout_desc_; }
+
+ private:
+  miopenDropoutDescriptor_t dropout_desc_;
+
+  MIOpenDropoutDescriptor(const MIOpenDropoutDescriptor&) = delete;
+  void operator=(const MIOpenDropoutDescriptor&) = delete;
+};
+
 class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
  public:
   MIOpenRnnDescriptor(miopenHandle_t miopen_handle, int num_layers,
@@ -1710,15 +1811,19 @@ class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
         rnn_mode_(rnn_mode),
         data_type_(data_type),
         algorithm_config_(algorithm_config) {
+    // Create the dropout handle
+    miopen_dropout_desc_.reset(new MIOpenDropoutDescriptor(
+        miopen_handle, dropout, seed, state_allocator));
     // Create the RNN handle
     auto status = wrap::miopenCreateRNNDescriptor(&rnn_desc_);
     RETURN_IF_MIOPEN_ERROR(status, "Unable to create RNN descriptor");
-    status = wrap::miopenSetRNNDescriptor(
+    status = wrap::miopenSetRNNDescriptor_V2(
         rnn_desc_ /*rnnDesc*/, hidden_size /*hiddenSize*/,
-        num_layers /*numLayers*/, input_mode /*inputMode*/,
-        direction_mode /*direction*/, rnn_mode /*mode*/,
-        miopenRNNwithBias /*biasMode*/, miopenRNNdefault /*algo*/,
-        data_type /*dataType*/);
+        num_layers /*numLayers*/,
+        miopen_dropout_desc_->handle() /*dropoutDesc*/,
+        input_mode /*inputMode*/, direction_mode /*direction*/,
+        rnn_mode /*mode*/, miopenRNNwithBias /*biasMode*/,
+        miopenRNNdefault /*algo*/, data_type /*dataType*/);
     RETURN_IF_MIOPEN_ERROR(status, "Unable to update RNN descriptor");
     // Create the params handle.
     miopen_params_desc_.reset(
@@ -1775,8 +1880,7 @@ class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
   miopenDataType_t data_type_;
   dnn::AlgorithmConfig algorithm_config_;
   port::Status status_;
-  // no dropout in MIOpen.
-  // std::unique_ptr<miopenDropoutDescriptor> miopen_dropout_desc_;
+  std::unique_ptr<MIOpenDropoutDescriptor> miopen_dropout_desc_;
   std::unique_ptr<MIOpenRnnParamsDescriptor> miopen_params_desc_;
   SE_DISALLOW_COPY_AND_ASSIGN(MIOpenRnnDescriptor);
 };
@@ -2023,6 +2127,7 @@ bool MIOpenSupport::DoRnnForwardImpl(
     Stream* stream, const MIOpenRnnDescriptor& rnn_desc,
     const MIOpenRnnSequenceTensorDescriptor& input_desc,
     const DeviceMemory<T>& input_data,
+    const DeviceMemory<int>& seq_lengths_data,
     const MIOpenRnnStateTensorDescriptor& input_h_desc,
     const DeviceMemory<T>& input_h_data,
     const MIOpenRnnStateTensorDescriptor& input_c_desc,
@@ -2164,6 +2269,7 @@ bool MIOpenSupport::DoRnnBackwardImpl(
     Stream* stream, const MIOpenRnnDescriptor& rnn_desc,
     const MIOpenRnnSequenceTensorDescriptor& input_desc,
     const DeviceMemory<T>& input_data,
+    const DeviceMemory<int>& seq_lengths_data,
     const MIOpenRnnStateTensorDescriptor& input_h_desc,
     const DeviceMemory<T>& input_h_data,
     const MIOpenRnnStateTensorDescriptor& input_c_desc,
@@ -2343,6 +2449,168 @@ MIOpenRnnParamsDescriptor::MIOpenRnnParamsDescriptor(
   }
 }
 
+
+class MIOpenCTCLossDescriptor {
+ public:
+  explicit MIOpenCTCLossDescriptor(miopenDataType_t data_type) {
+    auto status = wrap::miopenCreateCTCLossDescriptor(&handle_);
+    if (status != miopenStatusSuccess) {
+      LOG(FATAL) << "call to miopenCreateCTCLossDescriptor failed: "
+                 << ToString(status);
+    }
+
+    bool apply_softmax_layer = true;
+    status = wrap::miopenSetCTCLossDescriptor(handle_, data_type, 0,
+                                              apply_softmax_layer);
+    if (status != miopenStatusSuccess) {
+      LOG(FATAL) << "call to miopenSetCTCLossDescriptor failed: "
+                 << ToString(status);
+    }
+  }
+
+  ~MIOpenCTCLossDescriptor() {
+    auto status = wrap::miopenDestroyCTCLossDescriptor(handle_);
+    if (status != miopenStatusSuccess) {
+      LOG(FATAL) << "call to miopenDestroyCTCLossDescriptor failed: "
+                 << ToString(status);
+    }
+  }
+
+  miopenCTCLossDescriptor_t handle() const { return handle_; }
+
+ private:
+  miopenCTCLossDescriptor_t handle_;  // Owned
+
+  SE_DISALLOW_COPY_AND_ASSIGN(MIOpenCTCLossDescriptor);
+};
+
+port::Status MIOpenSupport::DoPrepareForCtcLoss(
+    Stream* stream, dnn::DataType element_type,
+    const dnn::RnnStateTensorDescriptor& probs_desc,
+    const dnn::RnnStateTensorDescriptor& grads_desc,
+    absl::Span<const int> labels_data,
+    absl::Span<const int> labels_lengths_data,
+    absl::Span<const int> input_lengths_data,
+    ScratchAllocator* scratch_allocator, DeviceMemory<uint8>* scratch_memory,
+    int* ctc_loss_algo_id) {
+  auto miopen = miopen_->GetHandle(parent_, stream);
+
+  MIOpenCTCLossDescriptor miopen_ctc_loss_desc(ToMIOpenDataType(element_type));
+
+  // Query the workspace size.
+  size_t workspace_size_in_bytes = 0;
+
+  const MIOpenRnnStateTensorDescriptor& miopen_probs_desc =
+      static_cast<const MIOpenRnnStateTensorDescriptor&>(probs_desc);
+
+  const MIOpenRnnStateTensorDescriptor& miopen_grads_desc =
+      static_cast<const MIOpenRnnStateTensorDescriptor&>(grads_desc);
+
+  auto status = wrap::miopenGetCTCLossWorkspaceSize(
+      miopen.handle(), miopen_probs_desc.handle(), miopen_grads_desc.handle(),
+      labels_data.data(), labels_lengths_data.data(), input_lengths_data.data(),
+      MIOPEN_CTC_LOSS_ALGO_DETERMINISTIC, miopen_ctc_loss_desc.handle(),
+      &workspace_size_in_bytes);
+
+  if (status != miopenStatusSuccess) {
+    LOG(FATAL) << "call to miopenDestroyCTCLossDescriptor failed: "
+               << ToString(status);
+    return port::InternalError(
+        "Failed to determine scratch memory size for MIOpen CTC Loss");
+  }
+
+  *scratch_memory = DeviceMemory<uint8>();
+
+  // Allocate the workspace.
+  if (workspace_size_in_bytes != 0) {
+    if (scratch_allocator == nullptr) {
+      return port::InternalError(
+          absl::StrCat("An allocator must be specified when scratch memory is "
+                       "needed"));
+    }
+    auto scratch_or = scratch_allocator->AllocateBytes(workspace_size_in_bytes);
+    if (scratch_or.ok()) {
+      *scratch_memory = scratch_or.ValueOrDie();
+    } else {
+      LOG(ERROR)
+          << "Failed to allocate scratch memory - "
+          << scratch_or.status().error_message() << "\n"
+          << "\tYou can set the env var TF_CUDNN_WORKSPACE_LIMIT_IN_MB to a "
+             "larger number (e.g. 8192) to increase the max memory limit.\n"
+          << "\tIncreasing the max memory limit might help resolve this "
+             "error";
+      return port::InternalError(absl::StrCat(
+          "Failed to allocate scratch memory for MIOpen CTC Loss, of size: ",
+          workspace_size_in_bytes));
+    }
+  }
+
+  return port::Status::OK();
+}
+
+port::Status MIOpenSupport::DoCtcLossImpl(
+    Stream* stream, const MIOpenRnnStateTensorDescriptor& probs_desc,
+    const DeviceMemoryBase probs_data, absl::Span<const int> labels_data,
+    absl::Span<const int> labels_lengths_data,
+    absl::Span<const int> input_lengths_data, DeviceMemoryBase costs_data,
+    const MIOpenRnnStateTensorDescriptor& grads_desc,
+    DeviceMemoryBase grads_data, const MIOpenCTCLossDescriptor& ctc_loss_desc,
+    DeviceMemory<uint8> scratch_memory, int* ctc_loss_algo_id) {
+  auto miopen = miopen_->GetHandle(parent_, stream);
+
+  int kNumTimestamps = probs_desc.num_layers();
+  int kBatchSize = probs_desc.batch_size();
+  int kNumLabels = probs_desc.data_size();
+  int total_size = kNumLabels * kNumTimestamps * kBatchSize;
+  (void)total_size;
+
+  auto status = wrap::miopenCTCLoss(
+      miopen.handle(), probs_desc.handle(), probs_data.opaque(),
+      labels_data.data(), labels_lengths_data.data(), input_lengths_data.data(),
+      costs_data.opaque(), grads_desc.handle(), grads_data.opaque(),
+      MIOPEN_CTC_LOSS_ALGO_DETERMINISTIC, ctc_loss_desc.handle(),
+      scratch_memory.opaque(), scratch_memory.size());
+  if (status != miopenStatusSuccess) {
+    LOG(FATAL) << "call to miopenCTCLoss failed: " << ToString(status);
+    return port::InternalError("Failure during MIOpen CTC Loss");
+  }
+
+  return port::Status::OK();
+}
+
+port::Status MIOpenSupport::DoCtcLoss(
+    Stream* stream, dnn::DataType element_type,
+    const dnn::RnnStateTensorDescriptor& probs_desc,
+    const DeviceMemoryBase probs_data,
+    absl::Span<const int> labels_data,
+    absl::Span<const int> labels_lengths_data,
+    absl::Span<const int> input_lengths_data, 
+    DeviceMemoryBase costs_data,
+    const dnn::RnnStateTensorDescriptor& grads_desc,
+    DeviceMemoryBase grads_data, DeviceMemory<uint8> scratch_memory,
+    int* ctc_loss_algo_id) {
+  // Current MIOPen CTC Loss only supports the float datatype
+  if (element_type != dnn::DataType::kFloat) {
+    return port::Status(port::error::INVALID_ARGUMENT,
+                        "MIOpenCTCLossDescriptor is supported only when the "
+                        "DataType is float");
+  }
+
+  MIOpenCTCLossDescriptor miopen_ctc_loss_desc(ToMIOpenDataType(element_type));
+
+  const MIOpenRnnStateTensorDescriptor& miopen_probs_desc =
+      static_cast<const MIOpenRnnStateTensorDescriptor&>(probs_desc);
+
+  const MIOpenRnnStateTensorDescriptor& miopen_grads_desc =
+      static_cast<const MIOpenRnnStateTensorDescriptor&>(grads_desc);
+
+  return DoCtcLossImpl(stream, miopen_probs_desc, probs_data, labels_data,
+                       labels_lengths_data, input_lengths_data, costs_data,
+                       miopen_grads_desc, grads_data, miopen_ctc_loss_desc,
+                       scratch_memory, ctc_loss_algo_id);
+}
+
+
 port::StatusOr<std::unique_ptr<dnn::RnnDescriptor>>
 MIOpenSupport::createRnnDescriptor(
     int num_layers, int hidden_size, int input_size, int cell_size,
@@ -2406,6 +2674,7 @@ bool MIOpenSupport::DoRnnForward(
     Stream* stream, const dnn::RnnDescriptor& rnn_desc,
     const dnn::RnnSequenceTensorDescriptor& input_desc,
     const DeviceMemory<Eigen::half>& input_data,
+    const DeviceMemory<int>& seq_lengths_data,
     const dnn::RnnStateTensorDescriptor& input_h_desc,
     const DeviceMemory<Eigen::half>& input_h_data,
     const dnn::RnnStateTensorDescriptor& input_c_desc,
@@ -2438,7 +2707,8 @@ bool MIOpenSupport::DoRnnForward(
 
   return DoRnnForwardImpl<Eigen::half>(
       stream, miopen_rnn_desc, miopen_input_desc, input_data,
-      miopen_input_h_desc, input_h_data, miopen_input_c_desc, input_c_data,
+      seq_lengths_data, miopen_input_h_desc, input_h_data, 
+      miopen_input_c_desc, input_c_data,
       params, miopen_output_desc, output_data, miopen_output_h_desc,
       output_h_data, miopen_output_c_desc, output_c_data, is_training,
       reserve_space_allocator, workspace_allocator, output_profile_result);
@@ -2448,6 +2718,7 @@ bool MIOpenSupport::DoRnnForward(
     Stream* stream, const dnn::RnnDescriptor& rnn_desc,
     const dnn::RnnSequenceTensorDescriptor& input_desc,
     const DeviceMemory<float>& input_data,
+    const DeviceMemory<int>& seq_lengths_data,
     const dnn::RnnStateTensorDescriptor& input_h_desc,
     const DeviceMemory<float>& input_h_data,
     const dnn::RnnStateTensorDescriptor& input_c_desc,
@@ -2479,7 +2750,8 @@ bool MIOpenSupport::DoRnnForward(
 
   return DoRnnForwardImpl<float>(
       stream, miopen_rnn_desc, miopen_input_desc, input_data,
-      miopen_input_h_desc, input_h_data, miopen_input_c_desc, input_c_data,
+      seq_lengths_data, miopen_input_h_desc, input_h_data, 
+      miopen_input_c_desc, input_c_data,
       params, miopen_output_desc, output_data, miopen_output_h_desc,
       output_h_data, miopen_output_c_desc, output_c_data, is_training,
       reserve_space_allocator, workspace_allocator, output_profile_result);
@@ -2489,6 +2761,7 @@ bool MIOpenSupport::DoRnnForward(
     Stream* stream, const dnn::RnnDescriptor& rnn_desc,
     const dnn::RnnSequenceTensorDescriptor& input_desc,
     const DeviceMemory<double>& input_data,
+    const DeviceMemory<int>& seq_lengths_data,
     const dnn::RnnStateTensorDescriptor& input_h_desc,
     const DeviceMemory<double>& input_h_data,
     const dnn::RnnStateTensorDescriptor& input_c_desc,
@@ -2511,6 +2784,7 @@ bool MIOpenSupport::DoRnnBackward(
     Stream* stream, const dnn::RnnDescriptor& rnn_desc,
     const dnn::RnnSequenceTensorDescriptor& input_desc,
     const DeviceMemory<Eigen::half>& input_data,
+    const DeviceMemory<int>& seq_lengths_data,
     const dnn::RnnStateTensorDescriptor& input_h_desc,
     const DeviceMemory<Eigen::half>& input_h_data,
     const dnn::RnnStateTensorDescriptor& input_c_desc,
@@ -2550,7 +2824,8 @@ bool MIOpenSupport::DoRnnBackward(
 
   return DoRnnBackwardImpl<Eigen::half>(
       stream, miopen_rnn_desc, miopen_input_desc, input_data,
-      miopen_input_h_desc, input_h_data, miopen_input_c_desc, input_c_data,
+      seq_lengths_data, miopen_input_h_desc, input_h_data, 
+      miopen_input_c_desc, input_c_data,
       params, miopen_output_desc, output_data, miopen_output_h_desc,
       output_h_data, miopen_output_c_desc, output_c_data, output_backprop_data,
       output_h_backprop_data, output_c_backprop_data, input_backprop_data,
@@ -2562,6 +2837,7 @@ bool MIOpenSupport::DoRnnBackward(
     Stream* stream, const dnn::RnnDescriptor& rnn_desc,
     const dnn::RnnSequenceTensorDescriptor& input_desc,
     const DeviceMemory<float>& input_data,
+    const DeviceMemory<int>& seq_lengths_data,
     const dnn::RnnStateTensorDescriptor& input_h_desc,
     const DeviceMemory<float>& input_h_data,
     const dnn::RnnStateTensorDescriptor& input_c_desc,
@@ -2600,7 +2876,8 @@ bool MIOpenSupport::DoRnnBackward(
 
   return DoRnnBackwardImpl<float>(
       stream, miopen_rnn_desc, miopen_input_desc, input_data,
-      miopen_input_h_desc, input_h_data, miopen_input_c_desc, input_c_data,
+      seq_lengths_data, miopen_input_h_desc, input_h_data, 
+      miopen_input_c_desc, input_c_data,
       params, miopen_output_desc, output_data, miopen_output_h_desc,
       output_h_data, miopen_output_c_desc, output_c_data, output_backprop_data,
       output_h_backprop_data, output_c_backprop_data, input_backprop_data,
@@ -2612,6 +2889,7 @@ bool MIOpenSupport::DoRnnBackward(
     Stream* stream, const dnn::RnnDescriptor& rnn_desc,
     const dnn::RnnSequenceTensorDescriptor& input_desc,
     const DeviceMemory<double>& input_data,
+    const DeviceMemory<int>& seq_lengths_data,
     const dnn::RnnStateTensorDescriptor& input_h_desc,
     const DeviceMemory<double>& input_h_data,
     const dnn::RnnStateTensorDescriptor& input_c_desc,
@@ -3094,19 +3372,17 @@ bool MIOpenSupport::DoBatchNormalizationForward(
     const DeviceMemory<float>& estimated_variance,
     const DeviceMemory<float>& side_input, const dnn::BatchDescriptor& x_desc,
     const dnn::BatchDescriptor& scale_offset_desc, const double epsilon,
+    const double exponential_average_factor,
     dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y,
     DeviceMemory<float>* batch_mean, DeviceMemory<float>* batch_var,
     DeviceMemory<float>* saved_mean, DeviceMemory<float>* saved_inv_var,
     bool is_training, ScratchAllocator* reserve_space_allocator,
-    ScratchAllocator* workspace_allocator,
-    std::function<const DeviceMemory<float>&()> var_to_inv_var,
-    std::function<void()> inv_var_to_var) {
+    ScratchAllocator* workspace_allocator) {
   return DoBatchNormalizationForwardImpl<Eigen::half, float>(
       stream, dnn::DataType::kHalf, dnn::DataType::kFloat, x, scale, offset,
       estimated_mean, estimated_variance, side_input, x_desc, scale_offset_desc,
       epsilon, activation_mode, y, batch_mean, batch_var, saved_mean,
-      saved_inv_var, is_training, std::move(var_to_inv_var),
-      std::move(inv_var_to_var));
+      saved_inv_var, is_training, reserve_space_allocator, workspace_allocator);
 }
 
 bool MIOpenSupport::DoBatchNormalizationForward(
@@ -3116,6 +3392,7 @@ bool MIOpenSupport::DoBatchNormalizationForward(
     const DeviceMemory<float>& estimated_variance,
     const DeviceMemory<float>& side_input, const dnn::BatchDescriptor& x_desc,
     const dnn::BatchDescriptor& scale_offset_desc, const double epsilon,
+    const double exponential_average_factor,
     dnn::ActivationMode activation_mode, DeviceMemory<float>* y,
     DeviceMemory<float>* batch_mean, DeviceMemory<float>* batch_var,
     DeviceMemory<float>* saved_mean, DeviceMemory<float>* saved_inv_var,
@@ -3127,8 +3404,7 @@ bool MIOpenSupport::DoBatchNormalizationForward(
       stream, dnn::DataType::kFloat, dnn::DataType::kFloat, x, scale, offset,
       estimated_mean, estimated_variance, side_input, x_desc, scale_offset_desc,
       epsilon, activation_mode, y, batch_mean, batch_var, saved_mean,
-      saved_inv_var, is_training, std::move(var_to_inv_var),
-      std::move(inv_var_to_var));
+      saved_inv_var, is_training, reserve_space_allocator, workspace_allocator);
 }
 
 template <class T, class U>
@@ -3140,11 +3416,12 @@ bool MIOpenSupport::DoBatchNormalizationForwardImpl(
     const DeviceMemory<U>& estimated_variance,
     const DeviceMemory<U>& side_input, const dnn::BatchDescriptor& x_desc,
     const dnn::BatchDescriptor& scale_offset_desc, const double epsilon,
+    const double exponential_average_factor,
     dnn::ActivationMode activation_mode, DeviceMemory<T>* y,
     DeviceMemory<U>* batch_mean, DeviceMemory<U>* batch_var,
     DeviceMemory<U>* saved_mean, DeviceMemory<U>* saved_inv_var,
-    bool is_training, std::function<const DeviceMemory<U>&()> var_to_inv_var,
-    std::function<void()> inv_var_to_var) {
+    bool is_training, ScratchAllocator* reserve_space_allocator,
+    ScratchAllocator* workspace_allocator) {
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   ScopedTensorDescriptor x_descriptor{x_desc,
@@ -3163,8 +3440,8 @@ bool MIOpenSupport::DoBatchNormalizationForwardImpl(
         miopen.handle(), mode, &one, &zero, x_descriptor.handle(), x.opaque(),
         x_descriptor.handle(), y->opaque(), scale_offset_descriptor.handle(),
         const_cast<void*>(scale.opaque()), const_cast<void*>(offset.opaque()),
-        1.0, batch_mean->opaque(), batch_var->opaque(), epsilon,
-        saved_mean->opaque(), saved_inv_var->opaque());
+        exponential_average_factor, batch_mean->opaque(), batch_var->opaque(), 
+        epsilon, saved_mean->opaque(), saved_inv_var->opaque());
   } else {
     const void* maybe_inv_var = estimated_variance.opaque();
     status = wrap::miopenBatchNormalizationForwardInference(
@@ -3247,7 +3524,7 @@ bool MIOpenSupport::DoBatchNormalizationBackwardImpl(
   return true;
 }
 
-bool MIOpenSupport::DoFusedConvolve(
+port::Status MIOpenSupport::DoFusedConvolve(
     Stream* stream, const dnn::BatchDescriptor& conv_input_descriptor,
     const DeviceMemory<double>& conv_input_data, double conv_input_scale,
     const dnn::FilterDescriptor& filter_descriptor,
@@ -3260,11 +3537,10 @@ bool MIOpenSupport::DoFusedConvolve(
     DeviceMemory<double>* output_data, ScratchAllocator* scratch_allocator,
     const dnn::AlgorithmConfig& algorithm_config,
     dnn::ProfileResult* output_profile_result) {
-  LOG(ERROR) << "fused convolve not implemented yet";
-  return false;
+    return port::UnimplementedError("fused convolve not implemented yet");
 }
 
-bool MIOpenSupport::DoFusedConvolve(
+port::Status MIOpenSupport::DoFusedConvolve(
     Stream* stream, const dnn::BatchDescriptor& conv_input_descriptor,
     const DeviceMemory<float>& conv_input_data, float conv_input_scale,
     const dnn::FilterDescriptor& filter_descriptor,
@@ -3277,11 +3553,10 @@ bool MIOpenSupport::DoFusedConvolve(
     DeviceMemory<float>* output_data, ScratchAllocator* scratch_allocator,
     const dnn::AlgorithmConfig& algorithm_config,
     dnn::ProfileResult* output_profile_result) {
-  LOG(ERROR) << "fused convolve not implemented yet";
-  return false;
+    return port::UnimplementedError("fused convolve not implemented yet");
 }
 
-bool MIOpenSupport::DoFusedConvolve(
+port::Status MIOpenSupport::DoFusedConvolve(
     Stream* stream, const dnn::BatchDescriptor& conv_input_descriptor,
     const DeviceMemory<Eigen::half>& conv_input_data, float conv_input_scale,
     const dnn::FilterDescriptor& filter_descriptor,
@@ -3295,11 +3570,10 @@ bool MIOpenSupport::DoFusedConvolve(
     DeviceMemory<Eigen::half>* output_data, ScratchAllocator* scratch_allocator,
     const dnn::AlgorithmConfig& algorithm_config,
     dnn::ProfileResult* output_profile_result) {
-  LOG(ERROR) << "fused convolve not implemented yet";
-  return false;
+    return port::UnimplementedError("fused convolve not implemented yet");
 }
 
-bool MIOpenSupport::DoFusedConvolve(
+port::Status MIOpenSupport::DoFusedConvolve(
     Stream* stream, const dnn::BatchDescriptor& conv_input_descriptor,
     const DeviceMemory<int8>& conv_input_data, float conv_input_scale,
     const dnn::FilterDescriptor& filter_descriptor,
@@ -3312,8 +3586,7 @@ bool MIOpenSupport::DoFusedConvolve(
     DeviceMemory<int8>* output_data, ScratchAllocator* scratch_allocator,
     const dnn::AlgorithmConfig& algorithm_config,
     dnn::ProfileResult* output_profile_result) {
-  LOG(ERROR) << "fused convolve not implemented yet";
-  return false;
+    return port::UnimplementedError("fused convolve not implemented yet");
 }
 
 bool MIOpenSupport::DoTransformTensor(Stream* stream,
