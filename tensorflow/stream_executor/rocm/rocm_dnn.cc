@@ -1753,8 +1753,7 @@ class MIOpenDropoutDescriptor {
         }
         if (state_sizes_in_bytes > 0) {
           auto allocated = state_allocator->AllocateBytes(state_sizes_in_bytes);
-          if (!allocated.ok() ||
-              (state_memory = allocated.value()) == nullptr) {
+          if (!allocated.ok()) {
             LOG(FATAL) << "Failed to allocate dropout state space.";
           }
         }
@@ -2555,7 +2554,7 @@ port::Status MIOpenSupport::DoCtcLossImpl(
     absl::Span<const int> input_lengths_data, DeviceMemoryBase costs_data,
     const MIOpenRnnStateTensorDescriptor& grads_desc,
     DeviceMemoryBase grads_data, const MIOpenCTCLossDescriptor& ctc_loss_desc,
-    DeviceMemory<uint8> scratch_memory, int* ctc_loss_algo_id) {
+    DeviceMemory<uint8> scratch_memory, int ctc_loss_algo_id) {
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   int kNumTimestamps = probs_desc.num_layers();
@@ -2588,7 +2587,7 @@ port::Status MIOpenSupport::DoCtcLoss(
     DeviceMemoryBase costs_data,
     const dnn::RnnStateTensorDescriptor& grads_desc,
     DeviceMemoryBase grads_data, DeviceMemory<uint8> scratch_memory,
-    int* ctc_loss_algo_id) {
+    int ctc_loss_algo_id) {
   // Current MIOPen CTC Loss only supports the float datatype
   if (element_type != dnn::DataType::kFloat) {
     return port::Status(port::error::INVALID_ARGUMENT,
@@ -3381,7 +3380,8 @@ bool MIOpenSupport::DoBatchNormalizationForward(
   return DoBatchNormalizationForwardImpl<Eigen::half, float>(
       stream, dnn::DataType::kHalf, dnn::DataType::kFloat, x, scale, offset,
       estimated_mean, estimated_variance, side_input, x_desc, scale_offset_desc,
-      epsilon, activation_mode, y, batch_mean, batch_var, saved_mean,
+      epsilon, exponential_average_factor, 
+      activation_mode, y, batch_mean, batch_var, saved_mean,
       saved_inv_var, is_training, reserve_space_allocator, workspace_allocator);
 }
 
@@ -3397,13 +3397,12 @@ bool MIOpenSupport::DoBatchNormalizationForward(
     DeviceMemory<float>* batch_mean, DeviceMemory<float>* batch_var,
     DeviceMemory<float>* saved_mean, DeviceMemory<float>* saved_inv_var,
     bool is_training, ScratchAllocator* reserve_space_allocator,
-    ScratchAllocator* workspace_allocator,
-    std::function<const DeviceMemory<float>&()> var_to_inv_var,
-    std::function<void()> inv_var_to_var) {
+    ScratchAllocator* workspace_allocator) {
   return DoBatchNormalizationForwardImpl<float, float>(
       stream, dnn::DataType::kFloat, dnn::DataType::kFloat, x, scale, offset,
       estimated_mean, estimated_variance, side_input, x_desc, scale_offset_desc,
-      epsilon, activation_mode, y, batch_mean, batch_var, saved_mean,
+      epsilon, exponential_average_factor, 
+      activation_mode, y, batch_mean, batch_var, saved_mean,
       saved_inv_var, is_training, reserve_space_allocator, workspace_allocator);
 }
 
@@ -3478,7 +3477,7 @@ bool MIOpenSupport::DoBatchNormalizationBackward(
 bool MIOpenSupport::DoBatchNormalizationBackward(
     Stream* stream, const DeviceMemory<float>& y_backprop,
     const DeviceMemory<float>& x, const DeviceMemory<float>& scale,
-    const DeviceMemory<float>& mean, const DeviceMemory<float>& variance,
+    const DeviceMemory<float>& mean, const DeviceMemory<float>& inv_var,
     const dnn::BatchDescriptor& x_desc,
     const dnn::BatchDescriptor& scale_offset_desc, const double epsilon,
     DeviceMemory<float>* x_backprop, DeviceMemory<float>* scale_backprop,
@@ -3486,7 +3485,7 @@ bool MIOpenSupport::DoBatchNormalizationBackward(
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator) {
   return DoBatchNormalizationBackwardImpl<float, float>(
-      stream, miopenFloat, miopenFloat, y_backprop, x, scale, mean, variance,
+      stream, miopenFloat, miopenFloat, y_backprop, x, scale, mean, inv_var,
       x_desc, scale_offset_desc, epsilon, x_backprop, scale_backprop,
       offset_backprop);
 }

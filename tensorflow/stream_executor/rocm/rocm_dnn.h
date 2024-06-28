@@ -66,9 +66,9 @@ class MIOpenSupport : public dnn::DnnSupport {
   bool DoRnnForward(Stream* stream, const dnn::RnnDescriptor& rnn_desc,
                     const dnn::RnnSequenceTensorDescriptor& input_desc,
                     const DeviceMemory<Eigen::half>& input_data,
+                    const DeviceMemory<int>& seq_lengths_data,                    
                     const dnn::RnnStateTensorDescriptor& input_h_desc,
                     const DeviceMemory<Eigen::half>& input_h_data,
-                    const DeviceMemory<int>& seq_lengths_data,
                     const dnn::RnnStateTensorDescriptor& input_c_desc,
                     const DeviceMemory<Eigen::half>& input_c_data,
                     const DeviceMemory<Eigen::half>& params,
@@ -244,7 +244,7 @@ class MIOpenSupport : public dnn::DnnSupport {
   bool DoBatchNormalizationBackward(
       Stream* stream, const DeviceMemory<float>& y_backprop,
       const DeviceMemory<float>& x, const DeviceMemory<float>& scale,
-      const DeviceMemory<float>& mean, const DeviceMemory<float>& variance,
+      const DeviceMemory<float>& mean, const DeviceMemory<float>& inv_var,
       const dnn::BatchDescriptor& x_desc,
       const dnn::BatchDescriptor& scale_offset_desc, const double epsilon,
       DeviceMemory<float>* x_backprop, DeviceMemory<float>* scale_backprop,
@@ -673,7 +673,7 @@ class MIOpenSupport : public dnn::DnnSupport {
       Stream* stream, int miopen_input_type, int miopen_scale_type,
       const DeviceMemory<T>& y_backprop, const DeviceMemory<T>& x,
       const DeviceMemory<U>& scale, const DeviceMemory<U>& mean,
-      const DeviceMemory<U>& variance, const dnn::BatchDescriptor& x_desc,
+      const DeviceMemory<U>& inv_var, const dnn::BatchDescriptor& x_desc,
       const dnn::BatchDescriptor& scale_offset_desc, const double epsilon,
       DeviceMemory<T>* x_backprop, DeviceMemory<U>* scale_backprop,
       DeviceMemory<U>* offset_backprop);
