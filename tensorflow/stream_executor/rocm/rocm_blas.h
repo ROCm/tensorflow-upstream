@@ -139,7 +139,7 @@ class ROCMBlas : public blas::BlasSupport {
   template <class T, class V>
   bool DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContext<T> ctx, V strided_fun);
 
-  template <typename T, typename FuncT>
+  template <typename T, typename FuncT, typename NativeT = T>
   port::Status DoBlasGemmBatchedInternal(
       FuncT rocblas_func, Stream* stream, blas::Transpose transa,
       blas::Transpose transb, uint64 m, uint64 n, uint64 k, T alpha,
