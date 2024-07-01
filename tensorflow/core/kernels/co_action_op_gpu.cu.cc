@@ -23,6 +23,17 @@
 #define EIGEN_USE_GPU
 #include "tensorflow/core/util/gpu_kernel_helper.h"
 
+
+#define MAKE_SHARED2(T, Name, N, M)                                     \
+  __shared__ __align__(alignof(T)) char Name##_raw[N * M * sizeof(T)]; \
+  typedef T(*Name##_Accessor)[M];                                      \
+  auto Name = reinterpret_cast<Name##_Accessor>(Name##_raw)
+
+#define MAKE_SHARED(T, Name, N)                                     \
+  __shared__ __align__(alignof(T)) char Name##_raw[N * sizeof(T)]; \
+  auto Name = reinterpret_cast<T*>(Name##_raw)
+
+
 namespace tensorflow {
 
 template <typename T>
@@ -54,7 +65,7 @@ __forceinline__ __device__ Scalar warpReduceSum(Scalar val) {
 
 template <typename Scalar, int M_SIZE, int N_SIZE>
 __forceinline__ __device__ Scalar blockReduceSum(Scalar val, int n) {
-  __shared__ static Scalar s_data[N_SIZE][32];
+  MAKE_SHARED2(Scalar, s_data, N_SIZE, 32);
   int lane = threadIdx.x % warpSize;
   int wid = threadIdx.x / warpSize;
   val = warpReduceSum<Scalar, 32>(val);
@@ -96,7 +107,7 @@ __global__ void ComputeCoActionIndicator(IMatmulParam<Scalar, TIndex> param) {
           N_SIZE;
 
   // step 1: load matrix b to shared memory
-  __shared__ Scalar Bs[K_SIZE * N_SIZE];
+  MAKE_SHARED(Scalar,Bs,K_SIZE *N_SIZE);
   if (threadIdx.x < K_SIZE * N_SIZE) {
     Bs[threadIdx.x] = B[threadIdx.x];
   }
