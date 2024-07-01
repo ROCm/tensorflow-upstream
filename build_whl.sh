@@ -21,9 +21,9 @@ export ROCM_TOOLKIT_PATH=$ROCM_INSTALL_DIR
 
 yes "" | TF_NEED_ROCM=1 ROCM_TOOLKIT_PATH=${ROCM_INSTALL_DIR} PYTHON_BIN_PATH=/usr/bin/python3 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
 pip3 uninstall -y tensorflow || true
-bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=rocm //tensorflow:libtensorflow_cc.so
-bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=rocm //tensorflow:libtensorflow_framework.so
-bazel build --config=opt --config=rocm //tensorflow/tools/pip_package:build_pip_package --verbose_failures &&
+bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=rocm --copt=-Wno-invalid-constexpr //tensorflow:libtensorflow_cc.so
+bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=rocm  //tensorflow:libtensorflow_framework.so
+bazel build --config=opt --config=rocm //tensorflow/tools/pip_package:build_pip_package --verbose_failures  &&
 bazel-bin/tensorflow/tools/pip_package/build_pip_package $TF_PKG_LOC
 
 echo y| pip uninstall tensorflow

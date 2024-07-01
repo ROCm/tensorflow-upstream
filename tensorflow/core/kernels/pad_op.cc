@@ -37,7 +37,7 @@ limitations under the License.
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || defined(TENSORFLOW_USE_ROCM)
 typedef Eigen::GpuDevice GPUDevice;
 #else
 typedef Eigen::ThreadPoolDevice GPUDevice;
