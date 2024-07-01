@@ -48,8 +48,7 @@ struct IMatmulParam {
 template <typename Scalar, int SUM_NUM>
 __forceinline__ __device__ Scalar warpReduceSum(Scalar val) {
   for (int offset = SUM_NUM / 2; offset > 0; offset >>= 1)
-    // val += __shfl_down_sync(0xffffffff, val, offset);
-    val += __shfl_up_sync(1, val, offset);
+    val += __shfl_down(val, offset);
   return val;
 }
 

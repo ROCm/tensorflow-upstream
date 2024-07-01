@@ -285,13 +285,14 @@ STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_destroy_handle)
 STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_set_stream)
 // STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_set_pointer_mode)
 // STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_get_pointer_mode)
-// STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_sgemm_batched)
+STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_hgemm_batched)
+STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_sgemm_batched)
 STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_hgemm_strided_batched)
 STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_sgemm_strided_batched)
-// STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_dgemm_batched)
+STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_dgemm_batched)
 STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_dgemm_strided_batched)
-// STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_cgemm_batched)
-// STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_zgemm_batched)
+STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_cgemm_batched)
+STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_zgemm_batched)
 ROCBLAS_BLAS_ROUTINE_EACH(STREAM_EXECUTOR_ROCBLAS_V2_WRAP)
 
 }  // namespace wrap
@@ -1812,7 +1813,7 @@ port::Status ROCMBlas::AllocateStridedBuffer(
   return port::Status::OK();
 }
 
-template <typename T, typename FuncT>
+template <typename T, typename FuncT, typename NativeT>
 port::Status ROCMBlas::DoBlasGemmBatchedInternal(
     FuncT rocblas_func, Stream *stream, blas::Transpose transa,
     blas::Transpose transb, uint64 m, uint64 n, uint64 k, T alpha,
@@ -1847,9 +1848,9 @@ port::Status ROCMBlas::DoBlasGemmBatchedInternal(
   
   // Alocate local vectors to hold device pointers to matrices
   // std::vector<MAPPED_T *> a_raw_ptrs, b_raw_ptrs, c_raw_ptrs;
-  const void *const *a_void_ptrs = reinterpret_cast<const void *const *>(a_array);
-  const void *const *b_void_ptrs = reinterpret_cast<const void *const *>(b_array);
-  void *const *c_void_ptrs = reinterpret_cast<void *const *>(c_array);
+  auto a_void_ptrs = reinterpret_cast<const NativeT *const *>(a_array);
+  auto b_void_ptrs = reinterpret_cast<const NativeT *const *>(b_array);
+  auto c_void_ptrs = reinterpret_cast<NativeT *const *>(c_array);
   
   // for (int i = 0; i < batch_count; ++i) {
   //   // static_cast does work when converting Eigen::half* to rocblas_half*,
@@ -1887,15 +1888,17 @@ port::Status ROCMBlas::DoBlasGemmBatchedInternal(
   //   return c_allocation_status;
   // }
 
-  // MAPPED_T *alpha_ptr = reinterpret_cast<MAPPED_T *>(&alpha);
-  // MAPPED_T *beta_ptr = reinterpret_cast<MAPPED_T *>(&beta);
+  auto *alpha_ptr = reinterpret_cast<NativeT *>(&alpha);
+  auto *beta_ptr = reinterpret_cast<NativeT *>(&beta);
 
   bool ok = DoBlasInternal(rocblas_func, stream, true /* = pointer_mode_host */,
                            ROCMBlasTranspose(transa), ROCMBlasTranspose(transb),
-                           m, n, k, &alpha, a_void_ptrs, lda,
-                           batch_stride_a, b_void_ptrs, ldb, batch_stride_b,
-                           &beta, c_void_ptrs, ldc,
-                           batch_stride_c, batch_count);
+                           m, n, k, alpha_ptr, 
+                           a_void_ptrs, lda,
+                           b_void_ptrs, ldb, 
+                           beta_ptr, 
+                           c_void_ptrs, ldc,
+                           batch_count);
 
   if (ok) {
     return port::Status::OK();
@@ -2015,8 +2018,9 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  int batch_count) {
   const Eigen::half alpha_half(alpha);
   const Eigen::half beta_half(beta);
-  port::Status status = DoBlasGemmBatchedInternal(
-                        wrap::rocblas_sgemm_strided_batched, stream, transa, transb, 
+  port::Status status = DoBlasGemmBatchedInternal<
+        Eigen::half, decltype(wrap::rocblas_hgemm_batched), rocblas_half >(
+                        wrap::rocblas_hgemm_batched, stream, transa, transb, 
                         m, n, k, alpha_half, a_array, lda,
                         b_array, ldb, beta_half, c_array, ldc, batch_count);
   if (!status.ok()) {
@@ -2032,7 +2036,7 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  float beta, float **c_array, int ldc,
                                  int batch_count) {
   port::Status status = DoBlasGemmBatchedInternal(
-                        wrap::rocblas_sgemm_strided_batched, stream, transa, transb, 
+                        wrap::rocblas_sgemm_batched, stream, transa, transb, 
                         m, n, k, alpha, a_array, lda,
                         b_array, ldb, beta, c_array, ldc, batch_count);
   if (!status.ok()) {
@@ -2048,7 +2052,7 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  double beta, double **c_array, int ldc,
                                  int batch_count) {
   port::Status status = DoBlasGemmBatchedInternal(
-                        wrap::rocblas_dgemm_strided_batched, stream, transa, transb, 
+                        wrap::rocblas_dgemm_batched, stream, transa, transb, 
                         m, n, k, alpha, a_array, lda,
                         b_array, ldb, beta, c_array, ldc, batch_count);
   if (!status.ok()) {
