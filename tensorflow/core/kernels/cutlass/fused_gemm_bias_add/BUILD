@@ -9,7 +9,7 @@ licenses(["notice"])  # Apache 2.0
 
 load(
     "//tensorflow:tensorflow.bzl",
-    "tf_cuda_cc_test",
+    "tf_gpu_cc_test",
     "tf_kernel_library",
 )
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
@@ -64,7 +64,7 @@ tf_kernel_library(
 )
 
 
-tf_cuda_cc_test(
+tf_gpu_cc_test(
     name = "fused_gemm_bias_add_op_test",
     size = "small",
     srcs = ["fused_gemm_bias_add_op_test.cc"],
