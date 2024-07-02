@@ -56,5 +56,10 @@ tf_kernel_library(
     }) +
     MATH_DEPS + [
         "//tensorflow/core:new_nn_ops_op_lib",
-    ]
+    ],
+    copts = [
+        "-std=c++17",
+        "-fexceptions",
+    ],
+    nocopts = "-fno-exceptions",
 )

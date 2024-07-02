@@ -24,6 +24,6 @@ rm -f $TF_PKG_LOC/tensorflow*.whl
 yes "" | TF_NEED_ROCM=1 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
 pip3 uninstall -y tensorflow || true
 bazel build --config=opt --config=rocm --action_env=HIP_PLATFORM=amd --cxxopt=-std=c++14 --host_cxxopt=-std=c++14 //tensorflow/tools/pip_package:build_pip_package --verbose_failures &&
-bazel build --config=opt --config=rocm --action_env=HIP_PLATFORM=amd --cxxopt=-std=c++14 --host_cxxopt=-std=c++14 //tensorflow/core/kernels/CK/fused_gemm_bias_add:fused_gemm_bias_add --verbose_failures &&
+bazel build --config=opt --config=rocm --action_env=HIP_PLATFORM=amd --cxxopt=-std=c++17 --host_cxxopt=-std=c++17 //tensorflow/core/kernels/CK/fused_tile_gemm:fused_tile_gemm --verbose_failures &&
 bazel-bin/tensorflow/tools/pip_package/build_pip_package $TF_PKG_LOC &&
 pip3 install $TF_PKG_LOC/tensorflow-1.12.3-cp37-cp37m-linux_x86_64.whl
