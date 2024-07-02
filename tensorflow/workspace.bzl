@@ -534,6 +534,28 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
     )
 
     tf_http_archive(
+        name = "cutlass_archive",
+        build_file = "//third_party:cutlass.BUILD",
+        sha256 = "ea1b7f96919460a5d80b09c1b246652539a8605600b2be4cccc02c254bccbe50",
+        strip_prefix = "cutlass-5783d6dbd0c34032371cce2bd999fc76007520d7",
+        urls = [
+            "https://mirror.bazel.build/github.com/chsigg/cutlass/archive/5783d6dbd0c34032371cce2bd999fc76007520d7.tar.gz",
+            "https://github.com/chsigg/cutlass/archive/5783d6dbd0c34032371cce2bd999fc76007520d7.tar.gz",
+        ],
+    )
+
+    tf_http_archive(
+        name = "ck_archive",
+        build_file = "//third_party:ck.BUILD",
+        sha256 = "a797683d6f419ababc108f51186b21d161abb5375911537e5c1f7f5fb25b2e1e",
+        strip_prefix = "composable_kernel-497ccb872b6a9a921c01df4dca49dac7cb242c72",
+        urls = [
+	    "https://mirror.bazel.build/github.com/ROCm/composable_kernel/archive/497ccb872b6a9a921c01df4dca49dac7cb242c72.tar.gz",
+	    "https://github.com/ROCm/composable_kernel/archive/497ccb872b6a9a921c01df4dca49dac7cb242c72.tar.gz",
+        ],
+    )
+
+    tf_http_archive(
         name = "boringssl",
         sha256 = "1188e29000013ed6517168600fc35a010d58c5d321846d6a6dfee74e4c788b45",
         strip_prefix = "boringssl-7f634429a04abc48e2eb041c81c5235816c96514",

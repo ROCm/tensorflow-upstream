@@ -52,7 +52,7 @@ tf_kernel_library(
     deps = [":cutlass_deps_fused_gemm_bias_add"] +
     select({
         "//conditions:default": [
-            "@cutlass_gpu//:headers",
+            "@cutlass_archive//:cutlass",
         ],
     }) +
     MATH_DEPS + [
