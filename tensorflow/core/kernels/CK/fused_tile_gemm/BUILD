@@ -26,9 +26,11 @@ MATH_DEPS = [
     "//third_party/eigen3",
 ]
 
+
 cc_library(
     name = "ck_deps_fused_tile_gemm",
     hdrs = glob(["**/**/*.h"]),
+    copts = ["-std=c++17"],
     visibility = ["//visibility:public"],
 )
 
@@ -43,6 +45,7 @@ tf_kernel_library(
         #"ck_irrelevant.h",
         "api.h",
     ],
+    copts = ["-std=c++17",  "-fexceptions",],
     hdrs = [
         "op.h",
         "api.h",
