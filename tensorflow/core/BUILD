@@ -1062,6 +1062,7 @@ tf_gen_op_libs(
         "manip_ops",
         "math_ops",
         "nn_ops",
+        "new_nn_ops",
         "no_op",
         "parsing_ops",
         "random_grad",

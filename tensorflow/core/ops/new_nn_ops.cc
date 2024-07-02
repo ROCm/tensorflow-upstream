@@ -28,7 +28,6 @@ using shape_inference::DimensionHandle;
 using shape_inference::InferenceContext;
 using shape_inference::ShapeHandle;
 
-namespace {
 REGISTER_OP("GemmLayernormGemmSoftmaxGemm")
   .Input("matrix_a0: dataTP")        //input0 query
   .Input("matrix_b0: dataTP")        //input1 linear projection pf query
@@ -94,6 +93,7 @@ REGISTER_OP("GemmRowSoftmaxGemm")
   .Attr("dataTP: {half}")
   .SetShapeFn([](InferenceContext* c) {
 
+    return Status::OK();
   });
 
 REGISTER_OP("GemmLayernormGemm")
@@ -111,6 +111,7 @@ REGISTER_OP("GemmLayernormGemm")
   .Attr("do_leaky_relu: bool = false")
   .SetShapeFn([](InferenceContext* c) {
 
+    return Status::OK();
   });
 
 REGISTER_OP("GemvSoftmaxGemv")
@@ -122,6 +123,7 @@ REGISTER_OP("GemvSoftmaxGemv")
   .Attr("dataTP: {float, half}")
   .SetShapeFn([](InferenceContext* c) {
 
+    return Status::OK();
   });
 
 REGISTER_OP("GatherGemv")
@@ -133,6 +135,7 @@ REGISTER_OP("GatherGemv")
   .Attr("head_num: int = 1")
   .SetShapeFn([](InferenceContext* c) {
 
+    return Status::OK();
   });
 
 REGISTER_OP("GatherGemv2")
@@ -144,6 +147,7 @@ REGISTER_OP("GatherGemv2")
   .Attr("head_num: int = 1")
   .SetShapeFn([](InferenceContext* c) {
 
+    return Status::OK();
   });
 
 REGISTER_OP("GatherAttention")
@@ -157,6 +161,7 @@ REGISTER_OP("GatherAttention")
   .Attr("head_num: int = 1")
   .SetShapeFn([](InferenceContext* c) {
 
+    return Status::OK();
   });
 
 REGISTER_OP("FusedTileGemm")
@@ -169,6 +174,7 @@ REGISTER_OP("FusedTileGemm")
 // (batch, 1, head_num * head_sz)
   .SetShapeFn([](InferenceContext* c) {
 
+    return Status::OK();
   });
 
 REGISTER_OP("FusedGemmBiasAdd")
