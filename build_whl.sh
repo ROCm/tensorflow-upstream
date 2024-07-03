@@ -27,4 +27,4 @@ bazel build --config=opt --config=rocm //tensorflow/tools/pip_package:build_pip_
 bazel-bin/tensorflow/tools/pip_package/build_pip_package $TF_PKG_LOC
 
 echo y| pip uninstall tensorflow
-pip install  ~/tensorflow_pkg/tensorflow-1.15.5-cp37-cp37m-linux_x86_64.whl
+pip install $TF_PKG_LOC/tensorflow-1.15.5-cp37-cp37m-linux_x86_64.whl
