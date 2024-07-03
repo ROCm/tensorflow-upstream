@@ -58,11 +58,13 @@ inline std::pair<int, int> GetNumGPUs(const Cluster& cluster) {
     auto compute_capability_it =
         device.second.environment().find("architecture");
 #if TENSORFLOW_USE_ROCM
-    bool is_enabled = se::gpu::UseNhwcLayoutForRocm();
+    bool is_enabled = false;//se::gpu::UseNhwcLayoutForRocm();
     if ((compute_capability_it->second == "gfx908" ||
          compute_capability_it->second == "gfx90a" ||
-	 compute_capability_it->second == "gfx940" ) && is_enabled) {
-       gpu_stats.num_voltas++;
+	      compute_capability_it->second == "gfx940" ||
+	      compute_capability_it->second == "gfx941" ||
+	      compute_capability_it->second == "gfx942") && is_enabled) {
+       num_volta++;
     }
 #endif
     if (compute_capability_it == device.second.environment().end()) {

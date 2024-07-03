@@ -624,7 +624,8 @@ Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
         "Incompatible AMD GCN ISA version was specified.");
   }
   TF_RETURN_IF_ERROR(
-      LinkROCDLIfNecessary(module, gcn_arch_name, device_bitcode_dir_path));
+      LinkROCDLIfNecessary(module, *amdgpu_version, device_bitcode_dir_path,
+      ir_path, linked_ir_path, optimized_ir_path));
 
   // For rocm, we always enable flush to zero. (for cuda, this is determined
   // via environemnt variables). This deceision was based on the observation
@@ -633,15 +634,15 @@ Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
   // not has major impact as the hipcc path by default enables flush to zero for
   // compilation.
   // If ftz is enabled, set it as an attribute on every function in the module.
-  if (debug_options.xla_gpu_ftz()) {
-    for (llvm::Function& fn : *module) {
-      // may be necessary for the compiler to generate atomics (confirm!)
-      fn.addFnAttr("denormal-fp-math-f32", "preserve-sign");
-      fn.addFnAttr("amdgpu-unsafe-fp-atomics", "true");
-    }
-  }
+  // if (debug_options.xla_gpu_ftz()) {
+  //   for (llvm::Function& fn : *module) {
+  //     // may be necessary for the compiler to generate atomics (confirm!)
+  //     fn.addFnAttr("denormal-fp-math-f32", "preserve-sign");
+  //     fn.addFnAttr("amdgpu-unsafe-fp-atomics", "true");
+  //   }
+  // }
 
-  return OkStatus();
+  return Status::OK();
 }
 
 // The following routine maps a feature token extracted from the
@@ -659,7 +660,7 @@ std::string MapGCNArchNameTokenToFeatureStr(const std::string& token,
   if (token == "sramecc+") {
     return "+sramecc";
   } else if (token == "sramecc-") {
-    if(gfx == "gfx90a" || gfx == "gfx940")
+    if(gfx == "gfx90a" || gfx == "gfx940" || gfx == "gfx941" || gfx == "gfx942")
       return "";
     return "-sramecc";
   } else if (token == "xnack+") {
