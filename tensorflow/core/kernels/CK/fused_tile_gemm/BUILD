@@ -33,7 +33,7 @@ cc_library(
 )
 
 tf_kernel_library(
-    name = "fused_tile_gemm",
+    name = "fused_gemm_bias_add",
     srcs = [
         "op.cc",
     ],
@@ -41,11 +41,11 @@ tf_kernel_library(
         "op.cu.cc",
         "op.h",
         #"ck_irrelevant.h",
-        "api.h",
+        # "api.h",
     ],
     hdrs = [
         "op.h",
-        "api.h",
+        # "api.h",
         #"ck_irrelevant.h",
     ],
     deps = [":ck_deps_fused_tile_gemm"] +
@@ -62,4 +62,23 @@ tf_kernel_library(
         "-fexceptions",
     ],
     nocopts = "-fno-exceptions",
+)
+
+
+tf_gpu_cc_test(
+    name = "fused_gemm_bias_add_test",
+    size = "small",
+    srcs = ["op_test.cc"],
+    deps = [
+        ":fused_gemm_bias_add",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
 )

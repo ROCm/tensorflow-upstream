@@ -37,20 +37,11 @@ void Compute(OpKernelContext* context) override {
     } else if(rank ==3 ){
         OP_REQUIRES_OK(context, context->allocate_output(0, {d0, d1, N}, &output_tensor));
     }
-    Param arguments = {
-        M,
-        N,
-        K,
-        1,
-        (reinterpret_cast<const void*>(context->input(0).flat<dataTP>().data())),
-        (reinterpret_cast<const void*>(context->input(1).flat<dataTP>().data())),
-        (reinterpret_cast<const void*>(context->input(2).flat<dataTP>().data())),
-        reinterpret_cast<void*>(output_tensor->flat<dataTP>().data())};
-    OP_REQUIRES_OK(context, functor::Fused_Gemm_Bias_Add_Functor<Device, dataTP>::Compute(context->eigen_device<Device>(), arguments));
+    OP_REQUIRES_OK(context, functor::Fused_Gemm_Bias_Add_Functor<Device, dataTP>::Compute(context->eigen_device<Device>(), M, N, K, 1, reinterpret_cast<const void*>(context->input(0).flat<dataTP>().data()), reinterpret_cast<const void*>(context->input(1).flat<dataTP>().data()), reinterpret_cast<const void*>(context->input(2).flat<dataTP>().data()), reinterpret_cast<void*>(output_tensor->flat<dataTP>().data())));
     }
 };
 
-#ifdef GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU(dataTP)\
     REGISTER_KERNEL_BUILDER(\
         Name("FusedGemmBiasAdd")\

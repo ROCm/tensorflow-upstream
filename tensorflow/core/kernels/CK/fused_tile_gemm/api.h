@@ -66,10 +66,10 @@ void FusedGemmBiasAdd(
     void* B0,
     void* C0,
     void* D0,
-    STREAM_TYPE stream
+    gpuStream_t stream
 ){
 
-#if 0
+// #if 0
 ck::half_t alpha0 = ck::half_t(1);
 ck::half_t beta0 = ck::half_t(1);
 ck::gemm::GemmCoord problem_size_0(M, N, K);
@@ -103,5 +103,5 @@ typename Gemm0::Arguments arguments_0{
         c_element_op);
 
     ave_time = invoker.Run(argument, StreamConfig{nullptr, 1});
-#endif
+// #endif
 }
