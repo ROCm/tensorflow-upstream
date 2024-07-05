@@ -27,7 +27,7 @@ MATH_DEPS = [
 ]
 
 cc_library(
-    name = "ck_deps_fused_gemm_bias_add",
+    name = "ck_deps",
     hdrs = glob(["**/**/*.h"]),
     visibility = ["//visibility:public"],
 )
@@ -40,15 +40,11 @@ tf_kernel_library(
     gpu_srcs = [
         "op.cu.cc",
         "op.h",
-        "ck_irrelevant.h",
-        "api.h",
     ],
     hdrs = [
         "op.h",
-        "api.h",
-        "ck_irrelevant.h",
     ],
-    deps = [":ck_deps_fused_gemm_bias_add"] +
+    deps = [":ck_deps"] +
     select({
         "//conditions:default": [
             "@ck_archive//:ck",
@@ -56,5 +52,29 @@ tf_kernel_library(
     }) +
     MATH_DEPS + [
         "//tensorflow/core:new_nn_ops_op_lib",
-    ]
+    ],
+    copts = [
+        "-std=c++17",
+        "-fexceptions",
+    ],
+    nocopts = "-fno-exceptions",
+)
+
+
+tf_gpu_cc_test(
+    name = "fused_gemm_bias_add_test",
+    size = "small",
+    srcs = ["op_test.cc"],
+    deps = [
+        ":fused_gemm_bias_add",
+        "//tensorflow/core/kernels:ops_testutil",
+        "//tensorflow/core/kernels:ops_util",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
 )
