@@ -19,9 +19,7 @@ class FusedGemmBiasAddOp : public OpKernel {
 
     int M = context->input(0).shape().dim_size(0);
     int N = context->input(1).shape().dim_size(0);
-    ;
     int K = context->input(0).shape().dim_size(1);
-    ;
 
     Tensor* output_tensor = nullptr;
 
@@ -30,7 +28,7 @@ class FusedGemmBiasAddOp : public OpKernel {
 
     OP_REQUIRES_OK(
         context,
-        functor::Fused_Gemm_Bias_Add_Functor<Device, dataTP>::Compute(
+        functor::FusedGemmBiasAddFunctor<Device, dataTP>::Compute(
             context->eigen_device<Device>(), M, N, K, 1,
             reinterpret_cast<const void*>(
                 context->input(0).flat<dataTP>().data()),

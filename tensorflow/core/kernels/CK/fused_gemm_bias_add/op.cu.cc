@@ -54,7 +54,7 @@ using DeviceOpInstance =
         ck::BlockGemmPipelineVersion::v1, F16>;
 namespace functor {
 template <typename dataTP_>
-struct Fused_Gemm_Bias_Add_Functor<GPUDevice, dataTP_> {
+struct FusedGemmBiasAddFunctor<GPUDevice, dataTP_> {
  public:
   static Status Compute(const GPUDevice& d, int M, int N, int K, int Batch,
                         const void* a0, const void* b0, const void* d0,
@@ -91,6 +91,6 @@ struct Fused_Gemm_Bias_Add_Functor<GPUDevice, dataTP_> {
   }
 };  // struct Fused_Gemm_Bias_Add_Functor
 }  // namespace functor
-template struct functor::Fused_Gemm_Bias_Add_Functor<GPUDevice, Eigen::half>;
+template struct functor::FusedGemmBiasAddFunctor<GPUDevice, Eigen::half>;
 }  // namespace tensorflow
 #endif

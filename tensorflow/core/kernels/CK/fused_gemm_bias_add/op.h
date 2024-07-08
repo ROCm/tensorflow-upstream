@@ -10,7 +10,7 @@
 namespace tensorflow {
 namespace functor {
 template <typename Device, typename dataTP>
-struct Fused_Gemm_Bias_Add_Functor {
+struct FusedGemmBiasAddFunctor {
   static Status Compute(const Device& d, int M, int N, int K, int Batch,
                         const void* a0, const void* b0, const void* d0,
                         void* e);
