@@ -6,7 +6,7 @@
 #include "tensorflow/core/framework/op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 namespace tensorflow {
-    using GPUDevice = Eigen::GpuDevice;
+using GPUDevice = Eigen::GpuDevice;
 using gemm_ln_attn_dtype_0 = ck_tile::fp16_t;
 
 // HeadDimQK <= 16
