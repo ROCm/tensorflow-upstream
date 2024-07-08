@@ -1,26 +1,10 @@
 #pragma once
 // macros for cutlass changes required by ali customized logic, must be defined before cutlass includes
 
-#include <cstdlib>
-#include <iostream>
-#include <initializer_list>
-#include <numeric>
-
-#include "ck/ck.hpp"
-#include "ck/tensor_operation/gpu/device/gemm_specialization.hpp"
-#include "ck/tensor_operation/gpu/device/tensor_layout.hpp"
-#include "ck/tensor_operation/gpu/element/element_wise_operation.hpp"
-#include "ck/utility/data_type.hpp"
-
-#include "ck/library/utility/check_err.hpp"
-#include "ck/library/utility/device_memory.hpp"
-#include "ck/library/utility/fill.hpp"
-#include "ck/library/utility/host_tensor.hpp"
-#include "ck/library/utility/host_tensor_generator.hpp"
-#include "ck/library/utility/literals.hpp"
-#include "ck/library/reference_tensor_operation/cpu/reference_gemm.hpp"
+#include "common.h"
 #include "ck/tensor_operation/gpu/device/impl/device_gemm_xdl_cshuffle_v3.hpp"
-
+#include <iomanip>
+// Types.
 using ADataType        = ck::half_t;
 using BDataType        = ck::half_t;
 using AccDataType      = float;
@@ -35,73 +19,148 @@ using AElementOp = PassThrough;
 using BElementOp = PassThrough;
 using CElementOp = PassThrough;
 
-static constexpr auto GemmDefault = ck::tensor_operation::device::GemmSpecialization::MNPadding;
+static constexpr auto GemmDefault = ck::tensor_operation::device::GemmSpecialization::Default;
 
 // clang-format off
-using DeviceGemmV2Instance =
+using DeviceGemmV2Instance = 
     ck::tensor_operation::device::DeviceGemm_Xdl_CShuffleV3<
-        ALayout,   BLayout,  CLayout,
-        ADataType,   BDataType,  CDataType,  AccDataType,  CShuffleDataType,
-        PassThrough, PassThrough, PassThrough, GemmDefault,
+        ALayout,   BLayout,  CLayout,   
+        ADataType,   BDataType,  CDataType,  AccDataType,  CShuffleDataType, 
+        PassThrough, PassThrough, PassThrough, GemmDefault, 
         256,
-        224, 256,
-        64, 8, 2,
+        128, 128, 
+        64, 8, 8,
         16,   16,
-        7,    8,
-        S<8, 32, 1>,  S<1, 0, 2>,  S<1, 0, 2>,
+        4,    4,
+        S<8, 32, 1>,  S<1, 0, 2>,  S<1, 0, 2>, 
         2, 8, 8, 0,
-        S<8, 32, 1>,  S<0, 2, 1>,  S<0, 2, 1>,
-        1, 8, 2, 0,
+        S<8, 32, 1>,  S<1, 0, 2>,  S<1, 0, 2>, 
+        2, 8, 8, 0,
         1, 2, S<1, 32, 1, 8>, 8,
         ck::BlockGemmPipelineScheduler::Intrawave,ck::BlockGemmPipelineVersion::v3>;
 // clang-format on
 
+// Helper function to print matrix
+template <typename T>
+void PrintMatrix(const T* matrix, int rows, int cols, const std::string& name, int num_values = 3) {
+    std::cout << "Matrix " << name << " (" << rows << "x" << cols << "):" << std::endl;
+    for (int i = 0; i < rows; ++i) {
+        // Print the first few values
+        for (int j = 0; j < std::min(cols, num_values); ++j) {
+            std::cout << std::setw(8) << static_cast<float>(matrix[i * cols + j]) << " ";
+        }
+
+        // Print ellipsis if there are more values in the row
+        if (cols > num_values * 2) {
+            std::cout << "... ";
+        }
+
+        // Print the last few values
+        for (int j = std::max(cols - num_values, num_values); j < cols; ++j) {
+            std::cout << std::setw(8) << static_cast<float>(matrix[i * cols + j]) << " ";
+        }
+        std::cout << std::endl;
+    }
+}
+
 template<int N_TILE>
-void FusedGemmBiasAdd(
+void FusedTileGemm(
     int M,
     int N,
     int K,
-    int Batch,
-    void* A0,
-    void* B0,
-    void* C0,
-    void* D0,
-    STREAM_TYPE stream
+    int KBatch,
+    int StrideA,
+    int StrideB,
+    int StrideC,
+    const ADataType* A,
+    const BDataType* B,
+    CDataType* C,
+    hipStream_t stream
 ){
+    std::cout << "FusedTileGemm called with parameters:" << std::endl;
+    std::cout << "M: " << M << ", N: " << N << ", K: " << K << std::endl;
+    std::cout << "StrideA: " << StrideA << ", StrideB: " << StrideB << ", StrideC: " << StrideC << std::endl;
+    std::cout << "KBatch: " << KBatch << std::endl;
 
-#if 0
-ck::half_t alpha0 = ck::half_t(1);
-ck::half_t beta0 = ck::half_t(1);
-ck::gemm::GemmCoord problem_size_0(M, N, K);
-typename Gemm0::Arguments arguments_0{
-    problem_size_0,
-    {reinterpret_cast<cutlass::half_t*>(A0), K}, M * K,
-    {reinterpret_cast<cutlass::half_t*>(B0), K}, N * K,
-    {reinterpret_cast<cutlass::half_t*>(C0), 0}, N,
-    {reinterpret_cast<cutlass::half_t*>(D0), N}, M * N,
-    { alpha0, beta0 },
-    Batch};
+    // Print input pointers
+    std::cout << "Pointer A: " << static_cast<const void*>(A) << std::endl;
+    std::cout << "Pointer B: " << static_cast<const void*>(B) << std::endl;
+    std::cout << "Pointer C: " << static_cast<void*>(C) << std::endl;
 
-    // do GEMM
-    auto gemm      = DeviceGemmV2Instance{};
-    auto invoker   = gemm.MakeInvoker();
+    // Print matrices (limited to small sizes for readability)
+    PrintMatrix(A, M, K, "A");
+    PrintMatrix(B, K, N, "B");
+    PrintMatrix(C, M, N, "C (initial)");
+
+    auto a_element_op = AElementOp{};
+    auto b_element_op = BElementOp{};
+    auto c_element_op = CElementOp{};
+
+    // Print element operations
+    std::cout << "Element operations initialized." << std::endl;
+
+    // Configure GEMM parameters
+    using DeviceGemmV2Instance = 
+        ck::tensor_operation::device::DeviceGemm_Xdl_CShuffleV3<
+            ALayout, BLayout, CLayout,
+            ADataType, BDataType, CDataType, AccDataType, CShuffleDataType,
+            PassThrough, PassThrough, PassThrough, GemmDefault,
+            256,
+            128, 128,
+            64, 8, 8,
+            16, 16,
+            4, 4,
+            S<8, 32, 1>,  S<1, 0, 2>,  S<1, 0, 2>, 
+            2, 8, 8, 0,
+            S<8, 32, 1>,  S<1, 0, 2>,  S<1, 0, 2>, 
+            2, 8, 8, 0,
+            1, 2, S<1, 32, 1, 8>, 8,
+            ck::BlockGemmPipelineScheduler::Intrawave, ck::BlockGemmPipelineVersion::v3>;
+
+    // Create GEMM instance
+    auto gemm = DeviceGemmV2Instance{};
+
+    // Print GEMM configuration
+    std::cout << "Using GEMM configuration: " << gemm.GetTypeString() << std::endl;
+
+    // Do GEMM
+    auto invoker = gemm.MakeInvoker();
     float ave_time = 0;
 
+    // Print before argument creation
+    std::cout << "Creating GEMM argument..." << std::endl;
+
     auto argument = gemm.MakeArgument(
-        static_cast<ADataType*>(a_m_k_device_buf.GetDeviceBuffer()),
-        static_cast<BDataType*>(b_k_n_device_buf.GetDeviceBuffer()),
-        static_cast<CDataType*>(c_m_n_device_buf.GetDeviceBuffer()),
+        A,
+        B,
+        C,
         M,
         N,
         K,
         StrideA,
         StrideB,
         StrideC,
-        Batch,
+        KBatch,
         a_element_op,
         b_element_op,
         c_element_op);
 
-    ave_time = invoker.Run(argument, StreamConfig{nullptr, 1});
-#endif
+    // Print argument details
+    std::cout << "Argument details: " << std::endl;
+    std::cout << "A: " << static_cast<const void*>(A) << ", B: " << static_cast<const void*>(B) << ", C: " << static_cast<void*>(C) << std::endl;
+    std::cout << "M: " << M << ", N: " << N << ", K: " << K << ", StrideA: " << StrideA << ", StrideB: " << StrideB << ", StrideC: " << StrideC << std::endl;
+    std::cout << "KBatch: " << KBatch << std::endl;
+
+    if (!gemm.IsSupportedArgument(argument)) {
+        std::cerr << "GEMM configuration does not support this problem" << std::endl;
+        return;
+    }
+
+    std::cout << "Running GEMM operation!" << std::endl;
+    ave_time = invoker.Run(argument, StreamConfig{stream, 1});
+    std::cout << "GEMM operation completed successfully!" << std::endl;
+    std::cout << "Average time: " << ave_time << " ms" << std::endl;
+
+    // Print result matrix
+    PrintMatrix(C, M, N, "C (result)");
 }

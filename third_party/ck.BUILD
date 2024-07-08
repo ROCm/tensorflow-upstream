@@ -59,6 +59,14 @@ cc_library(
     ],
     includes = [
         "include",
-        "library/include/ck/library",
+        "library/include/",
+        #"library/include/ck/library/utility/",
+        #"library/utility/",
+        #".",
+        #"include/ck",
+    ],
+    copts = [
+        "-std=c++17",
+        "-fexceptions",
     ],
 )

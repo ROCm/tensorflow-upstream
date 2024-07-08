@@ -17,6 +17,7 @@ limitations under the License.
 #define TENSORFLOW_CORE_COMMON_RUNTIME_GPU_GPU_MANAGED_ALLOCATOR_H_
 
 #include "tensorflow/core/framework/allocator.h"
+#include "hip/hip_runtime.h"
 
 namespace tensorflow {
 

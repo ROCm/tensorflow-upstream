@@ -94,7 +94,12 @@ cc_library(
         #":hipfft",
         ":hiprand",
         ":miopen",
-    ],
+    ]
+    +select({
+        "//conditions:default": [
+            "@ck_archive//:ck",
+        ],
+    })
 )
 
 %{rocm_include_genrules}

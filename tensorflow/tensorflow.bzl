@@ -1059,7 +1059,7 @@ def tf_gpu_kernel_library(
     native.cc_library(
         srcs = srcs,
         hdrs = hdrs,
-        copts = copts,
+        copts = copts + ["-std=c++17"],
         deps = deps + if_cuda_is_configured([
             clean_dep("//tensorflow/core:cuda"),
             clean_dep("//tensorflow/core:gpu_lib"),
@@ -1192,6 +1192,7 @@ def tf_kernel_library(
             name = name + "_gpu",
             srcs = gpu_srcs,
             deps = deps,
+            copts = copts,
             **kwargs
         )
         gpu_deps.extend([":" + name + "_gpu"])

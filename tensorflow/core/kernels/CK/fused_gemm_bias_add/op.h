@@ -1,6 +1,15 @@
 #pragma once
-#include "ck_irrelevant.h"
+#include <stdexcept>
+#include "ck/ck.hpp"
 #include "tensorflow/core/lib/core/errors.h"
+#ifndef PARAM_DEFINITION_HPP
+#define PARAM_DEFINITION_HPP
+
+struct Param {
+    // Define the members of Param here
+};
+
+#endif // PARAM_DEFINITION_HPP
 namespace tensorflow {
 namespace functor {
 template <typename Device, typename dataTP>

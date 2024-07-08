@@ -40,13 +40,13 @@ tf_kernel_library(
     gpu_srcs = [
         "op.cu.cc",
         "op.h",
-        "ck_irrelevant.h",
+        #"ck_irrelevant.h",
         "api.h",
     ],
     hdrs = [
         "op.h",
         "api.h",
-        "ck_irrelevant.h",
+        #"ck_irrelevant.h",
     ],
     deps = [":ck_deps_fused_gemm_bias_add"] +
     select({
@@ -56,5 +56,10 @@ tf_kernel_library(
     }) +
     MATH_DEPS + [
         "//tensorflow/core:new_nn_ops_op_lib",
-    ]
+    ],
+    copts = [
+        "-std=c++17",
+        "-fexceptions",
+    ],
+    nocopts = "-fno-exceptions",
 )
