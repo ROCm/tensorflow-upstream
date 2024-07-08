@@ -24,12 +24,12 @@
 
 namespace tensorflow {
 namespace {
-class GemmBiasAddTest : public OpsTestBase {
+class FusedGemmBiasAddTest : public OpsTestBase {
  protected:
   void RunUnfusedTest(const std::vector<Eigen::half>& mat_A,
                       const std::vector<Eigen::half>& mat_B,
                       const std::vector<Eigen::half>& mat_C,
-                      std::vector<Eigen::half>& mat_D, int M, int N, int K) {
+                      std::vector<Eigen::half>& mat_D, int K, int M, int N) {
     for (int m = 0; m < M; m++) {
       std::vector<float> tmp;
       for (int n = 0; n < N; n++) {
@@ -45,63 +45,63 @@ class GemmBiasAddTest : public OpsTestBase {
     }
   }
 
-  void RunCKTest(const std::vector<Eigen::half>& mat_A,
-                 const std::vector<Eigen::half>& mat_B,
-                 const std::vector<Eigen::half>& mat_C,
-                 std::vector<Eigen::half>& mat_D, int M, int N, int K) {
+  void RunFusedGemmBiasAddTest(const std::vector<Eigen::half>& mat_A,
+                               const std::vector<Eigen::half>& mat_B,
+                               const std::vector<Eigen::half>& mat_C,
+                               const std::vector<Eigen::half>& mat_D, int k,
+                               int m, int n) {
     SetDevice(DEVICE_GPU,
               std::unique_ptr<tensorflow::Device>(DeviceFactory::NewDevice(
                   "GPU", {}, "/job:a/replica:0/task:0")));
 
     TF_EXPECT_OK(NodeDefBuilder("fused_gemm_bias_add", "FusedGemmBiasAdd")
-                     .Input(FakeInput(DT_HALF))
-                     .Input(FakeInput(DT_HALF))
-                     .Input(FakeInput(DT_HALF))
-                     //  .Input(FakeInput(DT_HALF))
+                     .Input(FakeInput(DT_HALF))  // 0 q
+                     .Input(FakeInput(DT_HALF))  // 1 k
+                     .Input(FakeInput(DT_HALF))  // 2
                      .Finalize(node_def()));
 
     TF_EXPECT_OK(InitOp());
 
-    AddInputFromArray<Eigen::half>(TensorShape({M, K}), mat_A);  // 0
-    AddInputFromArray<Eigen::half>(TensorShape({N, K}), mat_B);  // 1
-    AddInputFromArray<Eigen::half>(TensorShape({M, N}), mat_C);  // 1
+    AddInputFromArray<Eigen::half>(TensorShape({m, k}), mat_A);  // 0
+    AddInputFromArray<Eigen::half>(TensorShape({n, k}), mat_B);  // 1
+    AddInputFromArray<Eigen::half>(TensorShape({n}), mat_C);
 
     TF_ASSERT_OK(RunOpKernel());
 
-    Tensor expected(allocator(), DT_HALF, TensorShape({M, N}));
+    Tensor expected(allocator(), DT_HALF, TensorShape({m, n}));
     test::FillValues<Eigen::half>(&expected, mat_D);
-    Tensor actual = *GetOutput(0);
-    test::ExpectTensorNear<Eigen::half>(expected, actual, 0.0005);
+
+    test::ExpectTensorNear<Eigen::half>(expected, *GetOutput(0), 0.00001);
   }
 };
 
-TEST_F(GemmBiasAddTest, Half) {
-  srand(10);
+TEST_F(FusedGemmBiasAddTest, Half) {
+  int k = 256;
+  int m = 3;
+  int n = 256;
 
+  srand(10);
   std::vector<Eigen::half> mat_A;
   std::vector<Eigen::half> mat_B;
   std::vector<Eigen::half> mat_C;
+
   std::vector<Eigen::half> mat_D;
 
-  int K = 256;
-  int M = 3;
-  int N = 256;
-
-  for (int i = 0; i < M * K; ++i) {
-    mat_A.push_back(Eigen::half(rand() / double(RAND_MAX) - 0.5));
+  for (int i = 0; i < m * k; ++i) {
+    mat_A.push_back(Eigen::half(rand() / double(RAND_MAX)));
   }
-  for (int i = 0; i < N * K; ++i) {
-    mat_B.push_back(Eigen::half(rand() / double(RAND_MAX) - 0.5));
+  for (int i = 0; i < n * k; ++i) {
+    mat_B.push_back(Eigen::half(rand() / double(RAND_MAX)));
   }
-  for (int i = 0; i < M * N; ++i) {
-    mat_C.push_back(Eigen::half(rand() / double(RAND_MAX) - 0.5));
+  for (int i = 0; i < n; ++i) {
+    mat_C.push_back(Eigen::half(0));
   }
-  for (int i = 0; i < M * N; ++i) {
+  for (int i = 0; i < m * n; ++i) {
     mat_D.push_back(Eigen::half(128));
   }
 
-  RunUnfusedTest(mat_A, mat_B, mat_C, mat_D, M, N, K);
-  RunCKTest(mat_A, mat_B, mat_C, mat_D, M, N, K);
+  RunUnfusedTest(mat_A, mat_B, mat_C, mat_D, k, m, n);
+  RunFusedGemmBiasAddTest(mat_A, mat_B, mat_C, mat_D, k, m, n);
 }
 
 }  // namespace
