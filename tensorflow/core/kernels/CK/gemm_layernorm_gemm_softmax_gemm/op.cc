@@ -31,7 +31,8 @@ class GemmLayernormGemmSoftmaxGemmOp : public OpKernel {
     const Tensor* layernorm_beta;
     OP_REQUIRES_OK(context, context->input("layernorm_beta", &layernorm_beta));
     const Tensor* layernorm_gamma;
-    OP_REQUIRES_OK(context, context->input("layernorm_gamma", &layernorm_gamma));
+    OP_REQUIRES_OK(context,
+                   context->input("layernorm_gamma", &layernorm_gamma));
     const Tensor* matrix_b1;
     OP_REQUIRES_OK(context, context->input("matrix_b1", &matrix_b1));
     const Tensor* softmaxmask;
@@ -56,22 +57,16 @@ class GemmLayernormGemmSoftmaxGemmOp : public OpKernel {
         context,
         functor::GemmLayernormGemmSoftmaxGemmFunctor<Device, dataTP>::Compute(
             context->eigen_device<Device>(),
-            reinterpret_cast<const void*>(
-                matrix_a0->flat<dataTP>().data()),
-            reinterpret_cast<const void*>(
-                matrix_b0->flat<dataTP>().data()),
-            reinterpret_cast<const void*>(
-                matrix_c0->flat<dataTP>().data()),
-            reinterpret_cast<const void*>(
-                matrix_b1->flat<dataTP>().data()),
-            reinterpret_cast<const void*>(
-                matrix_b2->flat<dataTP>().data()),
+            reinterpret_cast<const void*>(matrix_a0->flat<dataTP>().data()),
+            reinterpret_cast<const void*>(matrix_b0->flat<dataTP>().data()),
+            reinterpret_cast<const void*>(matrix_c0->flat<dataTP>().data()),
+            reinterpret_cast<const void*>(matrix_b1->flat<dataTP>().data()),
+            reinterpret_cast<const void*>(matrix_b2->flat<dataTP>().data()),
             reinterpret_cast<const void*>(
                 layernorm_gamma->flat<dataTP>().data()),
             reinterpret_cast<const void*>(
                 layernorm_beta->flat<dataTP>().data()),
-            reinterpret_cast<const void*>(
-                softmaxmask->flat<dataTP>().data()),
+            reinterpret_cast<const void*>(softmaxmask->flat<dataTP>().data()),
             reinterpret_cast<void*>(output_tensor->flat<dataTP>().data()), K, M,
             N0, N1, long_seq, N2, B_kv, head_num_, lrelu_alpha_, do_layer_norm_,
             do_leaky_relu_, do_query_mask_));

@@ -29,7 +29,8 @@ class GemmLayernormGemmOp : public OpKernel {
     const Tensor* layernorm_beta;
     OP_REQUIRES_OK(context, context->input("layernorm_beta", &layernorm_beta));
     const Tensor* layernorm_gamma;
-    OP_REQUIRES_OK(context, context->input("layernorm_gamma", &layernorm_gamma));
+    OP_REQUIRES_OK(context,
+                   context->input("layernorm_gamma", &layernorm_gamma));
     const Tensor* matrix_b1;
     OP_REQUIRES_OK(context, context->input("matrix_b1", &matrix_b1));
 
@@ -47,14 +48,10 @@ class GemmLayernormGemmOp : public OpKernel {
         context,
         functor::GemmLayernormGemmFunctor<Device, dataTP>::Compute(
             context->eigen_device<Device>(),
-            reinterpret_cast<const void*>(
-                matrix_a0->flat<dataTP>().data()),
-            reinterpret_cast<const void*>(
-                matrix_b0->flat<dataTP>().data()),
-            reinterpret_cast<const void*>(
-                matrix_c0->flat<dataTP>().data()),
-            reinterpret_cast<const void*>(
-                matrix_b1->flat<dataTP>().data()),
+            reinterpret_cast<const void*>(matrix_a0->flat<dataTP>().data()),
+            reinterpret_cast<const void*>(matrix_b0->flat<dataTP>().data()),
+            reinterpret_cast<const void*>(matrix_c0->flat<dataTP>().data()),
+            reinterpret_cast<const void*>(matrix_b1->flat<dataTP>().data()),
             reinterpret_cast<const void*>(
                 layernorm_gamma->flat<dataTP>().data()),
             reinterpret_cast<const void*>(

@@ -80,5 +80,3 @@ struct gemm_ln_gemm_traits_ {
   static constexpr bool kPadQWK = kPadQWK_;
   static constexpr bool kPadSK = kPadSK_;
 };
-
-

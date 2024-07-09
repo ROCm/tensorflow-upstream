@@ -106,23 +106,24 @@ struct GemmLayernormGemmSoftmaxGemmFunctor<GPUDevice, dataTP_> {
                                                       do_leaky_relu,
                                                       do_query_mask};
 
-    auto [kargs, grids] = gemm_ln_attn_create_kargs_and_grids<k_>(gemm_ln_attn_args_device);
+    auto [kargs, grids] =
+        gemm_ln_attn_create_kargs_and_grids<k_>(gemm_ln_attn_args_device);
     constexpr dim3 blocks = k_::BlockSize();
     constexpr ck_tile::index_t kBlockPerCu = k_::kBlockPerCu;
     float ave_time = ck_tile::launch_kernel(
         stream_config, ck_tile::make_kernel<blocks.x, kBlockPerCu>(
                            k_{}, grids, blocks, 0, kargs));
     if (time_kernel) {
-    //   std::size_t flop = std::size_t(2) * M * N * K;
-    //   std::size_t num_btype = sizeof(A0DataType) * M * K +
-    //                           sizeof(B0DataType) * K * N +
-    //                           sizeof(EDataType) * M * N;
+      //   std::size_t flop = std::size_t(2) * M * N * K;
+      //   std::size_t num_btype = sizeof(A0DataType) * M * K +
+      //                           sizeof(B0DataType) * K * N +
+      //                           sizeof(EDataType) * M * N;
 
-    //   float tflops = static_cast<float>(flop) / 1.E9 / ave_time;
+      //   float tflops = static_cast<float>(flop) / 1.E9 / ave_time;
 
-    //   float gb_per_sec = num_btype / 1.E6 / ave_time;
-    //   LOG(INFO) << "Running time: " << ave_time << " ms, " << tflops
-    //             << " TFlops, " << gb_per_sec << " GB/s";
+      //   float gb_per_sec = num_btype / 1.E6 / ave_time;
+      //   LOG(INFO) << "Running time: " << ave_time << " ms, " << tflops
+      //             << " TFlops, " << gb_per_sec << " GB/s";
     }
     return Status::OK();
   }
