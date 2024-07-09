@@ -9,6 +9,7 @@
 #include "tensorflow/core/framework/op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 namespace tensorflow {
+using GPUDevice = Eigen::GpuDevice;
 template <ck::index_t... Is>
 using S = ck::Sequence<Is...>;
 
@@ -42,7 +43,7 @@ using CDEElementOp = Add;
 
 static constexpr auto GemmSpec =
     ck::tensor_operation::device::GemmSpecialization::MNPadding;
-using GPUDevice = Eigen::GpuDevice;
+
 using DeviceOpInstance =
     ck::tensor_operation::device::DeviceGemmMultiD_Xdl_CShuffle_V3<
         Row, Col, DsLayout, ELayout, A0DataType, B0DataType, DsDataType,
@@ -70,8 +71,7 @@ struct FusedGemmBiasAddFunctor<GPUDevice, dataTP_> {
         BElementOp{}, CDEElementOp{});
     if (!device_op.IsSupportedArgument(argument)) {
       return errors::InvalidArgument(
-          "wrong! device_gemm with the specified compilation parameters does "
-          "not support this GEMM problem");
+          gemm.GetTypeString(), " does not support this problem");
     }
     float ave_time =
         invoker.Run(argument, StreamConfig{stream, time_kernel, 20, 50});

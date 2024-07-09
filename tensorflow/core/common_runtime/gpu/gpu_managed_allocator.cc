@@ -24,7 +24,7 @@ namespace tensorflow {
 void* GpuManagedAllocator::AllocateRaw(size_t alignment, size_t num_bytes) {
   void* ptr = nullptr;
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-  CHECK_EQ(hipMallocManaged(&ptr, num_bytes), hipSuccess);
+  CHECK_EQ(hipMalloc(&ptr, num_bytes), hipSuccess);
 #endif
   CHECK(!(reinterpret_cast<uintptr_t>(ptr) & (alignment - 1)));
   return ptr;

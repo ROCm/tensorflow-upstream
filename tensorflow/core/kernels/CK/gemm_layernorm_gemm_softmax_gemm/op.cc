@@ -21,13 +21,31 @@ class GemmLayernormGemmSoftmaxGemmOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
-    int M = context->input(0).shape().dim_size(0);
-    int N0 = context->input(1).shape().dim_size(0);
-    int K = context->input(0).shape().dim_size(2);
-    int B_kv = context->input(5).shape().dim_size(0);
-    int N1 = context->input(5).shape().dim_size(1);
-    int long_seq = context->input(6).shape().dim_size(1);
-    int N2 = context->input(7).shape().dim_size(2);
+    // Get the stamp token.
+    const Tensor* matrix_a0;
+    OP_REQUIRES_OK(context, context->input("matrix_a0", &matrix_a0));
+    const Tensor* matrix_b0;
+    OP_REQUIRES_OK(context, context->input("matrix_b0", &matrix_b0));
+    const Tensor* matrix_c0;
+    OP_REQUIRES_OK(context, context->input("matrix_c0", &matrix_c0));
+    const Tensor* layernorm_beta;
+    OP_REQUIRES_OK(context, context->input("layernorm_beta", &layernorm_beta));
+    const Tensor* layernorm_gamma;
+    OP_REQUIRES_OK(context, context->input("layernorm_gamma", &layernorm_gamma));
+    const Tensor* matrix_b1;
+    OP_REQUIRES_OK(context, context->input("matrix_b1", &matrix_b1));
+    const Tensor* softmaxmask;
+    OP_REQUIRES_OK(context, context->input("softmaxmask", &softmaxmask));
+    const Tensor* matrix_b2;
+    OP_REQUIRES_OK(context, context->input("matrix_b2", &matrix_b2));
+
+    int M = matrix_a0->shape().dim_size(0);
+    int N0 = matrix_b0->shape().dim_size(0);
+    int K = matrix_a0->shape().dim_size(2);
+    int B_kv = matrix_b1->shape().dim_size(0);
+    int N1 = matrix_b1->shape().dim_size(1);
+    int long_seq = softmaxmask->shape().dim_size(1);
+    int N2 = matrix_b2->shape().dim_size(2);
 
     Tensor* output_tensor = nullptr;
 
@@ -39,21 +57,21 @@ class GemmLayernormGemmSoftmaxGemmOp : public OpKernel {
         functor::GemmLayernormGemmSoftmaxGemmFunctor<Device, dataTP>::Compute(
             context->eigen_device<Device>(),
             reinterpret_cast<const void*>(
-                context->input(0).flat<dataTP>().data()),
+                matrix_a0->flat<dataTP>().data()),
             reinterpret_cast<const void*>(
-                context->input(1).flat<dataTP>().data()),
+                matrix_b0->flat<dataTP>().data()),
             reinterpret_cast<const void*>(
-                context->input(2).flat<dataTP>().data()),
+                matrix_c0->flat<dataTP>().data()),
             reinterpret_cast<const void*>(
-                context->input(3).flat<dataTP>().data()),
+                matrix_b1->flat<dataTP>().data()),
             reinterpret_cast<const void*>(
-                context->input(4).flat<dataTP>().data()),
+                matrix_b2->flat<dataTP>().data()),
             reinterpret_cast<const void*>(
-                context->input(5).flat<dataTP>().data()),
+                layernorm_gamma->flat<dataTP>().data()),
             reinterpret_cast<const void*>(
-                context->input(6).flat<dataTP>().data()),
+                layernorm_beta->flat<dataTP>().data()),
             reinterpret_cast<const void*>(
-                context->input(7).flat<dataTP>().data()),
+                softmaxmask->flat<dataTP>().data()),
             reinterpret_cast<void*>(output_tensor->flat<dataTP>().data()), K, M,
             N0, N1, long_seq, N2, B_kv, head_num_, lrelu_alpha_, do_layer_norm_,
             do_leaky_relu_, do_query_mask_));
