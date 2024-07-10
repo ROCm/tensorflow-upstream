@@ -12,8 +12,7 @@ template <typename Device, typename dataTP>
 class GemmRowSoftmaxGemmOp : public OpKernel {
  public:
   explicit GemmRowSoftmaxGemmOp(OpKernelConstruction* context)
-      : OpKernel(context) {
-  }
+      : OpKernel(context) {}
 
   void Compute(OpKernelContext* context) override {
     const Tensor* matrix_a0;
@@ -34,7 +33,11 @@ class GemmRowSoftmaxGemmOp : public OpKernel {
 
     OP_REQUIRES_OK(context, context->allocate_output(0, {batch, head_num, seq},
                                                      &output_tensor));
-
+    Tensor matrix_b1;
+    OP_REQUIRES_OK(context,
+                   context->allocate_temp(DataTypeToEnum<Eigen::half>::value,
+                                          TensorShape({batch, new_head, seq}),
+                                          &matrix_b1));
     OP_REQUIRES_OK(
         context,
         functor::GemmRowSoftmaxGemmFunctor<Device, dataTP>::Compute(
@@ -43,16 +46,15 @@ class GemmRowSoftmaxGemmOp : public OpKernel {
             reinterpret_cast<const void*>(matrix_a0->flat<dataTP>().data()),
             reinterpret_cast<const void*>(matrix_a1->flat<dataTP>().data()),
             reinterpret_cast<const void*>(kmask->flat<dataTP>().data()),
-            reinterpret_cast<void*>(output_tensor->flat<dataTP>().data()), batch, 
-                                 seq, 
-                                 head_num, 
-                                 new_head));
+            reinterpret_cast<void*>(matrix_b1.flat<dataTP>().data()),
+            reinterpret_cast<void*>(output_tensor->flat<dataTP>().data()),
+            batch, seq, head_num, new_head));
   }
 };
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU(dataTP)                                     \
-  REGISTER_KERNEL_BUILDER(Name("GemmRowSoftmaxGemm")              \
+  REGISTER_KERNEL_BUILDER(Name("GemmRowSoftmaxGemm")             \
                               .Device(DEVICE_GPU)                \
                               .TypeConstraint<dataTP>("dataTP"), \
                           GemmRowSoftmaxGemmOp<GPUDevice, dataTP>)
