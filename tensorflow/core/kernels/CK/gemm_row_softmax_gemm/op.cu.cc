@@ -58,7 +58,7 @@ struct GemmRowSoftmaxGemmFunctor<GPUDevice, dataTP_> {
                         const void* Keymask, void* mat_B1, void* mat_D,
                         int batch, int seq, int head_num, int new_head) {
     const bool time_kernel = std::getenv("TF_CK_TIME_KERNEL") != nullptr;
-    const auto& stream = d.stream();
+    const hipStream_t stream = d.stream();
 
     // void* mat_B1 = nullptr;
     // hipMalloc(&mat_B1, batch*new_head*seq*sizeof(dataTP_));
