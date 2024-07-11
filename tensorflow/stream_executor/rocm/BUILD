@@ -186,6 +186,42 @@ cc_library(
     alwayslink = True,
 )
 
+
+cc_library(
+    name = "amdhipblaslt_plugin",
+    srcs = if_rocm_is_configured([
+            "hip_blas_lt.cc",
+            "hip_blas_utils.cc"
+    ]),
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+        "hipblaslt_wrapper.h",
+        "hip_blas_utils.h",
+    ]),
+    deps = if_rocm_is_configured([
+        # keep sorted
+        ":hipblas_lt_header",
+        ":rocblas_plugin",
+        ":rocm_platform_id",
+    ]) + if_static([
+        ":hipblaslt_if_static",
+    ]),
+    alwayslink = True,
+)
+
+cc_library(
+    name = "hipblas_lt_header",
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+        "hipblaslt_wrapper.h",
+        "hip_blas_utils.h",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = if_rocm_is_configured([
+        # keep sorted
+    ]),
+)
+
 cc_library(
     name = "rocfft_plugin",
     srcs = if_rocm_is_configured(["rocm_fft.cc"]),
