@@ -55,6 +55,10 @@ struct half;
 
 namespace stream_executor {
 
+namespace gpu {
+struct BlasLt;
+}  // namespace gpu
+
 class Stream;
 class ScratchAllocator;
 
@@ -296,6 +300,8 @@ struct BatchedGemmCallContext2
 class BlasSupport {
  public:
   virtual ~BlasSupport() {}
+
+  virtual gpu::BlasLt *GetBlasLt() = 0;
 
   // Computes the sum of magnitudes of the vector elements.
   // result <- |Re x(1)| + |Im x(1)| + |Re  x(2)| + |Im  x(2)|+ ... + |Re  x(n)|

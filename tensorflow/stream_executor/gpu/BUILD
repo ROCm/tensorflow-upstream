@@ -48,6 +48,20 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_blas_lt",
+    srcs = if_gpu_is_configured(["gpu_blas_lt.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_blas_lt.h"]),
+    deps = if_gpu_is_configured([
+        "//tensorflow/stream_executor",
+        "//tensorflow/compiler/xla:xla_data_proto",
+        "//tensorflow/compiler/xla:statusor",
+        "//tensorflow/compiler/xla:util",
+        "//tensorflow/compiler/xla:shape_util",
+        "@com_google_absl//absl/types:any",
+    ]),
+)
+
+cc_library(
     name = "gpu_diagnostics_header",
     hdrs = if_gpu_is_configured(["gpu_diagnostics.h"]),
     deps = [
