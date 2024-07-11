@@ -40,13 +40,11 @@ tf_kernel_library(
     gpu_srcs = [
         "op.cu.cc",
         "op.h",
-        #"ck_irrelevant.h",
         "api.h",
     ],
     hdrs = [
         "op.h",
         "api.h",
-        #"ck_irrelevant.h",
     ],
     deps = [":ck_deps_fused_tile_gemm"] +
     select({
@@ -62,4 +60,22 @@ tf_kernel_library(
         "-fexceptions",
     ],
     nocopts = "-fno-exceptions",
+)
+
+tf_gpu_cc_test(
+    name = "fused_tile_gemm_test",
+    size = "small",
+    srcs = ["op_test.cc"],
+    deps = [
+        ":fused_tile_gemm",
+        "//tensorflow/core/kernels:ops_testutil",
+        "//tensorflow/core/kernels:ops_util",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
 )
