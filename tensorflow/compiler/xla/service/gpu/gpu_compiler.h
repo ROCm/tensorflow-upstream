@@ -36,6 +36,8 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+class  AutotuneConfig;
+
 // The GPU compiler generates efficient GPU executables.
 class GpuCompiler : public LLVMCompiler {
  public:
@@ -63,7 +65,8 @@ class GpuCompiler : public LLVMCompiler {
       se::DeviceMemoryAllocator* device_allocator) = 0;
 
   virtual Status OptimizeHloPostLayoutAssignment(
-      HloModule* hlo_module, se::StreamExecutor* stream_exec,
+      HloModule* hlo_module, const AutotuneConfig& cfg, 
+      se::StreamExecutor* stream_exec, 
       se::DeviceMemoryAllocator* device_allocator) = 0;
 
   virtual HloDataflowAnalysis::CanShareBuffer GetCanShareBuffer() {
@@ -98,6 +101,9 @@ class GpuCompiler : public LLVMCompiler {
       return ShapeUtil::ByteSizeOf(shape, pointer_size);
     };
   }
+
+  Status LoadAutotuneResultsFromFile(const DebugOptions& debug_options);
+  Status SerializeAutotuneResultsToFile(const DebugOptions& debug_options);
 
  private:
   se::Platform::Id platform_id_;

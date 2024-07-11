@@ -432,9 +432,19 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
           << " gdy: " << grid_dim_y << " gdz: " << grid_dim_z
           << " bdx: " << block_dim_x << " bdy: " << block_dim_y
           << " bdz: " << block_dim_z << " smem: " << shared_mem_bytes;
-  hipError_t res = tensorflow::wrap::hipModuleLaunchKernel(
+
+  // for in-process kernels we use non-null kernel_params:
+  auto res = hipSuccess;
+  if (kernel_params != nullptr) {
+    res = tensorflow::wrap::hipLaunchKernel((const void*)function,
+                                dim3(grid_dim_x, grid_dim_y, grid_dim_z),
+                                dim3(block_dim_x, block_dim_y, block_dim_z),
+                                kernel_params, shared_mem_bytes, stream);
+  } else {
+    res = tensorflow::wrap::hipModuleLaunchKernel(
       function, grid_dim_x, grid_dim_y, grid_dim_z, block_dim_x, block_dim_y,
-      block_dim_z, shared_mem_bytes, stream, kernel_params, extra);
+      block_dim_z, shared_mem_bytes, stream, nullptr, extra);
+  }
   if (res != hipSuccess) {
     return port::InternalError(
         absl::StrCat("Failed to launch ROCM kernel: ", ToString(res)));

@@ -1,6 +1,9 @@
 # Description:
 #   GPU-platform specific StreamExecutor support code.
-
+load(
+    "//tensorflow:tensorflow.bzl",
+    "tf_kernel_library",
+)
 load(
     "//tensorflow/stream_executor:build_defs.bzl",
     "if_gpu_is_configured",
@@ -44,6 +47,34 @@ cc_library(
         "//tensorflow/stream_executor",
         "//tensorflow/stream_executor:stream_executor_internal",
         "//tensorflow/stream_executor/platform",
+    ]),
+)
+
+cc_library(
+    name = "gpu_blas_lt",
+    srcs = if_gpu_is_configured(["gpu_blas_lt.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_blas_lt.h"]),
+    deps = if_gpu_is_configured([
+        "//tensorflow/stream_executor",
+        "//tensorflow/compiler/xla:xla_data_proto",
+        "//tensorflow/compiler/xla:statusor",
+        "//tensorflow/compiler/xla:util",
+        "//tensorflow/compiler/xla:shape_util",
+        "@com_google_absl//absl/types:any",
+    ]),
+)
+
+cc_library(
+    name = "gpu_blas_lt_gemm_runner_header",
+    hdrs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.h"]),
+)
+
+cc_library(
+    name = "gpu_blas_lt_gemm_runner",
+    srcs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.h"]),
+    deps = if_gpu_is_configured([
+        ":gpu_blas_lt"
     ]),
 )
 
@@ -192,5 +223,33 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_headers",
+    ]),
+)
+
+tf_kernel_library(
+    name = "redzone_allocator",
+    hdrs = if_gpu_is_configured(["redzone_allocator.h"]),
+    srcs = if_gpu_is_configured(["redzone_allocator.cc"]),
+    gpu_srcs = if_cuda_is_configured(["redzone_allocator_kernel_cuda.cc",
+                                       "redzone_allocator_kernel.h"]) +
+               if_rocm_is_configured(["redzone_allocator_kernel_rocm.cu.cc",
+                                      "redzone_allocator_kernel.h"]),
+    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "-DTENSORFLOW_USE_ROCM=1",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = [
+         "@com_google_absl//absl/container:fixed_array",
+         "@com_google_absl//absl/strings:str_format",
+         "@com_google_absl//absl/types:optional",
+         "@com_google_absl//absl/strings",
+         "//tensorflow/core:allocator",
+         "//tensorflow/stream_executor:gpu_asm_opts",
+         "//tensorflow/core:lib",
+         "//tensorflow/core:stream_executor_no_cuda",
+        "//tensorflow/stream_executor:device_memory",
+         "//tensorflow/stream_executor:device_memory_allocator",
+    ] + if_cuda_is_configured([
+        "//tensorflow/stream_executor/cuda:ptxas_utils",
     ]),
 )

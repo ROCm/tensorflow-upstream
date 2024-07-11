@@ -85,6 +85,10 @@ class ThunkEmitter {
   // to make sure `inst` outlives the lifetime of the returned Thunk object.
   std::unique_ptr<Thunk> BuildGemmThunk(const HloInstruction* inst);
 
+  // Returns a GemmThunk that calls cublaslt to implement `inst`. The caller needs
+  // to make sure `inst` outlives the lifetime of the returned Thunk object.
+  std::unique_ptr<Thunk> BuildCublasLtThunk(const HloInstruction* inst);
+
   // Returns an InfeedThunk that performs a host-to-device memcpy to implement
   // `inst`.
   std::unique_ptr<Thunk> BuildInfeedThunk(const HloInstruction* inst);

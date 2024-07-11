@@ -522,7 +522,7 @@ tf_cuda_library(
         "//tensorflow/core:logger",
         "//tensorflow/core:stream_executor",
         "//tensorflow/core/util/proto:proto_utils",
-        "//tensorflow/stream_executor:redzone_allocator",
+        "//tensorflow/stream_executor/gpu:redzone_allocator",
     ] + if_cuda([
         "//tensorflow/stream_executor/cuda:ptxas_utils",
     ]),
@@ -1917,6 +1917,30 @@ tf_cc_test(
         "//tensorflow/stream_executor/cuda:cudnn_plugin",
     ],
 )
+
+tf_cc_test(
+    name = "indicator_matmul_op_test",
+    size = "small",
+    srcs = ["indicator_matmul_op_test.cc"],
+    deps = [
+        ":indicator_matmul_op",
+        ":ops_testutil",
+        ":ops_util",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:client_session",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+        "@com_google_absl//absl/algorithm:container",
+    ],
+)
+
 
 tf_kernel_library(
     name = "gather_functor",
@@ -4255,7 +4279,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core/util/proto:proto_utils",
-        "//tensorflow/stream_executor:redzone_allocator",
+        "//tensorflow/stream_executor/gpu:redzone_allocator",
     ] + select({
         ":xsmm_convolutions": [
             "@libxsmm_archive//:xsmm_avx",

@@ -324,12 +324,17 @@ bool ROCMBlas::Init() {
     LOG(ERROR) << "failed to create rocBLAS handle: " << ToString(ret);
     return false;
   }
-
+  if (!blas_lt_.Init().ok()) {
+    LOG(ERROR) << "Failed to initialize hipblasLt";
+    return false;
+  }
   return true;
 }
 
 ROCMBlas::ROCMBlas(gpu::GpuExecutor *parent)
-    : parent_(CHECK_NOTNULL(parent)), blas_(nullptr) {}
+    : parent_(CHECK_NOTNULL(parent)), blas_(nullptr),
+      blas_lt_(parent)
+ {}
 
 ROCMBlas::~ROCMBlas() {
   if (blas_ != nullptr) {
