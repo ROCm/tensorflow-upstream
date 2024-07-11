@@ -546,8 +546,8 @@ _NP_TO_TF = frozenset([
     (np.int8, int8),
     (np.complex64, complex64),
     (np.complex128, complex128),
-    (np.object, string),
-    (np.bool, bool),
+    #(np.object, string),
+    #(np.bool, bool),
     (_np_qint8, qint8),
     (_np_quint8, quint8),
     (_np_qint16, qint16),
@@ -578,16 +578,16 @@ _TF_TO_NP = {
         np.int8,
     # NOTE(touts): For strings we use np.object as it supports variable length
     # strings.
-    types_pb2.DT_STRING:
-        np.object,
+    #types_pb2.DT_STRING:
+    #    np.object,
     types_pb2.DT_COMPLEX64:
         np.complex64,
     types_pb2.DT_COMPLEX128:
         np.complex128,
     types_pb2.DT_INT64:
         np.int64,
-    types_pb2.DT_BOOL:
-        np.bool,
+    #types_pb2.DT_BOOL:
+    #    np.bool,
     types_pb2.DT_QINT8:
         _np_qint8,
     types_pb2.DT_QUINT8:
@@ -620,8 +620,8 @@ _TF_TO_NP = {
         np.int16,
     types_pb2.DT_INT8_REF:
         np.int8,
-    types_pb2.DT_STRING_REF:
-        np.object,
+    #types_pb2.DT_STRING_REF:
+    #    np.object,
     types_pb2.DT_COMPLEX64_REF:
         np.complex64,
     types_pb2.DT_COMPLEX128_REF:
@@ -630,8 +630,8 @@ _TF_TO_NP = {
         np.int64,
     types_pb2.DT_UINT64_REF:
         np.uint64,
-    types_pb2.DT_BOOL_REF:
-        np.bool,
+    #types_pb2.DT_BOOL_REF:
+    #    np.bool,
     types_pb2.DT_QINT8_REF:
         _np_qint8,
     types_pb2.DT_QUINT8_REF:

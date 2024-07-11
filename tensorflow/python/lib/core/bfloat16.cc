@@ -317,7 +317,7 @@ PyTypeObject PyBfloat16_Type = {
     sizeof(PyBfloat16),                        // tp_basicsize
     0,                                         // tp_itemsize
     nullptr,                                   // tp_dealloc
-    nullptr,                                   // tp_print
+    0,                                   // tp_print
     nullptr,                                   // tp_getattr
     nullptr,                                   // tp_setattr
     nullptr,                                   // tp_compare / tp_reserved
@@ -490,7 +490,11 @@ bool RegisterBfloat16Cast(int numpy_type, bool cast_is_safe) {
 }
 
 template <typename InType, typename OutType, typename Functor>
+#if NPY_VERSION >= 0x0e
+void BinaryUFunc(char** args, const npy_intp* dimensions, const npy_intp* steps,
+#else
 void BinaryUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
+#endif
                  void* data) {
   const char* i0 = args[0];
   const char* i1 = args[1];
@@ -506,7 +510,11 @@ void BinaryUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
 }
 
 template <typename Functor>
+#if NPY_VERSION >= 0x0e
+void CompareUFunc(char** args, const npy_intp* dimensions, const npy_intp* steps,
+#else
 void CompareUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
+#endif
                   void* data) {
   BinaryUFunc<bfloat16, npy_bool, Functor>(args, dimensions, steps, data);
 }

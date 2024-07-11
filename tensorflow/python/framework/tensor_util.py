@@ -103,10 +103,10 @@ if _FAST_TENSOR_UTIL_AVAILABLE:
           fast_tensor_util.AppendComplex64ArrayToTensorProto,
       np.complex128:
           fast_tensor_util.AppendComplex128ArrayToTensorProto,
-      np.object:
-          fast_tensor_util.AppendObjectArrayToTensorProto,
-      np.bool:
-          fast_tensor_util.AppendBoolArrayToTensorProto,
+      #np.object:
+      #    fast_tensor_util.AppendObjectArrayToTensorProto,
+      #np.bool:
+      #    fast_tensor_util.AppendBoolArrayToTensorProto,
       dtypes.qint8.as_numpy_dtype:
           fast_tensor_util.AppendInt8ArrayToTensorProto,
       dtypes.quint8.as_numpy_dtype:
@@ -171,8 +171,8 @@ else:
       np.int16: SlowAppendIntArrayToTensorProto,
       np.complex64: SlowAppendComplex64ArrayToTensorProto,
       np.complex128: SlowAppendComplex128ArrayToTensorProto,
-      np.object: SlowAppendObjectArrayToTensorProto,
-      np.bool: SlowAppendBoolArrayToTensorProto,
+      #np.object: SlowAppendObjectArrayToTensorProto,
+      #np.bool: SlowAppendBoolArrayToTensorProto,
       dtypes.qint8.as_numpy_dtype: SlowAppendQIntArrayToTensorProto,
       dtypes.quint8.as_numpy_dtype: SlowAppendQIntArrayToTensorProto,
       dtypes.qint16.as_numpy_dtype: SlowAppendQIntArrayToTensorProto,
