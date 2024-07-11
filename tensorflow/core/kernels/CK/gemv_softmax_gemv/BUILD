@@ -40,16 +40,10 @@ tf_kernel_library(
     gpu_srcs = [
         "op.cu.cc",
         "op.h",
-        "mask.h",
-        "utils.h",
-        "fmha_fwd.h",
-    ] + glob(["fmha_kernels/*.cpp"]),
+    ] + glob(["*.hpp"]) + glob(["instances/*.cpp"]),
     hdrs = [
         "op.h",
-        "mask.h",
-        "utils.h",
-        "fmha_fwd.h",
-    ],
+    ] + glob(["*.hpp"]),
     deps = [":ck_deps"] +
     select({
         "//conditions:default": [
