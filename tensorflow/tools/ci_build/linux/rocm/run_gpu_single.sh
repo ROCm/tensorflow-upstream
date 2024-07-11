@@ -81,12 +81,12 @@ else
 	      --config=rocm \
 	      -k \
 	      --test_tag_filters=gpu,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-no_rocm,-benchmark-test,-rocm_multi_gpu,-tpu,-v1only \
-	      --jobs=30 \
+	      --jobs=15 \
 	      --local_ram_resources=60000 \
 	      --local_cpu_resources=15 \
 	      --local_test_jobs=${N_TEST_JOBS} \
-	      --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
-	      --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
+	      --test_env=TF_GPU_COUNT=${N_TEST_JOBS} \
+	      --test_env=TF_TESTS_PER_GPU=${TF_TESTS_PER_GPU} \
 	      --test_env=HSA_TOOLS_LIB=libroctracer64.so \
 	      --test_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
 	      --action_env=OPENBLAS_CORETYPE=Haswell \
