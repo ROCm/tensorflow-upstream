@@ -210,7 +210,7 @@ def _rocm_include_path(repository_ctx, rocm_config, bash_bin):
     inc_dirs.append(rocm_config.llvm_path + "/lib/clang/17/include")
     inc_dirs.append(rocm_config.llvm_path + "/lib/clang/18/include")
     inc_dirs.append(rocm_config.llvm_path + "/lib/clang/19/include")
-    if int(rocm_config.rocm_version_number) >= 60300:
+    if int(rocm_config.rocm_version_number) >= 60200:
         inc_dirs.append(rocm_toolkit_path + "/lib/llvm/lib/clang/17/include")
         inc_dirs.append(rocm_toolkit_path + "/lib/llvm/lib/clang/18/include")
         inc_dirs.append(rocm_toolkit_path + "/lib/llvm/lib/clang/19/include")
