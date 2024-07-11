@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "tensorflow/stream_executor/blas.h"
+#include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
 #include "tensorflow/stream_executor/host_or_device_scalar.h"
 #include "tensorflow/stream_executor/lib/stacktrace.h"
 #include "tensorflow/stream_executor/platform.h"
@@ -25,6 +26,7 @@ limitations under the License.
 #include "tensorflow/stream_executor/rng.h"
 #include "tensorflow/stream_executor/stream_executor_internal.h"
 #include "tensorflow/stream_executor/stream_executor_pimpl.h"
+#include "tensorflow/stream_executor/gpu/gpu_blas_lt_gemm_runner.h"
 #include "third_party/eigen3/Eigen/Core"
 
 namespace stream_executor {
@@ -2171,29 +2173,24 @@ struct ThenBlasImpl {
   // true.
   Stream &Run(Stream *stream,
               bool (blas::BlasSupport::*blas_func)(Stream *, Args...),
-              bool record_error, Args... args);
-};
-
-template <typename... Args>
-Stream &ThenBlasImpl<Args...>::Run(
-    Stream *stream, bool (blas::BlasSupport::*blas_func)(Stream *, Args...),
-    bool record_error, Args... args) {
-  if (stream->ok()) {
-    bool ok;
-    if (blas::BlasSupport *blas = stream->parent_->AsBlas()) {
-      ok = (blas->*blas_func)(stream, args...);
-    } else {
-      LOG(WARNING)
+              bool record_error, Args... args) {
+    if (stream->ok()) {
+      bool ok;
+      if (blas::BlasSupport *blas = stream->parent_->AsBlas()) {
+        ok = (blas->*blas_func)(stream, args...);
+      } else {
+        LOG(WARNING)
           << "attempting to perform BLAS operation using StreamExecutor "
              "without BLAS support";
-      ok = false;
-    }
+        ok = false;
+      }
     if (record_error) {
-      stream->CheckError(ok);
+        stream->CheckError(ok);
+      }
     }
+    return *stream;
   }
-  return *stream;
-}
+}; // ThenBlasImpl
 
 Stream &Stream::ThenBlasAsum(uint64 elem_count, const DeviceMemory<float> &x,
                              int incx, DeviceMemory<float> *result) {
@@ -3895,6 +3892,14 @@ Stream &Stream::ThenBlasGemmStridedBatched(
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
             PARAM(stride_c), PARAM(batch_count));
 
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunStridedBatched(*this, transa, transb, m, n, k, alpha, 
+        a, lda, stride_a, b, ldb, stride_b, beta,
+        c, ldc, stride_c, batch_count));
+    return *this;
+  }
+
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, float,
                const DeviceMemory<Eigen::half> &, int, int64,
                const DeviceMemory<Eigen::half> &, int, int64, float,
@@ -3916,6 +3921,14 @@ Stream &Stream::ThenBlasGemmStridedBatched(
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
             PARAM(stride_c), PARAM(batch_count));
 
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunStridedBatched(*this, transa, transb, m, n, k, alpha, 
+        a, lda, stride_a, b, ldb, stride_b, beta,
+        c, ldc, stride_c, batch_count));
+    return *this;
+  }
+
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, float,
                const DeviceMemory<float> &, int, int64,
                const DeviceMemory<float> &, int, int64, float,
@@ -3936,6 +3949,14 @@ Stream &Stream::ThenBlasGemmStridedBatched(
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(stride_a), PARAM(b),
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
             PARAM(stride_c), PARAM(batch_count));
+
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunStridedBatched(*this, transa, transb, m, n, k, alpha, 
+        a, lda, stride_a, b, ldb, stride_b, beta,
+        c, ldc, stride_c, batch_count));
+    return *this;
+  }
 
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, double,
                const DeviceMemory<double> &, int, int64,
@@ -4004,6 +4025,7 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
+
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, float,
                const Eigen::half**, int, const Eigen::half**, int, float,
                Eigen::half**, int, int, ScratchAllocator*>
@@ -4023,6 +4045,7 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
+
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, float,
                const float**, int, const float**, int, float, float**, int, int,
                ScratchAllocator*>
@@ -4041,6 +4064,7 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
+
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, double,
                const double**, int, const double**, int, double, double**, int,
                int, ScratchAllocator*>

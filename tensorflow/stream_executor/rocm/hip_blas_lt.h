@@ -1,0 +1,201 @@
+/* Copyright 2023 The OpenXLA Authors.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+    http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#ifndef TENSORFLOW_STREAM_EXECUTOR_ROCM_HIP_BLAS_LT_H_
+#define TENSORFLOW_STREAM_EXECUTOR_ROCM_HIP_BLAS_LT_H_
+
+#include "tensorflow/core/lib/core/status.h"
+#include "rocm/rocm_config.h"
+#include "tensorflow/stream_executor/device_memory_allocator.h"
+#include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
+#include "tensorflow/stream_executor/host_or_device_scalar.h"
+#include "tensorflow/compiler/xla/types.h"
+
+#include "tensorflow/stream_executor/rocm/hip_blas_utils.h"
+
+namespace hipblaslt_ext {
+  class GroupedGemm;
+  struct UserArguments;
+}
+
+namespace stream_executor {
+
+namespace gpu {
+class GpuExecutor;
+}  // namespace gpu
+
+namespace rocm {
+
+class BlasLt : public gpu::BlasLt {
+  template <typename T>
+  using Owned =
+      std::unique_ptr<std::remove_pointer_t<T>, hipblasStatus_t (*)(T)>;
+
+ public:
+  struct MatrixLayout {
+    static xla::StatusOr<MatrixLayout> Create(const gpu::MatrixLayout& m);
+
+    hipDataType type() const { return datatype_; }
+    hipblasLtMatrixLayout_t get() const { return handle_.get(); }
+
+   private:
+    MatrixLayout(hipblasLtMatrixLayout_t handle, hipDataType datatype)
+        : handle_(handle, hipblasLtMatrixLayoutDestroy),
+          datatype_(datatype) {}
+
+    Owned<hipblasLtMatrixLayout_t> handle_;
+    hipDataType datatype_;
+  };
+
+  class MatmulDesc {
+   public:
+    static xla::StatusOr<MatmulDesc> Create(
+        blas::ComputationType compute_type, blas::DataType scale_type,
+        blas::Transpose trans_a = blas::Transpose::kNoTranspose,
+        blas::Transpose trans_b = blas::Transpose::kNoTranspose,
+        Epilogue epilogue = Epilogue::kDefault,
+        PointerMode pointer_mode = PointerMode::kHost);
+
+    hipblasComputeType_t compute_type() const { return compute_type_; }
+    hipDataType scale_type() const { return datatype_; }
+    bool has_bias_epilogue() const { return has_bias_epilogue_; }
+    hipblasPointerMode_t pointer_mode() const {
+      return HIPBLAS_POINTER_MODE_HOST;
+    }
+    hipblasLtMatmulDesc_t get() const { return handle_.get(); }
+
+   private:
+    MatmulDesc(hipblasLtMatmulDesc_t handle, hipblasComputeType_t compute_type,
+               hipDataType datatype, bool bias_epilogue)
+        : handle_(handle, hipblasLtMatmulDescDestroy),
+          compute_type_(compute_type),
+          datatype_(datatype),
+          has_bias_epilogue_(bias_epilogue) {}
+
+    Owned<hipblasLtMatmulDesc_t> handle_;
+    hipblasComputeType_t compute_type_;
+    hipDataType datatype_;
+    bool has_bias_epilogue_;
+  };
+
+  struct MatmulPlan : public gpu::BlasLt::MatmulPlan {
+    MatmulPlan(const BlasLt& blas_lt_ref, MatmulDesc&& op_desc,
+               MatrixLayout&& a_desc, MatrixLayout&& b_desc,
+               MatrixLayout&& c_desc, MatrixLayout&& d_desc,
+               xla::complex128 alpha, double beta, bool must_swap_operands)
+        : blas_lt_ref_(blas_lt_ref),
+          op_desc_(std::move(op_desc)),
+          a_desc_(std::move(a_desc)),
+          b_desc_(std::move(b_desc)),
+          c_desc_(std::move(c_desc)),
+          d_desc_(std::move(d_desc)),
+          alpha_(alpha),
+          beta_(beta),
+          must_swap_operands_(must_swap_operands) {}
+
+    ~MatmulPlan() override = default;
+
+    xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
+        size_t max_algorithm_count, size_t max_workspace_size) const override;
+
+    void SetAlgorithm(const MatmulAlgorithm& algorithm) override;
+
+    xla::Status ExecuteOnStream(
+        Stream* stream, DeviceMemoryBase a_buffer, DeviceMemoryBase b_buffer,
+        DeviceMemoryBase c_buffer, DeviceMemoryBase d_buffer,
+        DeviceMemoryBase bias_buffer,  // may be null
+        DeviceMemoryBase aux_buffer,   // may be null
+        DeviceMemoryBase a_scale_buffer, DeviceMemoryBase b_scale_buffer,
+        DeviceMemoryBase c_scale_buffer, DeviceMemoryBase d_scale_buffer,
+        DeviceMemoryBase d_amax_buffer, 
+        absl::optional<DeviceMemoryBase> workspace,
+        absl::optional<ScratchAllocator*> scratch_allocator,
+        blas::ProfileResult* profile_result) const override;
+
+   protected:
+    xla::Status DoMatmul(Stream* stream, const void* alpha, DeviceMemoryBase a,
+                          DeviceMemoryBase b, const void* beta,
+                          DeviceMemoryBase c, DeviceMemoryBase d,
+                          DeviceMemoryBase bias, DeviceMemoryBase aux,
+                          DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
+                          DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
+                          DeviceMemoryBase d_amax,
+                          absl::optional<DeviceMemoryBase> workspace,
+                          absl::optional<ScratchAllocator*> scratch_allocator,
+                          blas::ProfileResult* profile_result) const override;
+
+   private:
+    const BlasLt& blas_lt_ref_;
+    // TODO(cjfj): Add consistency checks for types, shapes, etc.?
+    MatmulDesc op_desc_;
+    MatrixLayout a_desc_;
+    MatrixLayout b_desc_;
+    MatrixLayout c_desc_;
+    MatrixLayout d_desc_;
+    xla::complex128 alpha_;
+    double beta_;
+    bool must_swap_operands_;
+    absl::optional< MatmulAlgorithm > algorithm_; // selected algorithm
+  };  // struct MatmulPlan
+
+  struct GroupedMatmulPlan : public gpu::BlasLt::GroupedMatmulPlan {
+
+    friend class BlasLt;
+    using DeviceMemoryArgs = DeviceMemoryBase; // OwningDeviceMemory
+    using GroupedGemmPtr = std::unique_ptr< hipblaslt_ext::GroupedGemm >;
+
+    GroupedMatmulPlan(const BlasLt& blas_lt);
+
+    xla::Status ExecuteOnStream(Stream *stream,
+          const gpu::GroupedGemmConfig& cfg) override;
+
+    xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
+        size_t max_algorithm_count,
+        size_t max_workspace_size) override;
+
+    xla::Status SetAlgorithm(const MatmulAlgorithm& algorithm) override;
+
+    ~GroupedMatmulPlan() override;
+
+  private:
+    const BlasLt& blas_lt_ref_;
+    GroupedGemmPtr grouped_gemm_;
+    hipblaslt_ext::UserArguments *host_args_ = nullptr;
+    DeviceMemoryArgs device_args_;
+
+    SE_DISALLOW_COPY_AND_ASSIGN(GroupedMatmulPlan);
+  };
+
+  explicit BlasLt(gpu::GpuExecutor* parent)
+      : parent_(parent), blas_lt_(nullptr, hipblasLtDestroy) {}
+
+  xla::Status Init() override;
+
+  xla::StatusOr<MatmulPlanPtr> GetMatmulPlan(const gpu::GemmConfig& cfg,
+                                              Epilogue epilogue) const override;
+
+  xla::StatusOr<GroupedMatmulPlanPtr> GetGroupedMatmulPlan(
+        DeviceMemoryAllocator *allocator, 
+        const gpu::GroupedGemmConfig& config) const override;
+
+  ~BlasLt() override = default;
+
+ private:
+  gpu::GpuExecutor* parent_;
+  mutable absl::Mutex mu_;
+  Owned<hipblasLtHandle_t> blas_lt_ ABSL_GUARDED_BY(mu_);
+};
+
+}  // namespace rocm
+}  // namespace stream_executor
+
+#endif  // TENSORFLOW_STREAM_EXECUTOR_ROCM_HIP_BLAS_LT_H_

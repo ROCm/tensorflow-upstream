@@ -32,7 +32,7 @@ class BufferComparatorTest : public testing::Test {
  protected:
   BufferComparatorTest()
       : platform_(
-            se::MultiPlatformManager::PlatformWithName("cuda").ValueOrDie()),
+            se::MultiPlatformManager::PlatformWithName("rocm").ValueOrDie()),
         stream_exec_(platform_->ExecutorForDevice(0).ValueOrDie()) {}
 
   // Take floats only for convenience. Still uses ElementType internally.
@@ -54,8 +54,7 @@ class BufferComparatorTest : public testing::Test {
     BufferComparator comparator(
         ShapeUtil::MakeShape(
             primitive_util::NativeToPrimitiveType<ElementType>(),
-            {static_cast<int64>(lhs_buffer->ElementCount())}),
-        HloModuleConfig());
+            {static_cast<int64>(lhs_buffer->ElementCount())}));
     return comparator.CompareEqual(&stream, *lhs_buffer, *rhs_buffer)
         .ConsumeValueOrDie();
   }

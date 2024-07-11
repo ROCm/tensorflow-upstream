@@ -59,6 +59,10 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_allow_excess_precision(true);
   opts.set_xla_force_host_platform_device_count(1);
+  opts.set_xla_gpu_autotune_level(4);
+  opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
+  opts.set_xla_gpu_redzone_padding_bytes(8 * 1024 * 1024);
+
   return opts;
 }
 
@@ -121,6 +125,14 @@ static void AllocateFlags() {
       return true;
     };
   };
+
+  auto float_setter_for =
+      [](void (DebugOptions::*member_setter)(float)) {
+        return [member_setter](float value) {
+          (flag_values->*member_setter)(value);
+          return true;
+        };
+      };
 
   auto string_setter_for =
       [](void (DebugOptions::*member_setter)(const string& value)) {
@@ -534,6 +546,47 @@ static void AllocateFlags() {
                        flag_values->xla_gpu_algorithm_blacklist_path(),
                        "An AlgorithmBlacklist text proto file as a blacklist "
                        "of convolutions to avoid to use."),
+      tensorflow::Flag(
+          "xla_gpu_autotune_level",
+          int32_setter_for(&DebugOptions::set_xla_gpu_autotune_level),
+          flag_values->xla_gpu_autotune_level(),
+          "Set GEMM and Convolution auto-tuning level. 0 = off; 1 = on; 2 = "
+          "on+init; 3 = on+init+reinit; 4 = on+init+reinit+check; "
+          "5 = on+init+reinit+check and skip WRONG_RESULT solutions. See also "
+          "the related flag xla_gpu_autotune_gemm_rtol. Remark that, setting the "
+          "level to 5 only makes sense if you are sure that the reference (first "
+          "in the list) solution is numerically CORRECT. Otherwise, the autotuner "
+          "might discard many other correct solutions based on the failed "
+          "BufferComparator test."),
+      tensorflow::Flag(
+      "xla_gpu_dump_autotune_results_to",
+      string_setter_for(&DebugOptions::set_xla_gpu_dump_autotune_results_to),
+        flag_values->xla_gpu_dump_autotune_results_to(),
+        "File to write autotune results to. It will be a binary file unless the "
+        "name ends with .txt or .textproto. Warning: The results are written at "
+        "every compilation, possibly multiple times per process. This only works "
+        "on CUDA. In tests, the TEST_UNDECLARED_OUTPUTS_DIR prefix can be used "
+        "to write to their output directory."),
+      tensorflow::Flag(
+        "xla_gpu_load_autotune_results_from",
+        string_setter_for(&DebugOptions::set_xla_gpu_load_autotune_results_from),
+        flag_values->xla_gpu_load_autotune_results_from(),
+        "File to load autotune results from. It will be considered a binary file "
+        "unless the name ends with .txt or .textproto. It will be loaded at most "
+        "once per process. This only works on CUDA. In tests, the TEST_WORKSPACE "
+        "prefix can be used to load files from their data dependencies."),
+      tensorflow::Flag(
+        "xla_gpu_autotune_gemm_rtol",
+        float_setter_for(&DebugOptions::set_xla_gpu_autotune_gemm_rtol),
+        flag_values->xla_gpu_autotune_gemm_rtol(),
+        "Relative precision for comparing GEMM solutions vs the reference one"),
+      tensorflow::Flag(
+        "xla_gpu_redzone_padding_bytes",
+        int32_setter_for(&DebugOptions::set_xla_gpu_redzone_padding_bytes),
+        flag_values->xla_gpu_redzone_padding_bytes(),
+        "Amount of padding the redzone allocator will put on one side of each "
+        "buffer it allocates. (So the buffer's total size will be increased by "
+        "2x this value.)"),
   });
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects);
 }

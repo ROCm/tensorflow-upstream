@@ -129,6 +129,10 @@ port::StatusOr<void*> GetRocblasDsoHandle() {
   return GetDsoHandle("rocblas", "");
 }
 
+port::StatusOr<void*> GetHipblasltDsoHandle() {
+  return GetDsoHandle("hipblaslt", "");
+}
+
 port::StatusOr<void*> GetMiopenDsoHandle() {
   return GetDsoHandle("MIOpen", "");
 }
@@ -202,6 +206,11 @@ port::StatusOr<void*> GetCudnnDsoHandle() {
 
 port::StatusOr<void*> GetRocblasDsoHandle() {
   static auto result = new auto(DsoLoader::GetRocblasDsoHandle());
+  return *result;
+}
+
+port::StatusOr<void*> GetHipblasltDsoHandle() {
+  static auto result = new auto(DsoLoader::GetHipblasltDsoHandle());
   return *result;
 }
 
