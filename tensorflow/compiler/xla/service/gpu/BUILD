@@ -11,6 +11,11 @@ load(
     "tf_cc_test",
     "tf_copts",
     "tf_cuda_library",
+    "tf_kernel_library",
+)
+load(
+    "//tensorflow/stream_executor:build_defs.bzl",
+    "if_gpu_is_configured",
 )
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
@@ -444,6 +449,7 @@ cc_library(
         "fft_thunk.cc",
         "for_thunk.cc",
         "gemm_thunk.cc",
+        "gpublas_lt_matmul_thunk.cc",
         "gpu_executable.cc",
         "infeed_thunk.cc",
         "kernel_thunk.cc",
@@ -468,6 +474,7 @@ cc_library(
         "fft_thunk.h",
         "for_thunk.h",
         "gemm_thunk.h",
+        "gpublas_lt_matmul_thunk.h",
         "gpu_executable.h",
         "infeed_thunk.h",
         "kernel_thunk.h",
@@ -491,12 +498,14 @@ cc_library(
         ":hlo_execution_profiler",
         ":infeed_manager",
         ":ir_emission_utils",
+        ":matmul_utils",
         ":nccl_all_reduce_thunk",  # fixdeps: keep
         ":outfeed_manager",
         ":partition_assignment",
         ":stream_assignment",
         ":stream_executor_util",
         ":thunk",
+        ":autotuner_util",
         "//tensorflow/compiler/xla:array2d",
         "//tensorflow/compiler/xla:literal",
         "//tensorflow/compiler/xla:refcounting_hash_map",
@@ -524,6 +533,7 @@ cc_library(
         "//tensorflow/core/profiler/lib:traceme",
         "//tensorflow/stream_executor",
         "//tensorflow/stream_executor:blas",
+        "//tensorflow/stream_executor/gpu:gpu_blas_lt",
         "//tensorflow/stream_executor:device_memory",
         "//tensorflow/stream_executor:kernel",
         "//tensorflow/stream_executor/gpu:gpu_stream",
@@ -571,21 +581,42 @@ cc_library(
 )
 
 cc_library(
+    name = "matmul_utils",
+    srcs = ["matmul_utils.cc"],
+    hdrs = ["matmul_utils.h"],
+    deps = [
+        "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/compiler/xla:util",
+        "//tensorflow/compiler/xla:window_util",
+        "//tensorflow/compiler/xla:xla_data_proto",
+        "//tensorflow/compiler/xla/service/gpu:backend_configs",
+        "//tensorflow/compiler/xla/service:hlo",
+        "//tensorflow/stream_executor:blas",
+        "//tensorflow/stream_executor/gpu:gpu_blas_lt",
+        "@com_google_absl//absl/types:any",
+    ]
+)
+
+cc_library(
     name = "gemm_rewriter",
     srcs = ["gemm_rewriter.cc"],
     hdrs = ["gemm_rewriter.h"],
     deps = [
         ":backend_configs",
         ":ir_emission_utils",
+        ":matmul_utils",
+        ":gpu_types",
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/compiler/xla:statusor",
         "//tensorflow/compiler/xla/service:hlo",
         "//tensorflow/compiler/xla/service:hlo_casting_utils",
         "//tensorflow/compiler/xla/service:hlo_pass",
         "//tensorflow/compiler/xla/service:pattern_matcher",
+        "//tensorflow/stream_executor/gpu:gpu_blas_lt",
         "//tensorflow/core:lib",
         "//tensorflow/stream_executor/lib",
         "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/types:any",
     ],
 )
 
@@ -600,6 +631,9 @@ cc_library(
         ":gpu_executable",
         ":ir_emission_utils",
         ":stream_executor_util",
+        ":matmul_utils",
+        ":autotuner_compile_util",
+        ":autotuner_util",
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/compiler/xla:util",
         "//tensorflow/compiler/xla/service:hlo",
@@ -612,9 +646,45 @@ cc_library(
         "//tensorflow/stream_executor:blas",
         "//tensorflow/stream_executor:device_memory",
         "//tensorflow/stream_executor:device_memory_allocator",
-        "//tensorflow/stream_executor:redzone_allocator",
+        "//tensorflow/stream_executor/gpu:redzone_allocator",
         "@com_google_absl//absl/types:optional",
     ],
+)
+
+
+cc_library(
+    name = "autotuner_util",
+    srcs = if_gpu_is_configured(["autotuner_util.cc"]),
+    hdrs = if_gpu_is_configured(["autotuner_util.h"]),
+    deps = if_gpu_is_configured([
+        ":stream_executor_util",
+        "//tensorflow/core:autotuning_proto_cc",
+        "//tensorflow/core:autotune_results_proto_cc",
+         "//tensorflow/compiler/xla:shape_util",
+         "//tensorflow/compiler/xla:status_macros",
+         "//tensorflow/compiler/xla:types",
+         "//tensorflow/compiler/xla:util",
+         "//tensorflow/stream_executor",
+        "//tensorflow/stream_executor/gpu:redzone_allocator",
+    ]),
+)
+
+# We need a separate target, as runtime executable cannot depend on compilation
+# pipeline.
+cc_library(
+    name = "autotuner_compile_util",
+    srcs = if_gpu_is_configured(["autotuner_compile_util.cc"]),
+    hdrs = if_gpu_is_configured(["autotuner_compile_util.h"]),
+    deps = if_gpu_is_configured([
+        ":autotuner_util",
+        ":ir_emission_utils",
+        "//tensorflow/compiler/xla/service:shaped_buffer",
+        "//tensorflow/stream_executor",
+        "//tensorflow/stream_executor/gpu:gpu_stream_header",
+        "//tensorflow/stream_executor/gpu:redzone_allocator",
+        "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/compiler/xla:util",
+    ])
 )
 
 cc_library(
@@ -643,7 +713,7 @@ cc_library(
         "//tensorflow/core:stream_executor_no_cuda",
         "//tensorflow/core/util/proto:proto_utils",
         "//tensorflow/stream_executor:device_memory_allocator",
-        "//tensorflow/stream_executor:redzone_allocator",
+        "//tensorflow/stream_executor/gpu:redzone_allocator",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -1029,6 +1099,7 @@ cc_library(
         ":stream_executor_util",
         ":target_constants",
         ":variadic_op_splitter",
+        ":autotuner_util",
         "//tensorflow/compiler/xla:protobuf_util",
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/compiler/xla:statusor",
@@ -1186,6 +1257,7 @@ cc_library(
         ":gemm_rewriter",
         ":gpu_compiler",
         ":gpu_conv_algorithm_picker",
+        ":gemm_algorithm_picker",
         "//tensorflow/core/platform:rocm_rocdl_path",
     ],
 )
@@ -1350,6 +1422,8 @@ cc_library(
     hdrs = ["stream_executor_util.h"],
     copts = tf_copts(),
     deps = [
+        "//tensorflow/core:autotuning_proto_cc",
+        "//tensorflow/core/util/proto:proto_utils",
         "//tensorflow/compiler/xla:shape_util",
         "//tensorflow/compiler/xla:statusor",
         "//tensorflow/compiler/xla:types",
@@ -1385,15 +1459,39 @@ tf_cc_test(
     ],
 )
 
-cc_library(
-    name = "buffer_comparator",
-    srcs = [] + if_cuda_is_configured([
-        "buffer_comparator_cuda.cc",
-    ]) + if_rocm_is_configured([
-        "buffer_comparator_rocm.cc",
-    ]),
-    hdrs = ["buffer_comparator.h"],
+
+tf_kernel_library(
+    name = "image_ops_kernels",
+    srcs = [
+        "kernels/bipartite_match_op.cc",
+        "kernels/image_ops.cc",
+        "kernels/image_ops.h",
+        "kernels/segmentation_ops.cc",
+        "kernels/segmentation_ops.h",
+    ],
+    gpu_srcs = [
+        "kernels/image_ops_gpu.cu.cc",
+        "kernels/image_ops.h",
+    ],
     deps = [
+        ":image_ops_op_lib",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//third_party/eigen3",
+    ],
+    alwayslink = 1,
+)
+
+tf_kernel_library(
+    name = "buffer_comparator",
+    srcs = if_gpu_is_configured(["buffer_comparator.cc",
+                                 "buffer_comparator.h"]),
+    gpu_srcs = if_gpu_is_configured(["buffer_comparator.cu.cc"]),
+    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "-DTENSORFLOW_USE_ROCM=1",
+    ]),
+    deps = [
+        ":partition_assignment",
         ":stream_executor_util",
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/compiler/xla:util",

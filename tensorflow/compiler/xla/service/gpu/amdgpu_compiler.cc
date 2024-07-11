@@ -22,6 +22,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/gemm_rewriter.h"
 #include "tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "tensorflow/compiler/xla/service/gpu/target_constants.h"
+#include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
 #include "tensorflow/compiler/xla/service/hlo_constant_folding.h"
 #include "tensorflow/compiler/xla/service/hlo_cse.h"
 #include "tensorflow/compiler/xla/service/hlo_pass_fix.h"
@@ -83,7 +84,8 @@ Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
 }
 
 Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
-    HloModule* hlo_module, se::StreamExecutor* stream_exec,
+    HloModule* hlo_module, const AutotuneConfig& cfg, 
+    se::StreamExecutor* stream_exec,
     se::DeviceMemoryAllocator* device_allocator) {
   HloPassPipeline pipeline("post-layout_assignment");
   pipeline.AddInvariantChecker<HloVerifier>(
@@ -98,9 +100,12 @@ Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(options);
 
   // Rewrite GEMMs into custom calls.
-  pipeline.AddPass<GemmRewriter>();
+  pipeline.AddPass<GemmRewriter>(GetGpuVersion(stream_exec));
 
   pipeline.AddPass<GpuConvAlgorithmPicker>(stream_exec, device_allocator);
+
+  pipeline.AddPass<GemmAlgorithmPicker>(cfg);
+
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
 

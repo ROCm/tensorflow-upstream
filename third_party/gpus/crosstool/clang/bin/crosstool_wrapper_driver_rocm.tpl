@@ -147,6 +147,8 @@ def InvokeHipcc(argv, log=False):
   defines = ''.join([' -D' + define for define in defines])
   undefines = GetOptionValue(argv, 'U')
   undefines = ''.join([' -U' + define for define in undefines])
+  warnings = GetOptionValue(argv, 'W')
+  warnings = ''.join([' -W' + warn for warn in warnings])
   std_options = GetOptionValue(argv, 'std')
   hipcc_allowed_std_options = ["c++11", "c++14"]
   std_options = ''.join([' -std=' + define
@@ -191,6 +193,7 @@ def InvokeHipcc(argv, log=False):
   hipccopts += ' -fno-gpu-rdc '
   hipccopts += undefines
   hipccopts += defines
+  hipccopts += warnings
   hipccopts += std_options
   hipccopts += m_options
 

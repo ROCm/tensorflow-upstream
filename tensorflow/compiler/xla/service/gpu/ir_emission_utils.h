@@ -66,6 +66,8 @@ bool IsMatrixMultiplication(const HloInstruction& dot);
 // All matrix multiplications should be rewritten as such custom calls
 // after a GemmRewriter lowering pass.
 bool IsCublasGemm(const HloInstruction& hlo);
+bool IsLegacyCublasMatmul(const HloInstruction& hlo);
+bool IsCublasLtMatmul(const HloInstruction& hlo);
 
 #if GOOGLE_CUDA
 constexpr int64 kWarpSize = 32;
@@ -74,6 +76,9 @@ constexpr int64 kWarpSize = 64;
 #endif
 // A call to cuBLAS general matrix multiplication API.
 extern const char* const kGemmCallTarget;
+
+// A call to cuBLASLt general matrix multiplication API.
+extern const char* const kCublasLtMatmulCallTarget;
 
 // Returns true if `hlo` will be implemented as a call to BLAS gemm.
 //

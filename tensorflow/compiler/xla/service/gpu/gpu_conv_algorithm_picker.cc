@@ -37,7 +37,7 @@ limitations under the License.
 #include "tensorflow/core/platform/logger.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/util/proto/proto_utils.h"
-#include "tensorflow/stream_executor/redzone_allocator.h"
+#include "tensorflow/stream_executor/gpu/redzone_allocator.h"
 
 namespace xla {
 namespace gpu {
@@ -329,7 +329,7 @@ GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheCuda(
 
   const auto initialize_buffer = [stream, &result_shape,
                                   &rng_state](DeviceMemoryBase buffer) {
-    InitializeFloatBuffer(stream, result_shape.element_type(), &rng_state,
+    InitializeBuffer(stream, result_shape.element_type(), &rng_state,
                           buffer);
   };
 
@@ -494,7 +494,7 @@ GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheCuda(
       }
     } else {
       XLA_SCOPED_LOGGING_TIMER_LEVEL("BufferComparator::Create", 2);
-      comparator.emplace(result_shape, hlo_module_config);
+      comparator.emplace(result_shape, debug_options.xla_gpu_autotune_gemm_rtol());
       TF_ASSIGN_OR_RETURN(
           reference_result_buffer,
           input_output_allocator.AllocateBytes(result_buffer.size()));

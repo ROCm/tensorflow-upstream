@@ -232,6 +232,9 @@ def _rocm_include_path(repository_ctx, rocm_config):
     # Add rocBLAS headers
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/rocblas/include")
 
+    # Add hipblas-lt headers
+    #inc_dirs.append(rocm_config.rocm_toolkit_path + "/hipblaslt/include")
+
     # Add MIOpen headers
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/miopen/include")
 
@@ -511,6 +514,12 @@ def _find_libs(repository_ctx, rocm_config):
             cpu_value,
             rocm_config.rocm_toolkit_path,
         ),
+        "hipblaslt": _find_rocm_lib(
+            "hipblaslt",
+            repository_ctx,
+            cpu_value,
+            rocm_config.rocm_toolkit_path,
+        ),
         "hipfft": _find_rocm_lib(
             "hipfft",
             repository_ctx,
@@ -616,6 +625,7 @@ def _create_dummy_repository(repository_ctx):
         {
             "%{hip_lib}": _lib_name("amdhip64", cpu_value),
             "%{rocblas_lib}": _lib_name("rocblas", cpu_value),
+            "%{hipblaslt_lib}": _lib_name("hipblaslt", cpu_value),
             "%{miopen_lib}": _lib_name("miopen", cpu_value),
             "%{rccl_lib}": _lib_name("rccl", cpu_value),
             "%{hipfft_lib}": _lib_name("hipfft", cpu_value),
@@ -804,6 +814,7 @@ def _create_local_rocm_repository(repository_ctx):
         {
             "%{hip_lib}": rocm_libs["hip"].file_name,
             "%{rocblas_lib}": rocm_libs["rocblas"].file_name,
+            "%{hipblaslt_lib}": rocm_libs["hipblaslt"].file_name,
             "%{hipfft_lib}": rocm_libs["hipfft"].file_name,
             "%{hiprand_lib}": rocm_libs["hiprand"].file_name,
             "%{miopen_lib}": rocm_libs["miopen"].file_name,
