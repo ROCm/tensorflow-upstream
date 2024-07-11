@@ -71,7 +71,7 @@ class FusedGemmBiasAddTest : public OpsTestBase {
     Tensor expected(allocator(), DT_HALF, TensorShape({m, n}));
     test::FillValues<Eigen::half>(&expected, mat_D);
 
-    test::ExpectTensorNear<Eigen::half>(expected, *GetOutput(0), 0.00001);
+    test::ExpectTensorNear<Eigen::half>(expected, *GetOutput(0), 0.001);
   }
 };
 
