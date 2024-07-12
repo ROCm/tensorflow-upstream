@@ -23,8 +23,9 @@ class GatherGemv2Op : public OpKernel {
 
     Tensor* output_tensor = nullptr;
 
-    OP_REQUIRES_OK(context, context->allocate_output(0, {index, 1, head_num_*head_sz},
-                                                     &output_tensor));
+    OP_REQUIRES_OK(context,
+                   context->allocate_output(0, {index, 1, head_num_ * head_sz},
+                                            &output_tensor));
 
     OP_REQUIRES_OK(
         context,
@@ -34,8 +35,7 @@ class GatherGemv2Op : public OpKernel {
                 context->input(0).flat<dataTP>().data()),
             reinterpret_cast<const void*>(
                 context->input(1).flat<dataTP>().data()),
-            reinterpret_cast<const int*>(
-                context->input(2).flat<int>().data()),
+            reinterpret_cast<const int*>(context->input(2).flat<int>().data()),
             reinterpret_cast<void*>(output_tensor->flat<dataTP>().data()),
             head_sz, seq, B, index, head_num_));
   }

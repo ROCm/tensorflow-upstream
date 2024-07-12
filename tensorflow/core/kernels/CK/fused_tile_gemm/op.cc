@@ -21,7 +21,7 @@ class FusedTileGemmOp : public OpKernel {
     const int batch = context->input(0).shape().dim_size(0);
     const int head_sz = context->input(1).shape().dim_size(2) / head_num_;
     const int seq = context->input(0).shape().dim_size(2);
-    
+
     Tensor* output_tensor = nullptr;
     OP_REQUIRES_OK(context,
                    context->allocate_output(

@@ -57,7 +57,6 @@ struct GatherGemvFunctor<GPUDevice, dataTP_> {
   static Status Compute(const GPUDevice& d, const void* mat_A,
                         const void* mat_B, const int* indices, void* mat_D,
                         int head_sz, int seq, int B, int index, int head_num) {
-    const bool time_kernel = std::getenv("TF_CK_TIME_KERNEL") != nullptr;
     const auto& stream = d.stream();
 
     auto gemm = DeviceGemmV2Instance{};
@@ -74,20 +73,8 @@ struct GatherGemvFunctor<GPUDevice, dataTP_> {
                                      " does not support this problem");
     }
 
-    float ave_time =
-        invoker.Run(argument, StreamConfig{stream, time_kernel, 0, 20, 50});
-    if (time_kernel) {
-      //   std::size_t flop = std::size_t(2) * M * N * K;
-      //   std::size_t num_btype = sizeof(A0DataType) * M * K +
-      //                           sizeof(B0DataType) * K * N +
-      //                           sizeof(EDataType) * M * N;
+    invoker.Run(argument, StreamConfig{stream, false, 0, 20, 50});
 
-      //   float tflops = static_cast<float>(flop) / 1.E9 / ave_time;
-
-      //   float gb_per_sec = num_btype / 1.E6 / ave_time;
-      //   LOG(INFO) << "Running time: " << ave_time << " ms, " << tflops
-      //             << " TFlops, " << gb_per_sec << " GB/s";
-    }
     return Status::OK();
   }
 };  // struct Fused_Gemm_Bias_Add_Functor

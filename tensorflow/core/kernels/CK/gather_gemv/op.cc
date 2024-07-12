@@ -34,8 +34,7 @@ class GatherGemvOp : public OpKernel {
                 context->input(0).flat<dataTP>().data()),
             reinterpret_cast<const void*>(
                 context->input(1).flat<dataTP>().data()),
-            reinterpret_cast<const int*>(
-                context->input(2).flat<int>().data()),
+            reinterpret_cast<const int*>(context->input(2).flat<int>().data()),
             reinterpret_cast<void*>(output_tensor->flat<dataTP>().data()),
             head_sz, seq, B, index, head_num_));
   }
@@ -45,8 +44,8 @@ class GatherGemvOp : public OpKernel {
 };
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#define REGISTER_GPU(dataTP)                                                   \
-  REGISTER_KERNEL_BUILDER(                                                     \
+#define REGISTER_GPU(dataTP)                                                  \
+  REGISTER_KERNEL_BUILDER(                                                    \
       Name("GatherGemv").Device(DEVICE_GPU).TypeConstraint<dataTP>("dataTP"), \
       GatherGemvOp<GPUDevice, dataTP>)
 

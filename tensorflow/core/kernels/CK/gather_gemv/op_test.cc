@@ -84,7 +84,8 @@ class GatherGemvTest : public OpsTestBase {
 
     AddInputFromArray<T>(TensorShape({index, 1, head_sz * head_num}),
                          mat_A);  // 0
-    AddInputFromArray<T>(TensorShape({B, seq, head_sz * head_num}), mat_B);  // 1
+    AddInputFromArray<T>(TensorShape({B, seq, head_sz * head_num}),
+                         mat_B);                            // 1
     AddInputFromArray<int>(TensorShape({index}), indices);  // 1
 
     TF_ASSERT_OK(RunOpKernel());
@@ -128,10 +129,10 @@ TEST_F(GatherGemvTest, New) {
     mat_D.push_back(Eigen::half(128));
   }
 
-  RunUnfusedGatherGemvTest<Eigen::half>(mat_A, mat_B, indices, mat_D, head_sz, seq, b,
-                                  index, head_num);
-  RunGatherGemvTest<Eigen::half>(mat_A, mat_B, indices, mat_D, head_sz, seq, b, index,
-                           head_num);
+  RunUnfusedGatherGemvTest<Eigen::half>(mat_A, mat_B, indices, mat_D, head_sz,
+                                        seq, b, index, head_num);
+  RunGatherGemvTest<Eigen::half>(mat_A, mat_B, indices, mat_D, head_sz, seq, b,
+                                 index, head_num);
 }
 
 }  // namespace

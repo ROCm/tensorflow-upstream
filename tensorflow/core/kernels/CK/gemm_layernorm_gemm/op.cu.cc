@@ -65,10 +65,9 @@ struct GemmLayernormGemmFunctor<GPUDevice, dataTP_> {
                         void* mat_D, int K, int M, int N0, int N1, int head_num,
                         float lrelu_alpha, bool do_layer_norm,
                         bool do_leaky_relu) {
-    const bool time_kernel = std::getenv("TF_CK_TIME_KERNEL") != nullptr;
     const auto& stream = d.stream();
 
-    ck_tile::stream_config stream_config{stream, time_kernel, 0, 20, 50, true};
+    ck_tile::stream_config stream_config{stream, false, 0, 20, 50, true};
 
     auto gemm_ln_gemm_args_device = gemm_ln_gemm_args{mat_A0,
                                                       mat_B0,
@@ -90,21 +89,10 @@ struct GemmLayernormGemmFunctor<GPUDevice, dataTP_> {
         gemm_ln_gemm_create_kargs_and_grids<k_>(gemm_ln_gemm_args_device);
     constexpr dim3 blocks = k_::BlockSize();
     constexpr ck_tile::index_t kBlockPerCu = k_::kBlockPerCu;
-    float ave_time = ck_tile::launch_kernel(
-        stream_config, ck_tile::make_kernel<blocks.x, kBlockPerCu>(
-                           k_{}, grids, blocks, 0, kargs));
-    if (time_kernel) {
-      //   std::size_t flop = std::size_t(2) * M * N * K;
-      //   std::size_t num_btype = sizeof(A0DataType) * M * K +
-      //                           sizeof(B0DataType) * K * N +
-      //                           sizeof(EDataType) * M * N;
+    ck_tile::launch_kernel(stream_config,
+                           ck_tile::make_kernel<blocks.x, kBlockPerCu>(
+                               k_{}, grids, blocks, 0, kargs));
 
-      //   float tflops = static_cast<float>(flop) / 1.E9 / ave_time;
-
-      //   float gb_per_sec = num_btype / 1.E6 / ave_time;
-      //   LOG(INFO) << "Running time: " << ave_time << " ms, " << tflops
-      //             << " TFlops, " << gb_per_sec << " GB/s";
-    }
     return Status::OK();
   }
 };  // struct Fused_Gemm_Bias_Add_Functor
