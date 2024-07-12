@@ -544,15 +544,10 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
         ],
     )
 
-    tf_http_archive(
+    native.local_repository(
         name = "ck_archive",
-        build_file = "//third_party:ck.BUILD",
-        sha256 = "7cf19e34871e2d74e5fa6b8fee809249dc61d036460a8166d851015137ec8cbd",
-        strip_prefix = "composable_kernel-internal-letaoqin-develop_base",
-        urls = [
-	    "https://mirror.bazel.build/127.0.0.1:8000/composable_kernel-internal-letaoqin-develop_base.zip",
-	    "http://127.0.0.1:8000/composable_kernel-internal-letaoqin-develop_base.zip",
-        ],
+        #build_file = "//third_party:ck.BUILD",
+        path="/root/composable_kernel-internal",
     )
 
     tf_http_archive(

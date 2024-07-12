@@ -11,6 +11,7 @@ load(
     "//tensorflow:tensorflow.bzl",
     "tf_gpu_cc_test",
     "tf_kernel_library",
+    "tf_gpu_kernel_library",
 )
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 
@@ -32,29 +33,35 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+tf_gpu_kernel_library(
+    name = "gather_attention_cu",
+    srcs = [
+        "op.cu.cc",
+        "op.h",
+    ] + glob(["*.hpp"]) + glob(["instances/*.cpp"]),
+    hdrs = ["op.h"] + glob(["*.hpp"]),
+    deps = [":ck_deps",
+            "@ck_archive//:ck"] +
+    MATH_DEPS,
+    gpu_copts = [
+        "-std=c++17",
+        "-fexceptions",
+    ],
+    nocopts = "-fno-exceptions",
+)
+
 tf_kernel_library(
     name = "gather_attention",
     srcs = [
         "op.cc",
     ],
-    gpu_srcs = [
-        "op.cu.cc",
-        "op.h",
-    ] + glob(["*.hpp"]) + glob(["instances/*.cpp"]),
     hdrs = ["op.h"] + glob(["*.hpp"]),
-    deps = [":ck_deps"] +
-    select({
-        "//conditions:default": [
+    deps = [":ck_deps",
             "@ck_archive//:ck",
-        ],
-    }) +
-    MATH_DEPS + [
-        "//tensorflow/core:new_nn_ops_op_lib",
-    ],
-    copts = [
-        "-std=c++17",
-        "-fexceptions",
-    ],
+            ":gather_attention_cu",
+            "//tensorflow/core:new_nn_ops_op_lib",
+    ] + MATH_DEPS,
+    copts = ["-fexceptions",],
     nocopts = "-fno-exceptions",
 )
 
