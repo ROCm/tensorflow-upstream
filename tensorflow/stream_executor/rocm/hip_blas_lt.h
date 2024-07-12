@@ -37,7 +37,7 @@ class BlasLt : public gpu::BlasLt {
 
  public:
   struct MatrixLayout {
-    static absl::StatusOr<MatrixLayout> Create(const gpu::MatrixLayout& m);
+    static xla::StatusOr<MatrixLayout> Create(const gpu::MatrixLayout& m);
 
     hipDataType type() const { return datatype_; }
     hipblasLtMatrixLayout_t get() const { return handle_.get(); }
@@ -53,7 +53,7 @@ class BlasLt : public gpu::BlasLt {
 
   class MatmulDesc {
    public:
-    static absl::StatusOr<MatmulDesc> Create(
+    static xla::StatusOr<MatmulDesc> Create(
         blas::ComputationType compute_type, blas::DataType scale_type,
         blas::Transpose trans_a = blas::Transpose::kNoTranspose,
         blas::Transpose trans_b = blas::Transpose::kNoTranspose,
@@ -99,7 +99,7 @@ class BlasLt : public gpu::BlasLt {
 
     ~MatmulPlan() override = default;
 
-    absl::Status ExecuteOnStream(
+    xla::Status ExecuteOnStream(
         Stream* stream, DeviceMemoryBase a_buffer, DeviceMemoryBase b_buffer,
         DeviceMemoryBase c_buffer, DeviceMemoryBase d_buffer,
         DeviceMemoryBase bias_buffer,  // may be null
@@ -107,20 +107,20 @@ class BlasLt : public gpu::BlasLt {
         DeviceMemoryBase a_scale_buffer, DeviceMemoryBase b_scale_buffer,
         DeviceMemoryBase c_scale_buffer, DeviceMemoryBase d_scale_buffer,
         DeviceMemoryBase d_amax_buffer, const MatmulAlgorithm& algorithm,
-        std::optional<DeviceMemoryBase> workspace,
-        std::optional<ScratchAllocator*> scratch_allocator,
+        absl::optional<DeviceMemoryBase> workspace,
+        absl::optional<ScratchAllocator*> scratch_allocator,
         blas::ProfileResult* profile_result) const override;
 
-    absl::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
+    xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
         size_t max_algorithm_count, size_t max_workspace_size) const override;
 
    protected:
-    absl::Status ValidateInputs(blas::DataType scale_type, bool alpha_on_device,
+    xla::Status ValidateInputs(blas::DataType scale_type, bool alpha_on_device,
                                 bool beta_on_device, blas::DataType A_type,
                                 blas::DataType B_type, blas::DataType C_type,
                                 blas::DataType D_type) const override;
 
-    absl::Status DoMatmul(Stream* stream, const void* alpha, DeviceMemoryBase a,
+    xla::Status DoMatmul(Stream* stream, const void* alpha, DeviceMemoryBase a,
                           DeviceMemoryBase b, const void* beta,
                           DeviceMemoryBase c, DeviceMemoryBase d,
                           const MatmulAlgorithm& algorithm,
@@ -128,8 +128,8 @@ class BlasLt : public gpu::BlasLt {
                           DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
                           DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
                           DeviceMemoryBase d_amax,
-                          std::optional<DeviceMemoryBase> workspace,
-                          std::optional<ScratchAllocator*> scratch_allocator,
+                          absl::optional<DeviceMemoryBase> workspace,
+                          absl::optional<ScratchAllocator*> scratch_allocator,
                           blas::ProfileResult* profile_result) const override;
 
    private:
@@ -148,9 +148,9 @@ class BlasLt : public gpu::BlasLt {
   explicit BlasLt(gpu::GpuExecutor* parent)
       : parent_(parent), blas_lt_(nullptr, wrap::hipblasLtDestroy) {}
 
-  absl::Status Init() override;
+  xla::Status Init() override;
 
-  absl::StatusOr<MatmulPlanPtr> GetMatmulPlan(const gpu::GemmConfig& cfg,
+  xla::StatusOr<MatmulPlanPtr> GetMatmulPlan(const gpu::GemmConfig& cfg,
                                               Epilogue epilogue) const override;
 
   ~BlasLt() override = default;

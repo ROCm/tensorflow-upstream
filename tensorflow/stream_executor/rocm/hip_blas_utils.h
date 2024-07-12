@@ -18,12 +18,11 @@ limitations under the License.
 
 #include <string>
 
-// #include "absl/status/status.h"
+#include "tensorflow/compiler/xla/status.h"
 #include "tensorflow/stream_executor/blas.h"
 #include "tensorflow/stream_executor/rocm/hipblaslt_wrapper.h"
-// #include "tsl/platform/errors.h"
 
-#if TF_ROCM_VERSION < 60000
+#if 0 //TF_ROCM_VERSION < 60000
 #define hipDataType hipblasDatatype_t
 #define HIP_R_16F HIPBLAS_R_16F
 #define HIP_R_16BF HIPBLAS_R_16B
@@ -46,7 +45,7 @@ namespace rocm {
 #define SE_HIPBLAS_RETURN_IF_ERROR(expr) \
   TF_RETURN_IF_ERROR(::stream_executor::rocm::ToStatus(expr, #expr))
 
-absl::Status ToStatus(hipblasStatus_t status, const char* prefix);
+xla::Status ToStatus(hipblasStatus_t status, const char* prefix);
 hipDataType AsHipblasDataType(blas::DataType type);
 hipblasComputeType_t AsHipblasComputeType(blas::ComputationType type);
 hipblasOperation_t AsHipblasOperation(blas::Transpose trans);
