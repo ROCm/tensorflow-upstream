@@ -30,7 +30,8 @@ class FusedGemmBiasAddOp : public OpKernel {
     // OP_REQUIRES_OK(context,
     //                context->allocate_temp(DataTypeToEnum<dataTP>::value,
     //                                       TensorShape({M, N}), &bias_tmp));
-    // bias_tmp.flat<dataTP>() = context->input(2).flat<dataTP>().broadcast(bcast);
+    // bias_tmp.flat<dataTP>() =
+    // context->input(2).flat<dataTP>().broadcast(bcast);
     OP_REQUIRES_OK(
         context,
         functor::FusedGemmBiasAddFunctor<Device, dataTP>::Compute(
@@ -39,7 +40,8 @@ class FusedGemmBiasAddOp : public OpKernel {
                 context->input(0).flat<dataTP>().data()),
             reinterpret_cast<const void*>(
                 context->input(1).flat<dataTP>().data()),
-            reinterpret_cast<const void*>(context->input(2).flat<dataTP>().data()),
+            reinterpret_cast<const void*>(
+                context->input(2).flat<dataTP>().data()),
             reinterpret_cast<void*>(output_tensor->flat<dataTP>().data())));
   }
 };

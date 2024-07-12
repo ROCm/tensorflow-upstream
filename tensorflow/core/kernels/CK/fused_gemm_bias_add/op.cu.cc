@@ -53,7 +53,19 @@ using DeviceOpInstance =
 ///###### RRR
       ///<      Row,      Row, DsLayout, ELayout, A0DataType, B0DataType, DsDataType, EDataType, AccDataType, CShuffleDataType,  AElementOp,  BElementOp, CDEElementOp,       GemmSpec,   256,   256,   128,    64,  16,   4,  32,   32,    4,    2,     S<4, 64, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,    S<16, 16, 1>,    S<0, 2, 1>,     S<0, 2, 1>,             1,               8,              4,          0,          1,           1,               S<1, 32, 1, 8>,      S<8, 8, 1>,  ck::BlockGemmPipelineScheduler::Interwave, ck::BlockGemmPipelineVersion::v1, F16>;
 ///###### RCR
-         <      Row,      Col, DsLayout, ELayout, A0DataType, B0DataType, DsDataType, EDataType, AccDataType, CShuffleDataType,  AElementOp,  BElementOp, CDEElementOp,       GemmSpec,   256,   256,   128,    64,  16,  16,  32,   32,    4,    2,     S<4, 64, 1>,     S<1, 0, 2>,    S<1, 0, 2>,               2,             16,             16,          0,     S<4, 64, 1>,    S<1, 0, 2>,     S<1, 0, 2>,             2,              16,             16,          0,          1,           1,               S<1, 32, 1, 8>,      S<8, 8, 1>,  ck::BlockGemmPipelineScheduler::Interwave, ck::BlockGemmPipelineVersion::v1, F16>;
+        <Row, Col, DsLayout, ELayout, A0DataType, B0DataType,
+        DsDataType, EDataType, AccDataType, CShuffleDataType,
+        AElementOp,  BElementOp, CDEElementOp,       GemmSpec,
+        256,
+        128, 128,
+        64, 8, 8,
+        16,   16,
+        4,    4,
+        S<8, 32, 1>,  S<1, 0, 2>,  S<1, 0, 2>,
+        2, 8, 8, 0,
+        S<8, 32, 1>,  S<1, 0, 2>,  S<1, 0, 2>,
+        2, 8, 8, 0,
+        1, 2, S<1, 32, 1, 8>,      S<8, 8>,  ck::BlockGemmPipelineScheduler::Interwave, ck::BlockGemmPipelineVersion::v1, F16>;
 // clang-format on
 namespace functor {
 template <typename dataTP_>
