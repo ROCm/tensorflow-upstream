@@ -115,10 +115,10 @@ TEST_F(GatherGemvTest, New) {
   // output shape : (index, head_num, seq)
 
   for (int j = 0; j < index * head_num * head_sz; ++j) {
-    mat_A.push_back(Eigen::half(rand() / double(RAND_MAX)));
+    mat_A.push_back(Eigen::half(rand() / double(RAND_MAX) - 0.5));
   }
   for (int i = 0; i < b * seq * head_num * head_sz; ++i) {
-    mat_B.push_back(Eigen::half(rand() / double(RAND_MAX)));
+    mat_B.push_back(Eigen::half(rand() / double(RAND_MAX) - 0.5));
   }
   indices.push_back(0);
   indices.push_back(1);

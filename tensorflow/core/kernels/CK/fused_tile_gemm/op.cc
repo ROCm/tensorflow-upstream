@@ -18,29 +18,16 @@ class FusedTileGemmOp : public OpKernel {
   void Compute(OpKernelContext* context) override {
     int rank = context->input(0).dims();
 
-    // int M = 1;
-    // int N = 1;
-    // int K = 1;
-    // if (rank == 2) {
-    //   M = context->input(0).shape().dim_size(0);
-    //   N = context->input(1).shape().dim_size(0);
-    //   K = context->input(0).shape().dim_size(1);
-    // } else if (rank == 3) {
     const int batch = context->input(0).shape().dim_size(0);
-    // int M = d0 * d1;
     const int head_sz = context->input(1).shape().dim_size(2) / head_num_;
     const int seq = context->input(0).shape().dim_size(2);
-    // }
+    
     Tensor* output_tensor = nullptr;
-    // if (rank == 2) {
-    //   OP_REQUIRES_OK(context,
-    //                  context->allocate_output(0, {M, N}, &output_tensor));
-    // } else if (rank == 3) {
     OP_REQUIRES_OK(context,
                    context->allocate_output(
                        0, {batch, 1, context->input(1).shape().dim_size(2)},
                        &output_tensor));
-    // }
+
     OP_REQUIRES_OK(
         context,
         functor::FusedTileGemmFunctor<Device, dataTP>::Compute(

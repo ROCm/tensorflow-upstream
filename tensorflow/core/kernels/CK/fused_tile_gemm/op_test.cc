@@ -73,7 +73,7 @@ class FusedTileGemmTest : public OpsTestBase {
     Tensor expected(allocator(), DT_HALF,
                     TensorShape({batch, 1, head_sz * head_num}));
     test::FillValues<Eigen::half>(&expected, mat_D);
-    test::ExpectTensorNear<Eigen::half>(expected, *GetOutput(0), 0.01);
+    test::ExpectTensorNear<Eigen::half>(expected, *GetOutput(0), 0.001);
   }
 };
 
@@ -91,10 +91,10 @@ TEST_F(FusedTileGemmTest, Half) {
   // (batch, 1, head_num * head_sz)
 
   for (int i = 0; i < batch * seq * head_num; ++i) {
-    mat_A.push_back(Eigen::half(rand() / double(RAND_MAX)));
+    mat_A.push_back(Eigen::half(rand() / double(RAND_MAX) - 0.5));
   }
   for (int i = 0; i < seq * head_sz * head_num; ++i) {
-    mat_B.push_back(Eigen::half(rand() / double(RAND_MAX)));
+    mat_B.push_back(Eigen::half(rand() / double(RAND_MAX) - 0.5));
   }
   // expect_data
   for (int i = 0; i < batch * head_num * head_sz; ++i) {
