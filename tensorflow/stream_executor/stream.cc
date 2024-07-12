@@ -3890,6 +3890,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     int64 stride_a, const DeviceMemory<Eigen::half> &b, int ldb, int64 stride_b,
     float beta, DeviceMemory<Eigen::half> *c, int ldc, int64 stride_c,
     int batch_count) {
+	VLOG(-1) << "Running ThenBlasGemmStridedBatched fp16";
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(stride_a), PARAM(b),
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
@@ -3911,6 +3912,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     int64 stride_a, const DeviceMemory<float> &b, int ldb, int64 stride_b,
     float beta, DeviceMemory<float> *c, int ldc, int64 stride_c,
     int batch_count) {
+	VLOG(-1) << "Running ThenBlasGemmStridedBatched fp32";
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(stride_a), PARAM(b),
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
@@ -3999,6 +4001,7 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     const Eigen::half** a, int lda,
                                     const Eigen::half** b, int ldb, float beta,
                                     Eigen::half** c, int ldc, int batch_count) {
+	VLOG(-1) << "Running ThenBlasGemmBatched fp16";
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -4016,6 +4019,7 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     int lda, const float** b, int ldb,
                                     float beta, float** c, int ldc,
                                     int batch_count) {
+	VLOG(-1) << "Running ThenBlasGemmBatched fp32";
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -4060,11 +4064,13 @@ Stream &Stream::ThenBlasGemmImpl(T ctx)
 
 Stream &Stream::ThenBlasGemm(blas::GemmCallContext<Eigen::half> ctx)
 {
+	VLOG(-1) << "Running ThenBlasGemm fp16";
   return ThenBlasGemmImpl(ctx);
 }
 
 Stream &Stream::ThenBlasGemm(blas::GemmCallContext<float> ctx)
 {
+	VLOG(-1) << "Running ThenBlasGemm fp32";
   return ThenBlasGemmImpl(ctx);
 }
 

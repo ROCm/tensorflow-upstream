@@ -84,6 +84,7 @@ void RunGemmStridedBatched(OpKernelContext* context, bool trans_a, bool trans_b,
                            const se::DeviceMemory<Scalar>& b, int64 stride_b,
                            Scalar beta, se::DeviceMemory<Scalar>* c,
                            int64 stride_c, int64 batch_count) {
+	VLOG(-1) << "Running RunGemmStridedBatched";
   typedef typename HalfAsFloat<Scalar>::type CUDA_T;
   int lda = trans_a ? m : k;
   int ldb = trans_b ? k : n;
@@ -111,6 +112,7 @@ void RunGemmBatched(OpKernelContext* context, bool trans_a, bool trans_b,
                     int64 m, int64 n, int64 k, Scalar alpha, Scalar** a_ptrs,
                     Scalar** b_ptrs, Scalar beta, Scalar** c_ptrs,
                     int64 batch_count) {
+	VLOG(-1) << "Running RunGemmBatched";
   typedef typename HalfAsFloat<Scalar>::type CUDA_T;
   int lda = trans_a ? m : k;
   int ldb = trans_b ? k : n;

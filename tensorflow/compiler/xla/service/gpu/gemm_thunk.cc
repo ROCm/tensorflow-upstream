@@ -51,6 +51,7 @@ Status GemmThunk::ExecuteOnStream(const ExecuteParams &params) {
     return params.buffer_allocations->GetDeviceAddress(slice);
   };
 
+  VLOG(-1) << "Running GEMM thunk on instruction: " << hlo_instruction();
   VLOG(3) << "Running GEMM thunk on instruction: " << hlo_instruction();
   se::DeviceMemoryBase lhs_data = get_device_address(lhs_buffer_);
   se::DeviceMemoryBase rhs_data = get_device_address(rhs_buffer_);
@@ -75,6 +76,7 @@ static bool DoGemmWithAlgorithm(
     MatrixDescriptor output_matrix, AlphaType alpha, double beta,
     se::Stream *stream, absl::optional<se::blas::AlgorithmType> algorithm,
     se::blas::ProfileResult *output_profile_result) {
+	VLOG(-1) << "DoGemmWithAlgorithm";
   DCHECK(!output_matrix.transpose);
 
   PrimitiveType type = primitive_util::NativeToPrimitiveType<Element>();
@@ -173,6 +175,7 @@ Status RunGemm(const HloInstruction *gemm,
                HloExecutionProfiler *profiler,
                se::blas::ProfileResult *profile_result,
                absl::optional<se::blas::AlgorithmType> algorithm) {
+  VLOG(-1) << "Executing a GemmThunk";
   VLOG(2) << "Executing a GemmThunk";
   CHECK(IsCublasGemm(*gemm));
 

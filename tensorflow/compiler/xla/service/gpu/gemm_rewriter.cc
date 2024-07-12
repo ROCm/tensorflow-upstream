@@ -47,6 +47,7 @@ namespace m = match;
 class GemmRewriterVisitor : public DfsHloRewriteVisitor {
  public:
   Status HandleDot(HloInstruction *instr) override {
+		VLOG(-1) << "Handling Dot";
     if (IsMatrixMultiplication(*instr)) {
       CHECK(!instr->IsRank2Transpose());
       HloInstruction *lhs = instr->mutable_operand(0);
@@ -70,6 +71,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       //auto attributes = instr->frontend_attributes().map();
       //gemm_config.set_grad_x(attributes["grad_x"] == "true");
       //gemm_config.set_grad_y(attributes["grad_y"] == "true");
+		  VLOG(-1) << "Rewrite dot to custom gemm call";
       TF_RETURN_IF_ERROR(gemm_call->set_backend_config(gemm_config));
       TF_RETURN_IF_ERROR(
           ReplaceWithNewInstruction(instr, std::move(gemm_call)));

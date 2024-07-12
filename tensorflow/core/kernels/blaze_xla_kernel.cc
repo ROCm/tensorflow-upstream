@@ -112,10 +112,12 @@ void BlazeXlaOp::InitPredictor(OpKernelConstruction* context) {
       flags->tf_xla_min_cluster_size = 1;
     }
     config->mutable_graph_options()->mutable_optimizer_options()->set_global_jit_level(jitLevel);
+		VLOG(-1) << "Using BlazeXlaPredictor";
     predictor_ = absl::make_unique<BlazeXlaPredictor>(input_names_, output_names_,
                                        graph_def_, device_, blaze_run_options_,
                                        device_string_, input_types_, context);
   } else {
+		VLOG(-1) << "Using BlazePredictor";
     predictor_ = absl::make_unique<BlazePredictor>(input_names_, output_names_,
                                     graph_def_, device_, blaze_run_options_,
                                     device_string_, input_types_, context);
