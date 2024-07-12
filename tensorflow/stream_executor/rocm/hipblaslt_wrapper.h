@@ -20,6 +20,8 @@ limitations under the License.
 #define __HIP_DISABLE_CPP_FUNCTIONS__
 
 #include "rocm/rocm_config.h"
+#include "tensorflow/stream_executor/lib/env.h"
+#include "tensorflow/stream_executor/platform/dso_loader.h"
 
 //#if TF_ROCM_VERSION >= 50500
 #include "rocm/include/hipblaslt/hipblaslt.h"
@@ -50,12 +52,12 @@ namespace wrap {
     static FuncPtrT loaded = []() -> FuncPtrT {                               \
       static const char* kName = TO_STR(api_name);                            \
       void* f;                                                                \
-      auto s = tsl::Env::Default() -> GetSymbolFromLibrary(                   \
-          stream_executor::internal::CachedDsoLoader::GetHipblasltDsoHandle() \
-              .value(),                                                       \
+      auto s = port::Env::Default() -> GetSymbolFromLibrary(                  \
+          internal::CachedDsoLoader::GetHipblasltDsoHandle()                  \
+              .ValueOrDie(),                                                  \
           kName, &f);                                                         \
       CHECK(s.ok()) << "could not find " << kName                             \
-                    << " in hipblaslt lib; dlerror: " << s.message();         \
+                    << " in hipblaslt lib; dlerror: " << s.error_message();   \
       return reinterpret_cast<FuncPtrT>(f);                                   \
     }();                                                                      \
     return loaded(args...);                                                   \

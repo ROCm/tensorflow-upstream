@@ -14,27 +14,25 @@ limitations under the License.
 ==============================================================================*/
 
 #include "tensorflow/stream_executor/rocm/hip_blas_utils.h"
-
-#include "absl/strings/str_cat.h"
-#include "xla/stream_executor/blas.h"
+#include "tensorflow/stream_executor/blas.h"
+#include "tensorflow/compiler/xla/util.h"
 
 namespace stream_executor {
 namespace rocm {
 
-absl::Status ToStatus(hipblasStatus_t status, const char* prefix) {
+xla::Status ToStatus(hipblasStatus_t status, const char* prefix) {
   if (status != HIPBLAS_STATUS_SUCCESS) {
-    return absl::InternalError(absl::StrCat(
-        prefix, ": ",
-        "HipblasLt error " + std::to_string(static_cast<int>(status))));
+    return xla::InternalError("%s: HipblasLt error %d", 
+        static_cast<int>(status));
   }
-  return absl::OkStatus();
+  return xla::Status::OK();
 }
 
 hipDataType AsHipblasDataType(blas::DataType type) {
   switch (type) {
     case blas::DataType::kHalf:
       return HIP_R_16F;
-    case blas::DataType::kBF16:
+    case blas::DataType::kBFloat16:
       return HIP_R_16BF;
     case blas::DataType::kFloat:
       return HIP_R_32F;
@@ -54,8 +52,8 @@ hipDataType AsHipblasDataType(blas::DataType type) {
 }
 
 hipblasComputeType_t AsHipblasComputeType(blas::ComputationType type) {
-  if (type == blas::ComputationType::kF32 ||
-      type == blas::ComputationType::kTF32AsF32)
+  if (type == blas::ComputationType::kF32)
+      //|| type == blas::ComputationType::kTF32AsF32)
     return HIPBLAS_COMPUTE_32F;
   else
     LOG(FATAL) << "unsupported hipblaslt computation type";

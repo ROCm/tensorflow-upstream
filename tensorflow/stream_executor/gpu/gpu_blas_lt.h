@@ -33,7 +33,6 @@ limitations under the License.
 #include "tensorflow/stream_executor/device_memory.h"
 #include "tensorflow/stream_executor/host_or_device_scalar.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
-//#include "tsl/platform/errors.h"
 
 namespace stream_executor::gpu {
 
@@ -205,7 +204,7 @@ struct BlasLt {
         absl::optional<ScratchAllocator*> scratch_allocator = absl::nullopt,
         blas::ProfileResult* profile_result = nullptr) const {
       TF_RETURN_IF_ERROR(ValidateInputs(
-          blas::ToDataType<Scale>::value, alpha.on_device(), beta.on_device(),
+          blas::ToDataType<Scale>::value, alpha.is_pointer(), beta.is_pointer(),
           blas::ToDataType<A>::value, blas::ToDataType<B>::value,
           blas::ToDataType<C>::value, blas::ToDataType<D>::value));
 
