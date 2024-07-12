@@ -28,7 +28,7 @@ class FusedGemmBiasAddOp : public OpKernel {
     Eigen::array<int, 2> bcast({M, N});
     Tensor bias_tmp;
     OP_REQUIRES_OK(context,
-                   context->allocate_temp(DataTypeToEnum<Eigen::half>::value,
+                   context->allocate_temp(DataTypeToEnum<dataTP>::value,
                                           TensorShape({M, N}), &bias_tmp));
     bias_tmp.flat<dataTP>() = context->input(2).flat<dataTP>().broadcast(bcast);
     OP_REQUIRES_OK(

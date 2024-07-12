@@ -35,7 +35,7 @@ class GemmRowSoftmaxGemmOp : public OpKernel {
                                                      &output_tensor));
     Tensor matrix_b1;
     OP_REQUIRES_OK(context,
-                   context->allocate_temp(DataTypeToEnum<Eigen::half>::value,
+                   context->allocate_temp(DataTypeToEnum<dataTP>::value,
                                           TensorShape({batch, new_head, seq}),
                                           &matrix_b1));
     OP_REQUIRES_OK(

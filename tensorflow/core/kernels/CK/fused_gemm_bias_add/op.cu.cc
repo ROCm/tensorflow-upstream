@@ -41,7 +41,7 @@ using BElementOp = PassThrough;
 using CDEElementOp = Add;
 
 static constexpr auto GemmSpec =
-    ck::tensor_operation::device::GemmSpecialization::MNPadding;
+    ck::tensor_operation::device::GemmSpecialization::MNKPadding;
 
 using DeviceOpInstance =
     ck::tensor_operation::device::DeviceGemmMultiD_Xdl_CShuffle_V3

@@ -1,5 +1,4 @@
 #include <functional>
-#include <iostream>
 #include <vector>
 
 #include "tensorflow/core/common_runtime/device.h"
@@ -24,94 +23,87 @@
 
 namespace tensorflow {
 namespace {
-class GemmBiasAddTest : public OpsTestBase {
+class FusedTileGemmTest : public OpsTestBase {
  protected:
-    void RunUnfusedTest(const std::vector<Eigen::half>& mat_A,
-        const std::vector<Eigen::half>& mat_B,
-        const std::vector<Eigen::half>& mat_C,
-        std::vector<Eigen::half>& mat_D,
-        int M,
-        int N, int K){
-        for(int m = 0; m < M; m++){
-            std::vector<float> tmp;
-            for(int n = 0; n < N; n++){
-                float psum = 0.f;
-                for(int k = 0; k < K; k++){
-                    float areg = float(mat_A[m * K + k]);
-                    float breg = float(mat_B[n * K + k]);
-                    psum += areg * breg;
-                }
-                psum +=float( mat_C[n]);
-                mat_D[m * N + n] = Eigen::half(psum);
-            }
+  void RunStandardGemvTest(const std::vector<Eigen::half>& mat_A,
+                           const std::vector<Eigen::half>& mat_B,
+                           std::vector<Eigen::half>& mat_D, int batch, int seq,
+                           int head_sz, int head_num) {
+    for (int b = 0; b < batch; b++) {
+      for (int h = 0; h < head_num; h++) {
+        for (int n = 0; n < head_sz; n++) {
+          float psum = 0.f;
+          for (int k = 0; k < seq; k++) {
+            float areg = float(mat_A[b * seq * head_num + h * seq + k]);  // a0
+            float breg =
+                float(mat_B[k * head_sz * head_num + head_sz * h + n]);  // b1
+            psum += areg * breg;
+          }
+          mat_D[b * head_sz * head_num + h * head_sz + n] = Eigen::half(psum);
         }
+      }
     }
+  }
 
-  void RunGemmBiasAddTest(
-    const std::vector<Eigen::half>& mat_A,
-    const std::vector<Eigen::half>& mat_B,
-    const std::vector<Eigen::half>& mat_C,
-    std::vector<Eigen::half>& mat_D,
-    int M, int N, int K) {
+  void RunFusedTileGemmTest(const std::vector<Eigen::half>& mat_A,
+                            const std::vector<Eigen::half>& mat_B,
+                            const std::vector<Eigen::half>& mat_D, int batch,
+                            int seq, int head_sz, int head_num) {
     SetDevice(DEVICE_GPU,
               std::unique_ptr<tensorflow::Device>(DeviceFactory::NewDevice(
                   "GPU", {}, "/job:a/replica:0/task:0")));
+    // (batch, head_num, seq) * (1, seq, head_num * head_sz)
+    // (batch, 1, head_num * head_sz)
 
-    TF_EXPECT_OK(NodeDefBuilder("fused_gemm_bias_add",
-                                "FusedGemmBiasAdd")
+    TF_EXPECT_OK(NodeDefBuilder("fused_tile_gemm", "FusedTileGemm")
                      .Input(FakeInput(DT_HALF))
                      .Input(FakeInput(DT_HALF))
-                     .Input(FakeInput(DT_HALF))
-                     .Input(FakeInput(DT_HALF))
+                     .Attr("head_num", head_num)
                      .Finalize(node_def()));
 
     TF_EXPECT_OK(InitOp());
 
-
-    AddInputFromArray<Eigen::half>(TensorShape({M, K}), mat_A);  // 0
-    AddInputFromArray<Eigen::half>(TensorShape({N, K}), mat_B);    // 1
-    AddInputFromArray<Eigen::half>(TensorShape({M, N}), mat_C);    // 1
-    AddInputFromArray<Eigen::half>(TensorShape({M, N}), mat_D);
+    AddInputFromArray<Eigen::half>(TensorShape({batch, head_num, seq}),
+                                   mat_A);  // 0
+    AddInputFromArray<Eigen::half>(TensorShape({1, seq, head_sz * head_num}),
+                                   mat_B);  // 1
 
     TF_ASSERT_OK(RunOpKernel());
 
-    Tensor expected(allocator(), DT_HALF, TensorShape({M, N}));
+    Tensor expected(allocator(), DT_HALF,
+                    TensorShape({batch, 1, head_sz * head_num}));
     test::FillValues<Eigen::half>(&expected, mat_D);
-
-    test::ExpectTensorNear<Eigen::half>(expected, *GetOutput(0), 0.0005);
+    test::ExpectTensorNear<Eigen::half>(expected, *GetOutput(0), 0.01);
   }
 };
 
-TEST_F(GemmBiasAddTest, Half) {
-  srand(10);
+TEST_F(FusedTileGemmTest, Half) {
+  int batch = 100;
+  int seq = 48;
+  int head_sz = 32;
+  int head_num = 8;
 
+  srand(9);
   std::vector<Eigen::half> mat_A;
   std::vector<Eigen::half> mat_B;
-  std::vector<Eigen::half> mat_C;
   std::vector<Eigen::half> mat_D;
+  // (batch, head_num, seq) * (1, seq, head_num * head_sz)
+  // (batch, 1, head_num * head_sz)
 
-  int K = 256;
-  int M = 3;
-  int N = 256;
-
-  for (int i = 0; i < M * K; ++i) {
-    mat_A.push_back(Eigen::half(rand() / double(RAND_MAX) - 0.5));
+  for (int i = 0; i < batch * seq * head_num; ++i) {
+    mat_A.push_back(Eigen::half(rand() / double(RAND_MAX)));
   }
-  for (int i = 0; i < N * K; ++i) {
-    mat_B.push_back(Eigen::half(rand() / double(RAND_MAX) - 0.5));
+  for (int i = 0; i < seq * head_sz * head_num; ++i) {
+    mat_B.push_back(Eigen::half(rand() / double(RAND_MAX)));
   }
-  for (int i = 0; i < M * N; ++i) {
-    mat_C.push_back(Eigen::half(rand() / double(RAND_MAX) - 0.5));
-  }
-  for (int i = 0; i < M * N; ++i) {
-    mat_D.push_back(Eigen::half(128));
+  // expect_data
+  for (int i = 0; i < batch * head_num * head_sz; ++i) {
+    mat_D.push_back(Eigen::half(3));
   }
 
-  RunUnfusedTest(
-      mat_A, mat_B, mat_C, mat_D, M, N, K);
-  RunGemmBiasAddTest(
-      mat_A, mat_B, mat_C, mat_D, M, N, K);
+  // TF_ASSERT_OK(RunOpKernel());
+  RunStandardGemvTest(mat_A, mat_B, mat_D, batch, seq, head_sz, head_num);
+  RunFusedTileGemmTest(mat_A, mat_B, mat_D, batch, seq, head_sz, head_num);
 }
-
 }  // namespace
 }  // namespace tensorflow
