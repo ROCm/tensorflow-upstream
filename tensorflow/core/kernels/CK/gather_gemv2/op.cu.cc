@@ -81,7 +81,7 @@ struct GatherGemv2Functor<GPUDevice, dataTP_> {
     }
 
     float ave_time =
-        invoker.Run(argument, StreamConfig{stream, time_kernel, 20, 50});
+        invoker.Run(argument, StreamConfig{stream, time_kernel, 0, 20, 50});
     if (time_kernel) {
       //   std::size_t flop = std::size_t(2) * M * N * K;
       //   std::size_t num_btype = sizeof(A0DataType) * M * K +

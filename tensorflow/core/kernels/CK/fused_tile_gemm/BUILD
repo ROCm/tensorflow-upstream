@@ -40,8 +40,6 @@ tf_kernel_library(
     gpu_srcs = [
         "op.cu.cc",
         "op.h",
-        #"ck_irrelevant.h",
-        # "api.h",
     ],
     hdrs = [
         "op.h",
