@@ -42,7 +42,7 @@ xla::StatusOr<xla::PrimitiveType> AsXlaPrimitiveType(blas::DataType dtype);
 
 xla::StatusOr<blas::ComputationType> GetBlasComputationType(
     /*xla::PrecisionConfig::Algorithm algorithm,*/ xla::PrimitiveType lhs_dtype,
-    xla::PrimitiveType output_dtype, int64_t compute_precision);
+    xla::PrimitiveType output_dtype, int64 compute_precision);
 
 // Returns the type for the alpha and beta scalars.
 blas::DataType GetScaleType(blas::DataType c_type,
@@ -55,10 +55,10 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
     kColumnMajor,  // Elements in the same column are contiguous in memory.
   };
 
-  MatrixLayout(xla::PrimitiveType dtype_, int64_t num_rows_, int64_t num_cols_,
-               Order order_, int64_t batch_size_ = 1,
-               absl::optional<int64_t> leading_dim_stride_ = {},
-               absl::optional<int64_t> batch_stride_ = {},
+  MatrixLayout(xla::PrimitiveType dtype_, int64 num_rows_, int64 num_cols_,
+               Order order_, int64 batch_size_ = 1,
+               absl::optional<int64> leading_dim_stride_ = {},
+               absl::optional<int64> batch_stride_ = {},
                absl::optional<blas::Transpose> transpose_ = {});
 
   void Transpose();
@@ -67,13 +67,13 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
   // `num_rows` / `num_cols` are for the "logical" matrix shape:
   // i.e. the contracting dim has size `num_cols` for LHS operands and
   // `num_rows` for RHS operands.
-  int64_t num_rows;
-  int64_t num_cols;
+  int64 num_rows;
+  int64 num_cols;
   Order order;
-  int64_t batch_size;
-  int64_t leading_dim_stride;
+  int64 batch_size;
+  int64 leading_dim_stride;
   // `batch_stride` is set to `0` when `batch_size == 1`.
-  int64_t batch_stride;
+  int64 batch_stride;
   blas::Transpose transpose;
 };
 
@@ -81,8 +81,8 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
 // to underlying blas API
 struct MatrixDescriptor {
   DeviceMemoryBase data;
-  int64_t leading_dim_stride = 0;
-  int64_t batch_stride = 0;
+  int64 leading_dim_stride = 0;
+  int64 batch_stride = 0;
   blas::DataType type{};
   blas::Transpose transpose{};
 
@@ -95,8 +95,8 @@ struct MatrixDescriptor {
 struct OutputMatrixDescriptor : public MatrixDescriptor {
   OutputMatrixDescriptor(MatrixDescriptor&& parent) noexcept
       : MatrixDescriptor(std::move(parent)) {}
-  int64_t batch_size = 0;
-  int64_t m = 0, n = 0, k = 0;
+  int64 batch_size = 0;
+  int64 m = 0, n = 0, k = 0;
   blas::ComputationType compute_type{};
 };
 
@@ -113,11 +113,11 @@ struct GemmConfig {  // plain GemmConfig which is extended with create functions
   MatrixLayout output_layout;
   xla::complex128 alpha;
   double beta;
-  int64_t compute_precision;
+  int64 compute_precision;
   // PrecisionConfig-level algorithm
   //xla::PrecisionConfig::Algorithm precision_algorithm;
   // BLAS-library-level algorithm.
-  absl::optional<int64_t> algorithm;
+  absl::optional<int64> algorithm;
   bool grad_x;
   bool grad_y;
   absl::optional<blas::ComputationType> compute_type;

@@ -81,11 +81,11 @@ xla::StatusOr<PrimitiveType> AsXlaPrimitiveType(DataType dtype) {
   }
 }
 
-MatrixLayout::MatrixLayout(xla::PrimitiveType dtype_, int64_t num_rows_,
-                           int64_t num_cols_, MatrixLayout::Order order_,
-                           int64_t batch_size_,
-                           absl::optional<int64_t> leading_dim_stride_,
-                           absl::optional<int64_t> batch_stride_,
+MatrixLayout::MatrixLayout(xla::PrimitiveType dtype_, int64 num_rows_,
+                           int64 num_cols_, MatrixLayout::Order order_,
+                           int64 batch_size_,
+                           absl::optional<int64> leading_dim_stride_,
+                           absl::optional<int64> batch_stride_,
                            absl::optional<blas::Transpose> transpose_)
     : dtype(dtype_),
       num_rows(num_rows_),
@@ -112,7 +112,7 @@ void MatrixLayout::Transpose() {
 
 xla::StatusOr<ComputationType> GetBlasComputationType(
     xla::PrimitiveType lhs_dtype,
-    xla::PrimitiveType output_dtype, int64_t compute_precision) {
+    xla::PrimitiveType output_dtype, int64 /*compute_precision*/) {
   switch (output_dtype) {
       case PrimitiveType::F16:         // fall-through
       case PrimitiveType::BF16:

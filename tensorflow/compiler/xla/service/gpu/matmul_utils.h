@@ -24,9 +24,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/compiler/xla/status.h"
 #include "tensorflow/compiler/xla/statusor.h"
 
+#include "tensorflow/compiler/xla/service/gpu/backend_configs.pb.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/shape.h"
 #include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
@@ -34,22 +35,18 @@ limitations under the License.
 //#include "tensorflow/stream_executor/device_memory.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 
-#if TENSORFLOW_USE_ROCM
-#include "rocm/rocm_config.h"
-#endif
-
 namespace xla {
 namespace gpu {
 
 // Ordered non-contracting dimensions for a dot instruction operand.
-StatusOr<std::vector<int64_t>> GetNonContractingDims(
-    const Shape& shape, absl::Span<const int64_t> batch_dims,
-    absl::Span<const int64_t> contracting_dims);
+StatusOr<std::vector<int64>> GetNonContractingDims(
+    const Shape& shape, absl::Span<const int64> batch_dims,
+    absl::Span<const int64> contracting_dims);
 
 // Normalize shape to (batch, rows, columns) logical dimensions.
 StatusOr<Shape> GetBatchRowColumnShape(
-    const Shape& shape, absl::Span<const int64_t> batch_dims,
-    absl::Span<const int64_t> row_dims, absl::Span<const int64_t> col_dims);
+    const Shape& shape, absl::Span<const int64> batch_dims,
+    absl::Span<const int64> row_dims, absl::Span<const int64> col_dims);
 
 // Returns true if the backend can lower the dot. Currently the classical
 // emitters cannot handle some dots, e.g., i8[] x i8[] -> i32[] dots,
@@ -58,13 +55,23 @@ bool IsDotSupportedByClassicalEmitters(const HloInstruction& dot);
 
 // extending plain MatrixLayout struct with creator functions
 struct MatrixLayout : public se::gpu::MatrixLayout {
+
+  MatrixLayout(xla::PrimitiveType dtype_, int64 num_rows_, int64 num_cols_,
+               Order order_, int64 batch_size_ = 1,
+               absl::optional<int64> leading_dim_stride_ = {},
+               absl::optional<int64> batch_stride_ = {},
+               absl::optional<se::blas::Transpose> transpose_ = {}) :
+    se::gpu::MatrixLayout(dtype_, num_rows_, num_cols_,
+               order_, batch_size_, leading_dim_stride_,
+               batch_stride_, transpose_) {}
+
   // Returns the matrix layout for a logical shape (batch, rows, columns).
   static StatusOr<MatrixLayout> For(const Shape& shape);
   // Returns the matrix layout with the given batch, row, col dimensions.
   static StatusOr<MatrixLayout> For(const Shape& shape,
-                                          absl::Span<const int64_t> batch_dims,
-                                          absl::Span<const int64_t> row_dims,
-                                          absl::Span<const int64_t> col_dims);
+                                          absl::Span<const int64> batch_dims,
+                                          absl::Span<const int64> row_dims,
+                                          absl::Span<const int64> col_dims);
   // Returns the matrix layout for the output.
   static StatusOr<MatrixLayout> For(const Shape& shape,
                                           size_t lhs_num_batch_dims,
@@ -79,31 +86,22 @@ struct GemmConfig : public se::gpu::GemmConfig {
   //
   // Size of the workspace based on NVIDIA recommendation:
   // https://docs.nvidia.com/cuda/cublas/#cublassetworkspace
-  static constexpr int64_t kHopperWorkspace = 32 * 1024 * 1024;  // 32 MiB
-  static constexpr int64_t kDefaultWorkspace = 4 * 1024 * 1024;  // 4 MiB
+  static constexpr int64 kHopperWorkspace = 32 * 1024 * 1024;  // 32 MiB
+  static constexpr int64 kDefaultWorkspace = 4 * 1024 * 1024;  // 4 MiB
+
+  explicit GemmConfig(se::gpu::GemmConfig&& cfg) : 
+    se::gpu::GemmConfig(std::move(cfg)) { }
 
   static StatusOr<GemmConfig> For(const HloInstruction* gemm,
         const GemmBackendConfig& config);
 
   static StatusOr<GemmConfig> For(
-      const Shape& lhs_shape, absl::Span<const int64_t> lhs_batch_dims,
-      absl::Span<const int64_t> lhs_contracting_dims, const Shape& rhs_shape,
-      absl::Span<const int64_t> rhs_batch_dims,
-      absl::Span<const int64_t> rhs_contracting_dims, const Shape& output_shape,
+      const Shape& lhs_shape, absl::Span<const int64> lhs_batch_dims,
+      absl::Span<const int64> lhs_contracting_dims, const Shape& rhs_shape,
+      absl::Span<const int64> rhs_batch_dims,
+      absl::Span<const int64> rhs_contracting_dims, const Shape& output_shape,
       double alpha_real, double alpha_imag, double beta,
-      absl::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
-      bool grad_y);
-
-  // As above with additional `c_shape` and `bias_shape_ptr` parameter, both
-  // which are only necessarily for F8 gemms.
-  static StatusOr<GemmConfig> For(
-      const Shape& lhs_shape, absl::Span<const int64_t> lhs_batch_dims,
-      absl::Span<const int64_t> lhs_contracting_dims, const Shape& rhs_shape,
-      absl::Span<const int64_t> rhs_batch_dims,
-      absl::Span<const int64_t> rhs_contracting_dims, const Shape& c_shape,
-      const Shape* bias_shape_ptr, const Shape& output_shape, double alpha_real,
-      double alpha_imag, double beta,
-      absl::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
+      absl::optional<int64> algorithm, int64 compute_precision, bool grad_x,
       bool grad_y);
 
   struct DescriptorsTuple {
@@ -132,12 +130,12 @@ Status RunGemm(
 namespace gpublas_lt {
 
 StatusOr<bool> EpilogueAddsVectorBias(
-    GemmBackendConfig_Epilogue epilogue);
+    GemmBackendConfig::Epilogue epilogue);
 StatusOr<bool> EpilogueHasAuxiliaryOutput(
-    GemmBackendConfig_Epilogue epilogue);
+    GemmBackendConfig::Epilogue epilogue);
 
 StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
-    GemmBackendConfig_Epilogue epilogue);
+    GemmBackendConfig::Epilogue epilogue);
 
 }  // namespace gpublas_lt
 
