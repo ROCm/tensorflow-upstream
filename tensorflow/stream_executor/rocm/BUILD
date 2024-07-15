@@ -163,7 +163,7 @@ cc_library(
     deps = if_rocm_is_configured([
         ":rocm_gpu_executor",
         ":rocm_platform_id",
-        ":hipblas_lt_header",
+        ":amdhipblaslt_plugin",
         "//third_party/eigen3",
         "//tensorflow/core:lib_internal",
         "//tensorflow/stream_executor",
@@ -203,11 +203,11 @@ cc_library(
         "hip_blas_lt.h",
         "hipblaslt_wrapper.h",
         "hip_blas_utils.h",
+        "rocm_blas.h",
     ]),
     deps = if_rocm_is_configured([
         # keep sorted
         ":hipblas_lt_header",
-        ":rocblas_plugin",
         ":rocm_platform_id",
         "@com_google_absl//absl/types:any",
         "//tensorflow/stream_executor/gpu:gpu_blas_lt",
@@ -215,6 +215,15 @@ cc_library(
         "//tensorflow/compiler/xla:statusor",
         "//tensorflow/compiler/xla:util",
         "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/stream_executor/gpu:gpu_activation",
+        "//tensorflow/stream_executor/gpu:gpu_helpers_header",
+        "//tensorflow/stream_executor/gpu:gpu_stream_header",
+        "//tensorflow/stream_executor/gpu:gpu_timer_header",
+        "//tensorflow/stream_executor/lib",
+        "//tensorflow/stream_executor/platform",
+        "//tensorflow/stream_executor/platform:dso_loader",
+        "//tensorflow/stream_executor:scratch_allocator",
+        "@local_config_rocm//rocm:rocm_headers",
     ]) + if_static([
         ":hipblaslt_if_static",
     ]),

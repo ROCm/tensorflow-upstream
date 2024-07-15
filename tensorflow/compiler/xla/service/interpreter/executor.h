@@ -144,10 +144,14 @@ class XlaInterpreterExecutor : public internal::StreamExecutorInterface {
     return port::Status{port::error::UNIMPLEMENTED, ""};
   }
 
+  port::Status SynchronizeEvent(Event *event) override {
+    return port::Status{port::error::UNIMPLEMENTED, ""};
+  }
+
   Event::Status PollForEventStatus(Event *event) override {
     return Event::Status::kError;
   }
-
+  
   bool AllocateStream(Stream *stream) override { return true; }
   void DeallocateStream(Stream *stream) override {}
   bool CreateStreamDependency(Stream *dependent, Stream *other) override;

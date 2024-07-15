@@ -98,7 +98,7 @@ Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(options);
 
   // Rewrite GEMMs into custom calls.
-  pipeline.AddPass<GemmRewriter>();
+  pipeline.AddPass<GemmRewriter>(GetGpuVersion(stream_exec));
 
   pipeline.AddPass<GpuConvAlgorithmPicker>(stream_exec, device_allocator);
   // Clean up new_tuple described above.

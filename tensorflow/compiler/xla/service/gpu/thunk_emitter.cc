@@ -26,6 +26,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/custom_call_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/fft_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/gemm_thunk.h"
+#include "tensorflow/compiler/xla/service/gpu/gpublas_lt_matmul_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/infeed_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
 #include "tensorflow/compiler/xla/service/gpu/outfeed_thunk.h"
@@ -103,6 +104,31 @@ std::unique_ptr<Thunk> ThunkEmitter::BuildGemmThunk(
       GetAllocationSlice(*rhs),   // The buffer assigned to RHS.
       GetAllocationSlice(*inst),  // The output buffer.
       /*implements_whole_instruction=*/true, inst, std::move(gemm_config));
+}
+
+std::unique_ptr<Thunk> ThunkEmitter::BuildCublasLtThunk(
+    const HloInstruction* inst) {
+  auto config_or = inst->backend_config<GemmBackendConfig>();
+  GemmBackendConfig gemm_config = std::move(config_or.ValueOrDie());
+  const HloInstruction* lhs = inst->operand(0);
+  const HloInstruction* rhs = inst->operand(1);
+
+  return absl::make_unique<CublasLtMatmulThunk>(
+    inst, std::move(gemm_config), se::gpu::BlasLt::Epilogue::kDefault,
+    /*algorithm_idx*/0,
+    GetAllocationSlice(*lhs),   // The buffer assigned to LHS.
+    GetAllocationSlice(*rhs),   // The buffer assigned to RHS.
+    GetAllocationSlice(*inst),  // The c_buffer
+    GetAllocationSlice(*inst),  // The output buffer
+    BufferAllocation::Slice{}, // bias_buffer
+    BufferAllocation::Slice{}, // aux_buffer
+    BufferAllocation::Slice{}, // a_scale_buffer
+    BufferAllocation::Slice{}, // b_scale_buffer
+    BufferAllocation::Slice{}, // c_scale_buffer
+    BufferAllocation::Slice{}, // d_scale_buffer
+    BufferAllocation::Slice{}, // d_amax_buffer
+    absl::nullopt // workspace_buffer
+  );
 }
 
 std::unique_ptr<Thunk> ThunkEmitter::BuildInfeedThunk(
@@ -285,8 +311,12 @@ Status ThunkEmitter::HandleCustomCall(HloInstruction* custom_call) {
   }
 #endif
 
-  if (IsCublasGemm(*custom_call)) {
+  if (IsLegacyCublasMatmul(*custom_call)) {
     AddThunkToThunkSequence(BuildGemmThunk(custom_call));
+    return Status::OK();
+  }
+  if (IsCublasLtMatmul(*custom_call)) {
+    AddThunkToThunkSequence(BuildCublasLtThunk(custom_call));
     return Status::OK();
   }
 

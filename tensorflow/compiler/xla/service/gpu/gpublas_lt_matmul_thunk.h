@@ -86,7 +86,7 @@ class CublasLtMatmulThunk : public Thunk {
       matmul_algorithm_cache_ ABSL_GUARDED_BY(matmul_algorithm_cache_mutex_);
 
   GemmBackendConfig backend_config_;
-  std::unique_ptr< GemmConfig > gemm_config_ptr_; // TODO!
+  //std::unique_ptr< GemmConfig > gemm_config_ptr_; // TODO!
   se::gpu::BlasLt::Epilogue epilogue_;
   int64_t algorithm_idx_;
   BufferAllocation::Slice a_buffer_;
