@@ -150,7 +150,7 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(options);
 
   // Rewrite GEMMs into custom calls.
-  pipeline.AddPass<GemmRewriter>();
+  pipeline.AddPass<GemmRewriter>(GetGpuVersion(stream_exec));
 
   // Choose the fastest algorithm for each conv.
   //

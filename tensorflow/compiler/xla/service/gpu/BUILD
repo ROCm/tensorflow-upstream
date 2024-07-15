@@ -598,15 +598,19 @@ cc_library(
     deps = [
         ":backend_configs",
         ":ir_emission_utils",
+        ":matmul_utils",
+        ":gpu_types",
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/compiler/xla:statusor",
         "//tensorflow/compiler/xla/service:hlo",
         "//tensorflow/compiler/xla/service:hlo_casting_utils",
         "//tensorflow/compiler/xla/service:hlo_pass",
         "//tensorflow/compiler/xla/service:pattern_matcher",
+        "//tensorflow/stream_executor/gpu:gpu_blas_lt",
         "//tensorflow/core:lib",
         "//tensorflow/stream_executor/lib",
         "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/types:any",
     ],
 )
 
