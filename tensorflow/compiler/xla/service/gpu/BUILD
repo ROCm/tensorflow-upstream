@@ -493,6 +493,7 @@ cc_library(
         ":hlo_execution_profiler",
         ":infeed_manager",
         ":ir_emission_utils",
+        ":matmul_utils",
         ":nccl_all_reduce_thunk",  # fixdeps: keep
         ":outfeed_manager",
         ":partition_assignment",
@@ -526,6 +527,7 @@ cc_library(
         "//tensorflow/core/profiler/lib:traceme",
         "//tensorflow/stream_executor",
         "//tensorflow/stream_executor:blas",
+        "//tensorflow/stream_executor/gpu:gpu_blas_lt",
         "//tensorflow/stream_executor:device_memory",
         "//tensorflow/stream_executor:kernel",
         "//tensorflow/stream_executor/gpu:gpu_stream",
@@ -570,6 +572,23 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@llvm//:core",
     ],
+)
+
+cc_library(
+    name = "matmul_utils",
+    srcs = ["matmul_utils.cc"],
+    hdrs = ["matmul_utils.h"],
+    deps = [
+        "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/compiler/xla:util",
+        "//tensorflow/compiler/xla:window_util",
+        "//tensorflow/compiler/xla:xla_data_proto",
+        "//tensorflow/compiler/xla/service/gpu:backend_configs",
+        "//tensorflow/compiler/xla/service:hlo",
+        "//tensorflow/stream_executor:blas",
+        "//tensorflow/stream_executor/gpu:gpu_blas_lt",
+        "@com_google_absl//absl/types:any",
+    ]
 )
 
 cc_library(

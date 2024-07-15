@@ -24,44 +24,22 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/algorithm/container.h"
-#include "absl/log/check.h"
-#include "absl/log/log.h"
-#include "absl/status/status.h"
-#include "absl/strings/str_cat.h"
-#include "absl/types/span.h"
-#include "tensorflow/compiler/xla/autotuning.pb.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
 #include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/service/algorithm_util.h"
 #include "tensorflow/compiler/xla/service/gpu/backend_configs.pb.h"
 #include "tensorflow/compiler/xla/shape.h"
 #include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/stream_executor/blas.h"
-#include "tensorflow/stream_executor/device_memory.h"
-#include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
-#include "tensorflow/stream_executor/numeric_options.h"
-#include "tensorflow/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/types.h"
 #include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
+#include "tensorflow/compiler/xla/status_macros.h"
 
 namespace xla {
 namespace gpu {
 
-StatusOr<std::vector<int64_t>> GetNonContractingDims(
-    const Shape& shape, absl::Span<const int64_t> batch_dims,
-    absl::Span<const int64_t> contracting_dims) {
-  std::vector<int64_t> non_contracting_dims;
+StatusOr<std::vector<int64>> GetNonContractingDims(
+    const Shape& shape, absl::Span<const int64> batch_dims,
+    absl::Span<const int64> contracting_dims) {
+  std::vector<int64> non_contracting_dims;
   // This is O(rank**2), but we expect rank to be small.
-  for (int64_t dim = 0; dim < shape.rank(); ++dim) {
+  for (int64 dim = 0; dim < shape.rank(); ++dim) {
     bool is_batch = absl::c_count(batch_dims, dim) != 0;
     bool is_contracting = absl::c_count(contracting_dims, dim) != 0;
     TF_RET_CHECK(!(is_batch && is_contracting));
@@ -75,17 +53,17 @@ StatusOr<std::vector<int64_t>> GetNonContractingDims(
 }
 
 StatusOr<Shape> GetBatchRowColumnShape(
-    const Shape& shape, absl::Span<const int64_t> batch_dims,
-    absl::Span<const int64_t> row_dims, absl::Span<const int64_t> col_dims) {
+    const Shape& shape, absl::Span<const int64> batch_dims,
+    absl::Span<const int64> row_dims, absl::Span<const int64> col_dims) {
   TF_RET_CHECK(shape.has_layout());
 
-  std::vector<int64_t> minor_to_major;
+  std::vector<int64> minor_to_major;
   for (size_t i = 0; i < shape.rank();) {
     // The GeMM output always has its layout set such that the batch, row, and
     // col dim groups are each laid out physically sequentially. GeMM operands
     // must, therefore, be laid out similarly.
     auto check_physically_sequential =
-        [&](absl::Span<const int64_t> dims) -> Status {
+        [&](absl::Span<const int64> dims) -> Status {
       for (auto it = dims.rbegin(); it != dims.rend(); ++it) {
         // NOTE: `i` is incremented as we check the dimensions.
         if (*it != shape.layout().minor_to_major()[i++])
@@ -94,7 +72,7 @@ StatusOr<Shape> GetBatchRowColumnShape(
       return Status::OK();
     };
 
-    int64_t dim = shape.layout().minor_to_major()[i];
+    int64 dim = shape.layout().minor_to_major()[i];
     if (!row_dims.empty() && dim == row_dims.back()) {
       minor_to_major.push_back(1);
       TF_RETURN_IF_ERROR(check_physically_sequential(row_dims));
@@ -113,13 +91,13 @@ StatusOr<Shape> GetBatchRowColumnShape(
   if (row_dims.empty()) minor_to_major.push_back(1);
   if (batch_dims.empty()) minor_to_major.push_back(0);
 
-  auto dim_size = [&](absl::Span<const int64_t> dims) {
-    return absl::c_accumulate(dims, 1, [&](int64_t size, int64_t dim) {
+  auto dim_size = [&](absl::Span<const int64> dims) {
+    return absl::c_accumulate(dims, 1, [&](int64 size, int64 dim) {
       return size * shape.dimensions(dim);
     });
   };
-
-  return ShapeUtil::MakeShapeWithDenseLayout(
+  // absl::Span< const int64 > UU(minor_to_major);
+  return ShapeUtil::MakeShapeWithLayout(
       shape.element_type(),
       {dim_size(batch_dims), dim_size(row_dims), dim_size(col_dims)},
       minor_to_major);
@@ -130,17 +108,17 @@ StatusOr<Shape> GetBatchRowColumnShape(
   TF_RET_CHECK(shape.rank() == 3);
   TF_RET_CHECK(shape.has_layout());
 
-  int64_t batch_size = shape.dimensions(0);
-  int64_t num_rows = shape.dimensions(1);
-  int64_t num_cols = shape.dimensions(2);
+  int64 batch_size = shape.dimensions(0);
+  int64 num_rows = shape.dimensions(1);
+  int64 num_cols = shape.dimensions(2);
 
   Order order{Order::kRowMajor};
-  int64_t leading_dim_stride = num_cols;
-  int64_t batch_stride = num_rows * num_cols;
+  int64 leading_dim_stride = num_cols;
+  int64 batch_stride = num_rows * num_cols;
 
   // `MatrixLayout`, like BLAS, uses only two strides, so either the row or
   // column must be contiguous in memory (i.e. most minor physical dimension).
-  absl::Span<const int64_t> minor_to_major = shape.layout().minor_to_major();
+  absl::Span<const int64> minor_to_major = shape.layout().minor_to_major();
   switch (64 * minor_to_major[2] + 8 * minor_to_major[1] + minor_to_major[0]) {
     case 012:  // (B,R,C) (major-to-minor)
       break;
@@ -164,14 +142,14 @@ StatusOr<Shape> GetBatchRowColumnShape(
   if (batch_size == 1) {
     batch_stride = 0;
   }
-  return MatrixLayout{se::gpu::MatrixLayout{shape.element_type(), num_rows,
-                                            num_cols, order, batch_size,
-                                            leading_dim_stride, batch_stride}};
+
+  return MatrixLayout(shape.element_type(), num_rows, num_cols, order, 
+        batch_size, leading_dim_stride, batch_stride);
 }
 
 /*static*/ StatusOr<MatrixLayout> MatrixLayout::For(
-    const Shape& shape, absl::Span<const int64_t> batch_dims,
-    absl::Span<const int64_t> row_dims, absl::Span<const int64_t> col_dims) {
+    const Shape& shape, absl::Span<const int64> batch_dims,
+    absl::Span<const int64> row_dims, absl::Span<const int64> col_dims) {
   TF_ASSIGN_OR_RETURN(
       Shape batch_row_col_shape,
       GetBatchRowColumnShape(shape, batch_dims, row_dims, col_dims));
@@ -186,13 +164,13 @@ StatusOr<Shape> GetBatchRowColumnShape(
   TF_RET_CHECK(shape.rank() ==
                num_batch_dims + lhs_num_row_dims + rhs_num_col_dims);
 
-  std::vector<int64_t> dims(shape.rank());
+  std::vector<int64> dims(shape.rank());
   absl::c_iota(dims, 0);
 
-  auto batch_dims = absl::Span<const int64_t>(dims).first(num_batch_dims);
+  auto batch_dims = absl::Span<const int64>(dims).first(num_batch_dims);
   auto row_dims =
-      absl::Span<const int64_t>(dims).subspan(num_batch_dims, lhs_num_row_dims);
-  auto col_dims = absl::Span<const int64_t>(dims).last(rhs_num_col_dims);
+      absl::Span<const int64>(dims).subspan(num_batch_dims, lhs_num_row_dims);
+  auto col_dims = absl::Span<const int64>(dims).last(rhs_num_col_dims);
 
   return MatrixLayout::For(shape, batch_dims, row_dims, col_dims);
 }
@@ -201,95 +179,64 @@ namespace {
 // Returns the relative order of 'dims' as indices from 0 to dims.size() - 1.
 // Let 'indices' be the returned vector, then it holds that
 // dims[indices[i - 1]] < dims[indices[i]] for 0 < i < dims.size()
-std::vector<int64_t> NormalizedRelativeOrder(absl::Span<const int64_t> dims) {
+std::vector<int64> NormalizedRelativeOrder(absl::Span<const int64> dims) {
   // Remap the dimensions to values between 0 and dims.size() - 1, keeping their
   // relative order the same.
-  std::vector<int64_t> indices(dims.size());
+  std::vector<int64> indices(dims.size());
   absl::c_iota(indices, 0);
   absl::c_sort(indices,
-               [&](int64_t a, int64_t b) { return dims[a] < dims[b]; });
+               [&](int64 a, int64 b) { return dims[a] < dims[b]; });
   return indices;
 }
 }  // namespace
 
 /*static*/ StatusOr<GemmConfig> GemmConfig::For(
-    const Shape& lhs_shape, absl::Span<const int64_t> lhs_batch_dims,
-    absl::Span<const int64_t> lhs_contracting_dims, const Shape& rhs_shape,
-    absl::Span<const int64_t> rhs_batch_dims,
-    absl::Span<const int64_t> rhs_contracting_dims, const Shape& output_shape,
+    const Shape& lhs_shape, absl::Span<const int64> lhs_batch_dims,
+    absl::Span<const int64> lhs_contracting_dims, const Shape& rhs_shape,
+    absl::Span<const int64> rhs_batch_dims,
+    absl::Span<const int64> rhs_contracting_dims, const Shape& output_shape,
     double alpha_real, double alpha_imag, double beta,
-    absl::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
+    absl::optional<int64> algorithm, int64 compute_precision, bool grad_x,
     bool grad_y) {
-  return GemmConfig::For(lhs_shape, lhs_batch_dims, lhs_contracting_dims,
-                         rhs_shape, rhs_batch_dims, rhs_contracting_dims,
-                         /*c_shape=*/output_shape, /*bias_shape_ptr=*/nullptr,
-                         output_shape, alpha_real, alpha_imag, beta,
-                         algorithm, compute_precision,
-                         grad_x, grad_y);
-}
 
-/*static*/ StatusOr<GemmConfig> GemmConfig::For(
-    const Shape& lhs_shape, absl::Span<const int64_t> lhs_batch_dims,
-    absl::Span<const int64_t> lhs_contracting_dims, const Shape& rhs_shape,
-    absl::Span<const int64_t> rhs_batch_dims,
-    absl::Span<const int64_t> rhs_contracting_dims, const Shape& c_shape,
-    const Shape* bias_shape_ptr, const Shape& output_shape, double alpha_real,
-    double alpha_imag, double beta,
-    absl::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
-    bool grad_y) {
-  absl::Span<const int64_t> lhs_col_dims = lhs_contracting_dims;
+  absl::Span<const int64> lhs_col_dims = lhs_contracting_dims;
   TF_ASSIGN_OR_RETURN(
-      std::vector<int64_t> lhs_row_dims,
+      std::vector<int64> lhs_row_dims,
       GetNonContractingDims(lhs_shape, lhs_batch_dims, lhs_col_dims));
 
   TF_ASSIGN_OR_RETURN(
       MatrixLayout lhs_layout,
       MatrixLayout::For(lhs_shape, lhs_batch_dims, lhs_row_dims, lhs_col_dims));
 
-  absl::Span<const int64_t> rhs_row_dims = rhs_contracting_dims;
+  absl::Span<const int64> rhs_row_dims = rhs_contracting_dims;
   TF_ASSIGN_OR_RETURN(
-      std::vector<int64_t> rhs_col_dims,
+      std::vector<int64> rhs_col_dims,
       GetNonContractingDims(rhs_shape, rhs_batch_dims, rhs_row_dims));
 
   TF_ASSIGN_OR_RETURN(
       MatrixLayout rhs_layout,
       MatrixLayout::For(rhs_shape, rhs_batch_dims, rhs_row_dims, rhs_col_dims));
 
-  int64_t num_batch_dims =
+  int64 num_batch_dims =
       std::max(lhs_batch_dims.size(), rhs_batch_dims.size());
 
   TF_RET_CHECK(output_shape.rank() ==
                num_batch_dims + lhs_row_dims.size() + rhs_col_dims.size());
 
-  std::vector<int64_t> output_dims(output_shape.rank());
+  std::vector<int64> output_dims(output_shape.rank());
   absl::c_iota(output_dims, 0);
 
   auto output_batch_dims =
-      absl::Span<const int64_t>(output_dims).first(num_batch_dims);
-  auto output_row_dims = absl::Span<const int64_t>(output_dims)
+      absl::Span<const int64>(output_dims).first(num_batch_dims);
+  auto output_row_dims = absl::Span<const int64>(output_dims)
                              .subspan(num_batch_dims, lhs_row_dims.size());
   auto output_col_dims =
-      absl::Span<const int64_t>(output_dims).last(rhs_col_dims.size());
+      absl::Span<const int64>(output_dims).last(rhs_col_dims.size());
 
   TF_ASSIGN_OR_RETURN(MatrixLayout output_layout,
                       MatrixLayout::For(output_shape, output_batch_dims,
                                         output_row_dims, output_col_dims));
-  Shape c_matrix_shape = c_shape;
-  if (primitive_util::IsF8Type(lhs_shape.element_type()) &&
-      primitive_util::IsF8Type(output_shape.element_type()) && beta == 0.0) {
-    // By default, if c is not present (i.e., beta is 0), c_shape will be the
-    // output shape. cublasLT requires a valid c_shape to be passed, even if c
-    // is not present, and normally setting it to the output shape is fine. But
-    // for matmuls with FP8 inputs and outputs, C must instead have the same
-    // dtype as the vector bias if present, and either BF16 or F16 otherwise. So
-    // we set the dtype of C here.
-#if GOOGLE_CUDA
-    // hipBlasLt does not yet support the C matrix to be BF16 for fp8 matmul
-    // with fp8 output. Thus only do this for CUDA side.
-    c_matrix_shape.set_element_type(
-        bias_shape_ptr != nullptr ? bias_shape_ptr->element_type() : BF16);
-#endif
-  }
+  Shape c_matrix_shape = output_shape;
 
   TF_ASSIGN_OR_RETURN(MatrixLayout c_layout,
                       MatrixLayout::For(c_matrix_shape, output_batch_dims,
@@ -299,12 +246,9 @@ std::vector<int64_t> NormalizedRelativeOrder(absl::Span<const int64_t> dims) {
   // non-contracting dimensions match in size and relative physical location.
   // TODO(philipphack): Check the remaining dimensions in the FP8 case once
   // cuBLASLt supports the NN configuration.
-  if (lhs_shape.element_type() != F8E4M3FN &&
-      lhs_shape.element_type() != F8E5M2) {
-    TF_RET_CHECK(lhs_layout.num_cols == rhs_layout.num_rows);
-    TF_RET_CHECK(output_layout.num_rows == lhs_layout.num_rows);
-    TF_RET_CHECK(output_layout.num_cols == rhs_layout.num_cols);
-  }
+  TF_RET_CHECK(lhs_layout.num_cols == rhs_layout.num_rows);
+  TF_RET_CHECK(output_layout.num_rows == lhs_layout.num_rows);
+  TF_RET_CHECK(output_layout.num_cols == rhs_layout.num_cols);
   TF_RET_CHECK(c_layout.num_rows == output_layout.num_rows);
   TF_RET_CHECK(c_layout.num_cols == output_layout.num_cols);
   TF_RET_CHECK((lhs_layout.batch_size == output_layout.batch_size) ||
@@ -313,10 +257,6 @@ std::vector<int64_t> NormalizedRelativeOrder(absl::Span<const int64_t> dims) {
                (rhs_layout.batch_size == 1));
 
   switch (output_shape.element_type()) {
-    case F8E4M3FN:
-    case F8E5M2:
-    case F8E4M3FNUZ:
-    case F8E5M2FNUZ:
     case F16:
     case BF16:
     case F32:
@@ -343,7 +283,9 @@ std::vector<int64_t> NormalizedRelativeOrder(absl::Span<const int64_t> dims) {
                           output_shape.element_type()));
   }
 
-  return GemmConfig{lhs_layout,
+  return GemmConfig(
+      se::gpu::GemmConfig{
+                    lhs_layout,
                     rhs_layout,
                     c_layout,
                     output_layout,
@@ -352,26 +294,13 @@ std::vector<int64_t> NormalizedRelativeOrder(absl::Span<const int64_t> dims) {
                     compute_precision,
                     algorithm,
                     grad_x,
-                    grad_y};
+                    grad_y});
 }
-
-namespace {
-
-bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
-                   int64_t compute_precision) {
-  if (algorithm == PrecisionConfig::ALG_UNSET) {
-    return compute_precision <= 1;
-  }
-
-  return algorithm_util::HasTf32InputType(algorithm);
-}
-
-}  // namespace
 
 /*static*/ StatusOr<GemmConfig> GemmConfig::For(
     const HloInstruction* gemm, const GemmBackendConfig& config) {
 
-  absl::optional<int64_t> algorithm;
+  absl::optional<int64> algorithm;
   if (config.algorithm_case() != GemmBackendConfig::ALGORITHM_NOT_SET) {
     algorithm = config.selected_algorithm();
   } else {
@@ -384,42 +313,19 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
   const Shape& output_shape =
       gemm->shape().IsTuple() ? gemm->shape().tuple_shapes(0) : gemm->shape();
 
-  bool has_matrix_bias = config.beta() != 0.;
-  Shape c_shape = has_matrix_bias ? gemm->operand(2)->shape() : output_shape;
-
-  absl::optional<Shape> vector_bias_shape;
-  TF_ASSIGN_OR_RETURN(
-      bool has_vector_bias,
-      xla::gpu::gpublas_lt::EpilogueAddsVectorBias(config.epilogue()));
-  if (has_vector_bias) {
-    int vector_bias_index = has_matrix_bias ? 3 : 2;
-    if (primitive_util::IsF8Type(lhs_shape.element_type())) {
-      // FP8 gemms have 4 scales as inputs which come before the vector bias.
-      vector_bias_index += 4;
-    }
-    vector_bias_shape = gemm->operand(vector_bias_index)->shape();
-  }
-
-  auto attributes = gemm->frontend_attributes().map();
-  bool grad_x = (attributes["grad_x"] == "true");
-  bool grad_y = (attributes["grad_y"] == "true");
-
-  int64_t prceision = se::blas::kDefaultComputePrecision;
-  for (auto operand_precision : config.precision_config().operand_precision()) {
-    precision = std::max(precision, static_cast<int64_t>(operand_precision));
-  }
+  int64 precision = -1/*se::blas::kDefaultComputePrecision*/;
+  // for (auto operand_precision : config.precision_config().operand_precision()) {
+  //   precision = std::max(precision, static_cast<int64>(operand_precision));
+  // }
   // const PrecisionConfig::Algorithm precision_algorithm =
   //     config.precision_config().algorithm();
-
   return GemmConfig::For(
-      lhs_shape, dot_dims.lhs_batch_dimensions(),
-      dot_dims.lhs_contracting_dimensions(), rhs_shape,
-      dot_dims.rhs_batch_dimensions(), dot_dims.rhs_contracting_dimensions(),
-      /*c_shape=*/c_shape,
-      /*bias_shape_ptr=*/
-      vector_bias_shape ? &vector_bias_shape.value() : nullptr, output_shape,
-      config.alpha_real(), config.alpha_imag(), config.beta(),
-      algorithm, precision, grad_x, grad_y);
+      lhs_shape, AsInt64Slice(dot_dims.lhs_batch_dimensions()),
+      AsInt64Slice(dot_dims.lhs_contracting_dimensions()), rhs_shape,
+      AsInt64Slice(dot_dims.rhs_batch_dimensions()), 
+      AsInt64Slice(dot_dims.rhs_contracting_dimensions()),
+      output_shape, config.alpha_real(), config.alpha_imag(), config.beta(),
+      algorithm, precision, /*grad_x*/false, /*grad_y*/false);
 }
 
 StatusOr<GemmConfig::DescriptorsTuple> GemmConfig::GetMatrixDescriptors(
@@ -456,8 +362,7 @@ StatusOr<GemmConfig::DescriptorsTuple> GemmConfig::GetMatrixDescriptors(
   // algorithm) here? Why do we use the default?
   TF_ASSIGN_OR_RETURN(out_desc.compute_type,
                       se::gpu::GetBlasComputationType(
-                          PrecisionConfig::ALG_UNSET, lhs.dtype, out.dtype,
-                          se::blas::kDefaultComputePrecision));
+                          lhs.dtype, out.dtype, -1));
 
   TF_ASSIGN_OR_RETURN(se::gpu::MatrixDescriptor lhs_desc,
                       create_matrix_desc(lhs, lhs_buf));
@@ -476,8 +381,6 @@ Status DoGemmWithAlgorithm(const se::gpu::MatrixDescriptor& lhs,
                                  se::DeviceMemoryBase workspace, Scale alpha,
                                  Scale beta, se::Stream* stream,
                                  se::blas::AlgorithmType algorithm,
-                                 se::blas::ComputePrecision compute_precision,
-                                 const se::NumericOptions& numeric_options,
                                  se::blas::ProfileResult* profile_result,
                                  se::blas::CallContext context) {
   CHECK(output.transpose == se::blas::Transpose::kNoTranspose);
@@ -485,7 +388,7 @@ Status DoGemmWithAlgorithm(const se::gpu::MatrixDescriptor& lhs,
   PrimitiveType output_type = primitive_util::NativeToPrimitiveType<Output>();
   TF_ASSIGN_OR_RETURN(
       se::blas::ComputationType computation_type,
-      se::gpu::GetBlasComputationType(lhs_type, output_type, compute_precision));
+      se::gpu::GetBlasComputationType(lhs_type, output_type, -1));
   se::DeviceMemory<Output> output_data(output.data);
 
   // Set a workspace for all Blas operations launched below.
@@ -502,14 +405,14 @@ Status DoGemmWithAlgorithm(const se::gpu::MatrixDescriptor& lhs,
         alpha, lhs.cast<Input>(), lhs.leading_dim_stride, lhs.batch_stride,
         rhs.cast<Input>(), rhs.leading_dim_stride, rhs.batch_stride, beta,
         &output_data, output.leading_dim_stride, output.batch_stride,
-        output.batch_size, computation_type, algorithm, numeric_options,
+        output.batch_size, computation_type, algorithm, 
         profile_result, context);
   } else {
     return blas->BlasGemmWithAlgorithm(
         stream, lhs.transpose, rhs.transpose, output.m, output.n, output.k,
         alpha, lhs.cast<Input>(), lhs.leading_dim_stride, rhs.cast<Input>(),
         rhs.leading_dim_stride, beta, &output_data, output.leading_dim_stride,
-        computation_type, algorithm, numeric_options, profile_result, context);
+        computation_type, algorithm, profile_result, context);
   }
 }
 
@@ -519,10 +422,8 @@ Status DoGemm(const se::gpu::MatrixDescriptor& lhs,
                     const se::gpu::OutputMatrixDescriptor& output,
                     se::DeviceMemoryBase workspace, Scale alpha, Scale beta,
                     se::Stream* stream,
-                    PrecisionConfig::Algorithm precision_algorithm,
                     absl::optional<se::blas::AlgorithmType> algorithm,
                     se::blas::ComputePrecision compute_precision,
-                    const se::NumericOptions& numeric_options,
                     se::blas::ProfileResult* profile_result,
                     se::blas::CallContext context) {
   CHECK(output.transpose == se::blas::Transpose::kNoTranspose);
@@ -534,8 +435,8 @@ Status DoGemm(const se::gpu::MatrixDescriptor& lhs,
 
   if (algorithm) {
     return DoGemmWithAlgorithm<Scale, Input, Output>(
-        lhs, rhs, output, workspace, alpha, beta, stream, precision_algorithm,
-        *algorithm, compute_precision, numeric_options, profile_result,
+        lhs, rhs, output, workspace, alpha, beta, stream,
+        *algorithm, compute_precision, profile_result,
         context);
   }
 
@@ -548,124 +449,123 @@ Status DoGemm(const se::gpu::MatrixDescriptor& lhs,
         alpha, lhs.cast<Input>(), lhs.leading_dim_stride, lhs.batch_stride,
         rhs.cast<Input>(), rhs.leading_dim_stride, rhs.batch_stride, beta,
         &output_data, output.leading_dim_stride, output.batch_stride,
-        output.batch_size, numeric_options, context);
+        output.batch_size, context);
   }
 
   return blas->BlasGemm(stream, lhs.transpose, rhs.transpose, output.m,
                         output.n, output.k, alpha, lhs.cast<Input>(),
                         lhs.leading_dim_stride, rhs.cast<Input>(),
                         rhs.leading_dim_stride, beta, &output_data,
-                        output.leading_dim_stride, numeric_options, context);
+                        output.leading_dim_stride, context);
 }
 
 }  // namespace
 
-Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
-                     se::DeviceMemoryBase rhs_buffer,
-                     se::DeviceMemoryBase output_buffer,
-                     se::DeviceMemoryBase workspace_buffer,
-                     bool deterministic_ops, se::Stream* stream,
-                     absl::optional<se::blas::AlgorithmType> algorithm,
-                     se::blas::ProfileResult* profile_result) {
-  VLOG(2) << "Executing a GemmThunk";
+// Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
+//                      se::DeviceMemoryBase rhs_buffer,
+//                      se::DeviceMemoryBase output_buffer,
+//                      se::DeviceMemoryBase workspace_buffer,
+//                      bool deterministic_ops, se::Stream* stream,
+//                      absl::optional<se::blas::AlgorithmType> algorithm,
+//                      se::blas::ProfileResult* profile_result) {
+//   VLOG(2) << "Executing a GemmThunk";
 
-  TF_ASSIGN_OR_RETURN(
-      GemmConfig::DescriptorsTuple desc,
-      config.GetMatrixDescriptors(lhs_buffer, rhs_buffer, output_buffer));
+//   TF_ASSIGN_OR_RETURN(
+//       GemmConfig::DescriptorsTuple desc,
+//       config.GetMatrixDescriptors(lhs_buffer, rhs_buffer, output_buffer));
 
-  se::NumericOptions numeric_options{
-      deterministic_ops,
-      /*allow_tf32=*/IsTf32Allowed(config.precision_algorithm,
-                                   config.compute_precision)};
+//   se::NumericOptions numeric_options{
+//       deterministic_ops,
+//       /*allow_tf32=*/true};
 
-  if (!algorithm) algorithm = config.algorithm;
+//   if (!algorithm) algorithm = config.algorithm;
 
-  se::blas::CallContext context = se::blas::CallContext::kNone;
-  if (config.grad_x) {
-    context = desc.operands_swapped ? se::blas::CallContext::kBackpropInput2
-                                    : se::blas::CallContext::kBackpropInput1;
-  }
-  if (config.grad_y) {
-    context = desc.operands_swapped ? se::blas::CallContext::kBackpropInput1
-                                    : se::blas::CallContext::kBackpropInput2;
-  }
+//   se::blas::CallContext context = se::blas::CallContext::kNone;
+//   if (config.grad_x) {
+//     context = desc.operands_swapped ? se::blas::CallContext::kBackpropInput2
+//                                     : se::blas::CallContext::kBackpropInput1;
+//   }
+//   if (config.grad_y) {
+//     context = desc.operands_swapped ? se::blas::CallContext::kBackpropInput1
+//                                     : se::blas::CallContext::kBackpropInput2;
+//   }
 
-  std::tuple operand_types{config.lhs_layout.dtype, config.rhs_layout.dtype,
-                           config.output_layout.dtype};
+//   auto operand_types = std::make_tuple(config.lhs_layout.dtype, 
+//       config.rhs_layout.dtype, config.output_layout.dtype);
 
-  // Skip degenerate gemm with memzero. In general this is not safe, because it
-  // will suppress NaN propagation, however cuBLAS internally has exactly the
-  // same optimization for compatibility with NETLIB implementation, so we are
-  // not making things worse (and cuBLAS optimization is incompatible with CUDA
-  // graphs, so we are making sure we do not trigger it).
-  if (config.alpha.real() == 0.0 && config.alpha.imag() == 0.0 &&
-      config.beta == 0.0) {
-    return stream->MemZero(&output_buffer, output_buffer.size());
-  }
+//   // Skip degenerate gemm with memzero. In general this is not safe, because it
+//   // will suppress NaN propagation, however cuBLAS internally has exactly the
+//   // same optimization for compatibility with NETLIB implementation, so we are
+//   // not making things worse (and cuBLAS optimization is incompatible with CUDA
+//   // graphs, so we are making sure we do not trigger it).
+//   if (config.alpha.real() == 0.0 && config.alpha.imag() == 0.0 &&
+//       config.beta == 0.0) {
+//     return stream->MemZero(&output_buffer, output_buffer.size());
+//   }
 
-#define TYPED_GEMM(SCALENTYPE, ATYPE, BTYPE, CTYPE)                         \
-  if (operand_types == std::make_tuple(ATYPE, BTYPE, CTYPE)) {              \
-    using NativeScaleType =                                                 \
-        primitive_util::PrimitiveTypeToNative<SCALENTYPE>::type;            \
-    using NativeAType = primitive_util::PrimitiveTypeToNative<ATYPE>::type; \
-    using NativeCType = primitive_util::PrimitiveTypeToNative<CTYPE>::type; \
-    return DoGemm<NativeScaleType, NativeAType, NativeCType>(               \
-        desc.lhs, desc.rhs, desc.output, workspace_buffer,                  \
-        static_cast<NativeScaleType>(config.alpha.real()),                  \
-        static_cast<NativeScaleType>(config.beta), stream,                  \
-        config.precision_algorithm, algorithm, config.compute_precision,    \
-        numeric_options, profile_result, context);                          \
-  }
+// #define TYPED_GEMM(SCALENTYPE, ATYPE, BTYPE, CTYPE)                         \
+//   if (operand_types == std::make_tuple(ATYPE, BTYPE, CTYPE)) {              \
+//     using NativeScaleType =                                                 \
+//         primitive_util::PrimitiveTypeToNative<SCALENTYPE>::type;            \
+//     using NativeAType = primitive_util::PrimitiveTypeToNative<ATYPE>::type; \
+//     using NativeCType = primitive_util::PrimitiveTypeToNative<CTYPE>::type; \
+//     return DoGemm<NativeScaleType, NativeAType, NativeCType>(               \
+//         desc.lhs, desc.rhs, desc.output, workspace_buffer,                  \
+//         static_cast<NativeScaleType>(config.alpha.real()),                  \
+//         static_cast<NativeScaleType>(config.beta), stream,                  \
+//         algorithm, config.compute_precision,                                \
+//         numeric_options, profile_result, context);                          \
+//   }
 
-#define TYPED_GEMM_COMPLEX(SCALENTYPE, ATYPE, BTYPE, CTYPE)                 \
-  if (operand_types == std::make_tuple(ATYPE, BTYPE, CTYPE)) {              \
-    using NativeScaleType =                                                 \
-        primitive_util::PrimitiveTypeToNative<SCALENTYPE>::type;            \
-    using NativeAType = primitive_util::PrimitiveTypeToNative<ATYPE>::type; \
-    using NativeCType = primitive_util::PrimitiveTypeToNative<CTYPE>::type; \
-    return DoGemm<NativeScaleType, NativeAType, NativeCType>(               \
-        desc.lhs, desc.rhs, desc.output, workspace_buffer,                  \
-        static_cast<NativeScaleType>(config.alpha),                         \
-        static_cast<NativeScaleType>(config.beta), stream,                  \
-        config.precision_algorithm, algorithm, config.compute_precision,    \
-        numeric_options, profile_result, context);                          \
-  }
+// #define TYPED_GEMM_COMPLEX(SCALENTYPE, ATYPE, BTYPE, CTYPE)                 \
+//   if (operand_types == std::make_tuple(ATYPE, BTYPE, CTYPE)) {              \
+//     using NativeScaleType =                                                 \
+//         primitive_util::PrimitiveTypeToNative<SCALENTYPE>::type;            \
+//     using NativeAType = primitive_util::PrimitiveTypeToNative<ATYPE>::type; \
+//     using NativeCType = primitive_util::PrimitiveTypeToNative<CTYPE>::type; \
+//     return DoGemm<NativeScaleType, NativeAType, NativeCType>(               \
+//         desc.lhs, desc.rhs, desc.output, workspace_buffer,                  \
+//         static_cast<NativeScaleType>(config.alpha),                         \
+//         static_cast<NativeScaleType>(config.beta), stream,                  \
+//         algorithm, config.compute_precision,                                \
+//         numeric_options, profile_result, context);                          \
+//   }
 
-  if (config.output_layout.dtype == S32) {
-    if (!algorithm) algorithm = se::blas::kDefaultGemmAlgo;
-    // TODO(tdanyluk): Investigate why don't we use the actual precision (and
-    // algorithm) here? Why do we use the default?
-    return DoGemmWithAlgorithm<int32_t, int8_t, int32_t>(
-        desc.lhs, desc.rhs, desc.output, workspace_buffer,
-        static_cast<int32_t>(config.alpha.real()),
-        static_cast<int32_t>(config.beta), stream, PrecisionConfig::ALG_UNSET,
-        *algorithm, se::blas::kDefaultComputePrecision, numeric_options,
-        profile_result, context);
-  }
+//   if (config.output_layout.dtype == S32) {
+//     if (!algorithm) algorithm = se::blas::kDefaultGemmAlgo;
+//     // TODO(tdanyluk): Investigate why don't we use the actual precision (and
+//     // algorithm) here? Why do we use the default?
+//     return DoGemmWithAlgorithm<int32_t, int8_t, int32_t>(
+//         desc.lhs, desc.rhs, desc.output, workspace_buffer,
+//         static_cast<int32_t>(config.alpha.real()),
+//         static_cast<int32_t>(config.beta), stream, 
+//         *algorithm, se::blas::kDefaultComputePrecision, numeric_options,
+//         profile_result, context);
+//   }
 
-  TYPED_GEMM(F32, BF16, BF16, BF16)
-  TYPED_GEMM(F32, F16, F16, F16)
-  TYPED_GEMM(F32, S8, S8, F32)
-  TYPED_GEMM(F32, BF16, BF16, F32)
-  TYPED_GEMM(F32, F16, F16, F32)
-  TYPED_GEMM(F32, F32, F32, F32)
-  TYPED_GEMM(F64, F64, F64, F64)
-  TYPED_GEMM_COMPLEX(C64, C64, C64, C64)
-  TYPED_GEMM_COMPLEX(C128, C128, C128, C128)
+//   TYPED_GEMM(F32, BF16, BF16, BF16)
+//   TYPED_GEMM(F32, F16, F16, F16)
+//   TYPED_GEMM(F32, S8, S8, F32)
+//   TYPED_GEMM(F32, BF16, BF16, F32)
+//   TYPED_GEMM(F32, F16, F16, F32)
+//   TYPED_GEMM(F32, F32, F32, F32)
+//   TYPED_GEMM(F64, F64, F64, F64)
+//   TYPED_GEMM_COMPLEX(C64, C64, C64, C64)
+//   TYPED_GEMM_COMPLEX(C128, C128, C128, C128)
 
-#undef TYPED_GEMM
-#undef TYPED_GEMM_COMPLEX
-  return Internal(
-      "Unexpected GEMM dtype: %s %s %s",
-      primitive_util::LowercasePrimitiveTypeName(config.lhs_layout.dtype),
-      primitive_util::LowercasePrimitiveTypeName(config.rhs_layout.dtype),
-      primitive_util::LowercasePrimitiveTypeName(config.output_layout.dtype));
-}  // namespace gpu
+// #undef TYPED_GEMM
+// #undef TYPED_GEMM_COMPLEX
+//   return Internal(
+//       "Unexpected GEMM dtype: %s %s %s",
+//       primitive_util::LowercasePrimitiveTypeName(config.lhs_layout.dtype),
+//       primitive_util::LowercasePrimitiveTypeName(config.rhs_layout.dtype),
+//       primitive_util::LowercasePrimitiveTypeName(config.output_layout.dtype));
+// }  // namespace gpu
 
 namespace gpublas_lt {
 
 StatusOr<bool> EpilogueAddsVectorBias(
-    GemmBackendConfig_Epilogue epilogue) {
+    GemmBackendConfig::Epilogue epilogue) {
   switch (epilogue) {
     case GemmBackendConfig::DEFAULT:
     case GemmBackendConfig::RELU:
@@ -683,7 +583,7 @@ StatusOr<bool> EpilogueAddsVectorBias(
 }
 
 StatusOr<bool> EpilogueHasAuxiliaryOutput(
-    GemmBackendConfig_Epilogue epilogue) {
+    GemmBackendConfig::Epilogue epilogue) {
   switch (epilogue) {
     case GemmBackendConfig::DEFAULT:
     case GemmBackendConfig::RELU:
@@ -701,7 +601,7 @@ StatusOr<bool> EpilogueHasAuxiliaryOutput(
 }
 
 StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
-    GemmBackendConfig_Epilogue epilogue) {
+    GemmBackendConfig::Epilogue epilogue) {
   switch (epilogue) {
     case GemmBackendConfig::DEFAULT:
       return se::gpu::BlasLt::Epilogue::kDefault;
@@ -727,11 +627,6 @@ StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
 }  // namespace gpublas_lt
 
 bool IsDotSupportedByClassicalEmitters(const HloInstruction& dot) {
-  if (!algorithm_util::IsSupportedByElementalIrEmitter(
-          dot.precision_config().algorithm())) {
-    return false;
-  }
-
   // Let us be conservative and only throw float dots at the emitters.
   switch (dot.shape().element_type()) {
     case F16:
