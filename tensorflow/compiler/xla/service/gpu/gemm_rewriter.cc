@@ -74,9 +74,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       int64 batch_size = std::accumulate(output_shape.dimensions().begin(),
                                          output_shape.dimensions().end() - 2, 1,
                                          std::multiplies<int64>());
-      std::unique_ptr<HloInstruction> gemm_call =
-          HloInstruction::CreateCustomCall(output_shape, {lhs, rhs},
-                                           kGemmCallTarget);
       GemmBackendConfig gemm_config;
       gemm_config.set_alpha_real(1.0);
       gemm_config.set_alpha_imag(0.0);
@@ -87,7 +84,15 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       //auto attributes = instr->frontend_attributes().map();
       //gemm_config.set_grad_x(attributes["grad_x"] == "true");
       //gemm_config.set_grad_y(attributes["grad_y"] == "true");
-		  VLOG(-1) << "Rewrite dot to custom gemm call";
+
+      TF_ASSIGN_OR_RETURN(
+          auto gemm_target,
+          GetGemmCustomCallTarget(*instr, gemm_config));
+
+      auto gemm_call =
+          HloInstruction::CreateCustomCall(output_shape, {lhs, rhs},
+                                           gemm_target);
+
       TF_RETURN_IF_ERROR(gemm_call->set_backend_config(gemm_config));
       TF_RETURN_IF_ERROR(
           ReplaceWithNewInstruction(instr, std::move(gemm_call)));
