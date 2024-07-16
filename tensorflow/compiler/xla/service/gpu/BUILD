@@ -11,6 +11,11 @@ load(
     "tf_cc_test",
     "tf_copts",
     "tf_cuda_library",
+    "tf_kernel_library",
+)
+load(
+    "//tensorflow/stream_executor:build_defs.bzl",
+    "if_gpu_is_configured",
 )
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
@@ -1410,15 +1415,39 @@ tf_cc_test(
     ],
 )
 
-cc_library(
-    name = "buffer_comparator",
-    srcs = [] + if_cuda_is_configured([
-        "buffer_comparator_cuda.cc",
-    ]) + if_rocm_is_configured([
-        "buffer_comparator_rocm.cc",
-    ]),
-    hdrs = ["buffer_comparator.h"],
+
+tf_kernel_library(
+    name = "image_ops_kernels",
+    srcs = [
+        "kernels/bipartite_match_op.cc",
+        "kernels/image_ops.cc",
+        "kernels/image_ops.h",
+        "kernels/segmentation_ops.cc",
+        "kernels/segmentation_ops.h",
+    ],
+    gpu_srcs = [
+        "kernels/image_ops_gpu.cu.cc",
+        "kernels/image_ops.h",
+    ],
     deps = [
+        ":image_ops_op_lib",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//third_party/eigen3",
+    ],
+    alwayslink = 1,
+)
+
+tf_kernel_library(
+    name = "buffer_comparator",
+    srcs = if_gpu_is_configured(["buffer_comparator.cc",
+                                 "buffer_comparator.h"]),
+    gpu_srcs = if_gpu_is_configured(["buffer_comparator.cu.cc"]),
+    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "-DTENSORFLOW_USE_ROCM=1",
+    ]),
+    deps = [
+        ":partition_assignment",
         ":stream_executor_util",
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/compiler/xla:util",
