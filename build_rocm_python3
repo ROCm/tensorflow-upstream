@@ -17,7 +17,7 @@
 # that was just built by this script. Since this error is not apparent, it
 # can lead to a lot of frustation and lost time trying to figure why the
 # changes made in the current build are not working!
-TF_PKG_LOC=/tmp/tensorflow_pkg
+TF_PKG_LOC=.
 rm -f $TF_PKG_LOC/tensorflow*.whl
 
 
