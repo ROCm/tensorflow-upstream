@@ -21,6 +21,19 @@ set -xe
 
 source ~/.bashrc
 
+apt-get update
+# Install python dep
+apt-get install -y python-dev
+# Install bz2 dep
+apt-get install -y libbz2-dev
+# Install curses dep
+apt-get install -y libncurses5 libncurses5-dev
+apt-get install - libncursesw5 libncursesw5-dev
+# Install readline dep
+apt-get install -y libreadline8 libreadline-dev
+# Install sqlite3 dependencies
+apt-get install -y libsqlite3-dev
+
 # PYTHON
 wget https://www.python.org/ftp/python/3.7.17/Python-3.7.17.tgz && tar xvf Python-3.7.17.tgz && cd Python-3.7*/ && ./configure --enable-optimizations && make altinstall
 ln -sf /usr/local/bin/python3.7 /usr/bin/python3 && ln -sf /usr/local/bin/pip3.7 /usr/bin/pip3
@@ -36,4 +49,4 @@ export PYTHON_BIN_PATH=/usr/local/bin/python${PYTHON_VERSION}
 curl https://bootstrap.pypa.io/pip/3.7/get-pip.py -o get-pip.py
 python3 get-pip.py
 python3 -m pip install --no-cache-dir --upgrade pip
-python3 -m pip install --user virtualenv
+python3 -m pip install --upgrade virtualenv
