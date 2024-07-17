@@ -41,27 +41,35 @@ using ComparisonKernelT =
     se::TypedKernel<se::DeviceMemory<ElementT>, se::DeviceMemory<ElementT>,
                     float, uint64_t, se::DeviceMemory<uint64_t>>;
 
+struct ComparisonParams {
+  double relative_tol = 0.1;
+  bool verbose = true;
+  const Shape *shape = nullptr;
+  se::Stream* stream = nullptr;
+  se::DeviceMemoryBase current{};
+  se::DeviceMemoryBase expected{};
+};
+
 // Compares two buffers on the GPU.
 //
 // Returns `true` if two buffers are equal, `false` otherwise.
 template <typename ElementT>
-StatusOr<bool> BufferComparator::DeviceCompare(
-    se::Stream* stream, se::DeviceMemoryBase current,
-    se::DeviceMemoryBase expected, absl::string_view kernel_name,
-    void* kernel_symbol) const {
-  se::StreamExecutor* executor = stream->parent();
+static StatusOr<bool> DeviceCompare(
+              absl::string_view kernel_name, void* kernel_symbol, 
+              const ComparisonParams& params) {
+  se::StreamExecutor* executor = params.stream->parent();
 
   se::ScopedDeviceMemory<uint64_t> out_param =
       executor->AllocateOwnedScalar<uint64_t>();
 
-  stream->ThenMemZero(out_param.ptr(), sizeof(uint64_t));
-  if (current.size() != expected.size()) {
+  params.stream->ThenMemZero(out_param.ptr(), sizeof(uint64_t));
+  if (params.current.size() != params.expected.size()) {
     return Internal("Mismatched buffer size: %d bytes vs. %d bytes",
-                    current.size(), expected.size());
+                    params.current.size(), params.expected.size());
   }
 
-  se::DeviceMemory<ElementT> current_typed(current);
-  se::DeviceMemory<ElementT> expected_typed(expected);
+  se::DeviceMemory<ElementT> current_typed(params.current);
+  se::DeviceMemory<ElementT> expected_typed(params.expected);
   uint64_t buffer_size = current_typed.ElementCount();
 
   TF_ASSIGN_OR_RETURN(
@@ -74,17 +82,18 @@ StatusOr<bool> BufferComparator::DeviceCompare(
   const se::DeviceDescription& gpu_device_info =
       executor->GetDeviceDescription();
 
-  LaunchDimensions dim = CalculateLaunchDimensions(shape_, gpu_device_info);
+  LaunchDimensions dim =
+      CalculateLaunchDimensions(*params.shape, gpu_device_info);
 
-  stream->ThenLaunch(se::ThreadDim(dim.threads_per_block()),
-                     se::BlockDim(dim.block_count()), *comparison_kernel,
-                  current_typed, expected_typed, static_cast<float>(tolerance_),
-                     buffer_size, out_param.cref());
+  params.stream->ThenLaunch(se::ThreadDim(dim.threads_per_block()),
+        se::BlockDim(dim.block_count()), *comparison_kernel,
+        current_typed, expected_typed, static_cast<float>(params.relative_tol),
+        buffer_size, out_param.cref());
 
   uint64_t result = -1;
   CHECK_EQ(out_param->size(), sizeof(result));
-  stream->ThenMemcpy(&result, *out_param, sizeof(result));
-  TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+  params.stream->ThenMemcpy(&result, *out_param, sizeof(result));
+  TF_RETURN_IF_ERROR(params.stream->BlockHostUntilDone());
   return result == 0;
 }
 
@@ -93,15 +102,13 @@ StatusOr<bool> BufferComparator::DeviceCompare(
 //
 // Returns true if no differences were seen, false otherwise.
 template <typename ElementType, typename ComparisonType>
-StatusOr<bool> BufferComparator::HostCompare(
-    se::Stream* stream, se::DeviceMemoryBase current,
-    se::DeviceMemoryBase expected) const {
-  int64_t n = current.size() / sizeof(ElementType);
+static StatusOr<bool> HostCompare(const ComparisonParams& params) {
+  int64_t n = params.current.size() / sizeof(ElementType);
   std::vector<ElementType> host_current(n), host_expected(n);
 
-  stream->ThenMemcpy(host_current.data(), current, current.size());
-  stream->ThenMemcpy(host_expected.data(), expected, expected.size());
-  TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+  params.stream->ThenMemcpy(host_current.data(), params.current, params.current.size());
+  params.stream->ThenMemcpy(host_expected.data(), params.expected, params.expected.size());
+  TF_RETURN_IF_ERROR(params.stream->BlockHostUntilDone());
 
   const auto canonicalize = [](ComparisonType a) -> ComparisonType {
     if (std::is_same<ElementType, Eigen::half>::value && a) {
@@ -114,6 +121,7 @@ StatusOr<bool> BufferComparator::HostCompare(
     return a;
   };
   int differences_seen = 0;
+
   for (int64_t i = 0; i < n && differences_seen < 10; ++i) {
     auto current_value = static_cast<ComparisonType>(host_current[i]);
     auto expected_value = static_cast<ComparisonType>(host_expected[i]);
@@ -133,32 +141,30 @@ StatusOr<bool> BufferComparator::HostCompare(
         !(std::abs(current_value_canonical - expected_value_canonical) /
               (std::max(std::abs(current_value_canonical),
                         std::abs(expected_value_canonical)) +
-               1) <
-          tolerance_)) {
+               1) < params.relative_tol)) {
+      if(!params.verbose) return false; // Return immediately if not verbose.
       ++differences_seen;
       LOG(ERROR) << "Difference at " << i << ": " << current_value
-                 << ", expected " << expected_value;
+                   << ", expected " << expected_value;
     }
   }
   return differences_seen == 0;
 }
 
 template <typename ElementT, typename ComparisonT>
-StatusOr<bool> BufferComparator::CompareEqualParameterized(
-    se::Stream* stream, se::DeviceMemoryBase current,
-    se::DeviceMemoryBase expected, absl::string_view kernel_name,
-    void* kernel_symbol) const {
+static StatusOr<bool> CompareEqualParameterized(
+    absl::string_view kernel_name, void* kernel_symbol, 
+    const ComparisonParams& params) {
   XLA_SCOPED_LOGGING_TIMER("BufferComparator::CompareEqual");
-  TF_ASSIGN_OR_RETURN(bool result,
-                      DeviceCompare<ElementT>(stream, current, expected,
-                                              kernel_name, kernel_symbol));
+  TF_ASSIGN_OR_RETURN(
+      bool result, DeviceCompare<ElementT>(kernel_name, kernel_symbol, params));
 
   if (result) {
     return true;
   }
 
-  TF_ASSIGN_OR_RETURN(bool host_return, (HostCompare<ElementT, ComparisonT>(
-                                            stream, current, expected)));
+  TF_ASSIGN_OR_RETURN(bool host_return, 
+          (HostCompare<ElementT, ComparisonT>(params)));
   CHECK_EQ(host_return, result)
       << "Host comparison succeeded even though GPU comparison failed.";
   return false;
@@ -167,40 +173,37 @@ StatusOr<bool> BufferComparator::CompareEqualParameterized(
 StatusOr<bool> BufferComparator::CompareEqual(
     se::Stream* stream, se::DeviceMemoryBase current,
     se::DeviceMemoryBase expected) const {
+
+  ComparisonParams params{
+    relative_tol_, verbose_, &shape_, stream, current, expected};
+
   switch (shape_.element_type()) {
     case xla::F16:
       return CompareEqualParameterized<Eigen::half, float>(
-          stream, current, expected, "fp16_comparison",
-          buffer_comparator::fp16_comparison());
+           "fp16_comparison", buffer_comparator::fp16_comparison(), params);
     case xla::BF16:
       return CompareEqualParameterized<tensorflow::bfloat16, float>(
-          stream, current, expected, "bf16_comparison",
-          buffer_comparator::bf16_comparison());
+           "bf16_comparison", buffer_comparator::bf16_comparison(), params);
     case xla::F32:
       return CompareEqualParameterized<float, float>(
-          stream, current, expected, "fp32_comparison",
-          buffer_comparator::fp32_comparison());
+           "fp32_comparison", buffer_comparator::fp32_comparison(), params);
     case xla::F64:
       return CompareEqualParameterized<double, double>(
-          stream, current, expected, "fp64_comparison",
-          buffer_comparator::fp64_comparison());
+           "fp64_comparison", buffer_comparator::fp64_comparison(), params);
     case xla::S8:
       return CompareEqualParameterized<int8_t, float>(
-          stream, current, expected, "int8_comparison",
-          buffer_comparator::int8_comparison());
+           "int8_comparison", buffer_comparator::int8_comparison(), params);
     case xla::S32:
       return CompareEqualParameterized<int32_t, float>(
-          stream, current, expected, "int32_comparison",
-          buffer_comparator::int32_comparison());
+           "int32_comparison", buffer_comparator::int32_comparison(), params);
     default:
       return Unimplemented("Unimplemented element type");
   }
 }
 
-BufferComparator::BufferComparator(const Shape& shape,
-                                   const HloModuleConfig& config,
-                                   double tolerance)
-    : shape_(shape), config_(config), tolerance_(tolerance) {
+BufferComparator::BufferComparator(const Shape& shape, double tolerance, 
+      bool verbose) : 
+        shape_(shape), relative_tol_(tolerance), verbose_(verbose) {
   // Normalize complex shapes: since we treat the passed array as a contiguous
   // storage it does not matter which dimension are we doubling.
   auto double_dim_size = [&]() {
