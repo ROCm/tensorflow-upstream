@@ -109,9 +109,9 @@ struct GemmLayernormGemmSoftmaxGemmFunctor<GPUDevice, dataTP_> {
         gemm_ln_attn_create_kargs_and_grids<k_>(gemm_ln_attn_args_device);
     constexpr dim3 blocks = k_::BlockSize();
     constexpr ck_tile::index_t kBlockPerCu = k_::kBlockPerCu;
-    float ave_time = ck_tile::launch_kernel(
-        stream_config, ck_tile::make_kernel<blocks.x, kBlockPerCu>(
-                           k_{}, grids, blocks, 0, kargs));
+    ck_tile::launch_kernel(stream_config,
+                           ck_tile::make_kernel<blocks.x, kBlockPerCu>(
+                               k_{}, grids, blocks, 0, kargs));
 
     return Status::OK();
   }

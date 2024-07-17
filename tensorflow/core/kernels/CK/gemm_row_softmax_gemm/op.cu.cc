@@ -41,7 +41,7 @@ void gemm_row_softmax_gemm_fp16(GemmRowSoftmaxGemmParams& param,
                                 hipStream_t stream) {
   HEAD_SZ_SWITCH(param.b0_head_sz, Gemm0MaxK, [&] {
     NEW_HEAD_SZ_SWITCH(param.b1_head_sz, Gemm1MaxK, [&] {
-      if constexpr(Gemm0MaxK <= Gemm1MaxK) {
+      if constexpr (Gemm0MaxK <= Gemm1MaxK) {
         run_gemm_row_softmax_gemm<ck_tile::fp16_t, ck_tile::fp16_t, Gemm0MaxK,
                                   Gemm1MaxK>(param, stream);
       };
@@ -50,8 +50,8 @@ void gemm_row_softmax_gemm_fp16(GemmRowSoftmaxGemmParams& param,
 };
 
 namespace functor {
-template <typename dataTP_>
-struct GemmRowSoftmaxGemmFunctor<GPUDevice, dataTP_> {
+template <typename T>
+struct GemmRowSoftmaxGemmFunctor<GPUDevice, T> {
  public:
   static Status Compute(const GPUDevice& d, const void* mat_B0,
                         const void* mat_A0, const void* mat_A1,
@@ -80,9 +80,9 @@ struct GemmRowSoftmaxGemmFunctor<GPUDevice, dataTP_> {
     params.a1_ld_sz = new_head;
     params.d_batch_stride = head_num * seq;
     params.d_head_stride = seq;
-
-    gemm_row_softmax_gemm_fp16(params, stream);
-
+    if constexpr (std::is_same_v<T, Eigen::half>) {
+      gemm_row_softmax_gemm_fp16(params, stream);
+    }
     return Status::OK();
   }
 };  // struct Fused_Gemm_Bias_Add_Functor

@@ -6,7 +6,6 @@
 #include "tensorflow/core/framework/op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
-
 extern template void
 run_gemv_softmax_gemv<ck_tile::fp16_t, ck_tile::fp16_t, 64>(
     const GemvSoftmaxGemvParams& param, hipStream_t stream);
@@ -28,8 +27,8 @@ void gemv_softmax_gemv_fp16(GemvSoftmaxGemvParams& param, hipStream_t stream) {
 };
 
 namespace functor {
-template <typename dataTP_>
-struct GemvSoftmaxGemvFunctor<GPUDevice, dataTP_> {
+template <typename T>
+struct GemvSoftmaxGemvFunctor<GPUDevice, T> {
  public:
   static Status Compute(const GPUDevice& d, const void* mat_A,
                         const void* mat_B0, const void* keymask,
@@ -58,9 +57,9 @@ struct GemvSoftmaxGemvFunctor<GPUDevice, dataTP_> {
     params.b1_nhead_stride = head_sz;
     params.d_batch_stride = head_sz;
     params.d_nhead_stride = head_sz;
-
-    gemv_softmax_gemv_fp16(params, stream);
-
+    if constexpr (std::is_same_v<T, Eigen::half>) {
+      gemv_softmax_gemv_fp16(params, stream);
+    }
     return Status::OK();
   }
 };  // struct Fused_Gemm_Bias_Add_Functor

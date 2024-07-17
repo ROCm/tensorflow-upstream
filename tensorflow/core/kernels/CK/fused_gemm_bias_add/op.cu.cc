@@ -13,39 +13,39 @@ using GPUDevice = Eigen::GpuDevice;
 template <ck::index_t... Is>
 using S = ck::Sequence<Is...>;
 
-using F16 = ck::half_t;
-using F32 = float;
+template <typename T>
+Status ComputeInternal(const GPUDevice& d, int M, int N, int K, const void* a0,
+                       const void* b0, const void* d0, void* e) {
+  using Row = ck::tensor_layout::gemm::RowMajor;
+  using Col = ck::tensor_layout::gemm::ColumnMajor;
 
-using Row = ck::tensor_layout::gemm::RowMajor;
-using Col = ck::tensor_layout::gemm::ColumnMajor;
+  using A0DataType = T;
+  using B0DataType = T;
+  using AccDataType = float;
+  using CShuffleDataType = float;
+  using D0DataType = T;
+  using DsDataType = ck::Tuple<D0DataType>;
+  using EDataType = T;
 
-using A0DataType = F16;
-using B0DataType = F16;
-using AccDataType = F32;
-using CShuffleDataType = F32;
-using D0DataType = F16;
-using DsDataType = ck::Tuple<D0DataType>;
-using EDataType = F16;
+  using A0Layout = Row;
+  using B0Layout = Col;
+  using D0Layout = Row;
+  using DsLayout = ck::Tuple<D0Layout>;
+  using ELayout = Row;
 
-using A0Layout = Row;
-using B0Layout = Col;
-using D0Layout = Row;
-using DsLayout = ck::Tuple<D0Layout>;
-using ELayout = Row;
+  using PassThrough = ck::tensor_operation::element_wise::PassThrough;
+  using Add = ck::tensor_operation::element_wise::Add;
 
-using PassThrough = ck::tensor_operation::element_wise::PassThrough;
-using Add = ck::tensor_operation::element_wise::Add;
+  using AElementOp = PassThrough;
+  using BElementOp = PassThrough;
+  using CDEElementOp = Add;
 
-using AElementOp = PassThrough;
-using BElementOp = PassThrough;
-using CDEElementOp = Add;
+  static constexpr auto GemmSpec =
+      ck::tensor_operation::device::GemmSpecialization::MNKPadding;
 
-static constexpr auto GemmSpec =
-    ck::tensor_operation::device::GemmSpecialization::MNKPadding;
-
-using DeviceOpInstance =
-    ck::tensor_operation::device::DeviceGemmMultiD_Xdl_CShuffle_V3
-    // clang-format off
+  using DeviceOpInstance =
+      ck::tensor_operation::device::DeviceGemmMultiD_Xdl_CShuffle_V3
+      // clang-format off
 ///######|  ALayout|  BLayout| DsLayout| ELayout|      AData|      BData|     DsData|     EData|     AccData|         CShuffle|           A|           B|          CDE|           GEMM| Block|  MPer|  NPer|  KPer| AK1| BK1| MPer| NPer| MXdl| NXdl|  ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockTransfer| ABlockLds|  BBlockTransfer| BBlockTransfer| BBlockTransfer| BlockTransfer| BBlockTransfer| BBlockTransfer| BBlockLds|    CShuffle|    CShuffle| CBlockTransferClusterLengths|  CBlockTransfer|
 ///######|         |         |         |        |       Type|       Type|       Type|      Type|        Type|         DataType| Elementwise| Elementwise|  Elementwise| Spacialization|  Size| Block| Block| Block|    |    |  XDL|  XDL|  Per|  Per|   ThreadCluster|  ThreadCluster| SrcAccessOrder|   SrcVectorDim|      SrcScalar|      DstScalar| AddExtraM|   ThreadCluster|  ThreadCluster| SrcAccessOrder|  SrcVectorDim|      SrcScalar|      DstScalar| AddExtraN| MXdlPerWave| NXdlPerWave|         _MBlock_MWaveMPerXdl| ScalarPerVector|
 ///######|         |         |         |        |           |           |           |          |            |                 |   Operation|   Operation|    Operation|               |      |      |      |      |    |    |     |     | Wave| Wave| Lengths_K0_M_K1|   ArrangeOrder|               |               |      PerVector|   PerVector_K1|          | Lengths_K0_N_K1|   ArrangeOrder|               |              |      PerVector|   PerVector_K1|          |  PerShuffle|  PerShuffle|         _NBlock_NWaveNPerXdl|   _NWaveNPerXdl|
@@ -65,28 +65,34 @@ using DeviceOpInstance =
         2, 8, 8, 0,
         S<8, 32, 1>,  S<1, 0, 2>,  S<1, 0, 2>,
         2, 8, 8, 0,
-        1, 2, S<1, 32, 1, 8>,      S<8, 8>,  ck::BlockGemmPipelineScheduler::Interwave, ck::BlockGemmPipelineVersion::v1, F16>;
-// clang-format on
+        1, 2, S<1, 32, 1, 8>,      S<8, 8>,  ck::BlockGemmPipelineScheduler::Interwave, ck::BlockGemmPipelineVersion::v1, T>;
+  // clang-format on
+  const hipStream_t stream = d.stream();
+  auto device_op = DeviceOpInstance{};
+  auto invoker = device_op.MakeInvoker();
+  constexpr ck::index_t NumDTensor = DsDataType::Size();
+  auto argument = device_op.MakeArgument(
+      a0, b0, std::array<const void*, NumDTensor>{d0}, e, M, N, K, K, K,
+      std::array<ck::index_t, NumDTensor>{ck::Number<0>{}}, N, AElementOp{},
+      BElementOp{}, CDEElementOp{});
+  if (!device_op.IsSupportedArgument(argument)) {
+    return errors::InvalidArgument(device_op.GetTypeString(),
+                                   " does not support this problem");
+  }
+  invoker.Run(argument, StreamConfig{stream, false, 0, 20, 50});
+
+  return Status::OK();
+}
+
 namespace functor {
-template <typename dataTP_>
-struct FusedGemmBiasAddFunctor<GPUDevice, dataTP_> {
+template <typename T>
+struct FusedGemmBiasAddFunctor<GPUDevice, T> {
  public:
   static Status Compute(const GPUDevice& d, int M, int N, int K, const void* a0,
                         const void* b0, const void* d0, void* e) {
-    const hipStream_t stream = d.stream();
-    auto device_op = DeviceOpInstance{};
-    auto invoker = device_op.MakeInvoker();
-    constexpr ck::index_t NumDTensor = DsDataType::Size();
-    auto argument = device_op.MakeArgument(
-        a0, b0, std::array<const void*, NumDTensor>{d0}, e, M, N, K, K, K,
-        std::array<ck::index_t, NumDTensor>{ck::Number<0>{}}, N, AElementOp{},
-        BElementOp{}, CDEElementOp{});
-    if (!device_op.IsSupportedArgument(argument)) {
-      return errors::InvalidArgument(device_op.GetTypeString(),
-                                     " does not support this problem");
+    if constexpr (std::is_same_v<T, Eigen::half>) {
+      return ComputeInternal<ck::half_t>(d, M, N, K, a0, b0, d0, e);
     }
-    invoker.Run(argument, StreamConfig{stream, false, 0, 20, 50});
-
     return Status::OK();
   }
 };  // struct Fused_Gemm_Bias_Add_Functor

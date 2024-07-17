@@ -26,8 +26,8 @@ void gather_attention_fp16(GatherAttentionParams& param, hipStream_t stream) {
 };
 
 namespace functor {
-template <typename dataTP_>
-struct GatherAttentionFunctor<GPUDevice, dataTP_> {
+template <typename T>
+struct GatherAttentionFunctor<GPUDevice, T> {
  public:
   static Status Compute(const GPUDevice& d, const void* mat_A,
                         const void* mat_B0, const void* keymask,
@@ -60,7 +60,9 @@ struct GatherAttentionFunctor<GPUDevice, dataTP_> {
     params.d_batch_stride = head_sz * head_num;
     params.d_nhead_stride = head_sz;
 
-    gather_attention_fp16(params, stream);
+    if constexpr (std::is_same_v<T, Eigen::half>) {
+      gather_attention_fp16(params, stream);
+    }
 
     return Status::OK();
   }
