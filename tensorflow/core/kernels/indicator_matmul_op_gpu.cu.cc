@@ -142,6 +142,7 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
     OpKernelContext* context, bool trans_a, bool trans_b, int64 m, int64 n,
     int64 k, const Tensor& in_a, const Tensor& in_b, const Tensor& indicator,
     Tensor* out, int64 batch_a, int64 batch_b, int64 paralle_num) {
+	VLOG(-1) << "batch_a=" << batch_a << " batch_b=" << batch_b ;
   if (paralle_num == 1 && batch_a == 1) {
     auto a_ptr = AsDeviceMemory(in_a.template flat<Scalar>().data());
     auto b_ptr = AsDeviceMemory(in_b.template flat<Scalar>().data());
