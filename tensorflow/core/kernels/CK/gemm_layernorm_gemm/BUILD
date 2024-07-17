@@ -10,6 +10,7 @@ licenses(["notice"])  # Apache 2.0
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_gpu_cc_test",
+    "tf_gpu_kernel_library",
     "tf_kernel_library",
 )
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
@@ -32,36 +33,42 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-tf_kernel_library(
-    name = "gemm_layernorm_gemm",
+tf_gpu_kernel_library(
+    name = "gemm_layernorm_gemm_cu",
     srcs = [
-        "op.cc",
-    ],
-    gpu_srcs = [
         "op.cu.cc",
-        "op.h",
-        "gemm_ln_gemm.h",
     ],
     hdrs = [
         "op.h",
         "gemm_ln_gemm.h",
     ],
-    deps = [":ck_deps"] +
-    select({
-        "//conditions:default": [
-            "@ck_archive//:ck",
-        ],
-    }) +
-    MATH_DEPS + [
-        "//tensorflow/core:new_nn_ops_op_lib",
-    ],
-    copts = [
+    deps = [":ck_deps",
+            "@ck_archive//:ck"] +
+    MATH_DEPS,
+    gpu_copts = [
         "-std=c++17",
         "-fexceptions",
     ],
     nocopts = "-fno-exceptions",
 )
 
+tf_kernel_library(
+    name = "gemm_layernorm_gemm",
+    srcs = [
+        "op.cc",
+    ],
+    hdrs = [
+        "op.h",
+        "gemm_ln_gemm.h",
+    ],
+    deps = [":ck_deps",
+            "@ck_archive//:ck",
+            ":gemm_layernorm_gemm_cu",
+            "//tensorflow/core:new_nn_ops_op_lib",
+    ] + MATH_DEPS,
+    copts = ["-fexceptions",],
+    nocopts = "-fno-exceptions",
+)
 
 tf_gpu_cc_test(
     name = "gemm_layernorm_gemm_test",

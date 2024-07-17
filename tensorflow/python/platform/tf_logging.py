@@ -60,7 +60,7 @@ def _get_caller(offset=3):
 
 # The definition of `findCaller` changed in Python 3.2
 if _sys.version_info.major >= 3 and _sys.version_info.minor >= 2:
-  def _logger_find_caller(stack_info=False):  # pylint: disable=g-wrong-blank-lines
+  def _logger_find_caller(stack_info=False, stacklevel = 1):  # pylint: disable=g-wrong-blank-lines
     code, frame = _get_caller(4)
     sinfo = None
     if stack_info:

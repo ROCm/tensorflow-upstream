@@ -1,7 +1,6 @@
 #pragma once
 #include <stdexcept>
 
-#include "ck/ck.hpp"
 #include "tensorflow/core/lib/core/errors.h"
 
 namespace tensorflow {

@@ -1,6 +1,9 @@
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define EIGEN_USE_GPU
 
+#include "ck/ck.hpp"
+#include "ck/utility/data_type.hpp"
+#include "ck/utility/env.hpp"
 #include "ck/tensor_operation/gpu/device/gemm_specialization.hpp"
 #include "ck/tensor_operation/gpu/device/impl/device_batched_gemm_xdl_cshuffle_v3.hpp"
 #include "ck/tensor_operation/gpu/device/tensor_layout.hpp"

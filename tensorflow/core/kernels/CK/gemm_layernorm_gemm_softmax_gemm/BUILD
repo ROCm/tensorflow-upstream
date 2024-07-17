@@ -10,6 +10,7 @@ licenses(["notice"])  # Apache 2.0
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_gpu_cc_test",
+    "tf_gpu_kernel_library",
     "tf_kernel_library",
 )
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
@@ -32,43 +33,50 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-tf_kernel_library(
-    name = "gemm_layernorm_gemm_softmax_gemm",
+tf_gpu_kernel_library(
+    name = "gemm_layernorm_gemm_softmax_gemm_cu",
     srcs = [
-        "op.cc",
-    ],
-    gpu_srcs = [
         "op.cu.cc",
-        "op.h",
-        "gemm_ln_attn.h",
     ],
     hdrs = [
         "op.h",
         "gemm_ln_attn.h",
     ],
-    deps = [":ck_deps"] +
-    select({
-        "//conditions:default": [
-            "@ck_archive//:ck",
-        ],
-    }) +
-    MATH_DEPS + [
-        "//tensorflow/core:new_nn_ops_op_lib",
-    ],
-    copts = [
+    deps = [":ck_deps",
+            "@ck_archive//:ck"] +
+    MATH_DEPS,
+    gpu_copts = [
         "-std=c++17",
         "-fexceptions",
     ],
     nocopts = "-fno-exceptions",
 )
 
+tf_kernel_library(
+    name = "gemm_layernorm_gemm_softmax_gemm",
+    srcs = [
+        "op.cc",
+    ],
+    hdrs = [
+        "op.h",
+        "gemm_ln_attn.h",
+    ],
+    deps = [":ck_deps",
+            "@ck_archive//:ck",
+            ":gemm_layernorm_gemm_softmax_gemm_cu",
+            "//tensorflow/core:new_nn_ops_op_lib",
+    ] + MATH_DEPS,
+    copts = ["-fexceptions",],
+    nocopts = "-fno-exceptions",
+)
+
 
 tf_gpu_cc_test(
-    name = "gemm_layernorm_gemm_softmax_gemm_test",
+    name = "gemm_layernorm_gemm_softmax_gemm_softmax_gemm_test",
     size = "small",
     srcs = ["op_test.cc"],
     deps = [
-        ":gemm_layernorm_gemm_softmax_gemm",
+        ":gemm_layernorm_gemm_softmax_gemm_softmax_gemm",
         "//tensorflow/core/kernels:ops_testutil",
         "//tensorflow/core/kernels:ops_util",
         "//tensorflow/core:core_cpu",

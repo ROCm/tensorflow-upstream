@@ -10,6 +10,7 @@ licenses(["notice"])  # Apache 2.0
 load(
     "//tensorflow:tensorflow.bzl",
     "tf_gpu_cc_test",
+    "tf_gpu_kernel_library",
     "tf_kernel_library",
 )
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
@@ -32,12 +33,9 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-tf_kernel_library(
-    name = "gemm_row_softmax_gemm",
+tf_gpu_kernel_library(
+    name = "gemm_row_softmax_gemm_cu",
     srcs = [
-        "op.cc",
-    ],
-    gpu_srcs = [
         "op.cu.cc",
         "op.h",
     ] + glob(["instances/*.cpp"]),
@@ -60,6 +58,20 @@ tf_kernel_library(
     nocopts = "-fno-exceptions",
 )
 
+tf_kernel_library(
+    name = "gemm_row_softmax_gemm",
+    srcs = [
+        "op.cc",
+    ],
+    hdrs = glob(["*.h"]),
+    deps = [":ck_deps",
+            "@ck_archive//:ck",
+            ":gemm_row_softmax_gemm_cu",
+            "//tensorflow/core:new_nn_ops_op_lib",
+    ] + MATH_DEPS,
+    copts = ["-fexceptions",],
+    nocopts = "-fno-exceptions",
+)
 
 tf_gpu_cc_test(
     name = "gemm_row_softmax_gemm_test",
