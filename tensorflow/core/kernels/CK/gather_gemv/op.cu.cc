@@ -13,67 +13,77 @@ using GPUDevice = Eigen::GpuDevice;
 
 template <ck::index_t... Is>
 using S = ck::Sequence<Is...>;
+template <typename T>
+Status ComputeInternal(const GPUDevice& d, const void* mat_A, const void* mat_B,
+                       const int* indices, void* mat_D, int head_sz, int seq,
+                       int B, int index, int head_num) {
+  using PassThrough = ck::tensor_operation::element_wise::PassThrough;
+  using Scale = ck::tensor_operation::element_wise::Scale;
 
-using PassThrough = ck::tensor_operation::element_wise::PassThrough;
-using Scale = ck::tensor_operation::element_wise::Scale;
+  using Row = ck::tensor_layout::gemm::RowMajor;
+  using Col = ck::tensor_layout::gemm::ColumnMajor;
 
-using Row = ck::tensor_layout::gemm::RowMajor;
-using Col = ck::tensor_layout::gemm::ColumnMajor;
+  using ADataType = T;
+  using BDataType = T;
+  using AccDataType = float;
+  using CShuffleDataType = T;
+  using CDataType = T;
 
-using ADataType = ck::half_t;
-using BDataType = ck::half_t;
-using AccDataType = float;
-using CShuffleDataType = ck::half_t;
-using CDataType = ck::half_t;
+  using AElementOp = PassThrough;
+  using BElementOp = PassThrough;
+  using CElementOp = Scale;
 
-using AElementOp = PassThrough;
-using BElementOp = PassThrough;
-using CElementOp = Scale;
+  using BLayout = Col;
 
-using BLayout = Col;
+  static constexpr auto GemmDefault =
+      ck::tensor_operation::device::GemmSpecialization::MNKPadding;
 
-static constexpr auto GemmDefault =
-    ck::tensor_operation::device::GemmSpecialization::MNKPadding;
+  using DeviceGemmV2Instance =
+      ck::tensor_operation::device::DeviceGatherGemv_Xdl_CShuffleV3<
+          ck::tensor_operation::device::GatherGemvType::v1, ADataType,
+          BDataType, CDataType, AccDataType, CShuffleDataType, AElementOp,
+          BElementOp, CElementOp, GemmDefault, 256, 128, 128, 64, 8, 8, 16, 16,
+          4, 4, S<8, 32, 1>, S<1, 0, 2>, S<1, 0, 2>, 2, 8, 8, 0, S<8, 32, 1>,
+          S<1, 0, 2>, S<1, 0, 2>, 2, 8, 8, 0, 1, 2, S<1, 32, 1, 8>, 8,
+          ck::BlockGemmPipelineScheduler::Intrawave,
+          ck::BlockGemmPipelineVersion::v1>;
 
-using DeviceGemmV2Instance =
-    ck::tensor_operation::device::DeviceGatherGemv_Xdl_CShuffleV3<
-        ck::tensor_operation::device::GatherGemvType::v1, ADataType, BDataType,
-        CDataType, AccDataType, CShuffleDataType, AElementOp, BElementOp,
-        CElementOp, GemmDefault, 256, 128, 128, 64, 8, 8, 16, 16, 4, 4,
-        S<8, 32, 1>, S<1, 0, 2>, S<1, 0, 2>, 2, 8, 8, 0, S<8, 32, 1>,
-        S<1, 0, 2>, S<1, 0, 2>, 2, 8, 8, 0, 1, 2, S<1, 32, 1, 8>, 8,
-        ck::BlockGemmPipelineScheduler::Intrawave,
-        ck::BlockGemmPipelineVersion::v1>;
+  auto get_c_element_op = [](int HeadSz) {
+    float mul = 1.0f / sqrtf(HeadSz * 1.f);
+    return CElementOp{mul};
+  };
 
-CElementOp get_c_element_op(int HeadSz) {
-  float mul = 1.0f / sqrtf(HeadSz * 1.f);
-  return CElementOp{mul};
+  const auto& stream = d.stream();
+
+  auto gemm = DeviceGemmV2Instance{};
+  auto invoker = gemm.MakeInvoker();
+
+  auto argument = gemm.MakeArgument(static_cast<const ADataType*>(mat_A),
+                                    static_cast<const BDataType*>(mat_B),
+                                    indices, static_cast<CDataType*>(mat_D), B,
+                                    index, head_num, seq, head_sz, AElementOp{},
+                                    BElementOp{}, get_c_element_op(head_sz));
+
+  if (!gemm.IsSupportedArgument(argument)) {
+    return errors::InvalidArgument(gemm.GetTypeString(),
+                                   " does not support this problem");
+  }
+
+  invoker.Run(argument, StreamConfig{stream, false, 0, 20, 50});
+
+  return Status::OK();
 }
-
 namespace functor {
-template <typename dataTP_>
-struct GatherGemvFunctor<GPUDevice, dataTP_> {
+template <typename T>
+struct GatherGemvFunctor<GPUDevice, T> {
  public:
   static Status Compute(const GPUDevice& d, const void* mat_A,
                         const void* mat_B, const int* indices, void* mat_D,
                         int head_sz, int seq, int B, int index, int head_num) {
-    const auto& stream = d.stream();
-
-    auto gemm = DeviceGemmV2Instance{};
-    auto invoker = gemm.MakeInvoker();
-
-    auto argument = gemm.MakeArgument(
-        static_cast<const ADataType*>(mat_A),
-        static_cast<const BDataType*>(mat_B), indices,
-        static_cast<CDataType*>(mat_D), B, index, head_num, seq, head_sz,
-        AElementOp{}, BElementOp{}, get_c_element_op(head_sz));
-
-    if (!gemm.IsSupportedArgument(argument)) {
-      return errors::InvalidArgument(gemm.GetTypeString(),
-                                     " does not support this problem");
+    if constexpr (std::is_same_v<T, Eigen::half>) {
+      return ComputeInternal<ck::half_t>(d, mat_A, mat_B, indices, mat_D,
+                                         head_sz, seq, B, index, head_num);
     }
-
-    invoker.Run(argument, StreamConfig{stream, false, 0, 20, 50});
 
     return Status::OK();
   }

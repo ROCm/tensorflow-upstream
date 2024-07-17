@@ -14,56 +14,52 @@ using GPUDevice = Eigen::GpuDevice;
 template <ck::index_t... Is>
 using S = ck::Sequence<Is...>;
 
-using PassThrough = ck::tensor_operation::element_wise::PassThrough;
-using Scale = ck::tensor_operation::element_wise::Scale;
+template <typename T>
+Status ComputeInternal(const GPUDevice& d, const void* mat_A, const void* mat_B,
+                       const int* indices, void* mat_D, int head_sz, int seq,
+                       int B, int index, int head_num) {
+  using PassThrough = ck::tensor_operation::element_wise::PassThrough;
+  using Scale = ck::tensor_operation::element_wise::Scale;
 
-using Row = ck::tensor_layout::gemm::RowMajor;
-using Col = ck::tensor_layout::gemm::ColumnMajor;
+  using Row = ck::tensor_layout::gemm::RowMajor;
+  using Col = ck::tensor_layout::gemm::ColumnMajor;
 
-using ADataType = ck::half_t;
-using BDataType = ck::half_t;
-using AccDataType = float;
-using CShuffleDataType = ck::half_t;
-using CDataType = ck::half_t;
+  using ADataType = ck::half_t;
+  using BDataType = ck::half_t;
+  using AccDataType = float;
+  using CShuffleDataType = ck::half_t;
+  using CDataType = ck::half_t;
 
-using AElementOp = PassThrough;
-using BElementOp = PassThrough;
-using CElementOp = PassThrough;
+  using AElementOp = PassThrough;
+  using BElementOp = PassThrough;
+  using CElementOp = PassThrough;
 
-using BLayout = Row;
+  using BLayout = Row;
 
-static constexpr auto GemmDefault =
-    ck::tensor_operation::device::GemmSpecialization::MNKPadding;
+  static constexpr auto GemmDefault =
+      ck::tensor_operation::device::GemmSpecialization::MNKPadding;
 
-// clang-format off
-using DeviceGemmV2Instance = 
-    ck::tensor_operation::device::DeviceGatherGemv_Xdl_CShuffleV3<
-        ck::tensor_operation::device::GatherGemvType::v2,
-        ADataType,   BDataType,  CDataType,  AccDataType,  CShuffleDataType, 
-        AElementOp,  BElementOp, CElementOp, GemmDefault, 
-        128,
-        16,  64,  64,
-        8,   4,
-        16,  16,
-        1,   2,
-        S<8, 16, 1>,  S<1, 0, 2>,   S<1, 0, 2>,
-        2,   8,   8,   0,
-        S<16, 8, 1>,   S<0, 2, 1>,   S<0, 2, 1>,
-        1,   8,   4,   0,
-        1,   1,   S<1, 16, 1, 8>,   4,
-        ck::BlockGemmPipelineScheduler::Intrawave, ck::BlockGemmPipelineVersion::v1>;
+  // clang-format off
+  using DeviceGemmV2Instance = 
+      ck::tensor_operation::device::DeviceGatherGemv_Xdl_CShuffleV3<
+          ck::tensor_operation::device::GatherGemvType::v2,
+          ADataType,   BDataType,  CDataType,  AccDataType,  CShuffleDataType, 
+          AElementOp,  BElementOp, CElementOp, GemmDefault, 
+          128,
+          16,  64,  64,
+          8,   4,
+          16,  16,
+          1,   2,
+          S<8, 16, 1>,  S<1, 0, 2>,   S<1, 0, 2>,
+          2,   8,   8,   0,
+          S<16, 8, 1>,   S<0, 2, 1>,   S<0, 2, 1>,
+          1,   8,   4,   0,
+          1,   1,   S<1, 16, 1, 8>,   4,
+          ck::BlockGemmPipelineScheduler::Intrawave, ck::BlockGemmPipelineVersion::v1>;
 
-CElementOp get_c_element_op(int) {
-  return CElementOp{}; 
-}
-
-namespace functor {
-template <typename dataTP_>
-struct GatherGemv2Functor<GPUDevice, dataTP_> {
- public:
-  static Status Compute(const GPUDevice& d, const void* mat_A,
-                        const void* mat_B, const int* indices, void* mat_D,
-                        int head_sz, int seq, int B, int index, int head_num) {
+    auto get_c_element_op = [](int) {
+      return CElementOp{}; 
+    };
 
     const auto& stream = d.stream();
 
@@ -82,6 +78,20 @@ struct GatherGemv2Functor<GPUDevice, dataTP_> {
     }
 
     invoker.Run(argument, StreamConfig{stream, false, 0, 20, 50});
+    return Status::OK();
+}
+namespace functor {
+template <typename T>
+struct GatherGemv2Functor<GPUDevice, T> {
+ public:
+  static Status Compute(const GPUDevice& d, const void* mat_A,
+                        const void* mat_B, const int* indices, void* mat_D,
+                        int head_sz, int seq, int B, int index, int head_num) {
+
+    if constexpr (std::is_same_v<T, Eigen::half>) {
+      return ComputeInternal<ck::half_t>(d, mat_A, mat_B, indices, mat_D,
+                                         head_sz, seq, B, index, head_num);
+    }
 
     return Status::OK();
   }
