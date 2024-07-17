@@ -40,7 +40,6 @@ tf_gpu_kernel_library(
     ],
     hdrs = [
         "op.h",
-        "gemm_ln_gemm.h",
     ],
     deps = [":ck_deps",
             "@ck_archive//:ck"] +
@@ -59,7 +58,6 @@ tf_kernel_library(
     ],
     hdrs = [
         "op.h",
-        "gemm_ln_gemm.h",
     ],
     deps = [":ck_deps",
             "@ck_archive//:ck",

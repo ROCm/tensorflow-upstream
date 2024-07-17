@@ -40,7 +40,6 @@ tf_gpu_kernel_library(
     ],
     hdrs = [
         "op.h",
-        "gemm_ln_attn.h",
     ],
     deps = [":ck_deps",
             "@ck_archive//:ck"] +
@@ -59,7 +58,6 @@ tf_kernel_library(
     ],
     hdrs = [
         "op.h",
-        "gemm_ln_attn.h",
     ],
     deps = [":ck_deps",
             "@ck_archive//:ck",
@@ -72,11 +70,11 @@ tf_kernel_library(
 
 
 tf_gpu_cc_test(
-    name = "gemm_layernorm_gemm_softmax_gemm_softmax_gemm_test",
+    name = "gemm_layernorm_gemm_softmax_gemm_test",
     size = "small",
     srcs = ["op_test.cc"],
     deps = [
-        ":gemm_layernorm_gemm_softmax_gemm_softmax_gemm",
+        ":gemm_layernorm_gemm_softmax_gemm",
         "//tensorflow/core/kernels:ops_testutil",
         "//tensorflow/core/kernels:ops_util",
         "//tensorflow/core:core_cpu",
