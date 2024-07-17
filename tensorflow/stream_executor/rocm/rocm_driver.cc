@@ -1190,7 +1190,8 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
     if(pos!=string::npos)
        gcnArchName = gcnArchName.substr(pos+3);
     VLOG(1)<<"GCN arch name (stripped) " << gcnArchName;
-    supported = (gcnArchName=="908" || gcnArchName=="910" || gcnArchName=="90a");
+    supported = (gcnArchName=="908" || gcnArchName=="910" || gcnArchName=="90a" 
+      || gcnArchName=="940" || gcnArchName=="941" || gcnArchName=="942");
     gfx90a = (gcnArchName=="910" || gcnArchName=="90a");
     return port::Status::OK();
   }
