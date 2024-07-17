@@ -152,7 +152,11 @@ if [ -n "${CI_BUILD_USER_FORCE_BADNAME}" ]; then
 fi
 
 # Run the command inside the container.
+PWD=$(pwd)
+echo "PWD: "${PWD}
+echo "WORKSPACE: ${WORKSPACE}"
 echo "Running '${COMMAND[*]}' inside ${DOCKER_IMG_NAME}..."
+ls -l
 mkdir -p ${WORKSPACE}/bazel-ci_build-cache
 # By default we cleanup - remove the container once it finish running (--rm)
 # and share the PID namespace (--pid=host) so the process inside does not have
