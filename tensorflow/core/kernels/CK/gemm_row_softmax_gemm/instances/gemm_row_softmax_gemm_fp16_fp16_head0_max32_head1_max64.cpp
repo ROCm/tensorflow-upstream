@@ -4,7 +4,7 @@
 
 #include <ck_tile/core.hpp>
 
-#include "tensorflow/core/kernels/CK/gemm_row_softmax_gemm/gemm_row_softmax_gemm_dispatch.h"
+#include "ck_tile/05_gemm_row_softmax_gemm/gemm_row_softmax_gemm_dispatch.hpp"
 
 // clang-format off
 template void run_gemm_row_softmax_gemm<ck_tile::fp16_t, ck_tile::fp16_t, 32, 64>(const GemmRowSoftmaxGemmParams& param, hipStream_t stream);

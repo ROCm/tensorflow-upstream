@@ -39,8 +39,11 @@ tf_kernel_library(
     ],
     gpu_srcs = [
         "op.cu.cc",
-    ] + glob(["*.h"]) + glob(["instances/*.cpp"]),
-    hdrs = glob(["*.h"]),
+        "op.h",
+    ] + glob(["instances/*.cpp"]),
+    hdrs = [
+        "op.h",
+    ],
     deps = [":ck_deps"] +
     select({
         "//conditions:default": [

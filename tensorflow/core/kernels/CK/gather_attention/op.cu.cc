@@ -3,14 +3,13 @@
 
 #include <ck_tile/core.hpp>
 
-#include "gather_attention_dispatch.hpp"
-#include "gather_attention_headdim_switch.hpp"
+#include "ck_tile/07_gather_attention/gather_attention_dispatch.hpp"
+#include "ck_tile/07_gather_attention/gather_attention_headdim_switch.hpp"
 #include "op.h"
 #include "tensorflow/core/framework/op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
 // clang-format off
-extern template void run_gather_attention<ck_tile::fp16_t, ck_tile::fp16_t,  32>(const GatherAttentionParams& param, hipStream_t stream);
 extern template void run_gather_attention<ck_tile::fp16_t, ck_tile::fp16_t,  64>(const GatherAttentionParams& param, hipStream_t stream);
 extern template void run_gather_attention<ck_tile::fp16_t, ck_tile::fp16_t,  128>(const GatherAttentionParams& param, hipStream_t stream);
 extern template void run_gather_attention<ck_tile::fp16_t, ck_tile::fp16_t,  256>(const GatherAttentionParams& param, hipStream_t stream);

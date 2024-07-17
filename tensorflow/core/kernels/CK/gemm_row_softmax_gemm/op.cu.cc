@@ -3,8 +3,8 @@
 
 #include <ck_tile/core.hpp>
 
-#include "gemm_row_softmax_gemm_dispatch.h"
-#include "gemm_row_softmax_gemm_headdim_switch.h"
+#include "ck_tile/05_gemm_row_softmax_gemm/gemm_row_softmax_gemm_dispatch.hpp"
+#include "ck_tile/05_gemm_row_softmax_gemm/gemm_row_softmax_gemm_headdim_switch.hpp"
 #include "op.h"
 #include "tensorflow/core/framework/op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
@@ -41,7 +41,7 @@ void gemm_row_softmax_gemm_fp16(GemmRowSoftmaxGemmParams& param,
                                 hipStream_t stream) {
   HEAD_SZ_SWITCH(param.b0_head_sz, Gemm0MaxK, [&] {
     NEW_HEAD_SZ_SWITCH(param.b1_head_sz, Gemm1MaxK, [&] {
-      if (Gemm0MaxK <= Gemm1MaxK) {
+      if constexpr(Gemm0MaxK <= Gemm1MaxK) {
         run_gemm_row_softmax_gemm<ck_tile::fp16_t, ck_tile::fp16_t, Gemm0MaxK,
                                   Gemm1MaxK>(param, stream);
       };

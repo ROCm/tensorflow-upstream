@@ -89,7 +89,8 @@ class GatherGemv2Test : public OpsTestBase {
     // output (index, 1, head_sz * head_num)
 
     AddInputFromArray<T>(TensorShape({index, head_num, seq}), mat_A);  // 0
-    AddInputFromArray<T>(TensorShape({B, seq, head_sz * head_num}), mat_B);  // 1
+    AddInputFromArray<T>(TensorShape({B, seq, head_sz * head_num}),
+                         mat_B);                            // 1
     AddInputFromArray<int>(TensorShape({index}), indices);  // 1
 
     TF_ASSERT_OK(RunOpKernel());

@@ -1,14 +1,12 @@
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define EIGEN_USE_GPU
-#include "gemv_softmax_gemv_dispatch.hpp"
-#include "gemv_softmax_gemv_headdim_switch.hpp"
+#include "ck_tile/08_gemv_softmax_gemv/gemv_softmax_gemv_dispatch.hpp"
+#include "ck_tile/08_gemv_softmax_gemv/gemv_softmax_gemv_headdim_switch.hpp"
 #include "op.h"
 #include "tensorflow/core/framework/op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
-extern template void
-run_gemv_softmax_gemv<ck_tile::fp16_t, ck_tile::fp16_t, 32>(
-    const GemvSoftmaxGemvParams& param, hipStream_t stream);
+
 extern template void
 run_gemv_softmax_gemv<ck_tile::fp16_t, ck_tile::fp16_t, 64>(
     const GemvSoftmaxGemvParams& param, hipStream_t stream);
