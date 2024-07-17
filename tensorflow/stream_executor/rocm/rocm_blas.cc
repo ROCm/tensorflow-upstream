@@ -283,6 +283,8 @@ namespace wrap {
 STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_create_handle)
 STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_destroy_handle)
 STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_set_stream)
+STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_get_math_mode)
+STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_set_math_mode)
 // STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_set_pointer_mode)
 // STREAM_EXECUTOR_ROCBLAS_V2_WRAP(rocblas_get_pointer_mode)
 STREAM_EXECUTOR_ROCBLAS_WRAP(rocblas_hgemm_batched)
@@ -317,6 +319,55 @@ static string ToString(rocblas_status status) {
       return absl::StrCat("<invalid rocBLAS status: ", status, ">");
   }
 }
+
+class ScopedRocblasMathMode {
+ public:
+  // Note that, because the setting of the rocblas math mode is fallible,
+  // construction of this scoped datatype must be paired with a call to
+  // Init().
+  //
+  // Parameters:
+  //  handle: The rocblas library handle to act upon in setting the math mode.
+  explicit ScopedRocblasMathMode(GpuExecutor * parent, rocblas_handle handle)
+      : parent_(parent), handle_(handle), ok_(false) {}
+
+  // Attempts the switch to the requested scoped math mode, new_mode.
+  //
+  // Note that when false is returned, an appropriate error has already been
+  // logged.
+  bool Init(rocblas_math_mode new_mode) {
+    rocblas_status ret = wrap::rocblas_get_math_mode(parent_, handle_, &old_mode_);
+    if (ret != rocblas_status_success) {
+      LOG(ERROR) << "failed to get old rocblas math mode: " << ToString(ret);
+      return ok_ = false;
+    }
+
+    ret = wrap::rocblas_set_math_mode(parent_, handle_, new_mode);
+    if (ret != rocblas_status_success) {
+      LOG(ERROR) << "failed to set new rocblas math mode: " << ToString(ret);
+      return ok_ = false;
+    }
+    return ok_ = true;
+  }
+
+  // Switches back to the prior math mode, if the switch operation was
+  // successful in the first place.
+  ~ScopedRocblasMathMode() {
+    if (ok_) {
+      rocblas_status ret = wrap::rocblas_set_math_mode(parent_, handle_, old_mode_);
+      if (ret != rocblas_status_success) {
+        LOG(ERROR) << "failed to set former cublas math mode: "
+                   << ToString(ret);
+      }
+    }
+  }
+
+ private:
+  GpuExecutor *parent_;
+  rocblas_handle handle_;  // Handle to the rocBLAS instance of interest.
+  rocblas_math_mode old_mode_;  // Prior rocBLAS math mode, to be restored.
+  bool ok_;                // Whether the change was successful.
+};
 
 bool ROCMBlas::Init() {
   rocblas_status ret = wrap::rocblas_create_handle(parent_, &blas_);
@@ -411,6 +462,8 @@ bool ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
 
   CHECK(blas_ != nullptr);
   if (!SetStream(stream)) {
+		if (err_on_failure)
+			LOG(ERROR) << "Stream is null!";
     return false;
   }
 
@@ -1495,6 +1548,14 @@ bool ROCMBlas::DoBlasGemmImpl(Stream *stream, blas::GemmCallContext<T> ctx, V st
   const T alpha(ctx.alpha);
   const T beta(ctx.beta);
   typedef typename std::conditional<std::is_same<T, Eigen::half>::value, rocblas_half, T>::type DT;
+	/*
+	ScopedRocblasMathMode math_mode{parent_, blas_};
+	if (std::is_same<T, float>::value) {
+		if (!math_mode.Init(rocblas_xf32_xdl_math_op)) {
+			return false;
+		}
+	}
+	*/
   // we don't handle CallContext - this would not be called when XDLOPS are available (MI100 and up)
   if(ctx.stride_a>=0)
   {
@@ -1766,6 +1827,8 @@ port::Status ROCMBlas::AllocateStridedBuffer(
     return port::Status::OK();
   }
 
+	VLOG(-1) << "Need to reallocate buffers for strided gemm.";
+
   if (scratch_allocator != nullptr) {
     SE_ASSIGN_OR_RETURN(
         DeviceMemory<uint8> batch_matrix_bytes,
@@ -1816,6 +1879,7 @@ port::Status ROCMBlas::AllocateStridedBuffer(
   return port::Status::OK();
 }
 
+#if 0
 template <typename T, typename FuncT, typename NativeT>
 port::Status ROCMBlas::DoBlasGemmBatchedInternal(
     FuncT rocblas_func, Stream *stream, blas::Transpose transa,
@@ -1911,6 +1975,71 @@ port::Status ROCMBlas::DoBlasGemmBatchedInternal(
                         "failed BLAS call, see log for details");
   }
 }
+#endif
+
+template <class T, class V, class Alpha_T>
+bool ROCMBlas::DoBlasGemmBatchedImpl(
+    V rocblas_func, Stream *stream, blas::Transpose transa,
+    blas::Transpose transb, uint64 m, uint64 n, uint64 k, Alpha_T alpha,
+    const T **a_array, int lda, const T **b_array, int ldb, Alpha_T beta,
+    T **c_array, int ldc, int batch_count) {
+	std::vector<DeviceMemory<T> > a_mems;
+	std::vector<DeviceMemory<T> > b_mems;
+	std::vector<DeviceMemory<T> > c_mems;
+	a_mems.reserve(batch_count);
+	b_mems.reserve(batch_count);
+	c_mems.reserve(batch_count);
+
+  uint64_t batch_stride_a = 0;
+  uint64_t batch_stride_b = 0;
+  uint64_t batch_stride_c = 0;
+
+  assert(ldc >= m);
+  batch_stride_c = ldc * n;
+
+  if (ROCMBlasTranspose(transa) == rocblas_operation_none) {
+    assert(lda >= m);
+    batch_stride_a = lda * k;
+  } else {
+    assert(lda >= k);
+    batch_stride_a = lda * m;
+  }
+
+  if (ROCMBlasTranspose(transb) == rocblas_operation_none) {
+    assert(ldb >= k);
+    batch_stride_b = ldb * n;
+  } else {
+    assert(ldb >= n);
+    batch_stride_b = ldb * k;
+  }
+	for (int i=0;i<batch_count;i++) {
+		// Do I need to use smarter pointers here?
+		a_mems.push_back(DeviceMemory<T>::MakeFromByteSize(const_cast<void*>((const void*)a_array[i]), batch_stride_a*sizeof(T)));
+		b_mems.push_back(DeviceMemory<T>::MakeFromByteSize(const_cast<void*>((const void*)b_array[i]), batch_stride_b*sizeof(T)));
+		c_mems.push_back(DeviceMemory<T>::MakeFromByteSize(const_cast<void*>((const void*)c_array[i]), batch_stride_c*sizeof(T)));
+	}
+
+	const auto toPtrs = [](std::vector<DeviceMemory<T>>& v) {
+		std::vector<DeviceMemory<T>*> ptrs;
+		ptrs.reserve(v.size());
+		for (auto& mem : v) {
+			ptrs.push_back(&mem);
+		}
+		return ptrs;
+	};
+
+	std::vector<DeviceMemory<T> *> a_ptrs = toPtrs(a_mems);
+	std::vector<DeviceMemory<T> *> b_ptrs = toPtrs(b_mems);
+	std::vector<DeviceMemory<T> *> c_ptrs = toPtrs(c_mems);
+
+	const port::ArraySlice<DeviceMemory<T> *> pa = port::ArraySlice<DeviceMemory<T> *>(a_ptrs);
+	const port::ArraySlice<DeviceMemory<T> *> pb = port::ArraySlice<DeviceMemory<T> *>(b_ptrs);
+	const port::ArraySlice<DeviceMemory<T> *> pc = port::ArraySlice<DeviceMemory<T> *>(c_ptrs);
+	blas::BatchedGemmCallContext<T> ctx{transa, transb, m, n, k, alpha, beta,
+		&pa, lda, &pb, ldb, &pc, ldc, batch_count};
+	return DoBlasGemmBatchedImpl(stream, ctx, rocblas_func);
+
+}
 
 template <class T, class V>
 bool ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContext<T> ctx, V rocblas_func) {
@@ -1966,6 +2095,7 @@ bool ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContex
       AllocateStridedBuffer<T>(a_raw_ptrs, batch_count, batch_stride_a,
                                scratch_allocator, stream, &a_temp, &a);
   if (a_allocation_status != port::Status::OK()) {
+    VLOG(-1)<<"failed to allocate a";
     return false;
   }
 
@@ -1975,6 +2105,7 @@ bool ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContex
       AllocateStridedBuffer<T>(b_raw_ptrs, batch_count, batch_stride_b,
                                scratch_allocator, stream, &b_temp, &b);
   if (b_allocation_status != port::Status::OK()) {
+    VLOG(-1)<<"failed to allocate b";
     return false;
   }
 
@@ -1984,6 +2115,7 @@ bool ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContex
       AllocateStridedBuffer<T>(c_raw_ptrs, batch_count, batch_stride_c,
                                scratch_allocator, stream, &c_temp, &c);
   if (c_allocation_status != port::Status::OK()) {
+    VLOG(-1)<<"failed to allocate c";
     return false;
   }
 
@@ -2024,8 +2156,13 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  float beta, Eigen::half **c_array, int ldc,
                                  int batch_count) {
 	VLOG(-1) << "Running DoBlasGemmBatched array fp16";
-  const Eigen::half alpha_half(alpha);
-  const Eigen::half beta_half(beta);
+  //const Eigen::half alpha_half(alpha);
+  //const Eigen::half beta_half(beta);
+  return DoBlasGemmBatchedImpl(
+				 wrap::rocblas_hgemm_strided_batched, stream, transa, transb, 
+				 m, n, k, alpha, a_array, lda,
+				 b_array, ldb, beta, c_array, ldc, batch_count);
+	/*
   port::Status status = DoBlasGemmBatchedInternal<
         Eigen::half, decltype(wrap::rocblas_hgemm_batched), rocblas_half >(
                         wrap::rocblas_hgemm_batched, stream, transa, transb, 
@@ -2035,6 +2172,7 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
     LOG(ERROR) << status;
   }
   return status.ok();
+	*/
 }
 
 bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
@@ -2044,6 +2182,17 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  float beta, float **c_array, int ldc,
                                  int batch_count) {
 	VLOG(-1) << "Running DoBlasGemmBatched array fp32";
+	/*
+	ScopedRocblasMathMode math_mode{parent_, blas_};
+	if (!math_mode.Init(rocblas_xf32_xdl_math_op)) {
+		return false;
+	}
+	*/
+  return DoBlasGemmBatchedImpl(
+				 wrap::rocblas_sgemm_strided_batched, stream, transa, transb, 
+				 m, n, k, alpha, a_array, lda,
+				 b_array, ldb, beta, c_array, ldc, batch_count);
+	/*
   port::Status status = DoBlasGemmBatchedInternal(
                         wrap::rocblas_sgemm_batched, stream, transa, transb, 
                         m, n, k, alpha, a_array, lda,
@@ -2052,6 +2201,7 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
     LOG(ERROR) << status;
   }
   return status.ok();
+												*/
 }
 
 bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
@@ -2060,6 +2210,11 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  int lda, const double **b_array, int ldb,
                                  double beta, double **c_array, int ldc,
                                  int batch_count) {
+  return DoBlasGemmBatchedImpl(
+				 wrap::rocblas_dgemm_strided_batched, stream, transa, transb, 
+				 m, n, k, alpha, a_array, lda,
+				 b_array, ldb, beta, c_array, ldc, batch_count);
+	/*
   port::Status status = DoBlasGemmBatchedInternal(
                         wrap::rocblas_dgemm_batched, stream, transa, transb, 
                         m, n, k, alpha, a_array, lda,
@@ -2068,6 +2223,7 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
     LOG(ERROR) << status;
   }
   return status.ok();
+	*/
 }
 
 bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<std::complex<float> > ctx) {
