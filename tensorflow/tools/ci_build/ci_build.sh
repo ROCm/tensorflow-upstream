@@ -120,6 +120,7 @@ DOCKER_IMG_NAME=$(echo "${DOCKER_IMG_NAME}" | sed -e 's/=/_/g' -e 's/,/-/g')
 
 # Convert to all lower-case, as per requirement of Docker image names
 DOCKER_IMG_NAME=$(echo "${DOCKER_IMG_NAME}" | tr '[:upper:]' '[:lower:]')
+PWD=$(pwd)
 
 # Print arguments.
 echo "WORKSPACE: ${WORKSPACE}"
@@ -130,6 +131,7 @@ echo "CI_COMMAND_PREFIX: ${CI_COMMAND_PREFIX[*]}"
 echo "CONTAINER_TYPE: ${CONTAINER_TYPE}"
 echo "BUILD_TAG: ${BUILD_TAG}"
 echo "  (docker container name will be ${DOCKER_IMG_NAME})"
+echo "PWD: "${PWD}
 echo ""
 
 
