@@ -176,5 +176,6 @@ ${DOCKER_BINARY} run --rm --pid=host \
     ${ROCM_EXTRA_PARAMS} \
     ${CI_DOCKER_EXTRA_PARAMS[@]} \
     "${DOCKER_IMG_NAME}" \
-    ${PWD}/${CI_COMMAND_PREFIX[@]} \
     ${COMMAND[@]}
+    
+#${PWD}/${CI_COMMAND_PREFIX[@]} \
