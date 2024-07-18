@@ -110,16 +110,6 @@ class ROCMBlas : public blas::BlasSupport {
                               /*err_on_failure=*/false, args...);
   }
 
-  // A helper allocation funciton to convert raw pointers memory layout to
-  // strided flavor
-  template <typename T, typename U>
-  port::Status AllocateStridedBuffer(
-    const std::vector<U*> &raw_ptrs,
-    int batch_count, uint64_t batch_stride, ScratchAllocator *scratch_allocator,
-    Stream *stream,
-    std::unique_ptr<TemporaryDeviceMemory<U> > *temp_memory,
-    DeviceMemory<U> *device_memory);
-
   // A helper function to implement DoBlasGemmBatched interfaces for generic
   // types.
   //
@@ -137,20 +127,15 @@ class ROCMBlas : public blas::BlasSupport {
   // It will take advantage of the AllocateStridedBuffer subroutine to
   // reallocate the memory layout to be strided batched.
   template <class T, class V>
-  bool DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContext<T> ctx, V strided_fun);
+  port::Status DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContext<T> ctx, V strided_fun);
+  template <class T, class V>
+  port::Status DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContext2<T> ctx, V strided_fun);
 
 	template <class T, class V, class Alpha_T>
-	bool DoBlasGemmBatchedImpl( V rocblas_func, Stream *stream, blas::Transpose transa,
+	port::Status DoBlasGemmBatchedImpl2( V rocblas_func, Stream *stream, blas::Transpose transa,
 			blas::Transpose transb, uint64 m, uint64 n, uint64 k, Alpha_T alpha,
 			const T **a_array, int lda, const T **b_array, int ldb, Alpha_T beta,
 			T **c_array, int ldc, int batch_count);
-
-  template <typename T, typename FuncT, typename NativeT = T>
-  port::Status DoBlasGemmBatchedInternal(
-      FuncT rocblas_func, Stream* stream, blas::Transpose transa,
-      blas::Transpose transb, uint64 m, uint64 n, uint64 k, T alpha,
-      const T** a_array, int lda, const T** b_array, int ldb, T beta,
-      T** c_array, int ldc, int batch_count);
 
   // Helper function for implementing DoBlasGemvWithProfiling.
   template <typename T>

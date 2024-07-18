@@ -264,6 +264,27 @@ struct BatchedGemmCallContext
   AlgorithmType algorithm = kDefaultGemmAlgo;
 };
 
+template <class T, class U=T>
+struct BatchedGemmCallContext2
+{
+  blas::Transpose transa;
+  blas::Transpose transb;
+  uint64 m, n, k;
+  typename GemmCallContextAlpha<T>::type alpha, beta;
+  const T** pa;
+  int lda;
+  const T** pb;
+  int ldb;
+  U** pc;
+  int ldc;
+  int batch_count;
+  CallContext context = CallContext::kNone;
+  ScratchAllocator *scratch_allocator = nullptr;
+  ComputationType type = ComputationType::kUndefined;
+  ProfileResult *output_profile_result = 0;
+  AlgorithmType algorithm = kDefaultGemmAlgo;
+};
+
 // BLAS support interface -- this can be derived from a GPU executor when the
 // underlying platform has an BLAS library implementation available. See
 // StreamExecutor::AsBlas().
@@ -1088,20 +1109,20 @@ class BlasSupport {
                                  uint64 k, float alpha, const Eigen::half **a,
                                  int lda, const Eigen::half **b, int ldb,
                                  float beta, Eigen::half **c, int ldc,
-                                 int batch_count) = 0;  
+                                 int batch_count, ScratchAllocator* allocator) = 0;  
   virtual bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<float> ctx) = 0;
   virtual bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  blas::Transpose transb, uint64 m, uint64 n,
                                  uint64 k, float alpha, const float **a,
                                  int lda, const float **b, int ldb, float beta,
-                                 float **c, int ldc, int batch_count) = 0;
+                                 float **c, int ldc, int batch_count, ScratchAllocator* allocator) = 0;
   virtual bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<double> ctx) = 0;
   virtual bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  blas::Transpose transb, uint64 m, uint64 n,
                                  uint64 k, double alpha, const double **a,
                                  int lda, const double **b, int ldb,
                                  double beta, double **c, int ldc,
-                                 int batch_count) = 0;  
+                                 int batch_count, ScratchAllocator* allocator) = 0;  
   virtual bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<std::complex<float> > ctx) = 0;
   virtual bool DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<std::complex<double> > ctx) = 0;
 
@@ -1870,17 +1891,17 @@ class BlasSupport {
                          blas::Transpose transb, uint64 m, uint64 n, uint64 k, \
                          float alpha, const Eigen::half **a, int lda,          \
                          const Eigen::half **b, int ldb, float beta,           \
-                         Eigen::half **c, int ldc, int batch_count) override;  \
+                         Eigen::half **c, int ldc, int batch_count, ScratchAllocator* allocator) override;  \
   bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,               \
                          blas::Transpose transb, uint64 m, uint64 n, uint64 k, \
                          float alpha, const float **a, int lda,                \
                          const float **b, int ldb, float beta, float **c,      \
-                         int ldc, int batch_count) override;                   \
+                         int ldc, int batch_count, ScratchAllocator* allocator) override;                   \
   bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,               \
                          blas::Transpose transb, uint64 m, uint64 n, uint64 k, \
                          double alpha, const double **a, int lda,              \
                          const double **b, int ldb, double beta, double **c,   \
-                         int ldc, int batch_count) override;                   \
+                         int ldc, int batch_count, ScratchAllocator* allocator) override;                   \
   bool DoBlasGemmStridedBatched(                                               \
       Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,\
       uint64 n, uint64 k, float alpha, const DeviceMemory<Eigen::half> &a,     \

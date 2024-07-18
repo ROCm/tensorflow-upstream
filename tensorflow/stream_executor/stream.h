@@ -1351,19 +1351,22 @@ class Stream {
                               uint64 m, uint64 n, uint64 k, float alpha,
                               const Eigen::half** a, int lda,
                               const Eigen::half** b, int ldb, float beta,
-                              Eigen::half** c, int ldc, int batch_count);
+                              Eigen::half** c, int ldc, int batch_count,
+                              ScratchAllocator* allocator = nullptr);
 
   Stream& ThenBlasGemmBatched(blas::Transpose transa, blas::Transpose transb,
                               uint64 m, uint64 n, uint64 k, float alpha,
                               const float** a, int lda, const float** b,
                               int ldb, float beta, float** c, int ldc,
-                              int batch_count);
+                              int batch_count,
+                              ScratchAllocator* allocator = nullptr);
 
   Stream& ThenBlasGemmBatched(blas::Transpose transa, blas::Transpose transb,
                               uint64 m, uint64 n, uint64 k, double alpha,
                               const double** a, int lda, const double** b,
                               int ldb, double beta, double** c, int ldc,
-                              int batch_count);
+                              int batch_count,
+                              ScratchAllocator* allocator = nullptr);
 
   Stream &ThenBlasGemmStridedBatched(
       blas::Transpose transa, blas::Transpose transb, uint64 m, uint64 n,
