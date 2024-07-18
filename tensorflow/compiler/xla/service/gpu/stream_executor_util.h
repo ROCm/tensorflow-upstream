@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tensorflow/core/protobuf/autotuning.pb.h"
 #include "tensorflow/compiler/xla/layout.h"
 #include "tensorflow/compiler/xla/service/hlo_module_config.h"
 #include "tensorflow/compiler/xla/statusor.h"
@@ -84,6 +85,12 @@ se::GpuAsmOpts GpuAsmOptsFromConfig(const HloModuleConfig& hlo_module_config);
 // initalized to zero on the first use.
 void InitializeFloatBuffer(se::Stream* stream, PrimitiveType buffer_type,
                            int64* rng_state, se::DeviceMemoryBase buffer);
+
+                           // Returns result with the smallest time which has not failed.
+// If deterministic output is requested, returns first (not failing) result.
+StatusOr<tensorflow::AutotuneResult> PickBestResult(
+    absl::Span<tensorflow::AutotuneResult const> profile_results,
+    absl::optional<absl::string_view> instr_str);
 
 }  // namespace gpu
 }  // namespace xla

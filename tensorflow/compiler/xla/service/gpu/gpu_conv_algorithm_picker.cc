@@ -37,7 +37,7 @@ limitations under the License.
 #include "tensorflow/core/platform/logger.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/util/proto/proto_utils.h"
-#include "tensorflow/stream_executor/redzone_allocator.h"
+#include "tensorflow/stream_executor/gpu/redzone_allocator.h"
 
 namespace xla {
 namespace gpu {

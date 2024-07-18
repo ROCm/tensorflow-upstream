@@ -1,4 +1,4 @@
-/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2019 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,15 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_STREAM_EXECUTOR_CUDA_REDZONE_ALLOCATOR_H_
-#define TENSORFLOW_STREAM_EXECUTOR_CUDA_REDZONE_ALLOCATOR_H_
+#ifndef TENSORFLOW_STREAM_EXECUTOR_GPU_REDZONE_ALLOCATOR_H_
+#define TENSORFLOW_STREAM_EXECUTOR_GPU_REDZONE_ALLOCATOR_H_
 
+#include <cstdint>
+#include <string>
+#include <utility>
 #include <vector>
 
-#include "tensorflow/core/lib/math/math_util.h"
-#include "tensorflow/core/platform/stream_executor_no_cuda.h"
-#include "tensorflow/stream_executor/device_memory_allocator.h"
+#include "absl/strings/string_view.h"
 #include "tensorflow/stream_executor/gpu_asm_opts.h"
+#include "tensorflow/stream_executor/device_memory.h"
+#include "tensorflow/stream_executor/device_memory_allocator.h"
+#include "tensorflow/stream_executor/scratch_allocator.h"
+#include "tensorflow/stream_executor/stream_executor.h"
 
 namespace stream_executor {
 
@@ -38,13 +43,12 @@ namespace stream_executor {
 // memory for cudnn convolutions.
 class RedzoneAllocator : public ScratchAllocator {
  public:
-  static const int64 kDefaultMemoryLimit = 1LL << 32;  // 4GB
-  static const int64 kDefaultRedzoneSize =
+  static constexpr int64 kDefaultRedzoneSize =
       1LL << 23;  // 8MiB per side, 16MiB total.
-  static const uint8 kDefaultRedzonePattern = -1;
+  static constexpr uint8 kDefaultRedzonePattern = -1;  // NOLINT
   RedzoneAllocator(Stream* stream, DeviceMemoryAllocator* memory_allocator,
-                   GpuAsmOpts gpu_compilation_opts_,
-                   int64 memory_limit = kDefaultMemoryLimit,
+                   const GpuAsmOpts& gpu_compilation_opts_,
+                   int64 memory_limit = (1LL << 32),  // 4GB
                    int64 redzone_size = kDefaultRedzoneSize,
                    uint8 redzone_pattern = kDefaultRedzonePattern);
 
@@ -63,7 +67,8 @@ class RedzoneAllocator : public ScratchAllocator {
     RedzoneCheckStatus() = default;
 
     RedzoneCheckStatus(absl::string_view buffer_name, void* user_buffer_address,
-                       int64 offset, uint64 expected_value, uint64 actual_value)
+                       int64 offset, uint64 expected_value,
+                       uint64 actual_value)
         : buffer_name(buffer_name),
           user_buffer_address(user_buffer_address),
           offset(offset),
@@ -76,7 +81,7 @@ class RedzoneAllocator : public ScratchAllocator {
 
     std::string RedzoneFailureMsg() const;
 
-    string buffer_name = {};
+    std::string buffer_name = {};
     void* user_buffer_address = nullptr;
     int64 offset = 0;
     uint64 expected_value = 0;
@@ -86,7 +91,7 @@ class RedzoneAllocator : public ScratchAllocator {
   // Determines whether redzones around all allocated buffers are unmodified.
   //
   // Reinitializes redzones to the expected value, so that the same buffer
-  // could be reused for multiple checks.
+  // can be reused for multiple checks.
   //
   // Returns:
   //
@@ -95,6 +100,8 @@ class RedzoneAllocator : public ScratchAllocator {
   //    redzone has been detected.
   //  - A stream error, if loading or launching the kernel has failed.
   port::StatusOr<RedzoneCheckStatus> CheckRedzones() const;
+
+  Stream* stream() const { return stream_; }
 
  private:
   const int device_ordinal_;
@@ -117,6 +124,9 @@ class RedzoneAllocator : public ScratchAllocator {
   // isn't necessarily just first.size() - 2 * redzone_size_ because when the
   // user allocation size is not a multiple of 4 bytes, we round up the size of
   // the RHS redzone.
+  //
+  // ScratchAllocators need to free all allocated memory on destruction so we
+  // use `OwningDeviceMemory` here.
   std::vector<std::pair<OwningDeviceMemory, int64>> allocated_buffers_;
 
   int64 allocated_bytes_excluding_redzones_ = 0;
@@ -124,4 +134,4 @@ class RedzoneAllocator : public ScratchAllocator {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_STREAM_EXECUTOR_CUDA_REDZONE_ALLOCATOR_H_
+#endif  // TENSORFLOW_STREAM_EXECUTOR_GPU_REDZONE_ALLOCATOR_H_

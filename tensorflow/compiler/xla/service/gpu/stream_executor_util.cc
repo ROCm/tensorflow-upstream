@@ -22,6 +22,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/cleanup.h"
 #include "tensorflow/core/lib/io/path.h"
+#include "tensorflow/core/util/proto/proto_utils.h"
 #include "tensorflow/core/platform/cuda_libdevice_path.h"
 #include "tensorflow/core/platform/regexp.h"
 #include "tensorflow/core/platform/subprocess.h"
@@ -37,6 +38,109 @@ using se::dnn::DataLayout;
 using se::dnn::DataLayoutString;
 using se::dnn::FilterLayout;
 using se::dnn::FilterLayoutString;
+
+
+namespace {
+std::vector<tensorflow::AutotuneResult> KeepNonFailures(
+    absl::Span<tensorflow::AutotuneResult const> profile_results) {
+  // Filter out all failures except WRONG_RESULT, because false-positives are
+  // possible (e.g. perhaps the reference algorithm is the one that's
+  // incorrect!). Other failures can be detected with high accuracy. E.g.
+  // REDZONE_MODIFIED which is also quite severe.
+  std::vector<tensorflow::AutotuneResult> filtered_results;
+  absl::c_copy_if(profile_results, std::back_inserter(filtered_results),
+                  [](const tensorflow::AutotuneResult& r) {
+                    return !r.has_failure() ||
+                           r.failure().kind() == tensorflow::AutotuneResult::WRONG_RESULT;
+                  });
+  return filtered_results;
+}
+
+Status AllAlgorithmsFailedInternalError(
+    absl::optional<absl::string_view> instr_str,
+    absl::Span<tensorflow::AutotuneResult const> profile_results) {
+  std::ostringstream msg;
+  if (instr_str.has_value()) {
+    msg << "All algorithms tried for " << instr_str.value()
+        << " failed. Falling back to default algorithm.  Per-algorithm "
+           "errors:";
+  } else {
+    msg << "All algorithms failed. Falling back to the default algorithm. "
+        << "Per-algorithm errors:";
+  }
+  for (const auto& result : profile_results) {
+    msg << "\n  " << result.failure().msg();
+  }
+  return Internal("%s", msg.str());
+}
+
+Status NoAlgorithmSuppliedInternalError(
+    absl::optional<absl::string_view> instr_str) {
+  std::ostringstream msg;
+  if (instr_str.has_value()) {
+    msg << "There are no algorithm candidates for computing: \n  "
+        << instr_str.value()
+        << "\nThis likely means that the instruction shape is not supported by "
+           "the target GPU library.";
+  } else {
+    msg << "There are no algorithm candidates for computing the instruction.\n"
+           "This likely means that the instruction shape is not supported by "
+           "the target GPU library.";
+  }
+  return Internal("%s", msg.str());
+}
+
+void SortAutotuningResultsByRunTime(std::vector<tensorflow::AutotuneResult>& results) {
+  absl::c_sort(results,
+               [](const tensorflow::AutotuneResult& lhs, const tensorflow::AutotuneResult& rhs) {
+                 return tensorflow::proto_utils::FromDurationProto(lhs.run_time()) <
+                        tensorflow::proto_utils::FromDurationProto(rhs.run_time());
+               });
+}
+
+absl::Span<tensorflow::AutotuneResult const> TopResultsWithinMeasurementError(
+    std::vector<tensorflow::AutotuneResult>& results_sorted_by_runtime) {
+  // This value was picked by repeatedly running a few kernels that run for a
+  // short time and observing the run-time variance. A more rigorous analysis
+  // of the measurement error might yield a better error threshold.
+  constexpr absl::Duration kMeasurementError = absl::Microseconds(4);
+
+  absl::Duration min_time = tensorflow::proto_utils::FromDurationProto(
+      results_sorted_by_runtime.front().run_time());
+  absl::Duration limit_time = min_time + kMeasurementError;
+
+  auto limit_time_it = absl::c_find_if(
+      results_sorted_by_runtime, [limit_time](const tensorflow::AutotuneResult& x) {
+        return tensorflow::proto_utils::FromDurationProto(x.run_time()) > limit_time;
+      });
+  return absl::MakeSpan(&*results_sorted_by_runtime.begin(), &*limit_time_it);
+}
+}  // namespace
+
+StatusOr<tensorflow::AutotuneResult> PickBestResult(
+    absl::Span<tensorflow::AutotuneResult const> profile_results,
+    absl::optional<absl::string_view> instr_str) {
+  if (profile_results.empty()) {
+    return NoAlgorithmSuppliedInternalError(instr_str);
+  }
+
+  std::vector<tensorflow::AutotuneResult> filtered_results =
+      KeepNonFailures(profile_results);
+
+  if (filtered_results.empty()) {
+    return AllAlgorithmsFailedInternalError(instr_str, profile_results);
+  }
+
+  // Kernel run-time measurements within kMeasurementError are not precise.
+  // Consider the lowest measurements within the error margin as equivalent and
+  // within them prefer algorithms that use the least amount of scratch memory.
+  SortAutotuningResultsByRunTime(filtered_results);
+  auto top_within_error = TopResultsWithinMeasurementError(filtered_results);
+  return *absl::c_min_element(top_within_error, [](const tensorflow::AutotuneResult& lhs,
+                                                   const tensorflow::AutotuneResult& rhs) {
+    return lhs.scratch_bytes() < rhs.scratch_bytes();
+  });
+}
 
 bool IsVoltaOrLater(const se::StreamExecutor& stream_executor) {
   int major, minor;
