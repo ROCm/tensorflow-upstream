@@ -3890,7 +3890,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     int64 stride_a, const DeviceMemory<Eigen::half> &b, int ldb, int64 stride_b,
     float beta, DeviceMemory<Eigen::half> *c, int ldc, int64 stride_c,
     int batch_count) {
-	VLOG(-1) << "Running ThenBlasGemmStridedBatched fp16";
+//	VLOG(-1) << "Running ThenBlasGemmStridedBatched fp16";
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(stride_a), PARAM(b),
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
@@ -3912,7 +3912,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     int64 stride_a, const DeviceMemory<float> &b, int ldb, int64 stride_b,
     float beta, DeviceMemory<float> *c, int ldc, int64 stride_c,
     int batch_count) {
-	VLOG(-1) << "Running ThenBlasGemmStridedBatched fp32";
+//	VLOG(-1) << "Running ThenBlasGemmStridedBatched fp32";
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(stride_a), PARAM(b),
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
@@ -4000,17 +4000,18 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     uint64 k, float alpha,
                                     const Eigen::half** a, int lda,
                                     const Eigen::half** b, int ldb, float beta,
-                                    Eigen::half** c, int ldc, int batch_count) {
-	VLOG(-1) << "Running ThenBlasGemmBatched fp16";
+                                    Eigen::half** c, int ldc, int batch_count,
+                                    ScratchAllocator* allocator) {
+//	VLOG(-1) << "Running ThenBlasGemmBatched fp16";
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, float,
                const Eigen::half**, int, const Eigen::half**, int, float,
-               Eigen::half**, int, int>
+               Eigen::half**, int, int, ScratchAllocator*>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmBatched, transa, transb, m, n,
-              k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count);
+              k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count, allocator);
 }
 
 Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
@@ -4018,16 +4019,19 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     uint64 k, float alpha, const float** a,
                                     int lda, const float** b, int ldb,
                                     float beta, float** c, int ldc,
-                                    int batch_count) {
-	VLOG(-1) << "Running ThenBlasGemmBatched fp32";
+                                    int batch_count,
+                                    ScratchAllocator* allocator) {
+//	VLOG(-1) << "Running ThenBlasGemmBatched fp32";
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, float,
-               const float**, int, const float**, int, float, float**, int, int>
+               const float**, int, const float**, int, float, float**, int, int,
+               ScratchAllocator*>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmBatched, transa, transb, m, n,
-              k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count);
+              k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count,
+              allocator);
 }
 
 Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
@@ -4035,16 +4039,16 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     uint64 k, double alpha, const double** a,
                                     int lda, const double** b, int ldb,
                                     double beta, double** c, int ldc,
-                                    int batch_count) {
+                                    int batch_count, ScratchAllocator* allocator) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, double,
                const double**, int, const double**, int, double, double**, int,
-               int>
+               int, ScratchAllocator*>
       impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmBatched, transa, transb, m, n,
-              k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count);
+              k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count, allocator);
 }
 
 template <class T>
@@ -4064,13 +4068,13 @@ Stream &Stream::ThenBlasGemmImpl(T ctx)
 
 Stream &Stream::ThenBlasGemm(blas::GemmCallContext<Eigen::half> ctx)
 {
-	VLOG(-1) << "Running ThenBlasGemm fp16";
+//	VLOG(-1) << "Running ThenBlasGemm fp16";
   return ThenBlasGemmImpl(ctx);
 }
 
 Stream &Stream::ThenBlasGemm(blas::GemmCallContext<float> ctx)
 {
-	VLOG(-1) << "Running ThenBlasGemm fp32";
+//	VLOG(-1) << "Running ThenBlasGemm fp32";
   return ThenBlasGemmImpl(ctx);
 }
 
