@@ -79,3 +79,9 @@ new_http_archive(
         "http://download.tensorflow.org/models/speech_commands_v0.01.zip",
     ],
 )
+
+new_local_repository(
+    name = "ck_archive",
+    path = "/root/composable_kernel-internal",
+    build_file = "//third_party:ck.BUILD",
+)
