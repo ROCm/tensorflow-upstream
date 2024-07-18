@@ -494,7 +494,7 @@ GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheCuda(
       }
     } else {
       XLA_SCOPED_LOGGING_TIMER_LEVEL("BufferComparator::Create", 2);
-      comparator.emplace(result_shape, hlo_module_config);
+      comparator.emplace(result_shape, debug_options.xla_gpu_autotune_gemm_rtol());
       TF_ASSIGN_OR_RETURN(
           reference_result_buffer,
           input_output_allocator.AllocateBytes(result_buffer.size()));
