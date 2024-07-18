@@ -631,6 +631,6 @@ tf_cuda_cc_test(
         "//tensorflow/stream_executor:device_memory_allocator",
         "//tensorflow/stream_executor:event",
         "//tensorflow/stream_executor:kernel",
-        "//tensorflow/stream_executor:redzone_allocator",
+        "//tensorflow/stream_executor/gpu:redzone_allocator",
     ],
 )
