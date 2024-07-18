@@ -26,7 +26,7 @@ Status ComputeInternal<ck_tile::fp16_t>(const GPUDevice& d, const void* mat_A0,
                        int N2, int B_kv, int head_num, float lrelu_alpha,
                        bool do_layer_norm, bool do_leaky_relu,
                        bool do_query_mask) {
-  using gemm_ln_attn_dtype_0 = T;
+  using gemm_ln_attn_dtype_0 = ck_tile::fp16_t;
 
   // HeadDimQK <= 16
   // HeadDimV  <= 32
