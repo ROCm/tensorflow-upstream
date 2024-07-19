@@ -90,7 +90,7 @@ StatusOr<BlasLt::Epilogue> AsBlasLtEpilogue(
 class GemmAutotuner {
   const AutotuneConfig& autotune_config_;
   RedzoneBuffers rz_buffers_;
-  se::Stream* stream_ = nullptr;
+  std::unique_ptr< se::Stream > stream_;
   bool deterministic_ops_ = false;
   size_t solutions_limit_ = 0;
   size_t num_algorithms_left_ = 0;
@@ -105,13 +105,13 @@ class GemmAutotuner {
                                             const AutotuneCacheKey& key) {
 
     num_algorithms_left_ = 0;
-    if (autotune_config_.IsDeviceless()) {
-      // Return empty result, will tune at runtime.
-      return tensorflow::AutotuneResult{};
-    }
     VLOG(3) << "Starting autotune of GemmThunk " << gemm->ToString();
 
-    TF_ASSIGN_OR_RETURN(stream_, autotune_config_.GetStream());
+    if(!stream_) {
+      stream_ = std::make_unique< se::Stream >(autotune_config_.GetExecutor());
+      stream_->Init();
+    }
+
     const DebugOptions& debug_options =
         gemm->GetModule()->config().debug_options();
     deterministic_ops_ = false ;//debug_options.xla_gpu_deterministic_ops() ||
@@ -126,8 +126,8 @@ class GemmAutotuner {
     tensorflow::mutex_lock gpu_lock = LockGpu(stream_->parent());
 
     TF_ASSIGN_OR_RETURN(rz_buffers_, RedzoneBuffers::FromInstruction(
-                                         *gemm, autotune_config_, debug_options,
-                                         RedzoneBuffers::kAllInputsAllOutputs));
+                        *gemm, autotune_config_, stream_.get(), debug_options,
+                        RedzoneBuffers::kAllInputsAllOutputs));
 
     return IsCublasLtMatmul(*gemm)
                ? TuneGpuBlasLt(gemm, gemm_config)
@@ -180,7 +180,7 @@ class GemmAutotuner {
     }
 
     TF_ASSIGN_OR_RETURN(auto plan,
-                        BlasLt::GetMatmulPlan(stream_, gemm_config, epilogue));
+                   BlasLt::GetMatmulPlan(stream_.get(), gemm_config, epilogue));
 
     TF_ASSIGN_OR_RETURN(
         auto algorithms,
@@ -192,14 +192,14 @@ class GemmAutotuner {
         -> StatusOr<se::blas::ProfileResult> {
       // Run a warmup iteration without the profiler active.
       TF_RETURN_IF_ERROR(plan->ExecuteOnStream(
-          stream_, LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
+          stream_.get(), LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
           bias_buffer, aux_buffer, a_scale_buffer, b_scale_buffer,
           c_scale_buffer, d_scale_buffer, d_amax_buffer, algorithm,
           workspace_buffer));
 
       se::blas::ProfileResult profile_result;
       TF_RETURN_IF_ERROR(plan->ExecuteOnStream(
-          stream_, LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
+          stream_.get(), LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
           bias_buffer, aux_buffer, a_scale_buffer, b_scale_buffer,
           c_scale_buffer, d_scale_buffer, d_amax_buffer, algorithm,
           workspace_buffer, &profile_result));
@@ -224,7 +224,7 @@ class GemmAutotuner {
     if (blas == nullptr) {
       return xla::InternalError("No BLAS support for stream");
     }
-    blas->GetBlasGemmAlgorithms(stream_, desc.lhs, desc.rhs, &desc.output,
+    blas->GetBlasGemmAlgorithms(stream_.get(), desc.lhs, desc.rhs, &desc.output,
                                 &gemm_config.alpha, &gemm_config.beta,
                                 &algorithms);
 
@@ -236,7 +236,7 @@ class GemmAutotuner {
       // error code here.
       static_cast<void>(RunGemm(gemm_config, LhsBuffer(), RhsBuffer(),
                                 OutputBuffer(), workspace_buffer,
-                                deterministic_ops_, stream_, algorithm));
+                                deterministic_ops_, stream_.get(), algorithm));
       se::blas::ProfileResult profile_result;
       // Allow GpuTimer to use its delay kernel implementation to improve
       // accuracy.
@@ -247,7 +247,7 @@ class GemmAutotuner {
       // and the actual success-ness is returned in ProfileResult::is_valid.
       TF_RETURN_IF_ERROR(RunGemm(gemm_config, LhsBuffer(), RhsBuffer(),
                                  OutputBuffer(), workspace_buffer,
-                                 deterministic_ops_, stream_, algorithm,
+                                 deterministic_ops_, stream_.get(), algorithm,
                                  &profile_result));
       return std::move(profile_result);
     };
@@ -255,7 +255,7 @@ class GemmAutotuner {
     return GetBestAlgorithm<se::blas::AlgorithmType>(
                       gemm, algorithms, gemm_config.beta, false, tuned_func);
 #else
-  return xla::Unimplemented("Not implemented yet");
+  return tensorflow::AutotuneResult{};
 #endif
   }
 
@@ -299,7 +299,7 @@ class GemmAutotuner {
       // the bias parameter.
       if (autotune_config_.should_reinit_output_buffer() && beta != 0) {
         int64 rng_state = 0;
-        InitializeFloatBuffer(stream_, output_shape.element_type(), &rng_state,
+        InitializeFloatBuffer(stream_.get(), output_shape.element_type(), &rng_state,
                          OutputBuffer());
       }
       TF_ASSIGN_OR_RETURN(auto profile_result, run_benchmark(algorithm));
@@ -346,7 +346,7 @@ class GemmAutotuner {
       // Perform the comparison versus the reference algorithm.
       TF_ASSIGN_OR_RETURN(
           bool outputs_match,
-          comparator.CompareEqual(stream_, /*current=*/OutputBuffer(),
+          comparator.CompareEqual(stream_.get(), /*current=*/OutputBuffer(),
                                     /*expected=*/reference_buffer));
       if (!outputs_match) {
         LOG(ERROR) << "Results mismatch between different GEMM algorithms. "

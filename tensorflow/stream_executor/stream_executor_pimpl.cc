@@ -919,23 +919,4 @@ bool StreamExecutorMemoryAllocator::AllowsAsynchronousDeallocation() const {
   return false;
 }
 
-port::StatusOr<Stream*> StreamExecutorMemoryAllocator::GetStream(
-    int device_ordinal) {
-  CHECK(!AllowsAsynchronousDeallocation())
-      << "The logic below only works for synchronous allocators";
-  TF_ASSIGN_OR_RETURN(StreamExecutor * executor,
-                      GetStreamExecutor(device_ordinal));
-  absl::MutexLock lock(&mutex_);
-  if (!streams_.count(device_ordinal)) {
-    //TF_ASSIGN_OR_RETURN(auto stream, executor->CreateStream());
-    auto stream = std::make_unique< Stream >(executor);
-    stream->Init();
-    auto stream_ptr = stream.get();
-    // stream_ptr->set_name("StreamExecutorMemoryAllocator");
-    streams_.emplace(device_ordinal, std::move(stream));
-    return stream_ptr;
-  }
-  return streams_.at(device_ordinal).get();
-}
-
 }  // namespace stream_executor
