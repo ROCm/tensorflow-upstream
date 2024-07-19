@@ -57,7 +57,7 @@ Status ComputeInternal(const GPUDevice& d, const void* mat_A, const void* mat_B,
           1,   8,   4,   0,
           1,   1,   S<1, 16, 1, 8>,   4,
           ck::BlockGemmPipelineScheduler::Intrawave,ck::BlockGemmPipelineVersion::v1>;
-    const auto& stream = d.stream();
+    const hipStream_t stream = d.stream();
     auto a_element_op = AElementOp{};
     auto b_element_op = BElementOp{};
     auto c_element_op = CElementOp{};

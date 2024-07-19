@@ -66,7 +66,7 @@ Status ComputeInternal(const GPUDevice& d, const void* mat_A0,
                            true, true, true>;
   using k_ = gemm_ln_gemm_kernel_0;
 
-  const auto& stream = d.stream();
+  const hipStream_t stream = d.stream();
 
   ck_tile::stream_config stream_config{stream, false, 0, 20, 50, true};
 

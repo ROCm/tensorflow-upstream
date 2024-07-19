@@ -61,7 +61,7 @@ Status ComputeInternal(const GPUDevice& d, const void* mat_A, const void* mat_B,
       return CElementOp{}; 
     };
 
-    const auto& stream = d.stream();
+    const hipStream_t stream = d.stream();
 
     auto gemm = DeviceGemmV2Instance{};
     auto invoker = gemm.MakeInvoker();

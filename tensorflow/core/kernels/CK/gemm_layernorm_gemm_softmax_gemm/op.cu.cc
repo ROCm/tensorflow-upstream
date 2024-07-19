@@ -89,7 +89,7 @@ Status ComputeInternal<ck_tile::fp16_t>(const GPUDevice& d, const void* mat_A0,
                            ck_tile::BlockGemmLnAttnPipelineEnum::QWKV_LDS, true,
                            true, true, true, true>;
   using k_ = gemm_ln_attn_kernel_0;
-  const auto& stream = d.stream();
+  const hipStream_t stream = d.stream();
 
   ck_tile::stream_config stream_config{stream, false, 0, 20, 50, true};
 
