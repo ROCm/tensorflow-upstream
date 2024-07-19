@@ -36,11 +36,12 @@ namespace gpu {
 
 StatusOr<RedzoneBuffers> RedzoneBuffers::FromInstruction(
     const HloInstruction& instruction, const AutotuneConfig& config,
+    se::Stream *stream,
     const DebugOptions& debug_options, BuffersToCreate buffers_to_create) {
   RedzoneBuffers buffers;
 
   TF_ASSIGN_OR_RETURN(auto rz_allocator, AutotunerUtil::CreateRedzoneAllocator(
-                                             config, debug_options));
+                                             config, stream, debug_options));
   buffers.redzone_allocator_ =
       std::make_unique<se::RedzoneAllocator>(std::move(rz_allocator));
 

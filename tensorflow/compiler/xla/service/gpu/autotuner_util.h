@@ -47,18 +47,6 @@ struct DeviceConfig {
   se::DeviceMemoryAllocator* allocator = nullptr;  // may be null
 };
 
-struct DevicelessConfig {
-  // The human-readable description of the device.  It can be found by using
-  // stream_exec->GetDeviceDescription().model_str() when the stream executor
-  // is available.
-  std::string model_str;
-
-  // A field to determine the architecture of the device. We only pick an
-  // algorithm for non-Ampere architectures.
-  // se::GpuComputeCapability gpu_compute_capability{
-  //     se::CudaComputeCapability{0, 0}};
-};
-
 class AutotuneCacheKey {
  public:
   AutotuneCacheKey(absl::string_view model_str,
@@ -107,7 +95,7 @@ class AutotuneConfig {
         should_crash_on_check_failure_(right.should_crash_on_check_failure_)
          {}
 
-  AutotuneConfig(const absl::variant<DeviceConfig, DevicelessConfig>& config,
+  AutotuneConfig(const DeviceConfig& config,
                  const DebugOptions& debug_options)
       : config_(config),
         autotune_level_(debug_options.xla_gpu_autotune_level()),
@@ -118,36 +106,24 @@ class AutotuneConfig {
    std::string autotune_cache_dir() const { return ""; }
 
   absl::string_view GetModelStr() const {
-    if (auto deviceless_config = absl::get_if<DevicelessConfig>(&config_)) {
-      return deviceless_config->model_str;
-    }
-
-    const auto& device_config = absl::get<DeviceConfig>(config_);
     // NOTE: model_str is not available !
-    return device_config.stream_exec->GetDeviceDescription().name();
+    return GetExecutor()->GetDeviceDescription().name();
   }
 
   se::StreamExecutor* GetExecutor() const {
-    CHECK(absl::holds_alternative<DeviceConfig>(config_));
-    return absl::get<DeviceConfig>(config_).stream_exec;
+    CHECK(config_.stream_exec != nullptr);
+    return config_.stream_exec;
   }
 
   se::DeviceMemoryAllocator* GetAllocator() const {
-    CHECK(absl::holds_alternative<DeviceConfig>(config_));
-    auto& cf = absl::get<DeviceConfig>(config_);
-    if (cf.allocator != nullptr) {
-      return cf.allocator;
+    if (config_.allocator != nullptr) {
+      return config_.allocator;
     }
     if (allocator_ == nullptr) {
       allocator_ =
           std::make_unique<se::StreamExecutorMemoryAllocator>(GetExecutor());
     }
     return allocator_.get();
-  }
-
-  StatusOr<se::Stream*> GetStream() const {
-    CHECK(absl::holds_alternative<DeviceConfig>(config_));
-    return GetAllocator()->GetStream(GetExecutor()->device_ordinal());
   }
 
   // const se::GpuComputeCapability& GetGpuComputeCapability() const {
@@ -157,12 +133,8 @@ class AutotuneConfig {
   //   return absl::get<DevicelessConfig>(config_).gpu_compute_capability;
   // }
 
-  bool IsDeviceless() const {
-    return absl::holds_alternative<DevicelessConfig>(config_);
-  }
-
  private:
-  absl::variant<DeviceConfig, DevicelessConfig> config_;
+  DeviceConfig config_;
   int32_t autotune_level_;
   bool should_crash_on_check_failure_;
   mutable std::unique_ptr<se::DeviceMemoryAllocator> allocator_;
@@ -204,7 +176,8 @@ struct AutotunerUtil {
 
   // Creates a RedzoneAllocator from a given config.
   static StatusOr<se::RedzoneAllocator> CreateRedzoneAllocator(
-      const AutotuneConfig& config, const DebugOptions& opts);
+      const AutotuneConfig& config, se::Stream *stream, 
+      const DebugOptions& opts);
 
   // Functions to save/load XLA's autotuning results.
   //

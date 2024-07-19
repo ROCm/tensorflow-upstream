@@ -223,11 +223,12 @@ tf_kernel_library(
     copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "-DTENSORFLOW_USE_ROCM=1",
     ]),
+    visibility = ["//visibility:public"],
     deps = [
          "@com_google_absl//absl/container:fixed_array",
          "@com_google_absl//absl/strings:str_format",
          "@com_google_absl//absl/types:optional",
-        "@com_google_absl//absl/strings",
+         "@com_google_absl//absl/strings",
          "//tensorflow/core:allocator",
          "//tensorflow/stream_executor:gpu_asm_opts",
          "//tensorflow/core:lib",
@@ -238,28 +239,3 @@ tf_kernel_library(
         "//tensorflow/stream_executor/cuda:ptxas_utils",
     ]),
 )
-
-
-# cc_library(
-#     name = "redzone_allocator",
-#     srcs = [] + if_rocm_is_configured([
-#         "//tensorflow/stream_executor/rocm:redzone_allocator.cc",
-#     ]) + if_cuda_is_configured([
-#         "//tensorflow/stream_executor/cuda:redzone_allocator.cc",
-#     ]),
-#     hdrs = ["redzone_allocator.h"],
-#     deps = [
-#         "@com_google_absl//absl/container:fixed_array",
-#         "@com_google_absl//absl/strings:str_format",
-#         "@com_google_absl//absl/types:optional",
-#         "//tensorflow/core:allocator",
-#         "//tensorflow/stream_executor:gpu_asm_opts",
-#         "//tensorflow/core:lib",
-#         "//tensorflow/core:stream_executor_no_cuda",
-#         "//tensorflow/stream_executor:device_memory",
-#         "//tensorflow/stream_executor:device_memory_allocator",
-#         "//tensorflow/stream_executor:stream_executor_headers",
-#     ] + if_cuda_is_configured([
-#         "//tensorflow/stream_executor/cuda:ptxas_utils",
-#     ]),
-# )

@@ -120,12 +120,10 @@ GpuCompiler::GpuCompiler(se::Platform::Id platform_id,
 static AutotuneConfig GetAutotuneConfig(
     se::StreamExecutor* stream_exec, const DebugOptions& debug_options,
     se::DeviceMemoryAllocator* device_allocator) {
-  if (stream_exec) {
-    return AutotuneConfig{DeviceConfig{stream_exec, device_allocator},
+
+  CHECK(stream_exec != nullptr);
+  return AutotuneConfig{DeviceConfig{stream_exec, device_allocator},
                           debug_options};
-  }
-  return AutotuneConfig{
-      DevicelessConfig{"device_description_str"}, debug_options};
 }
 
 // Runs optimization passes on the given HLO module.

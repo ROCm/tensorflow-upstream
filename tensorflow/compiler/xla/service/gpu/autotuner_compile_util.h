@@ -56,6 +56,7 @@ class RedzoneBuffers {
   };
   static StatusOr<RedzoneBuffers> FromInstruction(
       const HloInstruction& instruction, const AutotuneConfig& config,
+      se::Stream *stream,
       const DebugOptions& debug_options, BuffersToCreate buffers_to_create);
 
   const std::vector<se::DeviceMemoryBase>& input_buffers() const {

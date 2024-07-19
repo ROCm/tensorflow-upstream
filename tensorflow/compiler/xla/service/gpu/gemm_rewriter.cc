@@ -142,7 +142,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                 instr->shape(),
                 {existing_gemm->mutable_operand(0),
                  existing_gemm->mutable_operand(1), bias},
-                kGemmCallTarget);
+          static_cast<HloCustomCallInstruction *>(existing_gemm)
+                                          ->custom_call_target());
         TF_RETURN_IF_ERROR(gemm_call->set_backend_config(config));
         TF_RETURN_IF_ERROR(
             ReplaceWithNewInstruction(instr, std::move(gemm_call)));

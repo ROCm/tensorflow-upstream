@@ -478,8 +478,8 @@ se::GpuAsmOpts PtxOptsFromDebugOptions(const DebugOptions& debug_options) {
 
 /*static*/ StatusOr<se::RedzoneAllocator>
 AutotunerUtil::CreateRedzoneAllocator(const AutotuneConfig& config,
+                                      se::Stream *stream,
                                       const DebugOptions& opts) {
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, config.GetStream());
   return se::RedzoneAllocator(
       stream, config.GetAllocator(), PtxOptsFromDebugOptions(opts),
       /*memory_limit=*/std::numeric_limits<int64>::max(),

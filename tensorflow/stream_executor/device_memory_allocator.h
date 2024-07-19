@@ -210,13 +210,6 @@ class DeviceMemoryAllocator {
   // pass the stream to Compiler.
   virtual Stream *GetStream() const { return nullptr; }
 
-  // Returns a stream pointer on which it is always safe to access memory
-  // allocated by this allocator. It is not necessary to use the returned stream
-  // though, as clients may have additional information letting them safely use
-  // a different stream.
-  virtual port::StatusOr<Stream *> GetStream(int device_ordinal) 
-  { return (Stream *)nullptr; }
-
  protected:
   const Platform* platform_;
 };
@@ -246,19 +239,12 @@ class StreamExecutorMemoryAllocator : public DeviceMemoryAllocator {
 
   bool AllowsAsynchronousDeallocation() const override;
 
-  port::StatusOr<Stream *> GetStream(int device_ordinal) override;
-
  private:
   port::StatusOr<StreamExecutor*> GetStreamExecutor(int device_ordinal);
 
   // Available stream executors. Each stream executor has a different device
   // ordinal.
   std::vector<StreamExecutor *> stream_executors_;
-
-  absl::Mutex mutex_;
-
-  // Cache of streams for GetStream.
-  std::map<int, std::unique_ptr<Stream>> streams_ GUARDED_BY(mutex_);
 };
 
 template <typename ElemT>
