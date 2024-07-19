@@ -24,11 +24,6 @@ limitations under the License.
 
 #include "absl/types/variant.h"
 
-// #include "absl/log/check.h"
-// #include "absl/status/status.h"
-// #include "absl/status/statusor.h"
-// #include "absl/strings/str_format.h"
-// #include "absl/strings/string_view.h"
 #include "tensorflow/core/protobuf/autotune_results.pb.h"
 #include "tensorflow/core/protobuf/autotuning.pb.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
@@ -38,7 +33,6 @@ limitations under the License.
 #include "tensorflow/stream_executor/device_memory_allocator.h"
 #include "tensorflow/stream_executor/gpu/redzone_allocator.h"
 #include "tensorflow/stream_executor/stream_executor.h"
-// #include "tensorflow/stream_executor/stream_executor_memory_allocator.h"
 #include "tensorflow/compiler/xla/xla.pb.h"
 
 namespace xla {

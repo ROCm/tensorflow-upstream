@@ -148,10 +148,13 @@ class GemmAutotuner {
 
   StatusOr<tensorflow::AutotuneResult> TuneGpuBlasLt(const HloInstruction* gemm,
                                                const GemmConfig& gemm_config) {
-    auto workspace_buffer =
-        rz_buffers_.output_buffers().at(gemm->shape().tuple_shapes_size() - 1);
+    
+    // TODO: no workspace buffer is yet integrated..
+    auto workspace_buffer = absl::optional<se::DeviceMemoryBase>{};
+    //rz_buffers_.output_buffers().at(gemm->shape().tuple_shapes_size() - 1);
 
-    GemmBackendConfig backend_config = gemm->backend_config<GemmBackendConfig>().ValueOrDie();
+    GemmBackendConfig backend_config = 
+                    gemm->backend_config<GemmBackendConfig>().ValueOrDie();
 
     bool has_matrix_bias = gemm_config.beta != 0.;
 
@@ -182,7 +185,8 @@ class GemmAutotuner {
     TF_ASSIGN_OR_RETURN(
         auto algorithms,
         plan->GetAlgorithms(/*max_algorithm_count*/ 128,
-                            /*max_workspace_size*/ workspace_buffer.size()));
+                            workspace_buffer.has_value()
+                          ? workspace_buffer.value().size() : 0));
 
     auto tuned_func = [&](const BlasLt::MatmulAlgorithm& algorithm)
         -> StatusOr<se::blas::ProfileResult> {
