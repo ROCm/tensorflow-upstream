@@ -253,7 +253,7 @@ def _amdgpu_targets(repository_ctx):
     amdgpu_targets_str = repository_ctx.os.environ[_TF_ROCM_AMDGPU_TARGETS]
     amdgpu_targets = amdgpu_targets_str.split(",")
     for amdgpu_target in amdgpu_targets:
-        if amdgpu_target[:3] != "gfx" or not amdgpu_target[3:].isdigit():
+        if amdgpu_target[:3] != "gfx":
             auto_configure_fail("Invalid AMDGPU target: %s" % amdgpu_target)
     return amdgpu_targets
 
