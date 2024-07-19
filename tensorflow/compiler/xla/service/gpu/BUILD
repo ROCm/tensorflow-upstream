@@ -682,13 +682,6 @@ cc_library(
         # "//tensorflow/stream_executor:stream_executor_memory_allocator",
          "//tensorflow/stream_executor",
         "//tensorflow/stream_executor/gpu:redzone_allocator",
-        # "@tsl//tsl/platform:base64",
-        # "@tsl//tsl/platform:env",
-        # "@tsl//tsl/platform:errors",
-        # "@tsl//tsl/platform:logging",
-        # "@tsl//tsl/platform:path",
-        # "@tsl//tsl/platform:protobuf",
-        # "@tsl//tsl/platform:statusor",
     ]),
 )
 
@@ -1138,6 +1131,7 @@ cc_library(
         ":stream_executor_util",
         ":target_constants",
         ":variadic_op_splitter",
+        ":autotuner_util",
         "//tensorflow/compiler/xla:protobuf_util",
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/compiler/xla:statusor",
@@ -1295,6 +1289,7 @@ cc_library(
         ":gemm_rewriter",
         ":gpu_compiler",
         ":gpu_conv_algorithm_picker",
+        ":gemm_algorithm_picker",
         "//tensorflow/core/platform:rocm_rocdl_path",
     ],
 )

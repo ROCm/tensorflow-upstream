@@ -24,24 +24,8 @@ limitations under the License.
 #include <utility>
 #include <openssl/sha.h>
 
-// #include "absl/base/const_init.h"
-// #include "absl/base/thread_annotations.h"
-// #include "absl/container/flat_hash_map.h"
-// #include "absl/log/log.h"
-// #include "absl/status/status.h"
-// #include "absl/status/statusor.h"
-// #include "absl/strings/match.h"
-// #include "absl/strings/str_cat.h"
-// #include "absl/strings/str_format.h"
-// #include "absl/strings/string_view.h"
-// #include "absl/synchronization/mutex.h"
-// #include "llvm/ADT/StringRef.h"
-// #include "llvm/Support/SHA256.h"
 #include "tensorflow/core/protobuf/autotune_results.pb.h"
 #include "tensorflow/core/protobuf/autotuning.pb.h"
-//#include "tensorflow/compiler/xla/hlo/ir/hlo_clone_context.h"
-//#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-///#include "tensorflow/compiler/xla/service/gpu/gpu_asm_opts_util.h"
 #include "tensorflow/compiler/xla/service/hlo_computation.h"
 #include "tensorflow/compiler/xla/service/gpu/stream_executor_util.h"
 #include "tensorflow/compiler/xla/shape.h"
@@ -54,11 +38,7 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/base64.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/lib/io/path.h"
-// #include "tensorflow/core/platform/errors.h"
-// #include "tensorflow/corel/platform/logging.h"
-// #include "tensorflow/core/platform/path.h"
 #include "tensorflow/core/platform/protobuf.h"  // IWYU pragma: keep
-//#include "tensorflow/core/platform/statusor.h"
 
 namespace xla {
 namespace gpu {

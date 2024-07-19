@@ -34,6 +34,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "tensorflow/compiler/xla/service/gpu/stream_executor_util.h"
 #include "tensorflow/compiler/xla/service/gpu/target_constants.h"
+#include "tensorflow/compiler/xla/service/gpu/autotuner_util.h"
 #include "tensorflow/compiler/xla/service/hlo_constant_folding.h"
 #include "tensorflow/compiler/xla/service/hlo_cse.h"
 #include "tensorflow/compiler/xla/service/hlo_pass_fix.h"
@@ -133,7 +134,8 @@ Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
 }
 
 Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
-    HloModule* hlo_module, se::StreamExecutor* stream_exec,
+    HloModule* hlo_module, const AutotuneConfig& cfg, 
+    se::StreamExecutor* stream_exec,
     se::DeviceMemoryAllocator* device_allocator) {
   HloPassPipeline pipeline("post-layout_assignment");
   /* TODO(b/117531509): Use LayoutAssignment::InstructionCanChangeLayout after
@@ -181,7 +183,7 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
 
   // Find the fastest algorithm for GEMMs.
   // Different gemm algrithm will case ptx cache miss
-  // pipeline.AddPass<GemmAlgorithmPicker>(stream_exec, device_allocator);
+  pipeline.AddPass<GemmAlgorithmPicker>(cfg);
 
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
