@@ -233,16 +233,20 @@ bool IrEmitter::MaybeEmitDirectAtomicOperation(
   if (root_opcode == HloOpcode::kAdd) {
     llvm::Triple target_triple = llvm::Triple(module_->getTargetTriple());
     // NVPTX supports atomicAdd on F32 and integer types.
-    if (target_triple.isNVPTX() && element_type == F32) {
+    if ((target_triple.isNVPTX() || 
+         target_triple.getArch() == llvm::Triple::amdgcn) && 
+         element_type == F32) {
       // F32 + F32
+      // use relaxed atomic ordering
       AtomicRMW(llvm::AtomicRMWInst::FAdd, output_address, source,
-                llvm::AtomicOrdering::SequentiallyConsistent);
+                llvm::AtomicOrdering::Monotonic);
       return true;
     }
     if (is_atomic_integral) {
       // integral + integral
+      // use relaxed atomic ordering
       AtomicRMW(llvm::AtomicRMWInst::Add, output_address, source,
-                llvm::AtomicOrdering::SequentiallyConsistent);
+                llvm::AtomicOrdering::Monotonic);
       return true;
     }
   }
