@@ -49,7 +49,7 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
     syslibs_configure(name = "local_config_syslibs")
     rocm_configure(name="local_config_rocm")
     python_configure(name = "local_config_python")
-    rocm_configure(name = "local_config_rocm")
+    # rocm_configure(name = "local_config_rocm")
 
     initialize_third_party()
 
@@ -724,16 +724,7 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
             "https://github.com/NVlabs/cub/archive/1.8.0.zip",
         ],
     )
-    tf_http_archive(
-        name = "rocprim_archive",
-        urls = [ 
-            "https://mirror.bazel.build/github.com/ROCmSoftwarePlatform/rocPRIM/archive/c1e2082751eb242c125fd1a01798c5c87008e029.tar.gz",
-            "https://github.com/ROCmSoftwarePlatform/rocPRIM/archive/c1e2082751eb242c125fd1a01798c5c87008e029.tar.gz",
-        ],      
-        sha256 = "34b13b752aa118aa3fe511da4fd2f1b1fe8d23a31043c45e014d550e4c761926",
-        strip_prefix = "rocPRIM-c1e2082751eb242c125fd1a01798c5c87008e029",
-        build_file = clean_dep("//third_party:rocprim.BUILD"),
-    )
+
     tf_http_archive(
         name = "cython",
         build_file = clean_dep("//third_party:cython.BUILD"),

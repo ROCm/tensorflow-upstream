@@ -196,6 +196,7 @@ def _rocm_include_path(repository_ctx, rocm_config):
 
     # Add hipcub headers
     inc_dirs.append("/opt/rocm/include/hipcub")
+    inc_dirs.append("/opt/rocm/include/rocprim")
 
     # Add RCCL headers
     inc_dirs.append("/opt/rocm/rccl/include")
@@ -670,8 +671,8 @@ def _read_dir(repository_ctx, src_dir):
     return result
 
 def _compute_rocm_extra_copts(repository_ctx, amdgpu_targets):
-    if False:
-        amdgpu_target_flags = ["--amdgpu-target=" +
+    if amdgpu_targets:
+        amdgpu_target_flags = ["--offload-arch=" +
                                amdgpu_target for amdgpu_target in amdgpu_targets]
     else:
         # AMDGPU targets are handled in the "crosstool_wrapper_driver_is_not_gcc"
@@ -705,6 +706,12 @@ def _create_local_rocm_repository(repository_ctx):
         rocm_include_path + "/hipfft",
         "rocm/include/hipfft",
         "hipfft-include",
+    ))
+    genrules.append(_symlink_genrule_for_dir(
+        repository_ctx,
+        rocm_include_path + "/rocprim",
+        "rocm/include/rocprim",
+        "rocprim-include",
     ))
     genrules.append(_symlink_genrule_for_dir(
         repository_ctx,
@@ -799,6 +806,7 @@ def _create_local_rocm_repository(repository_ctx):
                                 '":miopen-include",\n' +
                                 '":hip-include",\n' +
                                 '":hipcub-include",\n' +
+                                '":rocprim-include",\n' +
                                 '":rccl-include",'),
         },
     )
