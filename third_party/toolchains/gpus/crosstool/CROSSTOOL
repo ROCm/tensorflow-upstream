@@ -179,6 +179,7 @@ toolchain {
         # Stamp the binary with a unique identifier.
         flag: "-Wl,--build-id=md5"
         flag: "-Wl,--hash-style=gnu"
+        flag: "-Wl,--copy-dt-needed-entries"
       }
     }
   }
