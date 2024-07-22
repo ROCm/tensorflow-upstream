@@ -7,7 +7,7 @@ ARG ROCM_DEB_REPO=https://repo.radeon.com/rocm/apt/6.1/
 ARG ROCM_BUILD_NAME=ubuntu
 ARG ROCM_BUILD_NUM=main
 ARG ROCM_PATH=/opt/rocm-6.1.0
-ARG GPU_DEVICE_TARGETS="gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"
+ARG GPU_DEVICE_TARGETS="gfx942"
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV TF_NEED_ROCM 1
@@ -99,7 +99,7 @@ RUN touch ${ROCM_PATH}/.info/version
 RUN bash -c 'ln -s ${ROCM_PATH} /opt/rocm'
 
 # Add target file to help determine which device(s) to build for
-RUN bash -c 'echo -e "gfx906\ngfx908\ngfx90a\ngfx940\ngfx941\ngfx942\ngfx1030\ngfx1100" >> ${ROCM_PATH}/bin/target.lst'
+RUN bash -c 'echo -e "gfx942\n" >> ${ROCM_PATH}/bin/target.lst'
 
 # Setup environment variables, and add those environment variables at the end of ~/.bashrc 
 ARG HCC_HOME=/opt/rocm/hcc
@@ -126,3 +126,6 @@ ENV TF_NEED_ROCM 1
 # By default, HIP runtime "hides" 256MB from the TF Runtime, but with recent changes (update to ROCm2.3, dynamic loading of roc* libs, et al)
 # it seems that we need to up the threshold slightly to 320MB
 ENV HIP_HIDDEN_FREE_MEM=320
+
+#We'll be using a custom CK build in this branch
+RUN bash -c 'mv ${ROCM_PATH}/include/ck ${ROCM_PATH}/include/ck-back'
