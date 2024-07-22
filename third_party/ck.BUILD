@@ -59,6 +59,6 @@ cc_library(
     ],
     includes = [
         "include",
-        "library/include/ck/library",
+        "library/include/",
     ],
 )
