@@ -1,11 +1,14 @@
 #pragma once
-#include "ck_irrelevant.h"
+#include <stdexcept>
+
 #include "tensorflow/core/lib/core/errors.h"
+
 namespace tensorflow {
 namespace functor {
 template <typename Device, typename dataTP>
-struct Fused_Gemm_Bias_Add_Functor {
-    static Status Compute(const Device& d, const Param & param);
+struct FusedGemmBiasAddFunctor {
+  static Status Compute(const Device& d, int M, int N, int K, const void* a0,
+                        const void* b0, const void* d0, void* e);
 };
-} // namespace functor
-} // namespace tensorflow
+}  // namespace functor
+}  // namespace tensorflow

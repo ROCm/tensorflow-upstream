@@ -11,6 +11,7 @@ load(
     "//tensorflow:tensorflow.bzl",
     "tf_gpu_cc_test",
     "tf_kernel_library",
+    "tf_gpu_kernel_library",
 )
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 
@@ -27,9 +28,28 @@ MATH_DEPS = [
 ]
 
 cc_library(
-    name = "ck_deps_fused_tile_gemm",
+    name = "ck_deps",
     hdrs = glob(["**/**/*.h"]),
     visibility = ["//visibility:public"],
+)
+
+tf_gpu_kernel_library(
+    name = "fused_tile_gemm_cu",
+    srcs = [
+        "op.cu.cc",
+        "op.h",
+    ],
+    hdrs = [
+        "op.h",
+    ],
+    deps = [
+        ":ck_deps",
+        "@ck_archive//:ck",
+    ] + MATH_DEPS,
+    gpu_copts = [
+        "-std=c++17",
+        "-fexceptions",
+    ],
 )
 
 tf_kernel_library(
@@ -37,29 +57,30 @@ tf_kernel_library(
     srcs = [
         "op.cc",
     ],
-    gpu_srcs = [
-        "op.cu.cc",
-        "op.h",
-        #"ck_irrelevant.h",
-        "api.h",
-    ],
     hdrs = [
         "op.h",
-        "api.h",
-        #"ck_irrelevant.h",
     ],
-    deps = [":ck_deps_fused_tile_gemm"] +
-    select({
-        "//conditions:default": [
-            "@ck_archive//:ck",
-        ],
-    }) +
-    MATH_DEPS + [
-        "//tensorflow/core:new_nn_ops_op_lib",
+    deps = [
+    ":fused_tile_gemm_cu",
+    "//tensorflow/core:new_nn_ops_op_lib",
     ],
-    copts = [
-        "-std=c++17",
-        "-fexceptions",
+)
+
+
+tf_gpu_cc_test(
+    name = "fused_tile_gemm_test",
+    size = "small",
+    srcs = ["op_test.cc"],
+    deps = [
+        ":fused_tile_gemm",
+        "//tensorflow/core/kernels:ops_testutil",
+        "//tensorflow/core/kernels:ops_util",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
     ],
-    nocopts = "-fno-exceptions",
 )

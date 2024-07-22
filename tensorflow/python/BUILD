@@ -1721,6 +1721,17 @@ tf_gen_op_wrapper_private_py(
 )
 
 tf_gen_op_wrapper_private_py(
+    name = "new_nn_ops_gen",
+    visibility = [
+        "//learning/brain/python/ops:__pkg__",
+        "//tensorflow/compiler/tests:__pkg__",
+        "//tensorflow/contrib/quantization:__pkg__",
+        "//tensorflow/python/kernel_tests:__pkg__",
+        "//tensorflow/python/tools:__pkg__",
+    ],
+)
+
+tf_gen_op_wrapper_private_py(
     name = "parsing_ops_gen",
     visibility = [
         "//learning/brain/python/ops:__pkg__",
@@ -2474,6 +2485,7 @@ py_library(
         ":nn_grad",
         ":nn_ops",
         ":nn_ops_gen",
+        ":new_nn_ops_gen",
         ":rnn",
         ":sparse_ops",
         ":util",
@@ -2509,6 +2521,7 @@ py_library(
         ":graph_util",
         ":math_ops",
         ":nn_ops_gen",
+        ":new_nn_ops_gen",
         ":random_ops",
         ":tensor_shape",
         ":tensor_util",

@@ -1043,7 +1043,7 @@ ROCMDriver::DeviceGetSharedMemConfig(int device_ordinal) {
   hipDeviceProp_t props;
   hipError_t result = hipGetDeviceProperties(&props, device);
   if (result == hipSuccess) {
-    *version = strtol(&props.gcnArchName[3], nullptr, 10);
+    *version = strtol(&props.gcnArchName[3], nullptr, 16);
     return port::Status::OK();
   }
   *version = 0;

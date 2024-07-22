@@ -50,15 +50,24 @@ filegroup(
     ]),
 )
 
+filegroup(
+    name = "ck_examples",
+    srcs = glob([
+        "example/**",
+    ]),
+)
+
 cc_library(
     name = "ck",
     hdrs = [
         ":ck_header_files",
         ":ck_util_header_files",
         ":config_h",
+        ":ck_examples",
     ],
     includes = [
         "include",
         "library/include/ck/library",
+        "example",
     ],
 )

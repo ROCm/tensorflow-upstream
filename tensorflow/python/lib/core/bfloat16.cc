@@ -313,11 +313,15 @@ PyTypeObject PyBfloat16_Type = {
 #else
     PyVarObject_HEAD_INIT(nullptr, 0)
 #endif
-    "bfloat16",                                // tp_name
-    sizeof(PyBfloat16),                        // tp_basicsize
-    0,                                         // tp_itemsize
-    nullptr,                                   // tp_dealloc
-    nullptr,                                   // tp_print
+    "bfloat16",          // tp_name
+    sizeof(PyBfloat16),  // tp_basicsize
+    0,                   // tp_itemsize
+    nullptr,             // tp_dealloc
+#if PY_VERSION_HEX < 0x03080000
+    nullptr,  // tp_print
+#else
+    0,  // tp_vectorcall_offset
+#endif
     nullptr,                                   // tp_getattr
     nullptr,                                   // tp_setattr
     nullptr,                                   // tp_compare / tp_reserved
@@ -490,7 +494,7 @@ bool RegisterBfloat16Cast(int numpy_type, bool cast_is_safe) {
 }
 
 template <typename InType, typename OutType, typename Functor>
-void BinaryUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
+void BinaryUFunc(char** args, const npy_intp* dimensions, const npy_intp* steps,
                  void* data) {
   const char* i0 = args[0];
   const char* i1 = args[1];
@@ -505,9 +509,15 @@ void BinaryUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
   }
 }
 
+// Numpy changed const-ness of PyUFuncGenericFunction, provide overload.
 template <typename Functor>
 void CompareUFunc(char** args, npy_intp* dimensions, npy_intp* steps,
                   void* data) {
+  BinaryUFunc<bfloat16, npy_bool, Functor>(args, dimensions, steps, data);
+}
+template <typename Functor>
+void CompareUFunc(char** args, const npy_intp* dimensions,
+                  const npy_intp* steps, void* data) {
   BinaryUFunc<bfloat16, npy_bool, Functor>(args, dimensions, steps, data);
 }
 

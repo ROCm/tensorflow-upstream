@@ -104,6 +104,8 @@ from tensorflow.python.summary import summary
 from tensorflow.python.user_ops import user_ops
 from tensorflow.python.util import compat
 
+from tensorflow.python.ops import gen_new_nn_ops as new_nn_ops
+
 # Import boosted trees ops to make sure the ops are registered (but unused).
 from tensorflow.python.ops import gen_boosted_trees_ops as _gen_boosted_trees_ops
 

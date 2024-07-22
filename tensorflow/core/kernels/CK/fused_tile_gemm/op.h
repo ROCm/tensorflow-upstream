@@ -1,20 +1,15 @@
 #pragma once
 #include <stdexcept>
-#include "ck/ck.hpp"
+
 #include "tensorflow/core/lib/core/errors.h"
-#ifndef PARAM_DEFINITION_HPP
-#define PARAM_DEFINITION_HPP
 
-struct Param {
-    // Define the members of Param here
-};
-
-#endif // PARAM_DEFINITION_HPP
 namespace tensorflow {
 namespace functor {
 template <typename Device, typename dataTP>
-struct Fused_Gemm_Bias_Add_Functor {
-    static Status Compute(const Device& d, const Param & param);
+struct FusedTileGemmFunctor {
+  static Status Compute(const Device& d, const void* mat_A, const void* mat_B,
+                        void* mat_D, int batch, int seq, int head_sz,
+                        int head_num);
 };
-} // namespace functor
-} // namespace tensorflow
+}  // namespace functor
+}  // namespace tensorflow

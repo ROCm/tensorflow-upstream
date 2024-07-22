@@ -24,7 +24,7 @@ _TF_ROCM_CONFIG_REPO = "TF_ROCM_CONFIG_REPO"
 _DEFAULT_ROCM_VERSION = ""
 _DEFAULT_MIOPEN_VERSION = ""
 _DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm"
-_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx803", "gfx900"]
+_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx942"]
 
 def to_list_of_strings(elements):
     """Convert the list of ["a", "b", "c"] into '"a", "b", "c"'.
@@ -253,7 +253,7 @@ def _amdgpu_targets(repository_ctx):
     amdgpu_targets_str = repository_ctx.os.environ[_TF_ROCM_AMDGPU_TARGETS]
     amdgpu_targets = amdgpu_targets_str.split(",")
     for amdgpu_target in amdgpu_targets:
-        if amdgpu_target[:3] != "gfx" or not amdgpu_target[3:].isdigit():
+        if amdgpu_target[:3] != "gfx":
             auto_configure_fail("Invalid AMDGPU target: %s" % amdgpu_target)
     return amdgpu_targets
 
