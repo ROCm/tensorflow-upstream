@@ -21,9 +21,12 @@ RUN pip3 install keras_applications
 RUN pip3 install jupyter 
 RUN pip3 install numpy==1.18.5
 
+
 RUN rm -rf /opt/rocm/include/ck
-COPY ./install/install_bazel.sh ./
-RUN bash ./install_bazel.sh
+RUN git clone -b r1.12-rocm61-customops-sixifang-sabre https://github.com/ROCm/tensorflow-upstream.git
+WORKDIR tensorflow-upstream
+RUN bash tensorflow/tools/ci_build/install/install_bazel.sh
+RUN bash build_rocm_python3
 WORKDIR $HOME
 
 
