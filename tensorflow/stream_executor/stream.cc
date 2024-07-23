@@ -2171,29 +2171,24 @@ struct ThenBlasImpl {
   // true.
   Stream &Run(Stream *stream,
               bool (blas::BlasSupport::*blas_func)(Stream *, Args...),
-              bool record_error, Args... args);
-};
-
-template <typename... Args>
-Stream &ThenBlasImpl<Args...>::Run(
-    Stream *stream, bool (blas::BlasSupport::*blas_func)(Stream *, Args...),
-    bool record_error, Args... args) {
-  if (stream->ok()) {
-    bool ok;
-    if (blas::BlasSupport *blas = stream->parent_->AsBlas()) {
-      ok = (blas->*blas_func)(stream, args...);
-    } else {
-      LOG(WARNING)
+              bool record_error, Args... args) {
+    if (stream->ok()) {
+      bool ok;
+      if (blas::BlasSupport *blas = stream->parent_->AsBlas()) {
+        ok = (blas->*blas_func)(stream, args...);
+      } else {
+        LOG(WARNING)
           << "attempting to perform BLAS operation using StreamExecutor "
              "without BLAS support";
-      ok = false;
-    }
+        ok = false;
+      }
     if (record_error) {
-      stream->CheckError(ok);
+        stream->CheckError(ok);
+      }
     }
+    return *stream;
   }
-  return *stream;
-}
+}; // ThenBlasImpl
 
 Stream &Stream::ThenBlasAsum(uint64 elem_count, const DeviceMemory<float> &x,
                              int incx, DeviceMemory<float> *result) {

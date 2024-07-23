@@ -36,6 +36,8 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
+bool GpuBlasLtEnabled();
+
 xla::StatusOr<blas::DataType> AsBlasDataType(xla::PrimitiveType dtype);
 
 xla::StatusOr<xla::PrimitiveType> AsXlaPrimitiveType(blas::DataType dtype);
@@ -121,6 +123,15 @@ struct GemmConfig {  // plain GemmConfig which is extended with create functions
   bool grad_x;
   bool grad_y;
   absl::optional<blas::ComputationType> compute_type;
+};
+
+struct GroupedGemmConfig {
+  int64 m, n, k, batch_count;
+  blas::Transpose trans_a, trans_b;
+  const void *alpha, *beta;
+  blas::DataType type_a, type_b, type_c, type_d;
+  int64 lda, ldb, ldc, ldd;
+  blas::ComputationType compute_type;
 };
 
 struct BlasLt {
@@ -288,8 +299,8 @@ struct BlasLt {
                           absl::optional<ScratchAllocator*> scratch_allocator,
                           blas::ProfileResult* profile_result = nullptr) const {
       Scale salpha;
-      if constexpr (std::is_same<Scale, xla::complex64>::value ||
-                    std::is_same<Scale, xla::complex128>::value) {
+      if constexpr(std::is_same<Scale, xla::complex64>::value ||
+                   std::is_same<Scale, xla::complex128>::value) {
         salpha = static_cast<Scale>(alpha);
       } else {
         salpha = static_cast<Scale>(alpha.real());
@@ -324,14 +335,28 @@ struct BlasLt {
         absl::optional<DeviceMemoryBase> workspace,
         absl::optional<ScratchAllocator*> scratch_allocator,
         blas::ProfileResult* profile_result = nullptr) const = 0;
-  };  // class MatmulPlan
+  };  // struct MatmulPlan
+  struct GroupedMatmulPlan {
+
+    virtual xla::Status ExecuteOnStream(
+          const gpu::GroupedGemmConfig& cfg,
+          const void *alpha, const void** a, 
+          const void *beta, const void** b, 
+          const void** c, void **d) = 0;
+
+    virtual ~GroupedMatmulPlan() {}
+  };
 
   using MatmulPlanPtr = std::unique_ptr<MatmulPlan>;
+  using GroupedMatmulPlanPtr = std::unique_ptr<GroupedMatmulPlan>;
 
   virtual xla::Status Init() = 0;
 
   virtual xla::StatusOr<MatmulPlanPtr> GetMatmulPlan(
       const GemmConfig& cfg, Epilogue epilogue) const = 0;
+
+  virtual xla::StatusOr<GroupedMatmulPlanPtr> GetGroupedMatmulPlan(
+          const GroupedGemmConfig& config) const = 0;
 
   static BlasLt* Get(const Stream* stream);
 

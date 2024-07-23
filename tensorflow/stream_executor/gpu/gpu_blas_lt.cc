@@ -24,6 +24,7 @@ limitations under the License.
 #include "tensorflow/stream_executor/stream.h"
 #include "tensorflow/stream_executor/stream_executor.h"
 #include "tensorflow/compiler/xla/util.h"
+#include "tensorflow/core/util/env_var.h"
 
 namespace stream_executor {
 
@@ -32,6 +33,16 @@ namespace gpu {
 using blas::ComputationType;
 using blas::DataType;
 using xla::PrimitiveType;
+
+bool GpuBlasLtEnabled() {
+  static bool result = [] {
+    bool value = false;;
+    tensorflow::ReadBoolFromEnvVar("TF_ENABLE_GPU_BLASLT",
+                     /*default_value=*/false, &value);
+    return value;
+  }();
+  return result;
+}
 
 xla::StatusOr<DataType> AsBlasDataType(PrimitiveType dtype) {
   switch (dtype) {

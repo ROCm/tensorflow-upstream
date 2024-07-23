@@ -22,6 +22,10 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/rocm/hip_blas_utils.h"
 
+namespace hipblaslt_ext {
+  class GroupedGemm;
+}
+
 namespace stream_executor {
 
 namespace gpu {
@@ -145,7 +149,24 @@ class BlasLt : public gpu::BlasLt {
     xla::complex128 alpha_;
     double beta_;
     bool must_swap_operands_;
-  };  // class MatmulPlan
+  };  // struct MatmulPlan
+
+  struct GroupedMatmulPlan : public gpu::BlasLt::GroupedMatmulPlan {
+
+    GroupedMatmulPlan(const BlasLt& blas_lt, const gpu::GroupedGemmConfig& cfg);
+
+    xla::Status ExecuteOnStream(
+          const gpu::GroupedGemmConfig& cfg,
+          const void *alpha, const void** a, 
+          const void *beta, const void** b, 
+          const void** c, void **d) override;
+
+    ~GroupedMatmulPlan() override = default;
+
+  private:
+    const BlasLt& blas_lt_ref_;
+    std::unique_ptr< hipblaslt_ext::GroupedGemm > grouped_gemm_;
+  };
 
   explicit BlasLt(gpu::GpuExecutor* parent)
       : parent_(parent), blas_lt_(nullptr, wrap::hipblasLtDestroy) {}
@@ -154,6 +175,9 @@ class BlasLt : public gpu::BlasLt {
 
   xla::StatusOr<MatmulPlanPtr> GetMatmulPlan(const gpu::GemmConfig& cfg,
                                               Epilogue epilogue) const override;
+
+  xla::StatusOr<GroupedMatmulPlanPtr> GetGroupedMatmulPlan(
+        const gpu::GroupedGemmConfig& config) const override;
 
   ~BlasLt() override = default;
 

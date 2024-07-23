@@ -192,6 +192,12 @@ cc_library(
     alwayslink = True,
 )
 
+# cc_library(
+#     name = "hipblaslt_if_static",
+#     deps = [
+#         "@local_config_rocm//rocm:hipblaslt",
+#     ],
+# )
 
 cc_library(
     name = "amdhipblaslt_plugin",
@@ -224,9 +230,11 @@ cc_library(
         "//tensorflow/stream_executor/platform:dso_loader",
         "//tensorflow/stream_executor:scratch_allocator",
         "@local_config_rocm//rocm:rocm_headers",
-    ]) + if_static([
-        ":hipblaslt_if_static",
     ]),
+    # + if_static([
+    #     ":hipblaslt_if_static",
+    # ]),
+    linkopts = ["-lhipblaslt"],
     alwayslink = True,
 )
 

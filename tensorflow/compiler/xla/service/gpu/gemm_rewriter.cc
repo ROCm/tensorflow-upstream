@@ -27,6 +27,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/statusor.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/stream_executor/lib/statusor.h"
+#include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
 
 namespace xla {
 namespace gpu {
@@ -166,10 +167,7 @@ private:
   StatusOr<absl::string_view> GetGemmCustomCallTarget(
       const HloInstruction &instr,
       const GemmBackendConfig &gemm_backend_config) const {
-    if (!instr.GetModule()
-             ->config()
-             .debug_options()
-             .xla_gpu_enable_cublaslt()) {
+    if (!se::gpu::GpuBlasLtEnabled) {
       // cublasLt is not enabled.
       return absl::string_view(kGemmCallTarget);
     }

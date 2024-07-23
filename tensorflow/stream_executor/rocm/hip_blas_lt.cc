@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "rocm/rocm_config.h"
 #include "rocm/include/rocblas/rocblas.h"
+#include "rocm/include/hipblaslt/hipblaslt-ext.hpp"
 #include "tensorflow/compiler/xla/primitive_util.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/util.h"
@@ -63,6 +64,7 @@ using ::xla::complex128;
 using ::xla::complex64;
 using tensorflow::errors::InvalidArgument;
 using tensorflow::bfloat16;
+using namespace hipblaslt_ext;
 
 namespace {
 
@@ -598,6 +600,125 @@ xla::Status BlasLt::MatmulPlan::ExecuteOnStream(
 #undef TYPED_MATMUL
 
   return xla::Internal("Unexpected dtype");
+}
+
+BlasLt::GroupedMatmulPlan::GroupedMatmulPlan(const BlasLt& blas_lt, 
+                                      const gpu::GroupedGemmConfig& cfg) :
+  blas_lt_ref_(blas_lt),
+  grouped_gemm_(new GroupedGemm(blas_lt.blas_lt_.get(),
+          AsHipblasOperation(cfg.trans_a),
+          AsHipblasOperation(cfg.trans_b),
+          AsHipblasDataType(cfg.type_a),
+          AsHipblasDataType(cfg.type_b),
+          AsHipblasDataType(cfg.type_c),
+          AsHipblasDataType(cfg.type_d),
+          AsHipblasComputeType(cfg.compute_type))) {}
+
+// BlasLt::GroupedMatmulPlan::~GroupedMatmulPlan() {}
+
+auto BlasLt::GetGroupedMatmulPlan(const gpu::GroupedGemmConfig& config) const 
+    -> xla::StatusOr<GroupedMatmulPlanPtr> {
+   
+  auto plan = std::make_unique< GroupedMatmulPlan >(*this, config);
+  return xla::StatusOr<GroupedMatmulPlanPtr>{std::move(plan)};
+}
+
+/*
+
+static void groupedGemm(hipblasLtHandle_t H,
+                          hipblasOperation_t    trans_a,
+                          hipblasOperation_t    trans_b,
+                          std::vector<int64_t>& m,
+                          std::vector<int64_t>& n,
+                          std::vector<int64_t>& k,
+                          std::vector<int64_t>& batch_count,
+                          std::vector<float>&   alpha,
+                          std::vector<float>&   beta,
+                          std::vector<void*>&   d_a,
+                          std::vector<void*>&   d_b,
+                          std::vector<void*>&   d_c,
+                          std::vector<void*>&   d_d) {
+
+  hipblaslt_ext::GroupedGemm groupedgemm(
+        H, trans_a, trans_b, HIP_R_16F, HIP_R_16F, HIP_R_16F, HIP_R_16F, HIPBLAS_COMPUTE_32F);
+  groupedgemm.run();
+}*/
+
+xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(
+          const gpu::GroupedGemmConfig& cfg,
+          const void *alpha, const void** a, 
+          const void *beta, const void** b, 
+          const void** c, void **d) {
+ 
+
+  std::vector< int64_t > m(cfg.batch_count, cfg.m), 
+                         n(cfg.batch_count, cfg.n), 
+                         k(cfg.batch_count, cfg.k), 
+                         batch_count(cfg.batch_count, 1), 
+                         lda(cfg.batch_count, cfg.lda),
+                         ldb(cfg.batch_count, cfg.ldb),
+                         ldc(cfg.batch_count, cfg.ldc),
+                         ldd(cfg.batch_count, cfg.ldd),
+                         strideA(cfg.batch_count, cfg.m * cfg.k),
+                         strideB(cfg.batch_count, cfg.n * cfg.k),
+                         strideC(cfg.batch_count, cfg.m * cfg.n),
+                         strideD(cfg.batch_count, cfg.m * cfg.n);
+
+  std::vector< GemmEpilogue > epilogue(cfg.batch_count,
+            GemmEpilogue{});
+  std::vector< GemmInputs > inputs(cfg.batch_count);
+  for(int64 i = 0; i < cfg.batch_count; i++) {
+    inputs[i].a = const_cast< void * >(a[i]);
+    inputs[i].b = const_cast< void * >(b[i]);
+    inputs[i].c = const_cast< void * >(c[i]);
+    inputs[i].d = d[i];
+    inputs[i].alpha = const_cast< void * >(alpha);
+    inputs[i].beta = const_cast< void * >(beta);
+  }
+
+  GemmProblemType problem = {
+    .op_a = AsHipblasOperation(cfg.trans_a),
+    .op_b = AsHipblasOperation(cfg.trans_b),
+    .type_a = AsHipblasDataType(cfg.type_a),
+    .type_b = AsHipblasDataType(cfg.type_b),
+    .type_c = AsHipblasDataType(cfg.type_c),
+    .type_d = AsHipblasDataType(cfg.type_d),
+    .type_compute = AsHipblasComputeType(cfg.compute_type)
+  };
+
+  SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->setProblem(m, n, k, batch_count,
+          lda, ldb, ldc, ldd, strideA, strideB, strideC, strideD,
+          epilogue, inputs, problem));
+
+// struct GroupedGemmConfig {
+//   int64 m, n, k, batch_count;
+//   blas::Transpose trans_a, trans_b;
+//   const void *alpha, *beta;
+//   blas::DataType type_a, type_b, type_c, type_d;
+//   int64 lda, ldb, ldc, ldd;
+//   blas::ComputationType compute_type;
+// };
+
+    // struct GemmInputs
+    // {
+    //     void* a     = nullptr; //!< The a matrix input pointer.
+    //     void* b     = nullptr; //!< The b matrix input pointer.
+    //     void* c     = nullptr; //!< The c matrix input pointer.
+    //     void* d     = nullptr; //!< The d matrix input pointer.
+    //     void* alpha = nullptr; //!< The alpha value.
+    //     void* beta  = nullptr; //!< The beta value.
+    //     // Epilogue inputs
+    //     void* bias          = nullptr; //!< The bias input pointer.
+    //     void* scaleA        = nullptr; //!< The Scale A input pointer.
+    //     void* scaleB        = nullptr; //!< The Scale B input pointer.
+    //     void* scaleC        = nullptr; //!< The Scale C input pointer.
+    //     void* scaleD        = nullptr; //!< The Scale D input pointer.
+    //     void* scaleAux      = nullptr; //!< The Scale AUX input pointer.
+    //     void* scaleAlphaVec = nullptr; //!< The scaleAlpha vector input pointer.
+    //     void* aux           = nullptr; //!< The aux input pointer.
+    // };
+
+  return xla::Status::OK();
 }
 
 }  // namespace rocm
