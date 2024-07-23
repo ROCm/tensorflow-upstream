@@ -404,4 +404,55 @@ REGISTER_KERNEL_BUILDER(Name("Placeholder").Device(DEVICE_SYCL), PlaceholderOp);
 REGISTER_KERNEL_BUILDER(Name("PlaceholderV2").Device(DEVICE_SYCL),
                         PlaceholderOp);
 #endif  // TENSORFLOW_USE_SYCL
+
+
+template <typename Device, typename T>
+class ConstWeightsOpV2 : public OpKernel {
+ public:
+  explicit ConstWeightsOpV2(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("out_shape", &out_shape_));
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    const Device& d = ctx->eigen_device<Device>();
+    Tensor* out = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, out_shape_, &out));
+    functor::SetOneFunctor<Device, T> f;
+    f(d, out->flat<T>());
+    // To32Bit(out->flat<T>()).device(d) = To32Bit(out->flat<T>()).random();
+  }
+ private:
+  TensorShape out_shape_;
+};
+
+#define REGISTER_KERNEL(type, dev)                                      \
+  REGISTER_KERNEL_BUILDER(                                              \
+      Name("ConstWeightsOpV2").Device(DEVICE_##dev).TypeConstraint<type>("T"), \
+      ConstWeightsOpV2<dev##Device, type>)
+
+#define REGISTER_CPU(type) REGISTER_KERNEL(type, CPU)
+REGISTER_KERNEL(bool, CPU);
+REGISTER_KERNEL(Eigen::half, CPU);
+REGISTER_KERNEL(bfloat16, CPU);
+REGISTER_KERNEL(float, CPU);
+REGISTER_KERNEL(double, CPU);
+REGISTER_KERNEL(complex64, CPU);
+REGISTER_KERNEL(complex128, CPU);
+REGISTER_KERNEL(int64, CPU);
+REGISTER_KERNEL(int32, CPU);
+#undef REGISTER_CPU
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+REGISTER_KERNEL(bool, GPU);
+REGISTER_KERNEL(Eigen::half, GPU);
+REGISTER_KERNEL(bfloat16, GPU);
+REGISTER_KERNEL(float, GPU);
+REGISTER_KERNEL(double, GPU);
+REGISTER_KERNEL(complex64, GPU);
+REGISTER_KERNEL(complex128, GPU);
+REGISTER_KERNEL(int64, GPU);
+REGISTER_KERNEL(int32, GPU);
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+#undef REGISTER_KERNEL
 }  // namespace tensorflow

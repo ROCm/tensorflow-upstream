@@ -1898,12 +1898,29 @@ REGISTER_OP("Placeholder")
 // Placeholder was modified in a backwards compatible way to do what
 // PlaceholderV2 did, so we have deprecated V2 (no one was really
 // using it).
+
 REGISTER_OP("PlaceholderV2")
     .Output("output: dtype")
     .Attr("dtype: type")
     .Attr("shape: shape")
     .SetShapeFn(shape_inference::ExplicitShape)
     .Deprecated(23, "Placeholder now behaves the same as PlaceholderV2.");
+
+REGISTER_OP("ConstWeightsOpV2")
+    .Output("output: dtype")
+    .Attr("dtype: type")
+    .Attr("dense: bool")
+    .Attr("model_name: string")
+    .Attr("out_shape: shape")
+    .Attr("weight_name: string")
+    .SetShapeFn([](InferenceContext* c) {
+      TensorShape shape;
+      TF_RETURN_IF_ERROR(c->GetAttr("out_shape", &shape));
+      ShapeHandle output_shape;
+      TF_RETURN_IF_ERROR(c->MakeShapeFromTensorShape(shape, &output_shape));
+      c->set_output(0, output_shape);
+      return Status::OK();
+    });
 
 // --------------------------------------------------------------------------
 REGISTER_OP("PlaceholderWithDefault")
