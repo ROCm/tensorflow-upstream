@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
@@ -284,9 +285,17 @@ Status LinkWithBitcodeVector(llvm::Module* module,
   }
 
   // Dump LLVM IR.
+  std::string ir_string;
+  llvm::raw_string_ostream stream(ir_string);
+  //llvm::buffer_ostream pstream(stream);
+  module->print(stream, nullptr);
+  stream.flush();
+  ir_string = absl::StrReplaceAll(ir_string, {{"v1024:1024-v2048:2048-n32:64-S32-A5", "v1024:1024-v2048:2048-n32:64-S32-A5-G1-ni:7:8"}});
+
   std::unique_ptr<llvm::raw_fd_ostream> ir_fs(
       new llvm::raw_fd_ostream(ir_path, ec, llvm::sys::fs::F_None));
-  module->print(*ir_fs, nullptr);
+  //module->print(*ir_fs, nullptr);
+  *ir_fs << ir_string;
   ir_fs->flush();
 
   // Locate llvm-link.

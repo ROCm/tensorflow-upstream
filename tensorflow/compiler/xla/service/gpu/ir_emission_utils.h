@@ -69,8 +69,11 @@ bool IsCublasGemm(const HloInstruction& hlo);
 bool IsLegacyCublasMatmul(const HloInstruction& hlo);
 bool IsCublasLtMatmul(const HloInstruction& hlo);
 
+#if GOOGLE_CUDA
 constexpr int64 kWarpSize = 32;
-
+#else
+constexpr int64 kWarpSize = 64;
+#endif
 // A call to cuBLAS general matrix multiplication API.
 extern const char* const kGemmCallTarget;
 
