@@ -50,19 +50,6 @@ struct GroupedGemmRunner {
 
   GroupedGemmRunner() {}
 
-  // template < class Scalar, class TypeA, class TypeB, class TypeC >
-  // Stream& operator()(Stream& stream, blas::Transpose transa, 
-  //     blas::Transpose transb, 
-  //     uint64 m, uint64 n, uint64 k, Scalar alpha, const TypeA** a, int lda, 
-  //     const TypeB** b, int ldb, Scalar beta,
-  //     TypeC** c, int ldc, int batch_count) {
-  //   auto type_a = blas::ToDataType<T>::value;
-
-  //   auto res = run(stream, transa, transb, m, n, k, 
-  //         alpha, type_a, a, lda, type, b, ldb, &beta,
-  //         type, reinterpret_cast< void **>(c), ldc, batch_count)
-  // }
-
   Stream& operator()(Stream& stream, blas::Transpose transa, 
       blas::Transpose transb, uint64 m, uint64 n, uint64 k, 
       const void *alpha, blas::DataType type_a, const void** a, int lda, 

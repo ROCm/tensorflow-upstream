@@ -2052,6 +2052,7 @@ class Stream {
   std::vector<std::function<void()>> after_block_host_until_done_callbacks_
       GUARDED_BY(mu_);
 
+  // NOTE: this should not be a per-stream instance !!
   std::unique_ptr< gpu::GroupedGemmRunner > grouped_gemm_runner_
       GUARDED_BY(mu_);
 

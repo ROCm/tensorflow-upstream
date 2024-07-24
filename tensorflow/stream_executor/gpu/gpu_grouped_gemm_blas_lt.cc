@@ -71,12 +71,23 @@ Stream& GroupedGemmRunner::operator()(Stream& stream,
       return stream;
     }
     res = map_.emplace(cfg, std::move(plan_res.ValueOrDie())).first;
-    VLOG(0) << "++++++++++++++++++++++++++++++++++ added new config: " << map_.size() << " +++++++++++++++++++++++";
+
+    auto& plan = res->second;
+    auto algos = plan->GetAlgorithms().ValueOrDie();
+
+    VLOG(0) << "++++++++++++++++++++++++++++++++++ added new config: " << map_.size() << 
+        " algos found: " << algos.size();
+    if(algos.empty()) {
+      stream.SetError();
+      return stream;
+    }
+    plan->SetAlgorithm(algos[0]);
   }
+
   auto& plan = res->second;
-  auto res = plan->ExecuteOnStream(&stream, cfg);
-  if(!res.ok()) {
-    stream.CheckStatus(res);
+  auto status = plan->ExecuteOnStream(&stream, cfg);
+  if(!status.ok()) {
+    stream.CheckStatus(status);
   }
   return stream;
 }

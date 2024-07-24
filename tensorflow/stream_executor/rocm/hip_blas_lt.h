@@ -158,6 +158,12 @@ class BlasLt : public gpu::BlasLt {
     xla::Status ExecuteOnStream(Stream *stream,
           const gpu::GroupedGemmConfig& cfg) override;
 
+    xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
+        size_t max_algorithm_count,
+        size_t max_workspace_size) override;
+
+    xla::Status SetAlgorithm(const MatmulAlgorithm& algorithm) override;
+
     ~GroupedMatmulPlan() override;
 
   private:

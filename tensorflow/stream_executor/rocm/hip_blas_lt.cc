@@ -679,12 +679,54 @@ auto BlasLt::GetGroupedMatmulPlan(DeviceMemoryAllocator *allocator,
       " strides: " << a.strideD1 << "," << a.strideD2 << "," << a.strideA1 << "," << a.strideA2 <<
       " activate: " << a.activationType;
   }
-  
-  
   return xla::StatusOr<GroupedMatmulPlanPtr>(std::move(plan));
 }
 
+auto BlasLt::GroupedMatmulPlan::GetAlgorithms(
+        size_t max_algorithm_count, size_t max_workspace_size) ->
+    xla::StatusOr<std::vector<MatmulAlgorithm>> {
+
+  absl::MutexLock lock(&blas_lt_ref_.mu_);
+
+// gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_}; ??
+
+  GemmPreference gemmPref;
+  gemmPref.setMaxWorkspaceBytes(max_workspace_size);
+  
+  std::vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
+  SE_HIPBLAS_RETURN_IF_ERROR(
+        grouped_gemm_->algoGetHeuristic(max_algorithm_count, gemmPref, 
+              heuristicResult));
+  
+  std::vector<MatmulAlgorithm> algorithms;
+  algorithms.reserve(heuristicResult.size());
+  for(auto& res : heuristicResult) {
+    size_t workspace_size = 0;
+    if(grouped_gemm_->isAlgoSupported(res.algo, workspace_size)) {
+      algorithms.push_back({res.algo, workspace_size});
+    }
+  }
+  return algorithms;
+}
+
+xla::Status BlasLt::GroupedMatmulPlan::SetAlgorithm(
+            const MatmulAlgorithm& algorithm) 
+{
+  auto palgo = absl::any_cast<hipblasLtMatmulAlgo_t>(&algorithm.opaque_algo);
+  if(palgo == nullptr) {
+    return xla::InternalError("Wrong algorithm instance !");
+  }
+  absl::MutexLock lock(&blas_lt_ref_.mu_);
+  void *d_workspace = nullptr;
+  // NOTE: initialize requires a lot of time !!!
+  // TODO: add workspace
+  SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->initialize(
+          *palgo, d_workspace));
+  return xla::Status::OK();
+}
+
 xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(Stream *stream,
+          const MatmulAlgorithm& algorithm,
           const gpu::GroupedGemmConfig& cfg) {
   
   if(cfg.batch_count != device_args_.size()) {
@@ -705,22 +747,7 @@ xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(Stream *stream,
         device_args_.size())) {
     return xla::InternalError("Memcpy failed!");
   }
-  
-  size_t max_workspace_size = 1ll << 32;
-  GemmPreference gemmPref;
-  gemmPref.setMaxWorkspaceBytes(max_workspace_size);
-  
-  const int request_solutions = 1;
-  std::vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
-  SE_HIPBLAS_RETURN_IF_ERROR(
-        grouped_gemm_->algoGetHeuristic(request_solutions, gemmPref, 
-              heuristicResult));
-  if(heuristicResult.empty()) {
-    return xla::InternalError("No valid solutions found!");
-  }
-  void *d_workspace = nullptr;
-  SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->initialize(
-          heuristicResult[0].algo, d_workspace));
+
   SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->run(
         device_args_.opaque(), gpu::AsGpuStreamValue(stream)));
   } // end block
