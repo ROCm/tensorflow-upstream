@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "tensorflow/core/lib/core/status.h"
 #include "rocm/rocm_config.h"
-#include "tensorflow/stream_executor/device_memory.h"
+#include "tensorflow/stream_executor/device_memory_allocator.h"
 #include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
 #include "tensorflow/stream_executor/host_or_device_scalar.h"
 #include "tensorflow/compiler/xla/types.h"
@@ -24,6 +24,7 @@ limitations under the License.
 
 namespace hipblaslt_ext {
   class GroupedGemm;
+  struct UserArguments;
 }
 
 namespace stream_executor {
@@ -120,11 +121,6 @@ class BlasLt : public gpu::BlasLt {
         size_t max_algorithm_count, size_t max_workspace_size) const override;
 
    protected:
-    xla::Status ValidateInputs(blas::DataType scale_type, bool alpha_on_device,
-                                bool beta_on_device, blas::DataType A_type,
-                                blas::DataType B_type, blas::DataType C_type,
-                                blas::DataType D_type) const override;
-
     xla::Status DoMatmul(Stream* stream, const void* alpha, DeviceMemoryBase a,
                           DeviceMemoryBase b, const void* beta,
                           DeviceMemoryBase c, DeviceMemoryBase d,
@@ -153,19 +149,24 @@ class BlasLt : public gpu::BlasLt {
 
   struct GroupedMatmulPlan : public gpu::BlasLt::GroupedMatmulPlan {
 
-    GroupedMatmulPlan(const BlasLt& blas_lt, const gpu::GroupedGemmConfig& cfg);
+    friend class BlasLt;
+    using DeviceMemoryArgs = DeviceMemoryBase; // OwningDeviceMemory
+    using GroupedGemmPtr = std::unique_ptr< hipblaslt_ext::GroupedGemm >;
 
-    xla::Status ExecuteOnStream(
-          const gpu::GroupedGemmConfig& cfg,
-          const void *alpha, const void** a, 
-          const void *beta, const void** b, 
-          const void** c, void **d) override;
+    GroupedMatmulPlan(const BlasLt& blas_lt);
 
-    ~GroupedMatmulPlan() override = default;
+    xla::Status ExecuteOnStream(Stream *stream,
+          const gpu::GroupedGemmConfig& cfg) override;
+
+    ~GroupedMatmulPlan() override;
 
   private:
     const BlasLt& blas_lt_ref_;
-    std::unique_ptr< hipblaslt_ext::GroupedGemm > grouped_gemm_;
+    GroupedGemmPtr grouped_gemm_;
+    hipblaslt_ext::UserArguments *host_args_ = nullptr;
+    DeviceMemoryArgs device_args_;
+
+    SE_DISALLOW_COPY_AND_ASSIGN(GroupedMatmulPlan);
   };
 
   explicit BlasLt(gpu::GpuExecutor* parent)
@@ -177,6 +178,7 @@ class BlasLt : public gpu::BlasLt {
                                               Epilogue epilogue) const override;
 
   xla::StatusOr<GroupedMatmulPlanPtr> GetGroupedMatmulPlan(
+        DeviceMemoryAllocator *allocator, 
         const gpu::GroupedGemmConfig& config) const override;
 
   ~BlasLt() override = default;

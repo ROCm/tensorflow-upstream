@@ -35,12 +35,12 @@ using blas::DataType;
 using xla::PrimitiveType;
 
 bool GpuBlasLtEnabled() {
-  static bool result = [] {
-    bool value = false;;
+  static std::atomic_bool result{[] {
+    bool value = false;
     tensorflow::ReadBoolFromEnvVar("TF_ENABLE_GPU_BLASLT",
                      /*default_value=*/false, &value);
     return value;
-  }();
+  }()};
   return result;
 }
 
@@ -69,26 +69,45 @@ xla::StatusOr<DataType> AsBlasDataType(PrimitiveType dtype) {
   }
 }
 
-xla::StatusOr<PrimitiveType> AsXlaPrimitiveType(DataType dtype) {
-  switch (dtype) {
-    case DataType::kInt8:
-      return PrimitiveType::S8;
-    case DataType::kHalf:
-      return PrimitiveType::F16;
-    case DataType::kBFloat16:
-      return PrimitiveType::BF16;
-    case DataType::kFloat:
-      return PrimitiveType::F32;
-    case DataType::kInt32:
-      return PrimitiveType::S32;
-    case DataType::kDouble:
-      return PrimitiveType::F64;
-    case DataType::kComplexFloat:
-      return PrimitiveType::C64;
-    case DataType::kComplexDouble:
-      return PrimitiveType::C128;
-    default:
-      return xla::InternalError("AsXlaPrimitiveType: unsupported dtype");
+xla::StatusOr<ComputationType> GetBlasComputationType(
+    xla::PrimitiveType /*lhs_dtype*/,
+    xla::PrimitiveType output_dtype, int64 /*compute_precision*/) {
+  switch (output_dtype) {
+      case PrimitiveType::F16:         // fall-through
+      case PrimitiveType::BF16:
+        // Accumulate in f32 precision.
+        return ComputationType::kF32;
+      case PrimitiveType::F32:  // fall-through
+      case PrimitiveType::C64:
+        return ComputationType::kF32;
+      case PrimitiveType::F64:  // fall-through
+      case PrimitiveType::C128:
+        return ComputationType::kF64;
+      case PrimitiveType::S32:
+        return ComputationType::kI32;
+      default:
+        return xla::InternalError("GetBlasComputationType: unsupported type");
+  }
+}
+
+xla::StatusOr<ComputationType> GetBlasComputationType(
+    DataType /*lhs_dtype*/,
+    DataType output_dtype, int64 /*compute_precision*/) {
+  switch (output_dtype) {
+      case DataType::kHalf:   // fall-through
+      case DataType::kBFloat16:
+        // Accumulate in f32 precision.
+        return ComputationType::kF32;
+      case DataType::kFloat:  // fall-through
+      case DataType::kComplexFloat:
+        return ComputationType::kF32;
+      case DataType::kDouble: // fall-through
+      case DataType::kComplexDouble:
+        return ComputationType::kF64;
+      case DataType::kInt32:
+        return ComputationType::kI32;
+      default:
+        return xla::InternalError("GetBlasComputationType: unsupported type");
   }
 }
 
@@ -121,27 +140,6 @@ void MatrixLayout::Transpose() {
   order = (order == Order::kRowMajor) ? Order::kColumnMajor : Order::kRowMajor;
 }
 
-xla::StatusOr<ComputationType> GetBlasComputationType(
-    xla::PrimitiveType lhs_dtype,
-    xla::PrimitiveType output_dtype, int64 /*compute_precision*/) {
-  switch (output_dtype) {
-      case PrimitiveType::F16:         // fall-through
-      case PrimitiveType::BF16:
-        // Accumulate in f32 precision.
-        return ComputationType::kF32;
-      case PrimitiveType::F32:  // fall-through
-      case PrimitiveType::C64:
-        return ComputationType::kF32;
-      case PrimitiveType::F64:  // fall-through
-      case PrimitiveType::C128:
-        return ComputationType::kF64;
-      case PrimitiveType::S32:
-        return ComputationType::kI32;
-      default:
-        return xla::InternalError("GetBlasComputationType: unsupported type");
-  }
-}
-
 // BLAS GeMM's output is column-major. If we require row-major, use identity:
 // C^T = (A @ B)^T = B^T @ A^T.
 bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
@@ -170,6 +168,16 @@ bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
     return xla::InternalError("BlasLt is unavailable");
   }
   return blas->GetMatmulPlan(cfg, epilogue);
+}
+
+/* static */ auto BlasLt::GetGroupedMatmulPlan(const Stream* stream, 
+         DeviceMemoryAllocator *allocator,
+         const GroupedGemmConfig& cfg) -> xla::StatusOr<GroupedMatmulPlanPtr> {
+  auto blas = Get(stream);
+  if (blas == nullptr) {
+    return xla::InternalError("BlasLt is unavailable");
+  }
+  return blas->GetGroupedMatmulPlan(allocator, cfg);
 }
 
 /*static*/ BlasLt* BlasLt::Get(const Stream* stream) {

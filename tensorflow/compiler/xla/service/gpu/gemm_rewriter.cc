@@ -167,7 +167,7 @@ private:
   StatusOr<absl::string_view> GetGemmCustomCallTarget(
       const HloInstruction &instr,
       const GemmBackendConfig &gemm_backend_config) const {
-    if (!se::gpu::GpuBlasLtEnabled) {
+    if (!se::gpu::GpuBlasLtEnabled()) {
       // cublasLt is not enabled.
       return absl::string_view(kGemmCallTarget);
     }

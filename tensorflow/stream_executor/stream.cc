@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "tensorflow/stream_executor/blas.h"
+#include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
 #include "tensorflow/stream_executor/host_or_device_scalar.h"
 #include "tensorflow/stream_executor/lib/stacktrace.h"
 #include "tensorflow/stream_executor/platform.h"
@@ -25,6 +26,7 @@ limitations under the License.
 #include "tensorflow/stream_executor/rng.h"
 #include "tensorflow/stream_executor/stream_executor_internal.h"
 #include "tensorflow/stream_executor/stream_executor_pimpl.h"
+#include "tensorflow/stream_executor/gpu/gpu_grouped_gemm_blas_lt.h"
 #include "third_party/eigen3/Eigen/Core"
 
 namespace stream_executor {
@@ -299,6 +301,9 @@ Stream &Stream::Init() {
     // Successful initialization!
     allocated_ = true;
     ok_ = true;
+    if(gpu::GpuBlasLtEnabled()) {
+      grouped_gemm_runner_ = std::make_unique< gpu::GroupedGemmRunner >();
+    }
   } else {
     LOG(ERROR) << "failed to allocate stream during initialization";
   }
@@ -4001,6 +4006,15 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
+
+  if(grouped_gemm_runner_) {
+    auto type = blas::DataType::kHalf;
+    return (*grouped_gemm_runner_)(*this, transa, transb, m, n, k, 
+          &alpha, type, reinterpret_cast< const void **>(a), lda, 
+          type, reinterpret_cast< const void **>(b), ldb, &beta,
+          type, reinterpret_cast< void **>(c), ldc, batch_count);
+  }
+
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, float,
                const Eigen::half**, int, const Eigen::half**, int, float,
                Eigen::half**, int, int, ScratchAllocator*>
@@ -4020,6 +4034,14 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
+
+  if(grouped_gemm_runner_) {
+    auto type = blas::DataType::kFloat;
+    return (*grouped_gemm_runner_)(*this, transa, transb, m, n, k, 
+          &alpha, type, reinterpret_cast< const void **>(a), lda, 
+          type, reinterpret_cast< const void **>(b), ldb, &beta,
+          type, reinterpret_cast< void **>(c), ldc, batch_count);
+  }
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, float,
                const float**, int, const float**, int, float, float**, int, int,
                ScratchAllocator*>
@@ -4038,6 +4060,14 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
+
+  if(grouped_gemm_runner_) {
+    auto type = blas::DataType::kDouble;
+    return (*grouped_gemm_runner_)(*this, transa, transb, m, n, k, 
+          &alpha, type, reinterpret_cast< const void **>(a), lda, 
+          type, reinterpret_cast< const void **>(b), ldb, &beta,
+          type, reinterpret_cast< void **>(c), ldc, batch_count);
+  }
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, double,
                const double**, int, const double**, int, double, double**, int,
                int, ScratchAllocator*>

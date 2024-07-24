@@ -241,7 +241,7 @@ class GemmAutotuner {
           stream_.get(), LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
           bias_buffer, aux_buffer, a_scale_buffer, b_scale_buffer,
           c_scale_buffer, d_scale_buffer, d_amax_buffer, algorithm,
-          workspace_buffer, &profile_result));
+          workspace_buffer, absl::nullopt, &profile_result));
       return std::move(profile_result);
     };
 

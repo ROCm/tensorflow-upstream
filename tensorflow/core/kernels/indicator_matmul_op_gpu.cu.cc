@@ -156,6 +156,7 @@ void RunGemmBatched(OpKernelContext* context, bool trans_a, bool trans_b,
   auto trans_b_tf = trans_b ? se::blas::Transpose::kTranspose
                             : se::blas::Transpose::kNoTranspose;
   auto* stream = context->op_device_context()->stream();
+  //VLOG(0) << "RunGemmBatched on device: " << stream->parent()->device_ordinal();
   bool blas_launch_status =
       stream
           ->ThenBlasGemmBatched(
@@ -214,6 +215,8 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
   GpuLaunchConfig config = GetGpuLaunchConfig(param.batch_b, d);
   TF_CHECK_OK(GpuLaunchKernel(ComputePtrsKernel<Scalar, TIndex>, paralle_num,
                               config.thread_per_block, 0, d.stream(), param));
+  auto* stream = context->op_device_context()->stream();
+  TF_CHECK_OK(stream->BlockHostUntilDone());
   RunGemmBatched<Scalar>(context, trans_a, trans_b, m, n, k, Scalar(1.0),
                          param.As, param.Bs, Scalar(0.0), param.Cs,
                          batch_b * paralle_num,

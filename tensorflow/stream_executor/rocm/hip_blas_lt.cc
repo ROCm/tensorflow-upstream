@@ -13,6 +13,7 @@ limitations under the License.
 #include <algorithm>
 #include <climits>
 #include <memory>
+#include <sstream>
 #include <optional>
 #include <string>
 #include <utility>
@@ -331,6 +332,7 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
   return xla::StatusOr<MatmulPlanPtr>{std::move(M)};
 }
 
+<<<<<<< HEAD
 xla::Status BlasLt::MatmulPlan::ValidateInputs(
     blas::DataType scale_type, bool alpha_on_device, bool beta_on_device,
     blas::DataType A_type, blas::DataType B_type, blas::DataType C_type,
@@ -381,6 +383,8 @@ uint32_t checksum(const T* p, int n)
   return s;
 }
 
+=======
+>>>>>>> 3a4847ab4af... WIP: added grouped gemm to Stream
 xla::Status BlasLt::MatmulPlan::DoMatmul(
     Stream* stream, const void* alpha, DeviceMemoryBase a, DeviceMemoryBase b,
     const void* beta, DeviceMemoryBase c, DeviceMemoryBase d,
@@ -531,38 +535,6 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
   return xla::Status::OK();
 }
 
-namespace {
-
-template <hipDataType>
-struct HipToNativeT;
-
-template <>
-struct HipToNativeT<HIP_R_16BF> {
-  using type = bfloat16;
-};
-template <>
-struct HipToNativeT<HIP_R_16F> {
-  using type = Eigen::half;
-};
-template <>
-struct HipToNativeT<HIP_R_32F> {
-  using type = float;
-};
-template <>
-struct HipToNativeT<HIP_R_64F> {
-  using type = double;
-};
-template <>
-struct HipToNativeT<HIP_C_32F> {
-  using type = complex64;
-};
-template <>
-struct HipToNativeT<HIP_C_64F> {
-  using type = complex128;
-};
-
-}  // namespace
-
 xla::Status BlasLt::MatmulPlan::ExecuteOnStream(
     Stream* stream, DeviceMemoryBase a, DeviceMemoryBase b, DeviceMemoryBase c,
     DeviceMemoryBase d, DeviceMemoryBase bias, DeviceMemoryBase aux,
@@ -580,9 +552,7 @@ xla::Status BlasLt::MatmulPlan::ExecuteOnStream(
 
 #define TYPED_MATMUL(SCALENTYPE, ATYPE, BTYPE, CTYPE, DTYPE)               \
   if (operand_types == std::make_tuple(ATYPE, BTYPE, CTYPE, DTYPE)) {      \
-    return gpu::BlasLt::MatmulPlan::DoMatmul<                              \
-        SCALENTYPE, HipToNativeT<ATYPE>::type, HipToNativeT<BTYPE>::type,  \
-        HipToNativeT<CTYPE>::type, HipToNativeT<DTYPE>::type>(             \
+    return gpu::BlasLt::MatmulPlan::DoMatmul< SCALENTYPE >(                \
         stream, alpha_, a, b, beta_, c, d, bias, aux, a_scale, b_scale,    \
         c_scale, d_scale, d_amax, algorithm, workspace, scratch_allocator, \
         profile_result);                                                   \
@@ -602,55 +572,39 @@ xla::Status BlasLt::MatmulPlan::ExecuteOnStream(
   return xla::Internal("Unexpected dtype");
 }
 
-BlasLt::GroupedMatmulPlan::GroupedMatmulPlan(const BlasLt& blas_lt, 
-                                      const gpu::GroupedGemmConfig& cfg) :
-  blas_lt_ref_(blas_lt),
-  grouped_gemm_(new GroupedGemm(blas_lt.blas_lt_.get(),
+// BlasLt::GroupedMatmulPlan::GroupedMatmulPlan(const BlasLt& blas_lt, 
+//     GroupedGemmPtr&& ptr, DeviceMemoryArgs&& args_mem) : 
+//         blas_lt_ref_(blas_lt), grouped_gemm_(std::move(ptr)),
+//         device_args_(std::move(args_mem)) {}
+
+BlasLt::GroupedMatmulPlan::GroupedMatmulPlan(const BlasLt& blas_lt) : 
+        blas_lt_ref_(blas_lt) {}
+
+BlasLt::GroupedMatmulPlan::~GroupedMatmulPlan() {
+  if(host_args_ != nullptr) {
+    blas_lt_ref_.parent_->HostMemoryDeallocate(host_args_);
+  }
+  if(!device_args_.is_null()) {
+    blas_lt_ref_.parent_->Deallocate(&device_args_);
+  }
+}
+
+auto BlasLt::GetGroupedMatmulPlan(DeviceMemoryAllocator *allocator, 
+                              const gpu::GroupedGemmConfig& cfg) const 
+    -> xla::StatusOr<GroupedMatmulPlanPtr> {
+
+  auto plan = std::make_unique< GroupedMatmulPlan >(*this);
+
+  plan->grouped_gemm_ = std::make_unique< GroupedGemm >(blas_lt_.get(),
           AsHipblasOperation(cfg.trans_a),
           AsHipblasOperation(cfg.trans_b),
           AsHipblasDataType(cfg.type_a),
           AsHipblasDataType(cfg.type_b),
           AsHipblasDataType(cfg.type_c),
           AsHipblasDataType(cfg.type_d),
-          AsHipblasComputeType(cfg.compute_type))) {}
-
-// BlasLt::GroupedMatmulPlan::~GroupedMatmulPlan() {}
-
-auto BlasLt::GetGroupedMatmulPlan(const gpu::GroupedGemmConfig& config) const 
-    -> xla::StatusOr<GroupedMatmulPlanPtr> {
-   
-  auto plan = std::make_unique< GroupedMatmulPlan >(*this, config);
-  return xla::StatusOr<GroupedMatmulPlanPtr>{std::move(plan)};
-}
-
-/*
-
-static void groupedGemm(hipblasLtHandle_t H,
-                          hipblasOperation_t    trans_a,
-                          hipblasOperation_t    trans_b,
-                          std::vector<int64_t>& m,
-                          std::vector<int64_t>& n,
-                          std::vector<int64_t>& k,
-                          std::vector<int64_t>& batch_count,
-                          std::vector<float>&   alpha,
-                          std::vector<float>&   beta,
-                          std::vector<void*>&   d_a,
-                          std::vector<void*>&   d_b,
-                          std::vector<void*>&   d_c,
-                          std::vector<void*>&   d_d) {
-
-  hipblaslt_ext::GroupedGemm groupedgemm(
-        H, trans_a, trans_b, HIP_R_16F, HIP_R_16F, HIP_R_16F, HIP_R_16F, HIPBLAS_COMPUTE_32F);
-  groupedgemm.run();
-}*/
-
-xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(
-          const gpu::GroupedGemmConfig& cfg,
-          const void *alpha, const void** a, 
-          const void *beta, const void** b, 
-          const void** c, void **d) {
- 
-
+          AsHipblasComputeType(cfg.compute_type));
+  auto& ggemm = plan->grouped_gemm_;
+  
   std::vector< int64_t > m(cfg.batch_count, cfg.m), 
                          n(cfg.batch_count, cfg.n), 
                          k(cfg.batch_count, cfg.k), 
@@ -668,12 +622,12 @@ xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(
             GemmEpilogue{});
   std::vector< GemmInputs > inputs(cfg.batch_count);
   for(int64 i = 0; i < cfg.batch_count; i++) {
-    inputs[i].a = const_cast< void * >(a[i]);
-    inputs[i].b = const_cast< void * >(b[i]);
-    inputs[i].c = const_cast< void * >(c[i]);
-    inputs[i].d = d[i];
-    inputs[i].alpha = const_cast< void * >(alpha);
-    inputs[i].beta = const_cast< void * >(beta);
+    inputs[i].a = const_cast< void * >(cfg.a[i]);
+    inputs[i].b = const_cast< void * >(cfg.b[i]);
+    inputs[i].c = const_cast< void * >(cfg.c[i]);
+    inputs[i].d = cfg.d[i];
+    inputs[i].alpha = const_cast< void * >(cfg.alpha);
+    inputs[i].beta = const_cast< void * >(cfg.beta);
   }
 
   GemmProblemType problem = {
@@ -686,37 +640,91 @@ xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(
     .type_compute = AsHipblasComputeType(cfg.compute_type)
   };
 
-  SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->setProblem(m, n, k, batch_count,
+  uint64 mem_size = cfg.batch_count * sizeof(UserArguments);
+  {
+    absl::MutexLock lock(&mu_);
+    SE_HIPBLAS_RETURN_IF_ERROR(ggemm->setProblem(m, n, k, batch_count,
           lda, ldb, ldc, ldd, strideA, strideB, strideC, strideD,
           epilogue, inputs, problem));
 
-// struct GroupedGemmConfig {
-//   int64 m, n, k, batch_count;
-//   blas::Transpose trans_a, trans_b;
-//   const void *alpha, *beta;
-//   blas::DataType type_a, type_b, type_c, type_d;
-//   int64 lda, ldb, ldc, ldd;
-//   blas::ComputationType compute_type;
-// };
+    plan->host_args_ = static_cast< UserArguments *>(
+          parent_->HostMemoryAllocate(mem_size));
+    if(plan->host_args_ == nullptr) {
+      return xla::InternalError("Unable to allocate host memory for user args!");
+    }
+    SE_HIPBLAS_RETURN_IF_ERROR(ggemm->
+          getDefaultValueForDeviceUserArguments(plan->host_args_));
 
-    // struct GemmInputs
-    // {
-    //     void* a     = nullptr; //!< The a matrix input pointer.
-    //     void* b     = nullptr; //!< The b matrix input pointer.
-    //     void* c     = nullptr; //!< The c matrix input pointer.
-    //     void* d     = nullptr; //!< The d matrix input pointer.
-    //     void* alpha = nullptr; //!< The alpha value.
-    //     void* beta  = nullptr; //!< The beta value.
-    //     // Epilogue inputs
-    //     void* bias          = nullptr; //!< The bias input pointer.
-    //     void* scaleA        = nullptr; //!< The Scale A input pointer.
-    //     void* scaleB        = nullptr; //!< The Scale B input pointer.
-    //     void* scaleC        = nullptr; //!< The Scale C input pointer.
-    //     void* scaleD        = nullptr; //!< The Scale D input pointer.
-    //     void* scaleAux      = nullptr; //!< The Scale AUX input pointer.
-    //     void* scaleAlphaVec = nullptr; //!< The scaleAlpha vector input pointer.
-    //     void* aux           = nullptr; //!< The aux input pointer.
-    // };
+    // NOTE: memory must be aligned by 16 bytes ??
+    auto raw_mem = parent_->Allocate(mem_size);
+    // TF_ASSIGN_OR_RETURN(auto dev_mem, allocator->Allocate(parent_->device_ordinal(), 
+    //       mem_size)));
+    if(raw_mem == nullptr) {
+      return xla::InternalError("Unable to allocate memory for grouped gemm params!");
+    }
+    plan->device_args_ = GroupedMatmulPlan::DeviceMemoryArgs{raw_mem, mem_size};
+  } // end block
+
+  //for(const auto& a : plan->host_args_) 
+  {
+    const auto& a = plan->host_args_[0];
+
+    std::ostringstream os;
+    for(int i = 0; i < sizeof(a.alpha); i++) {
+      os << std::hex << (uint32_t)a.alpha[i];
+    }
+    VLOG(0) << a.m << "," << a.n << "," << a.batch << "," << a.k <<
+      " alpha " << os.str() <<
+      " pointers: " << a.d << "," << a.c << "," << a.a << "," << a.b <<
+      " strides: " << a.strideD1 << "," << a.strideD2 << "," << a.strideA1 << "," << a.strideA2 <<
+      " activate: " << a.activationType;
+  }
+  
+  
+  return xla::StatusOr<GroupedMatmulPlanPtr>(std::move(plan));
+}
+
+xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(Stream *stream,
+          const gpu::GroupedGemmConfig& cfg) {
+  
+  if(cfg.batch_count != device_args_.size()) {
+    return xla::InternalError("GroupedGemm config mismatch !");
+  }
+  for(size_t i = 0; i < device_args_.size(); i++) {
+    host_args_[i].a = const_cast< void * >(cfg.a[i]);
+    host_args_[i].b = const_cast< void * >(cfg.b[i]);
+    host_args_[i].c = const_cast< void * >(cfg.c[i]);
+    host_args_[i].d = const_cast< void * >(cfg.d[i]);
+  }
+
+  // gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_}; ??
+  {
+    
+  absl::MutexLock lock(&blas_lt_ref_.mu_);
+  if(!blas_lt_ref_.parent_->Memcpy(stream, &device_args_, host_args_,
+        device_args_.size())) {
+    return xla::InternalError("Memcpy failed!");
+  }
+  
+  size_t max_workspace_size = 1ll << 32;
+  GemmPreference gemmPref;
+  gemmPref.setMaxWorkspaceBytes(max_workspace_size);
+  
+  const int request_solutions = 1;
+  std::vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
+  SE_HIPBLAS_RETURN_IF_ERROR(
+        grouped_gemm_->algoGetHeuristic(request_solutions, gemmPref, 
+              heuristicResult));
+  if(heuristicResult.empty()) {
+    return xla::InternalError("No valid solutions found!");
+  }
+  void *d_workspace = nullptr;
+  SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->initialize(
+          heuristicResult[0].algo, d_workspace));
+  SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->run(
+        device_args_.opaque(), gpu::AsGpuStreamValue(stream)));
+  } // end block
+
 
   return xla::Status::OK();
 }

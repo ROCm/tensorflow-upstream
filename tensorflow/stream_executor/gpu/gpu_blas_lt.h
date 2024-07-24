@@ -34,17 +34,21 @@ limitations under the License.
 #include "tensorflow/stream_executor/host_or_device_scalar.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 
-namespace stream_executor::gpu {
+namespace stream_executor {
+
+namespace gpu {
 
 bool GpuBlasLtEnabled();
 
 xla::StatusOr<blas::DataType> AsBlasDataType(xla::PrimitiveType dtype);
 
-xla::StatusOr<xla::PrimitiveType> AsXlaPrimitiveType(blas::DataType dtype);
-
 xla::StatusOr<blas::ComputationType> GetBlasComputationType(
     /*xla::PrecisionConfig::Algorithm algorithm,*/ xla::PrimitiveType lhs_dtype,
     xla::PrimitiveType output_dtype, int64 compute_precision);
+
+xla::StatusOr<blas::ComputationType> GetBlasComputationType(
+    blas::DataType lhs_dtype, blas::DataType output_dtype, 
+    int64 compute_precision);
 
 // Returns the type for the alpha and beta scalars.
 blas::DataType GetScaleType(blas::DataType c_type,
@@ -132,6 +136,8 @@ struct GroupedGemmConfig {
   blas::DataType type_a, type_b, type_c, type_d;
   int64 lda, ldb, ldc, ldd;
   blas::ComputationType compute_type;
+  const void **a, **b, **c;
+  void **d;
 };
 
 struct BlasLt {
@@ -163,104 +169,6 @@ struct BlasLt {
     // and TF. One set API uses scratch_allocator to allocate workspace, and one
     // set API allow uses to provide pre-allocated buffer as workspace.
 
-    // API that uses scratch_allocator to allocate workspace
-    // This function is also used by Tensorflow:
-    // see tensorflow/core/kernels/matmul_util.h.
-    template <typename A, typename B, typename C, typename D, typename Scale>
-    xla::Status DoMatmul(Stream* stream,
-                          const HostOrDeviceScalar<Scale>& alpha,
-                          const DeviceMemory<A>& a, const DeviceMemory<B>& b,
-                          const HostOrDeviceScalar<Scale>& beta,
-                          const DeviceMemory<C>& c, DeviceMemory<D>& d,
-                          const MatmulAlgorithm& algorithm,
-                          ScratchAllocator& scratch_allocator,
-                          const DeviceMemory<C>& bias = {},
-                          const DeviceMemoryBase& aux = DeviceMemory<uint8_t>{},
-                          blas::ProfileResult* profile_result = nullptr) const {
-      return DoMatmul(stream, alpha, a, b, beta, c, d, algorithm, bias, aux, {},
-                      {}, {}, {}, {}, absl::nullopt, &scratch_allocator,
-                      profile_result);
-    }
-
-    // API that uses pre-allocated buffer as workspace
-    template <typename A, typename B, typename C, typename D, typename Scale>
-    xla::Status DoMatmul(
-        Stream* stream, const HostOrDeviceScalar<Scale>& alpha,
-        const DeviceMemory<A>& a, const DeviceMemory<B>& b,
-        const HostOrDeviceScalar<Scale>& beta, const DeviceMemory<C>& c,
-        DeviceMemory<D>& d, const MatmulAlgorithm& algorithm,
-        const DeviceMemory<C>& bias = {},
-        const DeviceMemoryBase& aux = DeviceMemory<uint8_t>{},
-        absl::optional<DeviceMemoryBase> workspace = absl::nullopt,
-        blas::ProfileResult* profile_result = nullptr) const {
-      return DoMatmul(stream, alpha, a, b, beta, c, d, algorithm, bias, aux, {},
-                      {}, {}, {}, {}, workspace, absl::nullopt, profile_result);
-    }
-
-    // The most general form: uses pre-allocated buffer workspace or
-    // provided scratch allocator
-    template <typename A, typename B, typename C, typename D, typename Scale>
-    xla::Status DoMatmul(
-        Stream* stream, const HostOrDeviceScalar<Scale>& alpha,
-        const DeviceMemory<A>& a, const DeviceMemory<B>& b,
-        const HostOrDeviceScalar<Scale>& beta, const DeviceMemory<C>& c,
-        DeviceMemory<D>& d, const MatmulAlgorithm& algorithm,
-        const DeviceMemory<C>& bias = {},
-        const DeviceMemoryBase& aux = DeviceMemoryBase{},
-        const DeviceMemory<Scale>& a_scale = {},
-        const DeviceMemory<Scale>& b_scale = {},
-        const DeviceMemory<Scale>& c_scale = {},
-        const DeviceMemory<Scale>& d_scale = {},
-        const DeviceMemory<Scale>& d_amax = {},
-        absl::optional<DeviceMemoryBase> workspace = absl::nullopt,
-        absl::optional<ScratchAllocator*> scratch_allocator = absl::nullopt,
-        blas::ProfileResult* profile_result = nullptr) const {
-      TF_RETURN_IF_ERROR(ValidateInputs(
-          blas::ToDataType<Scale>::value, alpha.is_pointer(), beta.is_pointer(),
-          blas::ToDataType<A>::value, blas::ToDataType<B>::value,
-          blas::ToDataType<C>::value, blas::ToDataType<D>::value));
-
-      return DoMatmul(stream, alpha.opaque(), a, b, beta.opaque(), c, d,
-                      algorithm, bias, aux, a_scale, b_scale, c_scale, d_scale,
-                      d_amax, workspace, scratch_allocator, profile_result);
-    }
-
-    // API that uses scratch_allocator to allocate workspace
-    xla::Status ExecuteOnStream(
-        Stream* stream, DeviceMemoryBase a_buffer, DeviceMemoryBase b_buffer,
-        DeviceMemoryBase c_buffer, DeviceMemoryBase d_buffer,
-        DeviceMemoryBase bias_buffer,  // may be null
-        DeviceMemoryBase aux_buffer,   // may be null
-        DeviceMemoryBase a_scale_buffer, DeviceMemoryBase b_scale_buffer,
-        DeviceMemoryBase c_scale_buffer, DeviceMemoryBase d_scale_buffer,
-        DeviceMemoryBase d_amax_buffer, const MatmulAlgorithm& algorithm,
-        ScratchAllocator& scratch_allocator,
-        blas::ProfileResult* profile_result = nullptr) const {
-      return ExecuteOnStream(stream, a_buffer, b_buffer, c_buffer, d_buffer,
-                             bias_buffer, aux_buffer, a_scale_buffer,
-                             b_scale_buffer, c_scale_buffer, d_scale_buffer,
-                             d_amax_buffer, algorithm, absl::nullopt,
-                             &scratch_allocator, profile_result);
-    }
-
-    // API that uses pre-allocated buffer as workspace
-    xla::Status ExecuteOnStream(
-        Stream* stream, DeviceMemoryBase a_buffer, DeviceMemoryBase b_buffer,
-        DeviceMemoryBase c_buffer, DeviceMemoryBase d_buffer,
-        DeviceMemoryBase bias_buffer,  // may be null
-        DeviceMemoryBase aux_buffer,   // may be null
-        DeviceMemoryBase a_scale_buffer, DeviceMemoryBase b_scale_buffer,
-        DeviceMemoryBase c_scale_buffer, DeviceMemoryBase d_scale_buffer,
-        DeviceMemoryBase d_amax_buffer, const MatmulAlgorithm& algorithm,
-        absl::optional<DeviceMemoryBase> workspace,
-        blas::ProfileResult* profile_result = nullptr) const {
-      return ExecuteOnStream(stream, a_buffer, b_buffer, c_buffer, d_buffer,
-                             bias_buffer, aux_buffer, a_scale_buffer,
-                             b_scale_buffer, c_scale_buffer, d_scale_buffer,
-                             d_amax_buffer, algorithm, workspace, absl::nullopt,
-                             profile_result);
-    }
-
     // The most general form: to be implemented by derived clases.
     virtual xla::Status ExecuteOnStream(
         Stream* stream, DeviceMemoryBase a_buffer, DeviceMemoryBase b_buffer,
@@ -271,8 +179,8 @@ struct BlasLt {
         DeviceMemoryBase c_scale_buffer, DeviceMemoryBase d_scale_buffer,
         DeviceMemoryBase d_amax_buffer, const MatmulAlgorithm& algorithm,
         absl::optional<DeviceMemoryBase> workspace,
-        absl::optional<ScratchAllocator*> scratch_allocator,
-        blas::ProfileResult* profile_result) const = 0;
+        absl::optional<ScratchAllocator*> scratch_allocator = absl::nullopt,
+        blas::ProfileResult* profile_result = nullptr) const = 0;
 
     // Returns a list of supported algorithms for DoMatmul. The algorithms are
     // returned in the order of increasing estimated compute time according to
@@ -285,8 +193,7 @@ struct BlasLt {
 
    protected:
     // might be used internally by ExecuteOnStream in derived classes
-    template <typename Scale, typename A, typename B = A, typename C = A,
-              typename D = A>
+    template <typename Scale>
     xla::Status DoMatmul(Stream* stream, xla::complex128 alpha,
                           DeviceMemoryBase a, DeviceMemoryBase b, double beta,
                           DeviceMemoryBase c, DeviceMemoryBase d,
@@ -306,23 +213,10 @@ struct BlasLt {
         salpha = static_cast<Scale>(alpha.real());
       }
       Scale sbeta = static_cast<Scale>(beta);
-      DeviceMemory<D> output(d);
-
-      return DoMatmul<A, B, C, D, Scale>(
-          stream, HostOrDeviceScalar<Scale>(salpha), DeviceMemory<A>(a),
-          DeviceMemory<B>(b), HostOrDeviceScalar<Scale>(sbeta),
-          DeviceMemory<C>(c), output, algorithm, DeviceMemory<C>(bias), aux,
-          DeviceMemory<Scale>(a_scale), DeviceMemory<Scale>(b_scale),
-          DeviceMemory<Scale>(c_scale), DeviceMemory<Scale>(d_scale),
-          DeviceMemory<Scale>(d_amax), workspace, scratch_allocator,
-          profile_result);
+      return DoMatmul(stream, &salpha, a, b, &sbeta, c, d,
+                     algorithm, bias, aux, a_scale, b_scale, c_scale, d_scale,
+                     d_amax, workspace, scratch_allocator, profile_result);
     }
-
-    // This is used internally by template DoMatmul function to validate inputs
-    virtual xla::Status ValidateInputs(
-        blas::DataType scale_type, bool alpha_on_device, bool beta_on_device,
-        blas::DataType A_type, blas::DataType B_type, blas::DataType C_type,
-        blas::DataType D_type) const = 0;
 
     // The most general version to be implemented by derived classes
     virtual xla::Status DoMatmul(
@@ -336,13 +230,11 @@ struct BlasLt {
         absl::optional<ScratchAllocator*> scratch_allocator,
         blas::ProfileResult* profile_result = nullptr) const = 0;
   };  // struct MatmulPlan
+
   struct GroupedMatmulPlan {
 
-    virtual xla::Status ExecuteOnStream(
-          const gpu::GroupedGemmConfig& cfg,
-          const void *alpha, const void** a, 
-          const void *beta, const void** b, 
-          const void** c, void **d) = 0;
+    virtual xla::Status ExecuteOnStream(Stream *stream, 
+          const gpu::GroupedGemmConfig& cfg) = 0;
 
     virtual ~GroupedMatmulPlan() {}
   };
@@ -356,6 +248,7 @@ struct BlasLt {
       const GemmConfig& cfg, Epilogue epilogue) const = 0;
 
   virtual xla::StatusOr<GroupedMatmulPlanPtr> GetGroupedMatmulPlan(
+          DeviceMemoryAllocator *allocator, 
           const GroupedGemmConfig& config) const = 0;
 
   static BlasLt* Get(const Stream* stream);
@@ -365,9 +258,16 @@ struct BlasLt {
                                                      const GemmConfig& cfg,
                                                      Epilogue epilogue);
 
+  // convenience function to create GroupedMatmulPlan directly using stream
+  static xla::StatusOr<GroupedMatmulPlanPtr> GetGroupedMatmulPlan(
+            const Stream* stream, DeviceMemoryAllocator *allocator, 
+            const GroupedGemmConfig& cfg);
+
   virtual ~BlasLt() {}
 };  // class BlasLt
 
-}  // namespace stream_executor::gpu
+}  // namespace gpu
+
+}  // namespace stream_executor
 
 #endif  // TENSORFLOW_STREAM_EXECUTOR_GPU_GPU_BLAS_LT_H_

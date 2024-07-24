@@ -65,6 +65,15 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_grouped_gemm_blas_lt",
+    srcs = if_gpu_is_configured(["gpu_grouped_gemm_blas_lt.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_grouped_gemm_blas_lt.h"]),
+    deps = if_gpu_is_configured([
+        ":gpu_blas_lt"
+    ]),
+)
+
+cc_library(
     name = "gpu_diagnostics_header",
     hdrs = if_gpu_is_configured(["gpu_diagnostics.h"]),
     deps = [

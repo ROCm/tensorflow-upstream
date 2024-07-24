@@ -293,9 +293,6 @@ message DebugOptions {
   // Blacklist for cuDNN convolutions.
   string xla_gpu_algorithm_blacklist_path = 128;
 
-  // Whether to use cuBLASLt for GEMMs on GPUs.
-  bool xla_gpu_enable_cublaslt = 130;
-
   // 0:   Disable gemm and convolution autotuning.
   // 1:   Enable autotuning, but disable correctness checking.
   // 2:   Also set output buffers to random numbers during autotuning.
@@ -304,22 +301,22 @@ message DebugOptions {
   // 4+:  Also check for correct outputs and for out-of-bounds reads/writes.
   //
   // Default: 4.
-  int32 xla_gpu_autotune_level = 131;
+  int32 xla_gpu_autotune_level = 130;
 
   // Relative precision for comparing different GEMM solutions 
-  float xla_gpu_autotune_gemm_rtol = 132;
+  float xla_gpu_autotune_gemm_rtol = 131;
 
   // File to write autotune results to. It will be a binary file unless the name
   // ends with .txt or .textproto. Warning: The results are written at every
   // compilation, possibly multiple times per process. This only works on CUDA.
-  string xla_gpu_dump_autotune_results_to = 133;
+  string xla_gpu_dump_autotune_results_to = 132;
 
   // File to load autotune results from. It will be considered a binary file
   // unless the name ends with .txt or .textproto. At most one loading will
   // happen during the lifetime of one process, even if the first one is
   // unsuccessful or different file paths are passed here. This only works on
   // CUDA.
-  string xla_gpu_load_autotune_results_from = 134;
+  string xla_gpu_load_autotune_results_from = 133;
 
   // Amount of padding the redzone allocator will put on one side of each buffer
   // it allocates.  (So the buffer's total size will be increased by 2x this
@@ -329,11 +326,11 @@ message DebugOptions {
   // write.  Smaller values consume less memory during autotuning.  Note that a
   // fused cudnn conv has up to 6 total buffers (4 inputs, 1 output, and 1
   // scratch), so this can be multiplied by quite a lot.
-  int32 xla_gpu_redzone_padding_bytes = 135;
+  int32 xla_gpu_redzone_padding_bytes = 134;
 
-  int32 xla_gpu_autotune_max_solutions = 136;
-  bool xla_gpu_autotune_evict_cache = 137;
-  // Next id: 138
+  int32 xla_gpu_autotune_max_solutions = 135;
+  bool xla_gpu_autotune_evict_cache = 136;
+  // Next id: 137
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
