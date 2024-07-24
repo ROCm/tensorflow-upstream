@@ -1502,7 +1502,7 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildInitializerThunk(
   if (fused && init_value->opcode() == HloOpcode::kParameter) {
     init_value = hlo->operand(init_value->parameter_number());
   }
-
+#if 0
   // Initializer thunks don't implement a whole instruction, and we want to
   // profile the whole instruction instead of the individual thunks it consists
   // of. Therefore we pass nullptr as the HloInstruction* to the thunks we
@@ -1554,7 +1554,7 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildInitializerThunk(
           word, GetAllocationSlice(*hlo, index), nullptr)};
     }
   }
-
+#endif
   // Otherwise fall back to our slow initializer code.
   std::unique_ptr<KernelThunk> kernel_thunk =
       BuildKernelThunk(hlo, /*implements_whole_instruction=*/false);
