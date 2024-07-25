@@ -9,17 +9,15 @@ RUN curl -o /etc/yum.repos.d/CentOS-Base.repo http://mirrors.aliyun.com/repo/Cen
 # Install required python packages
 
 RUN yum update -y -e 0 && yum install -y openjdk-8-jdk openjdk-8-jre unzip wget git \
-    python3-devel \
-    python3-pip \
+    rh-python38-python-devel.x86_64 \
+    rh-python38-python.x86_64 \
     rocprim \
     hipcub \
-    python3-wheel
-
-RUN pip3 install pip enum34 mock setuptools cython --upgrade
-RUN pip3 install keras_preprocessing --upgrade
-RUN pip3 install keras_applications
-RUN pip3 install jupyter 
-RUN pip3 install numpy==1.18.5
+    rh-python38-python-pip.noarch \
+    rh-python38-python-wheel.noarch
+RUN ln -sf /opt/rh/rh-python38/root/usr/bin/python3.8 /usr/bin/python3
+RUN python3 -m pip install pip enum34 mock setuptools cython --upgrade
+RUN python3 -m pip install keras_applications jupyter numpy==1.18.5 keras_preprocessing --upgrade
 
 RUN rm -rf /opt/rocm/include/ck
 COPY ./install/install_bazel.sh ./
