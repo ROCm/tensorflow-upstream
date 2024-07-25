@@ -36,10 +36,14 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-struct GemmConfig;
-
 class CublasLtMatmulThunk : public Thunk {
  public:
+  // matmul cache entry
+  struct Entry {
+    se::gpu::BlasLt::MatmulPlanPtr plan;
+    se::gpu::BlasLt::MatmulAlgorithm algorithm;
+  };
+
   CublasLtMatmulThunk(
       const HloInstruction *hlo_instruction,
       GemmBackendConfig&& backend_config,
@@ -60,25 +64,12 @@ class CublasLtMatmulThunk : public Thunk {
                             se::StreamExecutor* executor) override;
 
  private:
-  StatusOr<se::gpu::BlasLt::MatmulPlan*> GetMatmulPlan(
-      const stream_executor::Stream* stream);
-  StatusOr<se::gpu::BlasLt::MatmulAlgorithm> GetMatmulAlgorithm(
-      const se::gpu::BlasLt::MatmulPlan* plan, int64_t max_workspace);
-
-  absl::Mutex matmul_plans_cache_mutex_;
-  absl::flat_hash_map<const stream_executor::Stream*,
-                      se::gpu::BlasLt::MatmulPlanPtr>
-      matmul_plans_cache_ ABSL_GUARDED_BY(matmul_plans_cache_mutex_);
-
-  absl::Mutex matmul_algorithm_cache_mutex_;
-  absl::flat_hash_map<const se::gpu::BlasLt::MatmulPlan*,
-                      se::gpu::BlasLt::MatmulAlgorithm>
-      matmul_algorithm_cache_ ABSL_GUARDED_BY(matmul_algorithm_cache_mutex_);
+  StatusOr<Entry *> GetCachedMatmulPlan(const se::Stream* stream);
 
   GemmBackendConfig backend_config_;
-  //std::unique_ptr< GemmConfig > gemm_config_ptr_; // TODO!
   se::gpu::BlasLt::Epilogue epilogue_;
   int64_t algorithm_idx_;
+  std::string canonical_hlo_;
   BufferAllocation::Slice a_buffer_;
   BufferAllocation::Slice b_buffer_;
   BufferAllocation::Slice c_buffer_;

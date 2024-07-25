@@ -171,8 +171,8 @@ class GemmAutotuner {
                                                const GemmConfig& gemm_config) {
     
     // TODO: no workspace buffer is yet integrated..
-    auto workspace_buffer = absl::optional<se::DeviceMemoryBase>{};
-    //rz_buffers_.output_buffers().at(gemm->shape().tuple_shapes_size() - 1);
+    auto workspace_buffer = //absl::optional<se::DeviceMemoryBase>{};
+      rz_buffers_.output_buffers().at(gemm->shape().tuple_shapes_size() - 1);
 
     GemmBackendConfig backend_config = 
                     gemm->backend_config<GemmBackendConfig>().ValueOrDie();
@@ -198,16 +198,12 @@ class GemmAutotuner {
 
     TF_ASSIGN_OR_RETURN(
         auto algorithms,
-        plan->GetAlgorithms(/*max_algorithm_count*/solutions_limit_>0 ? solutions_limit_ : 128,
-                            workspace_buffer.has_value()
-                          ? workspace_buffer.value().size() : 0));
-    VLOG(0) << "Autotuning " << gemm_config.lhs_layout.num_rows << " " << gemm_config.lhs_layout.num_cols
-      << " " << gemm_config.rhs_layout.num_rows << " " << gemm_config.rhs_layout.num_cols
-      << " " << gemm_config.lhs_layout.batch_size;
+        plan->GetAlgorithms(/*max_algorithm_count*/ solutions_limit_>0 ? GemmConfig::kMaxCublasLtAlgorithms : 128,,
+                             /*max_workspace_size*/ workspace_buffer.size()));
     Nops = gemm_config.lhs_layout.num_rows * gemm_config.lhs_layout.num_cols 
             * gemm_config.rhs_layout.num_cols
             * gemm_config.lhs_layout.batch_size; 
-    VLOG(3) << "BlasLt::GetAlgorithms returns " << algorithms.size() << " algorithms";
+
     auto tuned_func = [&](const BlasLt::MatmulAlgorithm& algorithm)
         -> StatusOr<se::blas::ProfileResult> {
       rz_counter_ = (rz_counter_ + 1) % rz_buffers_.size();
@@ -339,7 +335,7 @@ class GemmAutotuner {
       // the bias parameter.
       if (autotune_config_.should_reinit_output_buffer() && beta != 0) {
         int64 rng_state = 0;
-        InitializeFloatBuffer(stream_.get(), output_shape.element_type(), &rng_state,
+        InitializeBuffer(stream_.get(), output_shape.element_type(), &rng_state,
                          OutputBuffer());
       }
       TF_ASSIGN_OR_RETURN(auto profile_result, run_benchmark(algorithm));
@@ -373,7 +369,7 @@ class GemmAutotuner {
       if(elapsed_time<best_time)
         VLOG(3) << "gemm algorithm " << profile_result.algorithm() << " took "
               << elapsed_time*1000. << "us; " << (Nops*2) / (elapsed_time*1e9) << " TFlops (memory " << rz_counter_ << " / " << rz_buffers_.size() << " )";
-//              << ( elapsed_time<best_time ? " *** " : "");
+
       best_time = std::min<double>(best_time, elapsed_time);
 
       *result.mutable_run_time() = tensorflow::proto_utils::ToDurationProto(

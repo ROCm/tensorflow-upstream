@@ -29,6 +29,8 @@ limitations under the License.
 // #include "rocm/include/hipblaslt.h"
 // #endif
 
+// NOTE: dynamic loader is disabled since hipblaslt-ext is linked statically!
+#if 0
 namespace stream_executor {
 namespace wrap {
 
@@ -94,5 +96,6 @@ FOREACH_HIPBLASLT_API(HIPBLASLT_API_WRAPPER)
 
 }  // namespace wrap
 }  // namespace stream_executor
+#endif
 
 #endif  // TENSORFLOW_STREAM_EXECUTOR_ROCM_HIPBLASLT_WRAPPER_H_

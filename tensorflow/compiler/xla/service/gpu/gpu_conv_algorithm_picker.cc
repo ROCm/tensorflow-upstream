@@ -329,7 +329,7 @@ GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheCuda(
 
   const auto initialize_buffer = [stream, &result_shape,
                                   &rng_state](DeviceMemoryBase buffer) {
-    InitializeFloatBuffer(stream, result_shape.element_type(), &rng_state,
+    InitializeBuffer(stream, result_shape.element_type(), &rng_state,
                           buffer);
   };
 

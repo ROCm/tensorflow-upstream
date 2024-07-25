@@ -65,6 +65,8 @@ Stream& GroupedGemmRunner::operator()(Stream& stream,
 
   auto res = map_.find(cfg);
   if(res == map_.end()) {
+    // TODO: call here BlockHostUntilDone()
+
     auto plan_res = gpu::BlasLt::GetGroupedMatmulPlan(&stream, nullptr, cfg);
     if(!plan_res.ok()) {
       stream.CheckStatus(plan_res.status());

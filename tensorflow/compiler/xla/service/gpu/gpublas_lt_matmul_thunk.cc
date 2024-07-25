@@ -16,14 +16,42 @@ limitations under the License.
 #include <utility>
 #include "tensorflow/compiler/xla/service/gpu/gpublas_lt_matmul_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
-
-// #include "tensorflow/compiler/xla/service/gpu/runtime/thunk.h"
-// #include "tensorflow/compiler/xla/status.h"
-// #include "tensorflow/stream_executor/device_memory.h"
-// #include "tsl/platform/logging.h"
+#include "tensorflow/compiler/xla/service/gpu/autotuner_util.h"
 
 namespace xla {
 namespace gpu {
+
+struct MatmulPlanCache {
+
+  using Entry = CublasLtMatmulThunk::Entry;
+
+  static MatmulPlanCache& i(const se::Stream *stream) {
+    static absl::Mutex m(absl::kConstInit);
+    // Each GPU gets different cache instance
+    static absl::flat_hash_map<void *, MatmulPlanCache> meta;
+    absl::MutexLock lock(&m);
+    return meta[stream->parent()];
+  }
+
+  template < class Func >
+  StatusOr<Entry *> GetOrCreate(const std::string& key, Func&& create) {
+    // each GPU has a different mutex => hence different GPU instances can
+    // create matmul plans in parallel
+    absl::MutexLock lock(mutex_.get()); 
+    auto res = map_.emplace(key, Entry{});
+    if(res.second) { // new entry inserted
+      TF_ASSIGN_OR_RETURN(res.first->second, create());
+    } 
+    return &res.first->second;
+  }
+
+  MatmulPlanCache() : mutex_(std::make_unique< absl::Mutex >()) { }
+private:
+
+private:
+  std::unique_ptr< absl::Mutex > mutex_;
+  absl::flat_hash_map<std::string, Entry> map_;
+};
 
 CublasLtMatmulThunk::CublasLtMatmulThunk(
     const HloInstruction *hlo_instruction,
@@ -40,6 +68,7 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
       backend_config_(std::move(backend_config)),
       epilogue_(epilogue),
       algorithm_idx_(algorithm_idx),
+      canonical_hlo_(AutotuneCacheKey("none", *hlo_instruction).GetHlo()),
       a_buffer_(a_buffer),
       b_buffer_(b_buffer),
       c_buffer_(c_buffer),
@@ -63,15 +92,9 @@ Status CublasLtMatmulThunk::Initialize(const GpuExecutable& executable,
 
 Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
 
-  TF_ASSIGN_OR_RETURN(auto plan, GetMatmulPlan(params.stream));
+  TF_ASSIGN_OR_RETURN(auto *entry, GetCachedMatmulPlan(params.stream));
 
-  TF_ASSIGN_OR_RETURN(
-      auto algorithm,
-      GetMatmulAlgorithm(plan, workspace_buffer_.has_value()
-                                   ? workspace_buffer_.value().size()
-                                   : 0));
-
-  VLOG(3) << "Running cublas_lt matmul thunk";
+  VLOG(3) << "Running cublas_lt matmul thunk for instr: " << hlo_instruction()->ToString();
   const BufferAllocations& allocs = *params.buffer_allocations;
 
   se::DeviceMemoryBase bias, a_scale, b_scale, c_scale, d_scale, d_amax;
@@ -104,51 +127,38 @@ Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
     workspace = allocs.GetDeviceAddress(workspace_buffer_.value());
   }
 
-  return plan->ExecuteOnStream(
+  return entry->plan->ExecuteOnStream(
       params.stream, allocs.GetDeviceAddress(a_buffer_),
       allocs.GetDeviceAddress(b_buffer_), allocs.GetDeviceAddress(c_buffer_),
       allocs.GetDeviceAddress(d_buffer_), bias, aux, a_scale, b_scale, c_scale,
-      d_scale, d_amax, algorithm, workspace);
+      d_scale, d_amax, entry->algorithm, workspace);
 }
 
-StatusOr<se::gpu::BlasLt::MatmulPlan*> CublasLtMatmulThunk::GetMatmulPlan(
-    const stream_executor::Stream* stream) {
-  {
-    absl::MutexLock lock(&matmul_plans_cache_mutex_);
-    auto it = matmul_plans_cache_.find(stream);
-    if (it != matmul_plans_cache_.end()) return it->second.get();
-  }
-  // TODO check if this is a proper place! Maybe create it earlier??
-  TF_ASSIGN_OR_RETURN(
-      auto gemm_config,
-      GemmConfig::For(hlo_instruction(), backend_config_));
+auto CublasLtMatmulThunk::GetCachedMatmulPlan(
+    const se::Stream* stream) -> StatusOr<Entry *> {
 
-  TF_ASSIGN_OR_RETURN(auto plan, se::gpu::BlasLt::GetMatmulPlan(
-                                     stream, gemm_config, epilogue_));
+  auto& cache = MatmulPlanCache::i(stream);
 
-  absl::MutexLock lock(&matmul_plans_cache_mutex_);
-  auto [it, _] = matmul_plans_cache_.emplace(stream, std::move(plan));
-  return it->second.get();
-}
+  auto create = [&]() -> StatusOr<MatmulPlanCache::Entry>  {
+    VLOG(2) << this << ": Adding new MatmulPlan for stream: " << stream << 
+                       " instr: " << hlo_instruction()->ToString();
+    TF_ASSIGN_OR_RETURN(
+       auto gemm_config,
+       GemmConfig::For(hlo_instruction(), backend_config_));
+    
+    TF_ASSIGN_OR_RETURN(auto plan, se::gpu::BlasLt::GetMatmulPlan(
+                                  stream, gemm_config, epilogue_));
+    
+    int64_t max_workspace = workspace_buffer_.has_value()
+                          ? workspace_buffer_.value().size() : 0;
+    TF_ASSIGN_OR_RETURN(auto algorithms,
+       plan->GetAlgorithms(/*max_algorithm_count*/GemmConfig::kMaxCublasLtAlgorithms,
+                           /*max_workspace_size*/ max_workspace));
+    TF_RET_CHECK(algorithm_idx_ >= 0 && algorithm_idx_ < algorithms.size());
 
-StatusOr<se::gpu::BlasLt::MatmulAlgorithm>
-CublasLtMatmulThunk::GetMatmulAlgorithm(const se::gpu::BlasLt::MatmulPlan* plan,
-                                        int64_t max_workspace) {
-  {
-    absl::MutexLock lock(&matmul_algorithm_cache_mutex_);
-    auto it = matmul_algorithm_cache_.find(plan);
-    if (it != matmul_algorithm_cache_.end()) return it->second;
-  }
-  TF_ASSIGN_OR_RETURN(
-      auto algorithms,
-      plan->GetAlgorithms(/*max_algorithm_count*/ 128,
-                          /*max_workspace_size*/ max_workspace));
-  TF_RET_CHECK(algorithm_idx_ >= 0 && algorithm_idx_ < algorithms.size());
-
-  absl::MutexLock lock(&matmul_algorithm_cache_mutex_);
-  auto [it, _] =
-      matmul_algorithm_cache_.emplace(plan, algorithms[algorithm_idx_]);
-  return it->second;
+    return MatmulPlanCache::Entry{std::move(plan), algorithms[algorithm_idx_]};
+  };
+  return cache.GetOrCreate(canonical_hlo_, create);
 }
 
 }  // namespace gpu

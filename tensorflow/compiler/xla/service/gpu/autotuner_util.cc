@@ -270,7 +270,7 @@ void SerializeAutotuneEntry(tensorflow::AutotuneResults* results, const Autotune
   TF_ASSIGN_OR_RETURN(se::DeviceMemoryBase buffer,
                       allocator.AllocateBytes(ShapeUtil::ByteSizeOf(shape)));
   if (config.should_init_buffers()) {
-    InitializeFloatBuffer(allocator.stream(), shape.element_type(), &rng_state,
+    InitializeBuffer(allocator.stream(), shape.element_type(), &rng_state,
                      buffer);
   }
   return buffer;

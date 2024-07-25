@@ -229,7 +229,7 @@ struct BlasLt {
         absl::optional<DeviceMemoryBase> workspace,
         absl::optional<ScratchAllocator*> scratch_allocator,
         blas::ProfileResult* profile_result = nullptr) const = 0;
-  };  // struct MatmulPlan
+  };  // class MatmulPlan
 
   struct GroupedMatmulPlan {
 

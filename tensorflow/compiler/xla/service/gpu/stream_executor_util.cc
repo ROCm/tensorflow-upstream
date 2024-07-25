@@ -20,6 +20,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/layout_util.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/util.h"
+#include "tensorflow/compiler/xla/primitive_util.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/cleanup.h"
 #include "tensorflow/core/lib/io/path.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/stream_executor/gpu_asm_opts.h"
 #include "tensorflow/stream_executor/kernel_spec.h"
+
 
 namespace xla {
 namespace gpu {
@@ -352,51 +354,93 @@ template <typename T>
 static void InitializeTypedBuffer(se::Stream* stream,
                                   se::DeviceMemoryBase buffer,
                                   int64* rng_state) {
-  static_assert(
-      std::is_floating_point<T>::value || std::is_same<T, Eigen::half>::value,
-      "Unimplemented for integers yet.");
-
   // Accesses to static variables are not locked, since the caller is already
   // in a critical section.
+
+  // Use a large prime number to fragment the accesses.
+  constexpr int host_buffer_size = 10069;
   static std::vector<T>* host_buffer = [] {
-    // Use a large prime number to fragment the accesses.
-    auto* ret = new std::vector<T>(10069);
+    auto* ret = new std::vector<T>(host_buffer_size);
     // Default-seeded random numbers.
     std::mt19937 gen;
     for (auto& element : *ret) {
-      using RandomType =
-          typename std::conditional<std::is_same<T, Eigen::half>::value, float,
-                                    T>::type;
+      constexpr bool kIsIntegral = std::numeric_limits<T>::is_integer;
+      constexpr bool kIsLowRange =
+          !kIsIntegral && std::numeric_limits<T>::max_exponent <=
+                              std::numeric_limits<Eigen::half>::max_exponent;
+      // Only double gets random values in double.  Other data types get random
+      // values in float then cast them to the target data types.
+      using RandomType = typename std::conditional<std::is_same<T, double>::value,
+                                                   double, float>::type;
       // Scale down the values for fp16 to have less overflows.
-      auto upper_bound =
-          RandomType(std::is_same<T, Eigen::half>::value ? 0.1 : 1.0);
-      element = T(UniformDistribution(RandomType(0), upper_bound, &gen));
+      auto upper_bound = RandomType(kIsLowRange ? 0.1 : 1.0);
+      auto rand_val = UniformDistribution(RandomType(0), upper_bound, &gen);
+      // For bf16, float or double, it is between [0,1].
+      // For fp16, it ranges between [0, 0.1].
+      // For integer types, element is either 0 or 1 for less overflows
+      // especially for int8_t.
+      element = T(kIsIntegral ? rand_val + 0.5 : rand_val);
     }
     return ret;
   }();
-
-  int64& host_index = *rng_state;
-
-  char* current_addr = static_cast<char*>(buffer.opaque());
+  // The buffer of random numbers is treated as being circular, and the seed in
+  // *rng_state is the offset in host_buffer that is copied to the zeroth index
+  // on the device. For large buffers then repeatedly copying the data from the
+  // host is expensive, so we just copy it once and use a kernel to repeat the
+  // data as needed.
   CHECK_EQ(0, buffer.size() % sizeof(T));
-  int64 elements_left = buffer.size() / sizeof(T);
-  while (elements_left > 0) {
-    CHECK_LE(host_index, host_buffer->size());
-    if (host_buffer->size() == host_index) {
-      host_index = 0;
-    }
-    int64 elements_copied =
-        std::min<int64>(host_buffer->size() - host_index, elements_left);
-    se::DeviceMemoryBase mem(current_addr, elements_copied * sizeof(T));
-    stream->ThenMemcpy(&mem, host_buffer->data() + host_index,
-                       elements_copied * sizeof(T));
-    current_addr += elements_copied * sizeof(T);
-    elements_left -= elements_copied;
-    host_index += elements_copied;
+  int64 elements_to_fill = buffer.size() / sizeof(T);
+  int64 host_index = *rng_state;
+  CHECK_LT(host_index, host_buffer_size);
+  *rng_state = (*rng_state + elements_to_fill) % host_buffer_size;
+  // Copy the last part of `host_buffer` to the start of `buf` on the device
+  int64 first_size =
+      std::min<int64>(host_buffer_size - host_index, elements_to_fill);
+  stream->ThenMemcpy(&buffer, host_buffer->data() + host_index,
+                             first_size * sizeof(T));
+  elements_to_fill -= first_size;
+  if (elements_to_fill == 0) {
+    // Nothing more to do
+    return;
   }
+  // Issue a second host->device copy to transfer the rest of host_buffer
+  int64 second_size = std::min<int64>(host_index, elements_to_fill);
+  CHECK_LE(first_size + second_size, host_buffer_size);
+  // = buffer.GetByteSlice(first_size * sizeof(T), second_size * sizeof(T));
+  se::DeviceMemoryBase mem(buffer.opaque() + first_size * sizeof(T),
+                           second_size * sizeof(T));
+
+  stream->ThenMemcpy(&mem, host_buffer->data(), mem.size());
+  elements_to_fill -= second_size;
+  if (elements_to_fill == 0) {
+    // Nothing more to do
+    return;
+  }
+#ifdef GOOGLE_CUDA
+  // Repeat the host_buffer_size elements at the start of `buf` to the end
+  CHECK_EQ(elements_to_fill, buffer.size() / sizeof(T) - host_buffer_size);
+  se::StreamExecutor* executor = stream->parent();
+  auto kernel =
+      se::TypedKernelFactory<se::DeviceMemoryBase, int64, int64>::Create(
+          executor, "RepeatBufferKernel", repeat_buffer_kernel::kernel());
+  if (!kernel.ok()) {
+    LOG(FATAL) << "Could not create RepeatBufferKernel: " << kernel.status();
+  }
+  // Launch the kernel with at least host_buffer_bytes threads. Each thread
+  // will read one byte of `host_buffer` from the start of `buffer`, where the
+  // Memcpy call(s) above put it, and scatter it through the rest of `buffer`.
+  constexpr int64 host_buffer_bytes = host_buffer_size * sizeof(T);
+  constexpr int threads_per_block = 256;
+  constexpr int blocks_per_grid =
+      (host_buffer_bytes + threads_per_block - 1) / threads_per_block;
+  TF_CHECK_OK(stream->ThenLaunch(se::ThreadDim(threads_per_block, 1, 1),
+                                 se::BlockDim(blocks_per_grid, 1, 1), *kernel,
+                                 buffer, host_buffer_bytes,
+                                 static_cast<int64>(buffer.size())));
+#endif
 }
 
-void InitializeFloatBuffer(se::Stream* stream, PrimitiveType buffer_type,
+void InitializeBuffer(se::Stream* stream, PrimitiveType buffer_type,
                            int64* rng_state, se::DeviceMemoryBase buffer) {
   switch (buffer_type) {
     case xla::F16:
@@ -407,6 +451,10 @@ void InitializeFloatBuffer(se::Stream* stream, PrimitiveType buffer_type,
     case xla::F64:
     case xla::C128:
       return InitializeTypedBuffer<double>(stream, buffer, rng_state);
+    case xla::S8:
+      return InitializeTypedBuffer<int8_t>(stream, buffer, rng_state);
+    case xla::U8:
+      return InitializeTypedBuffer<uint8_t>(stream, buffer, rng_state);
     default:
       LOG(FATAL) << "Unexpected type";
   }

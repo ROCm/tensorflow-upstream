@@ -87,7 +87,8 @@ struct GemmConfig : public se::gpu::GemmConfig {
   // Size of the workspace based on NVIDIA recommendation:
   // https://docs.nvidia.com/cuda/cublas/#cublassetworkspace
   static constexpr int64 kHopperWorkspace = 32 * 1024 * 1024;  // 32 MiB
-  static constexpr int64 kDefaultWorkspace = 4 * 1024 * 1024;  // 4 MiB
+  static constexpr int64 kDefaultWorkspace = 8 * 1024 * 1024;  // 16 MiB
+  static constexpr int64 kMaxCublasLtAlgorithms = 512; 
 
   explicit GemmConfig(se::gpu::GemmConfig&& cfg) : 
     se::gpu::GemmConfig(std::move(cfg)) { }

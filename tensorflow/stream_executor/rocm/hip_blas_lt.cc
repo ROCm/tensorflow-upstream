@@ -72,31 +72,31 @@ namespace {
 template <typename T>
 xla::Status SetAttr(hipblasLtMatrixLayout_t handle,
                      hipblasLtMatrixLayoutAttribute_t attr, T value) {
-  return SET_ATTR(wrap::hipblasLtMatrixLayoutSetAttribute, handle, attr, value);
+  return SET_ATTR(hipblasLtMatrixLayoutSetAttribute, handle, attr, value);
 }
 
 template <typename T>
 xla::StatusOr<T> GetAttr(hipblasLtMatrixLayout_t handle,
                           hipblasLtMatrixLayoutAttribute_t attr) {
-  return GET_ATTR(wrap::hipblasLtMatrixLayoutGetAttribute, handle, attr, T);
+  return GET_ATTR(hipblasLtMatrixLayoutGetAttribute, handle, attr, T);
 }
 
 template <typename T>
 xla::Status SetAttr(hipblasLtMatmulDesc_t handle,
                      hipblasLtMatmulDescAttributes_t attr, T value) {
-  return SET_ATTR(wrap::hipblasLtMatmulDescSetAttribute, handle, attr, value);
+  return SET_ATTR(hipblasLtMatmulDescSetAttribute, handle, attr, value);
 }
 
 template <typename T>
 xla::StatusOr<T> GetAttr(hipblasLtMatmulDesc_t handle,
                           hipblasLtMatmulDescAttributes_t attr) {
-  return GET_ATTR(wrap::hipblasLtMatmulDescGetAttribute, handle, attr, T);
+  return GET_ATTR(hipblasLtMatmulDescGetAttribute, handle, attr, T);
 }
 
 template <typename T>
 xla::Status SetAttr(hipblasLtMatmulPreference_t handle,
                      hipblasLtMatmulPreferenceAttributes_t attr, T value) {
-  return SET_ATTR(wrap::hipblasLtMatmulPreferenceSetAttribute, handle, attr,
+  return SET_ATTR(hipblasLtMatmulPreferenceSetAttribute, handle, attr,
                   value);
 }
 
@@ -141,7 +141,7 @@ static xla::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
 
 xla::Status BlasLt::Init() {
   hipblasLtHandle_t blas_lt;
-  SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtCreate(&blas_lt));
+  SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtCreate(&blas_lt));
   absl::MutexLock lock(&mu_);
   blas_lt_.reset(blas_lt);
   return xla::Status::OK();
@@ -153,7 +153,7 @@ xla::Status BlasLt::Init() {
 
   auto hipblas_data_type_ = AsHipblasDataType(type);
   hipblasLtMatrixLayout_t hip_layout;
-  SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatrixLayoutCreate(
+  SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtMatrixLayoutCreate(
       &hip_layout, hipblas_data_type_, m.num_rows, m.num_cols,
       m.leading_dim_stride));
   // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
@@ -187,7 +187,7 @@ xla::Status BlasLt::Init() {
           << int(pointer_mode);
   auto hip_scale_type = AsHipblasDataType(scale_type);
   auto hip_compute_type = AsHipblasComputeType(compute_type);
-  SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatmulDescCreate(
+  SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtMatmulDescCreate(
       &hip_desc, hip_compute_type, hip_scale_type));
 
   int32_t bias_flag =
@@ -220,11 +220,11 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
 
     hipblasLtMatmulPreference_t hip_preference;
     SE_HIPBLAS_RETURN_IF_ERROR(
-        wrap::hipblasLtMatmulPreferenceCreate(&hip_preference));
+        hipblasLtMatmulPreferenceCreate(&hip_preference));
 
     // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
     Owned<hipblasLtMatmulPreference_t> preference(
-        hip_preference, wrap::hipblasLtMatmulPreferenceDestroy);
+        hip_preference, hipblasLtMatmulPreferenceDestroy);
 
     TF_RETURN_IF_ERROR(SetAttr<uint64_t>(
         hip_preference, HIPBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
@@ -242,7 +242,7 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
     }
 
     int found_algorithm_count = 0;
-    auto error = wrap::hipblasLtMatmulAlgoGetHeuristic(
+    auto error = hipblasLtMatmulAlgoGetHeuristic(
         blas_lt_ref_.blas_lt_.get(), op_desc_.get(), a_desc_.get(),
         b_desc_.get(), c_desc_.get(), d_desc_.get(), preference.get(),
         max_algorithm_count, results.data(), &found_algorithm_count);
@@ -332,44 +332,6 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
   return xla::StatusOr<MatmulPlanPtr>{std::move(M)};
 }
 
-<<<<<<< HEAD
-xla::Status BlasLt::MatmulPlan::ValidateInputs(
-    blas::DataType scale_type, bool alpha_on_device, bool beta_on_device,
-    blas::DataType A_type, blas::DataType B_type, blas::DataType C_type,
-    blas::DataType D_type) const {
-  if (AsHipblasDataType(scale_type) != op_desc_.scale_type()) {
-    return InvalidArgument("mismatched scale types");
-  }
-
-  bool expect_scale_factor_on_device =
-      (op_desc_.pointer_mode() == HIPBLAS_POINTER_MODE_DEVICE);
-
-  if (alpha_on_device != expect_scale_factor_on_device) {
-    return InvalidArgument("wrong location for alpha");
-  }
-
-  if (beta_on_device != expect_scale_factor_on_device) {
-    return InvalidArgument("wrong location for beta");
-  }
-
-  if (AsHipblasDataType(A_type) != a_desc_.type()) {
-    return InvalidArgument("mismatched A matrix types");
-  }
-
-  if (AsHipblasDataType(B_type) != b_desc_.type()) {
-    return InvalidArgument("mismatched B matrix types");
-  }
-
-  if (AsHipblasDataType(C_type) != c_desc_.type()) {
-    return InvalidArgument("mismatched C matrix types");
-  }
-
-  if (AsHipblasDataType(D_type) != d_desc_.type()) {
-    return InvalidArgument("mismatched D matrix types");
-  }
-
-  return xla::Status::OK();
-}
 
 template <typename T>
 uint32_t checksum(const T* p, int n)
@@ -383,8 +345,6 @@ uint32_t checksum(const T* p, int n)
   return s;
 }
 
-=======
->>>>>>> 3a4847ab4af... WIP: added grouped gemm to Stream
 xla::Status BlasLt::MatmulPlan::DoMatmul(
     Stream* stream, const void* alpha, DeviceMemoryBase a, DeviceMemoryBase b,
     const void* beta, DeviceMemoryBase c, DeviceMemoryBase d,
@@ -468,19 +428,18 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
       gpu::rocm_null_gpu_job(gpu::AsGpuStreamValue(stream));
 
     if (palgo != nullptr) {
-      int n_iter = 1;
-      if (algorithm.run_count.has_value()) 
-        n_iter = *algorithm.run_count;
+      //int n_iter = 1;
+      //if (algorithm.run_count.has_value()) 
+      //  n_iter = *algorithm.run_count;
       VLOG(3)<<"Executing hipBlasLtMatmul " << a_desc_.m_.num_rows << " " << a_desc_.m_.num_cols
         << " " << b_desc_.m_.num_rows << " " << b_desc_.m_.num_cols
         <<  " with algo " << *(uint64_t*)palgo;
-      //for(int i=0; i<n_iter; i++) {
-       SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatmul(
-            blas_lt_ref_.blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
-            a_desc_.get(), b.opaque(), b_desc_.get(), beta, c.opaque(),
-            c_desc_.get(), d.opaque(), d_desc_.get(), palgo, workspace_addr,
-            workspace_size, gpu::AsGpuStreamValue(stream)));
-      //}
+      SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtMatmul(
+          blas_lt_ref_.blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
+          a_desc_.get(), b.opaque(), b_desc_.get(), beta, c.opaque(),
+          c_desc_.get(), d.opaque(), d_desc_.get(), palgo, workspace_addr,
+          workspace_size, gpu::AsGpuStreamValue(stream)));
+
       if(::stream_executor::gpu::do_blas_logging) {
         if (a_desc_.type() == HIP_R_16F) {
           const Eigen::half* pa = (const Eigen::half*)(a.opaque());
@@ -509,7 +468,6 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
         if (!isfinite(float(pc[0])))
           exit(0);
       }
-
     } else {
       return xla::InternalError("hipblaslt: Invalid algorithm type");
     }
@@ -686,19 +644,47 @@ auto BlasLt::GroupedMatmulPlan::GetAlgorithms(
         size_t max_algorithm_count, size_t max_workspace_size) ->
     xla::StatusOr<std::vector<MatmulAlgorithm>> {
 
-  absl::MutexLock lock(&blas_lt_ref_.mu_);
-
 // gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_}; ??
 
-  GemmPreference gemmPref;
-  gemmPref.setMaxWorkspaceBytes(max_workspace_size);
+  // GemmPreference gemmPref;
+  // gemmPref.setMaxWorkspaceBytes(max_workspace_size);
   
   std::vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
-  SE_HIPBLAS_RETURN_IF_ERROR(
-        grouped_gemm_->algoGetHeuristic(max_algorithm_count, gemmPref, 
-              heuristicResult));
-  
   std::vector<MatmulAlgorithm> algorithms;
+
+  absl::MutexLock lock(&blas_lt_ref_.mu_);
+
+  auto problem = grouped_gemm_->getProblemTypes()[0];
+  VLOG(0) << problem.op_a <<","<<
+                            problem.op_b<<","<<
+                            problem.type_a<<","<<
+                            problem.type_b<<","<<
+                            problem.type_c<<","<<
+                            problem.type_d<<","<<
+                            problem.type_compute;
+
+
+    // HIPBLAS_OP_N = 111, /**<  Operate with the matrix. */
+    // HIPBLAS_OP_T = 112, /**<  Operate with the transpose of the matrix. */
+    // HIPBLAS_OP_C = 113 /**< Operate with the conjugate transpose of the matrix. */
+
+// 2024-07-25 08:43:40.947586: I tensorflow/stream_executor/rocm/hip_blas_lt.cc:572] 1,200,1,24 alpha 00ffffff803f000000000000 pointers: 0x7f1653bac000,0x7f1653bac000,0x7f16540dc300,0x7f1653c42200 strides: 1,200,24,24 activate: 0
+// 2024-07-25 08:43:40.947641: I tensorflow/stream_executor/rocm/hip_blas_lt.cc:596] 112,111,0,0,0,0,2
+
+  SE_HIPBLAS_RETURN_IF_ERROR(getAllAlgos(blas_lt_ref_.blas_lt_.get(),
+                                       GemmType::HIPBLASLT_GROUPED_GEMM,
+                                       problem.op_a,
+                                       problem.op_b,
+                                       problem.type_a,
+                                       problem.type_b,
+                                       problem.type_c,
+                                       problem.type_d,
+                                       problem.type_compute,
+                                       heuristicResult));
+  // SE_HIPBLAS_RETURN_IF_ERROR(
+  //       grouped_gemm_->algoGetHeuristic(max_algorithm_count, gemmPref, 
+  //             heuristicResult));
+  VLOG(0) << "Total heuristics found: " << heuristicResult.size();
   algorithms.reserve(heuristicResult.size());
   for(auto& res : heuristicResult) {
     size_t workspace_size = 0;
@@ -726,12 +712,13 @@ xla::Status BlasLt::GroupedMatmulPlan::SetAlgorithm(
 }
 
 xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(Stream *stream,
-          const MatmulAlgorithm& algorithm,
           const gpu::GroupedGemmConfig& cfg) {
   
-  if(cfg.batch_count != device_args_.size()) {
+  if((size_t)cfg.batch_count != device_args_.size()) {
     return xla::InternalError("GroupedGemm config mismatch !");
   }
+  // NOTE: we can also use GPU kernel to update pointers directly 
+  // in device mem => then memcpy won't be necessary
   for(size_t i = 0; i < device_args_.size(); i++) {
     host_args_[i].a = const_cast< void * >(cfg.a[i]);
     host_args_[i].b = const_cast< void * >(cfg.b[i]);

@@ -50,7 +50,7 @@ class BlasLt : public gpu::BlasLt {
    private:
     MatrixLayout(hipblasLtMatrixLayout_t handle, hipDataType datatype,
         const gpu::MatrixLayout& m)
-        : handle_(handle, wrap::hipblasLtMatrixLayoutDestroy),
+        : handle_(handle, hipblasLtMatrixLayoutDestroy),
           datatype_(datatype), m_(m) {}
 
     Owned<hipblasLtMatrixLayout_t> handle_;
@@ -77,7 +77,7 @@ class BlasLt : public gpu::BlasLt {
    private:
     MatmulDesc(hipblasLtMatmulDesc_t handle, hipblasComputeType_t compute_type,
                hipDataType datatype, bool bias_epilogue)
-        : handle_(handle, wrap::hipblasLtMatmulDescDestroy),
+        : handle_(handle, hipblasLtMatmulDescDestroy),
           compute_type_(compute_type),
           datatype_(datatype),
           has_bias_epilogue_(bias_epilogue) {}
@@ -176,7 +176,7 @@ class BlasLt : public gpu::BlasLt {
   };
 
   explicit BlasLt(gpu::GpuExecutor* parent)
-      : parent_(parent), blas_lt_(nullptr, wrap::hipblasLtDestroy) {}
+      : parent_(parent), blas_lt_(nullptr, hipblasLtDestroy) {}
 
   xla::Status Init() override;
 
