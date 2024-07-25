@@ -114,6 +114,8 @@ class XlaInterpreterExecutor : public internal::StreamExecutorInterface {
     return false;
   }
 
+  port::Status SynchronizeEvent(Event *event) override;
+
   port::Status SynchronousMemcpy(DeviceMemoryBase *dev_dst,
                                  const void *host_src, uint64 size) override;
   port::Status SynchronousMemcpy(void *host_dst,

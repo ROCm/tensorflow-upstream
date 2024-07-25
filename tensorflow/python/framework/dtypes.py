@@ -298,8 +298,8 @@ class DType(object):
 
 # Define data type range of numpy dtype
 dtype_range = {
-    np.bool_: (False, True),
-    np.bool8: (False, True),
+    #np.bool_: (False, True),
+    #np.bool8: (False, True),
     np.uint8: (0, 255),
     np.uint16: (0, 65535),
     np.int8: (-128, 127),
@@ -539,10 +539,10 @@ _NP_TO_TF = {
     np.int8: int8,
     np.complex64: complex64,
     np.complex128: complex128,
-    np.object_: string,
+    #np.object_: string,
     np.string_: string,
     np.unicode_: string,
-    np.bool_: bool,
+    #np.bool_: bool,
     _np_qint8: qint8,
     _np_quint8: quint8,
     _np_qint16: qint16,
@@ -594,15 +594,15 @@ _TF_TO_NP = {
     # NOTE(touts): For strings we use np.object as it supports variable length
     # strings.
     types_pb2.DT_STRING:
-        np.object,
+        object,
+    types_pb2.DT_BOOL:
+        builtins.bool,
     types_pb2.DT_COMPLEX64:
         np.complex64,
     types_pb2.DT_COMPLEX128:
         np.complex128,
     types_pb2.DT_INT64:
         np.int64,
-    types_pb2.DT_BOOL:
-        np.bool,
     types_pb2.DT_QINT8:
         _np_qint8,
     types_pb2.DT_QUINT8:
@@ -636,7 +636,9 @@ _TF_TO_NP = {
     types_pb2.DT_INT8_REF:
         np.int8,
     types_pb2.DT_STRING_REF:
-        np.object,
+        object,
+    types_pb2.DT_BOOL_REF:
+        bool,
     types_pb2.DT_COMPLEX64_REF:
         np.complex64,
     types_pb2.DT_COMPLEX128_REF:
@@ -645,8 +647,6 @@ _TF_TO_NP = {
         np.int64,
     types_pb2.DT_UINT64_REF:
         np.uint64,
-    types_pb2.DT_BOOL_REF:
-        np.bool,
     types_pb2.DT_QINT8_REF:
         _np_qint8,
     types_pb2.DT_QUINT8_REF:

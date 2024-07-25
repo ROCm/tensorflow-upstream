@@ -87,6 +87,10 @@ bool XlaInterpreterExecutor::HostCallback(
   return true;
 }
 
+port::Status XlaInterpreterExecutor::SynchronizeEvent(Event *event) {
+  return port::Status::OK();
+}
+
 bool XlaInterpreterExecutor::CreateStreamDependency(Stream *dependent,
                                                     Stream *other) {
   AsExecutorStream(dependent)->EnqueueTask(
