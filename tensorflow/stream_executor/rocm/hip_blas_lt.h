@@ -41,11 +41,12 @@ class BlasLt : public gpu::BlasLt {
 
     hipDataType type() const { return datatype_; }
     hipblasLtMatrixLayout_t get() const { return handle_.get(); }
-
+    gpu::MatrixLayout m_;
    private:
-    MatrixLayout(hipblasLtMatrixLayout_t handle, hipDataType datatype)
+    MatrixLayout(hipblasLtMatrixLayout_t handle, hipDataType datatype,
+        const gpu::MatrixLayout& m)
         : handle_(handle, wrap::hipblasLtMatrixLayoutDestroy),
-          datatype_(datatype) {}
+          datatype_(datatype), m_(m) {}
 
     Owned<hipblasLtMatrixLayout_t> handle_;
     hipDataType datatype_;

@@ -109,6 +109,8 @@ absl::Span<tensorflow::AutotuneResult const> TopResultsWithinMeasurementError(
   absl::Duration min_time = tensorflow::proto_utils::FromDurationProto(
       results_sorted_by_runtime.front().run_time());
   absl::Duration limit_time = min_time + kMeasurementError;
+  if (limit_time > min_time*1.1)
+    limit_time = min_time*1.1;
 
   auto limit_time_it = absl::c_find_if(
       results_sorted_by_runtime, [limit_time](const tensorflow::AutotuneResult& x) {

@@ -331,7 +331,9 @@ message DebugOptions {
   // scratch), so this can be multiplied by quite a lot.
   int32 xla_gpu_redzone_padding_bytes = 135;
 
-  // Next id: 136
+  int32 xla_gpu_autotune_max_solutions = 136;
+  bool xla_gpu_autotune_evict_cache = 137;
+  // Next id: 138
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

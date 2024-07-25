@@ -144,6 +144,7 @@ struct BlasLt {
   struct MatmulAlgorithm {
     absl::any opaque_algo;
     size_t workspace_size;
+    absl::optional<int> run_count;
   };
 
   struct MatmulPlan {

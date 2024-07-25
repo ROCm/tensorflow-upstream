@@ -148,7 +148,7 @@ xla::Status BlasLt::Init() {
       &hip_layout, hipblas_data_type_, m.num_rows, m.num_cols,
       m.leading_dim_stride));
   // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
-  BlasLt::MatrixLayout layout(hip_layout, hipblas_data_type_);
+  BlasLt::MatrixLayout layout(hip_layout, hipblas_data_type_, m);
   if (m.order != gpu::MatrixLayout::Order::kColumnMajor)
     return xla::InternalError("HipblasLT does not support row-major matrices");
   TF_RETURN_IF_ERROR(SetAttr(hip_layout, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT,
@@ -436,11 +436,19 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_};
 
     if (palgo != nullptr) {
-      SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatmul(
-          blas_lt_ref_.blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
-          a_desc_.get(), b.opaque(), b_desc_.get(), beta, c.opaque(),
-          c_desc_.get(), d.opaque(), d_desc_.get(), palgo, workspace_addr,
-          workspace_size, gpu::AsGpuStreamValue(stream)));
+      int n_iter = 1;
+      if (algorithm.run_count.has_value()) 
+        n_iter = *algorithm.run_count;
+      VLOG(3)<<"Executing hipBlasLtMatmul " << a_desc_.m_.num_rows << " " << a_desc_.m_.num_cols
+        << " " << b_desc_.m_.num_rows << " " << b_desc_.m_.num_cols
+        <<  " with algo " << *(uint64_t*)palgo;
+      for(int i=0; i<n_iter; i++) {
+        SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatmul(
+            blas_lt_ref_.blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
+            a_desc_.get(), b.opaque(), b_desc_.get(), beta, c.opaque(),
+            c_desc_.get(), d.opaque(), d_desc_.get(), palgo, workspace_addr,
+            workspace_size, gpu::AsGpuStreamValue(stream)));
+      }
     } else {
       return xla::InternalError("hipblaslt: Invalid algorithm type");
     }
