@@ -63,8 +63,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   GemmRewriterVisitor(GpuVersion ver) : gpu_version_(ver) {}
  
   Status HandleDot(HloInstruction *instr) override {
-		VLOG(-1) << "Handling Dot";
     if (IsMatrixMultiplication(*instr)) {
+      VLOG(-1) << "Handling Dot";
       CHECK(!instr->IsRank2Transpose());
       HloInstruction *lhs = instr->mutable_operand(0);
       HloInstruction *rhs = instr->mutable_operand(1);
@@ -173,7 +173,6 @@ private:
       // cublasLt is not enabled.
       return absl::string_view(kGemmCallTarget);
     }
-
     // cublasLt is enabled, check if other internal conditions are met.
     const HloInstruction *lhs = instr.operand(0);
     const HloInstruction *rhs = instr.operand(1);
@@ -243,6 +242,7 @@ private:
         bool types_are_supported_by_cublas_lt,
         TypesAreSupportedByCublasLt(instr, gemm_backend_config));
     if (!types_are_supported_by_cublas_lt) {
+      VLOG(-1) << "Not converting to cublaslt: unsupported types";
       return false;
     }
 
@@ -271,6 +271,7 @@ private:
     constexpr int kMaxDimensionSize{4194240};
     if (output_shape.element_type() != C64) {
       // Does not match type in unsupported case.
+      VLOG(-1) << "Converting to cublaslt";
       return true;
     }
 

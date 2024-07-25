@@ -89,11 +89,13 @@ StatusOr<BlasLt::Epilogue> AsBlasLtEpilogue(
 
 class GemmAutotuner {
   const AutotuneConfig& autotune_config_;
-  RedzoneBuffers rz_buffers_;
+  std::vector< RedzoneBuffers > rz_buffers_;
+  size_t rz_counter_ = 0;
   std::unique_ptr< se::Stream > stream_;
   bool deterministic_ops_ = false;
   size_t solutions_limit_ = 0;
   size_t num_algorithms_left_ = 0;
+  uint64_t Nops = 0;
 
  public:
   explicit GemmAutotuner(const AutotuneConfig& autotune_config)
@@ -103,6 +105,11 @@ class GemmAutotuner {
 
   StatusOr<tensorflow::AutotuneResult> operator()(const HloInstruction* gemm,
                                             const AutotuneCacheKey& key) {
+
+    if (!IsCublasLtMatmul(*gemm)) {
+        // Currently not implemented.
+        return tensorflow::AutotuneResult{};
+    }
 
     num_algorithms_left_ = 0;
     VLOG(3) << "Starting autotune of GemmThunk " << gemm->ToString();
@@ -116,29 +123,43 @@ class GemmAutotuner {
         gemm->GetModule()->config().debug_options();
     deterministic_ops_ = false ;//debug_options.xla_gpu_deterministic_ops() ||
                                 //debug_options.xla_gpu_exclude_nondeterministic_ops();
-    solutions_limit_ = 0; //debug_options.xla_gpu_autotune_max_solutions();
+    solutions_limit_ = debug_options.xla_gpu_autotune_max_solutions();
 
     GemmBackendConfig backend_config = gemm->
               backend_config<GemmBackendConfig>().ValueOrDie();
     TF_ASSIGN_OR_RETURN(auto gemm_config, GemmConfig::For(gemm, backend_config));
 
+    size_t workset = gemm_config.lhs_layout.num_rows*gemm_config.lhs_layout.num_cols;
+    workset += gemm_config.rhs_layout.num_rows*gemm_config.rhs_layout.num_cols;
+    workset += gemm_config.output_layout.num_rows*gemm_config.output_layout.num_cols;
+    workset *= (gemm_config.lhs_layout.batch_size>1 ? gemm_config.lhs_layout.batch_size : 1);
+    size_t copies = 1;
+    if (debug_options.xla_gpu_autotune_evict_cache()) {
+      size_t min_workset = 1e9;
+      copies = min_workset/workset;
+      if (copies == 0)
+        copies = 1;
+    }
+
+    rz_buffers_.resize(copies);
     // Don't run autotuning concurrently on the same GPU.
     tensorflow::mutex_lock gpu_lock = LockGpu(stream_->parent());
 
-    TF_ASSIGN_OR_RETURN(rz_buffers_, RedzoneBuffers::FromInstruction(
+    for(int it = 0; it < copies; it ++) {
+      TF_ASSIGN_OR_RETURN(rz_buffers_[it], RedzoneBuffers::FromInstruction(
                         *gemm, autotune_config_, stream_.get(), debug_options,
                         RedzoneBuffers::kAllInputsAllOutputs));
-
+    }
     return IsCublasLtMatmul(*gemm)
                ? TuneGpuBlasLt(gemm, gemm_config)
                : TuneGpuBlas(gemm, gemm_config);
   }
 
  private:
-  se::DeviceMemoryBase LhsBuffer() { return rz_buffers_.input_buffers().at(0); }
-  se::DeviceMemoryBase RhsBuffer() { return rz_buffers_.input_buffers().at(1); }
+  se::DeviceMemoryBase LhsBuffer() { return rz_buffers_[rz_counter_].input_buffers().at(0); }
+  se::DeviceMemoryBase RhsBuffer() { return rz_buffers_[rz_counter_].input_buffers().at(1); }
   se::DeviceMemoryBase OutputBuffer() {
-    return rz_buffers_.output_buffers().at(0);
+    return rz_buffers_[rz_counter_].output_buffers().at(0);
   }
 
   const Shape& GetOutputShape(const HloInstruction* gemm) {
@@ -172,30 +193,48 @@ class GemmAutotuner {
     se::DeviceMemoryBase a_scale_buffer, b_scale_buffer, c_scale_buffer,
         d_scale_buffer, d_amax_buffer, bias_buffer, aux_buffer;
 
-    if (has_vector_bias) {
-      bias_buffer = rz_buffers_.input_buffers().at(has_matrix_bias ? 3 : 2);
-    }
-    if (has_aux_output) {
-      aux_buffer = rz_buffers_.output_buffers().at(1);
-    }
-
     TF_ASSIGN_OR_RETURN(auto plan,
                    BlasLt::GetMatmulPlan(stream_.get(), gemm_config, epilogue));
 
     TF_ASSIGN_OR_RETURN(
         auto algorithms,
-        plan->GetAlgorithms(/*max_algorithm_count*/ 128,
+        plan->GetAlgorithms(/*max_algorithm_count*/solutions_limit_>0 ? solutions_limit_ : 128,
                             workspace_buffer.has_value()
                           ? workspace_buffer.value().size() : 0));
-
+    VLOG(0) << "Autotuning " << gemm_config.lhs_layout.num_rows << " " << gemm_config.lhs_layout.num_cols
+      << " " << gemm_config.rhs_layout.num_rows << " " << gemm_config.rhs_layout.num_cols
+      << " " << gemm_config.lhs_layout.batch_size;
+    Nops = gemm_config.lhs_layout.num_rows * gemm_config.lhs_layout.num_cols 
+            * gemm_config.rhs_layout.num_cols
+            * gemm_config.lhs_layout.batch_size; 
+    VLOG(3) << "BlasLt::GetAlgorithms returns " << algorithms.size() << " algorithms";
     auto tuned_func = [&](const BlasLt::MatmulAlgorithm& algorithm)
         -> StatusOr<se::blas::ProfileResult> {
+      rz_counter_ = (rz_counter_ + 1) % rz_buffers_.size();
+
+      if (has_vector_bias) {
+        bias_buffer = rz_buffers_[rz_counter_].input_buffers().at(has_matrix_bias ? 3 : 2);
+      }
+      if (has_aux_output) {
+        aux_buffer = rz_buffers_[rz_counter_].output_buffers().at(1);
+      }
+
       // Run a warmup iteration without the profiler active.
       TF_RETURN_IF_ERROR(plan->ExecuteOnStream(
           stream_.get(), LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
           bias_buffer, aux_buffer, a_scale_buffer, b_scale_buffer,
           c_scale_buffer, d_scale_buffer, d_amax_buffer, algorithm,
           workspace_buffer));
+
+      rz_counter_ = (rz_counter_ + 1) % rz_buffers_.size();
+
+      if (has_vector_bias) {
+        bias_buffer = rz_buffers_[rz_counter_].input_buffers().at(has_matrix_bias ? 3 : 2);
+      }
+      if (has_aux_output) {
+        aux_buffer = rz_buffers_[rz_counter_].output_buffers().at(1);
+      }
+
 
       se::blas::ProfileResult profile_result;
       TF_RETURN_IF_ERROR(plan->ExecuteOnStream(
@@ -278,7 +317,7 @@ class GemmAutotuner {
     se::DeviceMemoryBase reference_buffer;
     if (autotune_config_.should_check_correctness()) {
       TF_ASSIGN_OR_RETURN(reference_buffer,
-                          rz_buffers_.RedzoneAllocator().AllocateBytes(
+                          rz_buffers_[0].RedzoneAllocator().AllocateBytes(
                               ShapeUtil::ByteSizeOf(output_shape)));
     }
 
@@ -292,6 +331,7 @@ class GemmAutotuner {
     absl::optional<int64_t> reference_algorithm;
 
     auto num = algorithms.size();
+    double best_time = 1e20;
     if (solutions_limit_ > 0) num = std::min(num, solutions_limit_);
     for (size_t i = 0; i < num; i++) {
       const AlgoT& algorithm = algorithms[i];
@@ -313,11 +353,31 @@ class GemmAutotuner {
         continue;
       }
 
-      VLOG(2) << "gemm algorithm " << profile_result.algorithm() << " took "
-              << profile_result.elapsed_time_in_ms() << "ms";
+      bool skip_correctness_check = false;
+      double elapsed_time = profile_result.elapsed_time_in_ms();
+      if (elapsed_time < 1.0) {
+        int repeat_count = 4;
+
+        double elapsed_time2 = 0.0;
+        for(int it = 0; it < repeat_count; it++) {
+          TF_ASSIGN_OR_RETURN(auto profile_result, run_benchmark(algorithm));
+          elapsed_time2 += profile_result.elapsed_time_in_ms();
+        }
+        elapsed_time2 /= repeat_count;
+        VLOG(4) << elapsed_time*1000. << " " << elapsed_time2*1000.;
+        if (beta != 0)
+          skip_correctness_check = true;
+        elapsed_time = elapsed_time2;
+      }
+
+      if(elapsed_time<best_time)
+        VLOG(3) << "gemm algorithm " << profile_result.algorithm() << " took "
+              << elapsed_time*1000. << "us; " << (Nops*2) / (elapsed_time*1e9) << " TFlops (memory " << rz_counter_ << " / " << rz_buffers_.size() << " )";
+//              << ( elapsed_time<best_time ? " *** " : "");
+      best_time = std::min<double>(best_time, elapsed_time);
 
       *result.mutable_run_time() = tensorflow::proto_utils::ToDurationProto(
-          absl::Milliseconds(profile_result.elapsed_time_in_ms()));
+          absl::Milliseconds(elapsed_time));
 
       if (!autotune_config_.should_check_correctness()) {
         num_algorithms_left_++;
@@ -325,7 +385,7 @@ class GemmAutotuner {
       }
       TF_ASSIGN_OR_RETURN(
           se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
-          rz_buffers_.RedzoneAllocator().CheckRedzones());
+          rz_buffers_[rz_counter_].RedzoneAllocator().CheckRedzones());
 
       if (!rz_check_status.ok()) {
         result.mutable_failure()->set_kind(tensorflow::AutotuneResult::REDZONE_MODIFIED);
@@ -337,6 +397,8 @@ class GemmAutotuner {
       }
 
       num_algorithms_left_++; 
+      if (skip_correctness_check)
+        continue;
       if (!reference_algorithm) {
         stream_->ThenMemcpy(&reference_buffer, OutputBuffer(),
                                            OutputBuffer().size());
@@ -370,8 +432,11 @@ class GemmAutotuner {
 
     StatusOr<tensorflow::AutotuneResult> best_res =
         PickBestResult(results, gemm->ToString());
+
     if (best_res.ok()) {
       auto best = std::move(best_res.ValueOrDie());
+      VLOG(0) << "Best gemm algorithm " << best.gemm().algorithm() << " took "
+              <<  absl::FDivDuration(tensorflow::proto_utils::FromDurationProto(best.run_time()), absl::Microseconds(1)) << " us";
       // Return a real algorithm ID if return_algo_index is false: 
       // e.g., in case of legacy cublas tuning.
       if (!return_algo_index) return best; 
@@ -414,6 +479,7 @@ StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
                       AutotunerUtil::Autotune(
                           gemm, config, [&] { return autotuner(gemm, key); }));
 
+  VLOG(3) << "AutotunerUtil::Autotune success";
   *num_algorithms_left = autotuner.num_algorithms_left();
   auto old_algorithm = backend_config.selected_algorithm();
   bool update_algorithm = true;
@@ -434,6 +500,7 @@ StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
     if (algorithm.has_gemm()) {
       new_algorithm = algorithm.gemm().algorithm();
     } else {
+      VLOG(3)<<"No has_gemm()";
       // NOTE: runtime autotuning is no longer available => set to default
       new_algorithm = se::blas::kDefaultAlgorithm;
     }
@@ -442,9 +509,10 @@ StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
       // We don't need to update the backend config if
       // the algorithm hasn't changed unless previously
       // the algorithm wasn't set explicitly.
+      VLOG(3) << "Same algo " << old_algorithm << " " << new_algorithm;
       return false;
     }
-
+    VLOG(3)<<"Setting algorithm " << new_algorithm;
     backend_config.set_selected_algorithm(new_algorithm);
     TF_RETURN_IF_ERROR(gemm->set_backend_config(backend_config));
     return true;  // We changed `gemm`
@@ -478,7 +546,7 @@ StatusOr<bool> GemmAlgorithmPicker::Run(
 
   num_algorithms_left_ = 0;
   if (module->config().debug_options().xla_gpu_autotune_level() == 0) {
-    VLOG(2) << "GEMM auto-tuning disabled, GemmAlgorithmPicker returning early";
+    VLOG(0) << "GEMM auto-tuning disabled, GemmAlgorithmPicker returning early";
     return false;
   }
 

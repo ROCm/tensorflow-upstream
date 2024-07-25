@@ -115,7 +115,7 @@ std::unique_ptr<Thunk> ThunkEmitter::BuildCublasLtThunk(
 
   return absl::make_unique<CublasLtMatmulThunk>(
     inst, std::move(gemm_config), se::gpu::BlasLt::Epilogue::kDefault,
-    /*algorithm_idx*/0,
+    /*algorithm_idx*/gemm_config.selected_algorithm(),
     GetAllocationSlice(*lhs),   // The buffer assigned to LHS.
     GetAllocationSlice(*rhs),   // The buffer assigned to RHS.
     GetAllocationSlice(*inst),  // The c_buffer

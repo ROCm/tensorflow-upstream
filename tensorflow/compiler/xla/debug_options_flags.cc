@@ -64,6 +64,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
   opts.set_xla_gpu_redzone_padding_bytes(8 * 1024 * 1024);
 
+  opts.set_xla_gpu_autotune_max_solutions(128);
+  opts.set_xla_gpu_autotune_evict_cache(false);
+
   return opts;
 }
 
@@ -592,6 +595,16 @@ static void AllocateFlags() {
         "Amount of padding the redzone allocator will put on one side of each "
         "buffer it allocates. (So the buffer's total size will be increased by "
         "2x this value.)"),
+      tensorflow::Flag(
+        "xla_gpu_autotune_max_solutions",
+        int32_setter_for(&DebugOptions::set_xla_gpu_autotune_max_solutions),
+        flag_values->xla_gpu_autotune_max_solutions(),
+        "Maximal number of GEMM solutions to consider for autotuning: 0 means "
+        "consider all solutions returned by the GEMM library."),
+      tensorflow::Flag("xla_gpu_autotune_evict_cache",
+                bool_setter_for(&DebugOptions::set_xla_gpu_autotune_evict_cache),
+                flag_values->xla_gpu_autotune_evict_cache(),
+                "Try to evict GPU caches before autotune benchmarking."),
   });
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects);
 }
