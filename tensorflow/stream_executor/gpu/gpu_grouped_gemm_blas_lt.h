@@ -23,8 +23,6 @@ namespace stream_executor {
   
 namespace  gpu {
 
-using GroupedGemmConfig = GroupedGemmConfig;
-
 namespace {
 
 auto AsTuple(const GroupedGemmConfig& p) {
@@ -48,15 +46,18 @@ H AbslHashValue(H h, const GroupedGemmConfig& params) {
 
 struct GroupedGemmRunner {
 
-  GroupedGemmRunner() {}
+  static GroupedGemmRunner& i(const Stream *stream);
 
-  Stream& operator()(Stream& stream, blas::Transpose transa, 
+  xla::Status operator()(Stream& stream, blas::Transpose transa, 
       blas::Transpose transb, uint64 m, uint64 n, uint64 k, 
       const void *alpha, blas::DataType type_a, const void** a, int lda, 
       blas::DataType type_b, const void** b, int ldb, const void *beta,
       blas::DataType type_c, void** c, int ldc, int batch_count);
 
 private:
+  GroupedGemmRunner();
+
+  std::unique_ptr< absl::Mutex > mutex_;
   absl::flat_hash_map<GroupedGemmConfig, BlasLt::GroupedMatmulPlanPtr> map_;
 };
 

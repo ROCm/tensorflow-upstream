@@ -43,10 +43,6 @@ limitations under the License.
 
 namespace stream_executor {
 
-namespace gpu {
-struct GroupedGemmRunner;
-}
-
 namespace host {
 class HostBlas;
 class HostFft;
@@ -1984,7 +1980,6 @@ class Stream {
   template <typename... Args>
   friend struct ThenBlasImpl;  // for implementing ThenBlasXXX.
   friend class ocl::CLBlas;    // for parent_.
-  friend struct gpu::GroupedGemmRunner; // BlasLt group gemm impl
 
   bool InErrorState() const LOCKS_EXCLUDED(mu_) {
     absl::ReaderMutexLock lock(&mu_);
@@ -2050,10 +2045,6 @@ class Stream {
 
   // Callbacks enqueued to be run after the next call to BlockHostUntilDone().
   std::vector<std::function<void()>> after_block_host_until_done_callbacks_
-      GUARDED_BY(mu_);
-
-  // NOTE: this should not be a per-stream instance !!
-  std::unique_ptr< gpu::GroupedGemmRunner > grouped_gemm_runner_
       GUARDED_BY(mu_);
 
   // Implementation of ThenConvolveBackwardBias that is shared by all types.

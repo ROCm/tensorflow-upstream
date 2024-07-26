@@ -30,7 +30,10 @@ struct MatmulPlanCache {
     // Each GPU gets different cache instance
     static absl::flat_hash_map<void *, MatmulPlanCache> meta;
     absl::MutexLock lock(&m);
-    return meta[stream->parent()];
+    auto res = meta.find(stream->parent());
+    if(res != meta.end()) return res->second;
+    MatmulPlanCache r;
+    return meta.emplace(stream->parent(), std::move(r)).first->second;
   }
 
   template < class Func >
@@ -45,8 +48,8 @@ struct MatmulPlanCache {
     return &res.first->second;
   }
 
-  MatmulPlanCache() : mutex_(std::make_unique< absl::Mutex >()) { }
 private:
+  MatmulPlanCache() : mutex_(std::make_unique< absl::Mutex >()) { }
 
 private:
   std::unique_ptr< absl::Mutex > mutex_;

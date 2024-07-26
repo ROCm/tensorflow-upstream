@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/gpu/gpu_grouped_gemm_blas_lt.h"
 #include "tensorflow/stream_executor/stream.h"
+#include "tensorflow/compiler/xla/util.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -22,7 +23,6 @@ limitations under the License.
 #include <utility>
 
 namespace stream_executor {
-
 namespace gpu {
 
 bool operator ==(const GroupedGemmConfig& rhs,
@@ -30,14 +30,29 @@ bool operator ==(const GroupedGemmConfig& rhs,
   return AsTuple(rhs) == AsTuple(lhs);
 }
 
-Stream& GroupedGemmRunner::operator()(Stream& stream, 
+GroupedGemmRunner::GroupedGemmRunner() :
+    mutex_(std::make_unique< absl::Mutex >()) { }
+
+/*static*/ GroupedGemmRunner& GroupedGemmRunner::i(const Stream *stream) {
+    static absl::Mutex m(absl::kConstInit);
+    // Each GPU gets different cache instance
+    static absl::flat_hash_map<void *, GroupedGemmRunner> meta;
+    absl::MutexLock lock(&m);
+    auto res = meta.find(stream->parent());
+    if(res != meta.end()) return res->second;
+    GroupedGemmRunner r;
+    return meta.emplace(stream->parent(), std::move(r)).first->second;
+}
+
+xla::Status GroupedGemmRunner::operator()(Stream& stream, 
       blas::Transpose transa, blas::Transpose transb, 
       uint64 m, uint64 n, uint64 k, 
       const void *alpha, blas::DataType type_a, const void** a, int lda, 
       blas::DataType type_b, const void** b, int ldb, const void *beta,
       blas::DataType type_c, void** c, int ldc, int batch_count) {
 
-  auto compute_type = gpu::GetBlasComputationType(type_a, type_c, 0).ValueOrDie();
+  TF_ASSIGN_OR_RETURN(auto compute_type, 
+            gpu::GetBlasComputationType(type_a, type_c, 0));
 
   GroupedGemmConfig cfg{
     .m = (int64)m,
@@ -67,31 +82,19 @@ Stream& GroupedGemmRunner::operator()(Stream& stream,
   if(res == map_.end()) {
     // TODO: call here BlockHostUntilDone()
 
-    auto plan_res = gpu::BlasLt::GetGroupedMatmulPlan(&stream, nullptr, cfg);
-    if(!plan_res.ok()) {
-      stream.CheckStatus(plan_res.status());
-      return stream;
-    }
-    res = map_.emplace(cfg, std::move(plan_res.ValueOrDie())).first;
+    TF_ASSIGN_OR_RETURN(auto plan_res, 
+            gpu::BlasLt::GetGroupedMatmulPlan(&stream, nullptr, cfg));
+    auto& plan = map_.emplace(cfg, std::move(plan_res)).first->second;
 
-    auto& plan = res->second;
-    auto algos = plan->GetAlgorithms().ValueOrDie();
-
+    TF_ASSIGN_OR_RETURN(auto algos, plan->GetAlgorithms());
     VLOG(0) << "++++++++++++++++++++++++++++++++++ added new config: " << map_.size() << 
         " algos found: " << algos.size();
     if(algos.empty()) {
-      stream.SetError();
-      return stream;
+      return xla::InternalError("No valid algorithms found!");
     }
     plan->SetAlgorithm(algos[0]);
   }
-
-  auto& plan = res->second;
-  auto status = plan->ExecuteOnStream(&stream, cfg);
-  if(!status.ok()) {
-    stream.CheckStatus(status);
-  }
-  return stream;
+  return res->second->ExecuteOnStream(&stream, cfg);
 }
 
 }  // namespace gpu

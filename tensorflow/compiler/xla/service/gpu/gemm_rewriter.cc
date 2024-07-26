@@ -439,14 +439,11 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
 
       TF_ASSIGN_OR_RETURN(auto config,
                           instr->backend_config<GemmBackendConfig>());
-      // TF_ASSIGN_OR_RETURN(const auto gpu_config,
-      //                     instr->backend_config<xla::gpu::GpuBackendConfig>());
-      // const xla::gpu::GemmBackendConfig &config =
-      //     gpu_config.gemm_backend_config();
-      xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
+      GemmBackendConfig_Epilogue epilogue = config.epilogue();
+
       TF_ASSIGN_OR_RETURN(
           has_aux_output,
-          xla::gpu::gpublas_lt::EpilogueHasAuxiliaryOutput(epilogue));
+          gpublas_lt::EpilogueHasAuxiliaryOutput(epilogue));
 
       if (!((instr->shape().IsTuple() &&
              instr->shape().tuple_shapes_size() ==
@@ -454,8 +451,8 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
             instr->shape().IsArray())) {
         return Status::OK();
       }
-    } else if (instr->custom_call_target() != kGemmCallTarget ||
-               !instr->shape().IsArray()) {
+    // do not add workspace buffer for legacy cublas yet
+    } else { //if (instr->custom_call_target() != kGemmCallTarget || !instr->shape().IsArray()) {
       return Status::OK();
     }
 
