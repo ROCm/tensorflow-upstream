@@ -164,6 +164,22 @@ class RocmComputeCapability {
     return gfx_versions_with_fp16_atomics_support().count(gfx_version()) != 0;
   }
 
+  bool has_bf16_atomics_support() {
+    return gfx_versions_with_bf16_atomics_support().count(gfx_version()) != 0;
+  }
+
+  bool has_fp32_atomics_support() {
+    return gfx_versions_with_fp32_atomics_support().count(gfx_version()) != 0;
+  }
+
+  bool has_fp64_atomics_support() {
+     return gfx_versions_with_fp64_atomics_support().count(gfx_version()) != 0;
+  }
+
+  bool gfx9_mi300_or_later() {
+    return gfx_versions_with_bf16_atomics_support().count(gfx_version()) != 0;
+  }
+
   RocmComputeCapabilityProto ToProto() const {
     RocmComputeCapabilityProto proto;
     proto.set_gcn_arch_name(gcn_arch_name_);
@@ -200,6 +216,15 @@ class RocmComputeCapability {
   std::set<std::string> gfx_versions_with_fp16_atomics_support() {
     // TODO(rocm): Check. This should be the same as
     // gfx_versions_with_fast_fp16_support.
+    return {"gfx908", "gfx90a", "gfx940", "gfx941", "gfx942"};
+  }
+  std::set<std::string> gfx_versions_with_bf16_atomics_support() {
+    return {"gfx940", "gfx941", "gfx942"};
+  }
+  std::set<std::string> gfx_versions_with_fp32_atomics_support() {
+    return {"gfx908", "gfx90a", "gfx940", "gfx941", "gfx942"};
+  }
+  std::set<std::string> gfx_versions_with_fp64_atomics_support() {
     return {"gfx90a", "gfx940", "gfx941", "gfx942"};
   }
 };

@@ -81,6 +81,13 @@ CHECK-NOT: store atomic{{.*}}unordered, align 4
 }
 
 TEST_F(GpuAtomicTest, TestAddAtomicF32) {
+  if (is_built_with_rocm_ && !backend()
+                                  .default_stream_executor()
+                                  ->GetDeviceDescription()
+                                  .rocm_compute_capability()
+                                  .has_fp32_atomics_support()) {
+    return;
+  }
   const char* hlo_string = R"(
     HloModule TensorFlowScatterV1
 
@@ -103,21 +110,39 @@ TEST_F(GpuAtomicTest, TestAddAtomicF32) {
     }
 )";
 
-  CompileAndVerifyIr(hlo_string, is_built_with_rocm_ ? R"(
-CHECK: atomicrmw fadd ptr addrspace(1) %[[ADDR:.*]], float %[[VALUE:.*]] syncscope("agent") seq_cst
+  HloModuleConfig config;
+  DebugOptions debug_options = config.debug_options();
+  debug_options.set_xla_gpu_ftz(true);
+  config.set_debug_options(debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+
+  CompileAndVerifyIr(std::move(module),
+                     is_built_with_rocm_ ? R"(
+CHECK: call float @llvm.amdgcn.global.atomic.fadd.f32.p1.f32(ptr addrspace(1) %[[ADDR:.*]], float %[[VALUE:.*]])
 )"
-                                                     : R"(
+                                         : R"(
 CHECK: atomicrmw fadd ptr %[[ADDR:.*]], float %[[VALUE:.*]] seq_cst
-)");
+)",
+                     false);
 }
 
 TEST_F(GpuAtomicTest, TestAddAtomicF64) {
   // Atomic add required sm_60 or above.
-  if (!backend()
-           .default_stream_executor()
-           ->GetDeviceDescription()
-           .cuda_compute_capability()
-           .IsAtLeast(6)) {
+  if (!is_built_with_rocm_ && !backend()
+                                   .default_stream_executor()
+                                   ->GetDeviceDescription()
+                                   .cuda_compute_capability()
+                                   .IsAtLeast(6)) {
+    return;
+  }
+
+  if (is_built_with_rocm_ && !backend()
+                                  .default_stream_executor()
+                                  ->GetDeviceDescription()
+                                  .rocm_compute_capability()
+                                  .has_fp64_atomics_support()) {
     return;
   }
 
@@ -143,9 +168,92 @@ TEST_F(GpuAtomicTest, TestAddAtomicF64) {
     }
 )";
 
-  CompileAndVerifyIr(hlo_string, R"(
+  CompileAndVerifyIr(hlo_string, is_built_with_rocm_ ? R"(
+CHECK: call double @llvm.amdgcn.global.atomic.fadd.f64.p1.f64(ptr addrspace(1) %[[ADDR:.*]], double %[[VALUE:.*]])
+)"
+                                                     : R"(
 CHECK: atomicrmw fadd ptr %[[ADDR:.*]], double %[[VALUE:.*]] seq_cst
 )");
+}
+
+TEST_F(GpuAtomicTest, TestAddAtomicF16) {
+  if (is_built_with_rocm_ && !backend()
+                                  .default_stream_executor()
+                                  ->GetDeviceDescription()
+                                  .rocm_compute_capability()
+                                  .has_fp16_atomics_support()) {
+    return;
+  }
+  const char* hlo_string = R"(
+    HloModule TensorFlowScatterV1
+
+    update_f16 (lhs: f16[], rhs: f16[]) -> f16[] {
+      lhs = f16[] parameter(0)
+      rhs = f16[] parameter(1)
+      ROOT add = f16[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      operand = f16[3,3] parameter(0)
+      indices = s32[2] parameter(1)
+      updates = f16[2,3] parameter(2)
+      ROOT scatter = f16[3,3] scatter(operand, indices, updates),
+          to_apply=update_f16,
+          update_window_dims={1},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1, unique_indices=false
+    }
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  CompileAndVerifyIr(std::move(module),
+                     is_built_with_rocm_ ? R"(
+CHECK: call {{.*}} @llvm.amdgcn.global.atomic.fadd.v2f16.p1.v2f16(ptr addrspace(1) %[[ADDR:.*]], {{.*}} %[[VALUE:.*]])
+)"
+                                         : R"(
+CHECK: cmpxchg ptr %[[ADDR:.*]], i32 %[[OLD:.*]], i32 %[[VALUE:.*]] seq_cst seq_cst
+)",
+                     false);
+}
+
+TEST_F(GpuAtomicTest, TestAddAtomicBF16) {
+  const char* hlo_string = R"(
+    HloModule TensorFlowScatterV1
+
+    update_bf16 (lhs: bf16[], rhs: bf16[]) -> bf16[] {
+      lhs = bf16[] parameter(0)
+      rhs = bf16[] parameter(1)
+      ROOT add = bf16[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      operand = bf16[3,3] parameter(0)
+      indices = s32[2] parameter(1)
+      updates = bf16[2,3] parameter(2)
+      ROOT scatter = bf16[3,3] scatter(operand, indices, updates),
+          to_apply=update_bf16,
+          update_window_dims={1},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1, unique_indices=false
+    }
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  CompileAndVerifyIr(std::move(module),
+                     is_built_with_rocm_ ? R"(
+CHECK: cmpxchg ptr %[[ADDR:.*]], i32 %[[OLD:.*]], i32 %[[VALUE:.*]] syncscope("agent") monotonic monotonic
+
+)"
+                                         : R"(
+CHECK: cmpxchg ptr %[[ADDR:.*]], i32 %[[OLD:.*]], i32 %[[VALUE:.*]] seq_cst seq_cst
+)",
+                     false);
 }
 
 }  // namespace
