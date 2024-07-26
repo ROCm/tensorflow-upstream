@@ -309,6 +309,7 @@ Status LinkWithBitcodeVector(llvm::Module* module,
       llvm_ir::AsStringRef("llvm-link"),
       llvm_ir::AsStringRef("-o"),
       llvm_ir::AsStringRef(linked_ir_path),
+      llvm_ir::AsStringRef("--suppress-warnings"),
   };
 
   llvmlink_args.push_back(llvm_ir::AsStringRef(ir_path));
