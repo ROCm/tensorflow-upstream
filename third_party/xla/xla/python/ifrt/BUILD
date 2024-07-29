@@ -82,6 +82,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":array_spec_proto_cc",
+        ":attribute_map",
         ":device_proto_cc",
         ":dtype_proto_cc",
         ":remap_plan_proto_cc",
@@ -182,6 +183,7 @@ xla_cc_test(
     srcs = ["index_domain_test.cc"],
     deps = [
         ":ifrt",
+        "@com_google_absl//absl/hash:hash_testing",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -192,6 +194,7 @@ xla_cc_test(
     srcs = ["index_test.cc"],
     deps = [
         ":ifrt",
+        "@com_google_absl//absl/hash:hash_testing",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -214,6 +217,7 @@ xla_cc_test(
     deps = [
         ":ifrt",
         ":shape_proto_cc",
+        "@com_google_absl//absl/hash:hash_testing",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:status_matchers",
@@ -368,10 +372,10 @@ cc_library(
     srcs = ["mock.cc"],
     hdrs = ["mock.h"],
     deps = [
+        ":attribute_map",
         ":ifrt",
         "//xla:test",
         "//xla/hlo/ir:hlo",
-        "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_layout",
         "//xla/tsl/concurrency:ref_count",
