@@ -115,15 +115,17 @@ __global__ void ComputeCoActionIndicator(IMatmulParam<Scalar, TIndex> param) {
 
   // step 2: pow + concat + matmul
   float C_local[N_SIZE] = {0.0f};
-#pragma unroll
-  for (int k = 0; k < K_SIZE; k++) {
-    float a_val = float(A[k]);
-#pragma unroll
-    for (int n = 0; n < N_SIZE; n++) {
-      if (blockIdx.z == 0) {
-        C_local[n] += a_val * float(Bs[k * N_SIZE + n]);
-      } else {
-        C_local[n] += a_val * a_val * float(Bs[k * N_SIZE + n]);
+  if (threadIdx.x < M_SIZE) {
+  #pragma unroll
+    for (int k = 0; k < K_SIZE; k++) {
+      float a_val = float(A[k]);
+  #pragma unroll
+      for (int n = 0; n < N_SIZE; n++) {
+        if (blockIdx.z == 0) {
+          C_local[n] += a_val * float(Bs[k * N_SIZE + n]);
+        } else {
+          C_local[n] += a_val * a_val * float(Bs[k * N_SIZE + n]);
+        }
       }
     }
   }
@@ -151,7 +153,7 @@ Status LaunchCoAction<GPUDevice, Scalar>::operator()(
   param.batch_a = batch_a;
   param.parallel_num = paralle_num;
   dim3 grid_dim(batch_b, paralle_num, pow_num);
-  dim3 block_dim(m);
+  dim3 block_dim((m+63) & ~63);
   const auto& d = context->eigen_device<GPUDevice>();
   int shared_memory_size = k * n * sizeof(Scalar) + 32 * n * sizeof(float);
   if (m == 50 && k == 5 && n == 4 && pow_num == 2) {
@@ -183,7 +185,7 @@ Status LaunchCoActionIndicator<GPUDevice, Scalar, TIndex>::operator()(
   param.batch_a = batch_a;
   param.parallel_num = paralle_num;
   dim3 grid_dim(batch_b, paralle_num, pow_num);
-  dim3 block_dim(m);
+  dim3 block_dim((m+63) & ~63);
   const auto& d = context->eigen_device<GPUDevice>();
   int shared_memory_size = k * n * sizeof(Scalar) + 32 * n * sizeof(float);
   if (m == 50 && k == 5 && n == 4 && pow_num == 2) {

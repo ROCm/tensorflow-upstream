@@ -135,6 +135,7 @@ class BlasLt : public gpu::BlasLt {
 
    private:
     const BlasLt& blas_lt_ref_;
+    mutable absl::Mutex mu_;
     // TODO(cjfj): Add consistency checks for types, shapes, etc.?
     MatmulDesc op_desc_;
     MatrixLayout a_desc_;

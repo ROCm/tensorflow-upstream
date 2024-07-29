@@ -108,6 +108,18 @@ void rocm_Broadcast_general(void* stream,
                      pdst, ppsrc, size);
 }
 
+__global__ void null_kernel()
+{
+  __shared__ int temp[256];
+  temp[threadIdx.x] = sinf(float(threadIdx.x));
+}
+
+void rocm_null_gpu_job(void* stream)
+{
+  hipLaunchKernelGGL(null_kernel,
+                     1,
+                     256, 0, (hipStream_t)stream);
+}
 
 };  // namespace gpu
 };  // namespace stream_executor
