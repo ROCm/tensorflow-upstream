@@ -1,4 +1,4 @@
-/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+  /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -82,9 +82,26 @@ class GpuContext {
   GpuContext& operator=(GpuContext&&) = delete;
   GpuContext& operator=(const GpuContext&) = delete;
 
+  void synchronize();
+  void register_stream(hipStream_t s);
+  void unregister_stream(hipStream_t s);
  private:
   const int device_ordinal_;
+  std::set<hipStream_t> streams_;
 };
+
+void GpuContext::synchronize() {
+  for (auto s: streams_)
+    hipStreamSynchronize(s);
+}
+
+void GpuContext::register_stream(hipStream_t s) {
+  streams_.insert(s);
+}
+
+void GpuContext::unregister_stream(hipStream_t s) {
+  streams_.erase(s);
+}
 
 namespace {
 
@@ -631,6 +648,7 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
                << context->device_ordinal() << ": " << ToString(res);
     return false;
   }
+  context->register_stream(*stream);
 
   VLOG(2) << "successfully created stream " << *stream << " for device "
           << context->device_ordinal() << " on thread";
@@ -642,8 +660,8 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
   if (*stream == nullptr) {
     return;
   }
-
   ScopedActivateContext activated{context};
+  context->unregister_stream(*stream);
   hipError_t res = tensorflow::wrap::hipStreamDestroy(*stream);
   if (res != hipSuccess) {
     LOG(ERROR) << "failed to destroy ROCM stream for device "
@@ -864,13 +882,15 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ bool GpuDriver::SynchronizeContext(GpuContext* context) {
   ScopedActivateContext activation{context};
+  /*
   hipError_t res = tensorflow::wrap::hipDeviceSynchronize();
   if (res != hipSuccess) {
     LOG(ERROR) << "could not synchronize on ROCM device: " << ToString(res)
                << " :: " << port::CurrentStackTrace();
     return false;
   }
-
+  */
+  context->synchronize();
   return true;
 }
 
@@ -982,6 +1002,14 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
                                                    uint64 size,
                                                    GpuStreamHandle stream) {
   ScopedActivateContext activation{context};
+/*
+  if (size <= 16) {
+    tensorflow::wrap::hipStreamSynchronize(stream);
+    memcpy(gpu_dst, host_src, size);
+    return true;
+  }
+*/
+  VLOG(1) << "AsyncMemcpyH2D " << gpu_dst << " " << host_src << " " << size;
   hipError_t res = tensorflow::wrap::hipMemcpyHtoDAsync(
       gpu_dst, const_cast<void*>(host_src), size, stream);
   if (res != hipSuccess) {

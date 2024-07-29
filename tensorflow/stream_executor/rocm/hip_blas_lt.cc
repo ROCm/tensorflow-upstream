@@ -25,6 +25,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/util.h"
 #include "tensorflow/core/lib/bfloat16/bfloat16.h"
 #include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/util/env_var.h"
 
 #include "tensorflow/stream_executor/gpu/gpu_activation.h"
 #include "tensorflow/stream_executor/gpu/gpu_helpers.h"
@@ -50,6 +51,10 @@ limitations under the License.
   }()
 
 namespace stream_executor {
+
+namespace gpu {
+void rocm_null_gpu_job(void* stream);
+};
 
 namespace rocm {
 
@@ -206,7 +211,7 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
   std::vector<hipblasLtMatmulHeuristicResult_t> results(max_algorithm_count);
 
   {
-    absl::MutexLock lock(&blas_lt_ref_.mu_);
+    absl::MutexLock lock(&mu_);
     TF_RET_CHECK(blas_lt_ref_.blas_lt_ != nullptr);
 
     hipblasLtMatmulPreference_t hip_preference;
@@ -400,7 +405,7 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
 
   auto palgo = absl::any_cast<hipblasLtMatmulAlgo_t>(&algorithm.opaque_algo);
   {
-    absl::MutexLock lock(&blas_lt_ref_.mu_);
+    absl::MutexLock lock(&mu_);
     TF_RET_CHECK(blas_lt_ref_.blas_lt_ != nullptr);
     // We must set the bias and aux pointers while holding the mutex, to avoid a
     // potential race condition from multiple threads sharing the same plan.
@@ -434,6 +439,14 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     }
 
     gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_};
+
+
+    int64 null_jobs = 0;
+    tensorflow::ReadInt64FromEnvVar("ROCM_NULL_JOBS", 0,
+                                &null_jobs);
+
+    for(int it=0; it<null_jobs; it++)
+      gpu::rocm_null_gpu_job(gpu::AsGpuStreamValue(stream));
 
     if (palgo != nullptr) {
       int n_iter = 1;
