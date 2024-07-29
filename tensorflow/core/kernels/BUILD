@@ -1918,6 +1918,30 @@ tf_cc_test(
     ],
 )
 
+tf_cc_test(
+    name = "indicator_matmul_op_test",
+    size = "small",
+    srcs = ["indicator_matmul_op_test.cc"],
+    deps = [
+        ":indicator_matmul_op",
+        ":ops_testutil",
+        ":ops_util",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:client_session",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+        "@com_google_absl//absl/algorithm:container",
+    ],
+)
+
+
 tf_kernel_library(
     name = "gather_functor",
     prefix = "gather_functor",
