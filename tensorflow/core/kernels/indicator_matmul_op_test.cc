@@ -146,7 +146,7 @@ class IndicatorMatMulOpTestBase : public OpsTestBase {
 
   void VerifyIndicatorMatMul(const Params& p) {
 
-    VLOG(0) << "Running " << p.parallel_num 
+    VLOG(0) << "----------------------------------- Running " << p.parallel_num 
             << "x" << p.batch_a << "x" << p.batch_b << "; m/n/k: "
             << p.m << "/" << p.k << "/" << p.n << "; adja/b: "
             << p.adjoint_a << "/" << p.adjoint_b;
@@ -163,8 +163,8 @@ class IndicatorMatMulOpTestBase : public OpsTestBase {
     rhs.flat<T>() = rhs.flat<T>().setRandom();
     rhs.flat<T>() -= rhs.flat<T>().constant(static_cast<T>(0.5f));
 
-    // NOTE indicator indices should be: if(ind < 0 || ind >= batch_a) {...}
-    IndexType max_idx = p.batch_a - 1;
+    // NOTE indicator indices should be: [0, batch_a)
+    IndexType max_idx = p.batch_a; // float range is [0, 1)
     using FT = double;
     Tensor indF(DataTypeToEnum<FT>::v(), {p.batch_b});
     Tensor ind(index_dtype, {p.batch_b});
@@ -198,6 +198,10 @@ TYPED_TEST_SUITE_P(IndicatorMatMulOpTest);
   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, true, false}); \
   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, true, true})
 
+
+// #define ENUM_PARAMS(parallel_num, batch_a, batch_b, m, k, n)  \
+//   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, false, false})
+
 TYPED_TEST_P(IndicatorMatMulOpTest, ParallelMatMul1) {
   // parallel_num, batch_a, batch_b, m, k, n
   ENUM_PARAMS(70, 100, 75, 36, 128, 120);
@@ -210,8 +214,14 @@ TYPED_TEST_P(IndicatorMatMulOpTest, ParallelMatMul2) {
 
 TYPED_TEST_P(IndicatorMatMulOpTest, ParallelMatMul3) {
   // parallel_num, batch_a, batch_b, m, k, n
-  ENUM_PARAMS(10, 111, 51, 136, 113, 111);
+  ENUM_PARAMS(16, 16, 32, 100, 128, 32);
+  ENUM_PARAMS(11, 111, 51, 137, 15, 111);
 }
+
+// m=1, n=200, k=24, alpha=1,
+//     a=0x7fddeb207600, lda=24, b=0x7fddeb206100, ldb=24, beta=0, c=0x7fddeb208b00, ldc=1,
+// batch_count=664
+
 
 #undef ENUM_PARAMS
 

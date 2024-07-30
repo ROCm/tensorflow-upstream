@@ -20,6 +20,7 @@
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/platform/stream_executor.h"
+#include "tensorflow/stream_executor/gpu/gpu_stream.h"
 #define EIGEN_USE_GPU
 #include "tensorflow/core/util/gpu_kernel_helper.h"
 
@@ -91,25 +92,11 @@ struct IMatmulParam {
   int batch_a, batch_b;
 };
 
-template <typename Scalar, typename TIndex>
-__global__ void ComputePtrsKernel(IMatmulParam<Scalar, TIndex> param) {
-  int m = param.m, n = param.n, k = param.k;
-  int batch_a = param.batch_a, batch_b = param.batch_b;
-  Scalar* A = param.A + blockIdx.x * batch_a * m * k;
-  Scalar* B = param.B + blockIdx.x * batch_b * k * n;
-  Scalar* C = param.C + blockIdx.x * batch_b * m * n;
-  for (int i = threadIdx.x; i < batch_b; i += blockDim.x) {
-    int64 offset = blockIdx.x * batch_b + i;
-    int64 ind = (int64)param.indicators[i];
-    if (ind < 0 || ind >= batch_a) {
-      //printf("Indicator ERROR for indicator_matmul, indicator: %d.\n", ind);
-      ind = 0;
-    }
-    param.As[offset] = &A[ind * m * k];
-    param.Bs[offset] = &B[i * k * n];
-    param.Cs[offset] = &C[i * m * n];
-  }
-}
+struct StridedCopyParams {
+  uint32_t m, n, k;
+  uint32_t batch_a, batch_b;
+  uint32_t bytes_per_scalar;
+};
 
 template <typename Scalar>
 void RunGemmStridedBatched(OpKernelContext* context, bool trans_a, bool trans_b,
@@ -140,6 +127,7 @@ void RunGemmStridedBatched(OpKernelContext* context, bool trans_a, bool trans_b,
         "Blas GemmStridedBatched launch failed : m=", m, ", n=", n, ", k=", k));
   }
 }
+
 
 template <typename Scalar>
 void RunGemmBatched(OpKernelContext* context, bool trans_a, bool trans_b,
@@ -173,24 +161,138 @@ void RunGemmBatched(OpKernelContext* context, bool trans_a, bool trans_b,
   }
 }
 
+
+template <typename Scalar, typename TIndex>
+__global__ void ComputePtrsKernel(IMatmulParam<Scalar, TIndex> param) {
+  int m = param.m, n = param.n, k = param.k;
+  int batch_a = param.batch_a, batch_b = param.batch_b;
+  Scalar* A = param.A + blockIdx.x * batch_a * m * k;
+  Scalar* B = param.B + blockIdx.x * batch_b * k * n;
+  Scalar* C = param.C + blockIdx.x * batch_b * m * n;
+  for (int i = threadIdx.x; i < batch_b; i += blockDim.x) {
+    int64 offset = blockIdx.x * batch_b + i;
+    int64 ind = (int64)param.indicators[i];
+    if (ind < 0 || ind >= batch_a) {
+      //printf("Indicator ERROR for indicator_matmul, indicator: %d.\n", ind);
+      ind = 0;
+    }
+    param.As[offset] = &A[ind * m * k];
+    param.Bs[offset] = &B[i * k * n];
+    param.Cs[offset] = &C[i * m * n];
+  }
+}
+
+#if TENSORFLOW_USE_ROCM
+#if 0
+#define LOAD(addr) __builtin_nontemporal_load(addr)
+#else
+#define LOAD(addr) (addr)[0]
+#endif
+#if 1
+#define STORE(x, addr) __builtin_nontemporal_store((x), (addr))
+#else
+#define STORE(x, addr) (addr)[0] = (x)
+#endif
+
+template <uint32_t BlockSz, typename TIndex>
+__global__ void StridedCopyKernel(const uint8_t *a_in, 
+      const TIndex* indicators, uint8_t *a_out, StridedCopyParams p) {
+
+  uint32_t pnum = blockIdx.x, batch = blockIdx.y, tid = threadIdx.x;
+  __shared__ TIndex shidx;
+  if(tid == 0) shidx = indicators[batch];
+  __syncthreads();
+
+  using Word = uint64_t;
+  constexpr uint32_t chunk_sz = sizeof(Word)*2;
+
+  uint32_t bytes = p.m*p.k*p.bytes_per_scalar;
+  auto src = (const Word *)(a_in + (pnum * p.batch_a + shidx) * bytes);
+  auto dst = (Word *)(a_out + (pnum * p.batch_b + batch) * bytes);
+
+  uint32_t nwords = bytes / chunk_sz;
+  for(uint32_t ofs = tid; ofs < nwords; ofs += BlockSz) {
+    Word r1 = LOAD(src + ofs*2),
+         r2 = LOAD(src + ofs*2 + 1);
+    STORE(r1, dst + ofs*2);
+    STORE(r2, dst + ofs*2 + 1);
+  }
+
+  const uint32_t bytes_mod = bytes % chunk_sz;
+  if(tid < bytes_mod / sizeof(uint32_t)) {
+    uint32_t ofs = (bytes & ~(chunk_sz-1))/sizeof(uint32_t) + tid;
+    auto r1 = LOAD((const uint32_t *)src + ofs);
+    STORE(r1, (uint32_t *)dst + ofs);
+    // if(batch == 0) printf("bytes mod: %d, ofs: %d, src: %p dest: %p\n", 
+    //         bytes_mod, ofs, (const uint32_t *)src + ofs, (uint32_t *)dst + ofs);
+  }
+}
+#endif // TENSORFLOW_USE_ROCM
+
 template <typename Scalar, typename TIndex>
 void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
     OpKernelContext* context, bool trans_a, bool trans_b, int64 m, int64 n,
     int64 k, const Tensor& in_a, const Tensor& in_b, const Tensor& indicator,
-    Tensor* out, int64 batch_a, int64 batch_b, int64 paralle_num) {
-	VLOG(1) << "batch_a=" << batch_a << " batch_b=" << batch_b ;
-  if (paralle_num == 1 && batch_a == 1) {
-    auto a_ptr = AsDeviceMemory(in_a.template flat<Scalar>().data());
-    auto b_ptr = AsDeviceMemory(in_b.template flat<Scalar>().data());
-    auto out_ptr = AsDeviceMemory(out->template flat<Scalar>().data());
-    RunGemmStridedBatched<Scalar>(context, trans_a, trans_b, m, n, k,
-                                  Scalar(1.0), a_ptr, 0, b_ptr, k * n,
-                                  Scalar(0.0), &out_ptr, m * n, batch_b);
-    return;
-  }
+    Tensor* out, int64 batch_a, int64 batch_b, int64 parallel_num) {
+
   auto a_base_ptr = in_a.template flat<Scalar>().data();
   auto b_base_ptr = in_b.template flat<Scalar>().data();
   auto c_base_ptr = out->template flat<Scalar>().data();
+
+  auto b_dev_ptr = AsDeviceMemory(b_base_ptr);
+  auto out_dev_ptr = AsDeviceMemory(c_base_ptr);
+  if (parallel_num == 1 && batch_a == 1) {
+    auto a_dev_ptr = AsDeviceMemory(a_base_ptr);
+    RunGemmStridedBatched<Scalar>(context, trans_a, trans_b, m, n, k,
+                                  Scalar(1.0), a_dev_ptr, 0, b_dev_ptr, k * n,
+                                  Scalar(0.0), &out_dev_ptr, m * n, batch_b);
+    return;
+  }
+#if TENSORFLOW_USE_ROCM
+  auto ind_ptr = indicator.template flat<TIndex>().data();
+  const int64 size = parallel_num * batch_b * m * k;
+  VLOG(0) << "Allocating " << (size * sizeof(Scalar)) << " bytes..";
+  Tensor a_strided;
+  OP_REQUIRES_OK(
+       context, context->allocate_temp(DataTypeToEnum<Scalar>::v(), 
+                                    TensorShape({size}), &a_strided));
+  
+  auto a_strided_ptr = a_strided.flat<Scalar>().data();
+  auto* stream = context->op_device_context()->stream();
+#if 0
+  for (int64 p = 0; p < parallel_num; p++) {
+    for (int64 b = 0; b < batch_b; b++) {
+      auto ind = (uint64)ind_ptr[b];
+      if(ind >= (uint64)batch_a) ind = 0;
+
+      uint64 sz = m*k*sizeof(Scalar);
+      auto dst = AsDeviceMemory(a_strided_ptr + (p * batch_b + b)*m*k); 
+      stream->ThenMemcpy(&dst, 
+            AsDeviceMemory(a_base_ptr + (p * batch_a + ind)*m*k), sz);
+      if(!stream->ok()) {
+        VLOG(0) << "ops stream error occurred!";
+      }
+    }
+  }
+#else
+  dim3 grid(parallel_num, batch_b, 1);
+  constexpr uint32_t BlockSz = 256;
+  StridedCopyParams params{ (uint32_t)m, (uint32_t)n, (uint32_t)k, 
+        (uint32_t)batch_a, (uint32_t)batch_b, (uint32_t)sizeof(Scalar)};
+
+  TF_CHECK_OK(GpuLaunchKernel(StridedCopyKernel<BlockSz, TIndex>, grid,
+                        BlockSz, 0, se::gpu::AsGpuStreamValue(stream), 
+                  reinterpret_cast<const uint8_t *>(a_base_ptr), ind_ptr, 
+                  reinterpret_cast<uint8_t *>(a_strided_ptr), params));
+#endif
+  auto a_dev_ptr = AsDeviceMemory(a_strided_ptr);
+  auto B = parallel_num * batch_b;
+  RunGemmStridedBatched<Scalar>(context, trans_a, trans_b, m, n, k,
+                            Scalar(1.0), a_dev_ptr, m * k, b_dev_ptr, k * n,
+                            Scalar(0.0), &out_dev_ptr, m * n, B);
+
+#else // !TENSORFLOW_USE_ROCM
+
   IMatmulParam<Scalar, TIndex> param;
   param.A = const_cast<Scalar*>(a_base_ptr);
   param.B = const_cast<Scalar*>(b_base_ptr);
@@ -199,7 +301,7 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
       const_cast<TIndex*>(indicator.template flat<TIndex>().data());
   param.m = m, param.n = n, param.k = k;
   param.batch_a = batch_a, param.batch_b = batch_b;
-  const int64 size = paralle_num * batch_b;
+  const int64 size = parallel_num * batch_b;
   Tensor a_ptrs, b_ptrs, c_ptrs;
   OP_REQUIRES_OK(
       context, context->allocate_temp(DT_UINT64, TensorShape({size}), &a_ptrs));
@@ -213,21 +315,23 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
   BlasScratchAllocator scratch_allocator(context);
   const auto& d = context->eigen_device<GPUDevice>();
   GpuLaunchConfig config = GetGpuLaunchConfig(param.batch_b, d);
-  TF_CHECK_OK(GpuLaunchKernel(ComputePtrsKernel<Scalar, TIndex>, paralle_num,
+  TF_CHECK_OK(GpuLaunchKernel(ComputePtrsKernel<Scalar, TIndex>, parallel_num,
                               config.thread_per_block, 0, d.stream(), param));
   auto* stream = context->op_device_context()->stream();
-  TF_CHECK_OK(stream->BlockHostUntilDone());
+  //TF_CHECK_OK(stream->BlockHostUntilDone());
   RunGemmBatched<Scalar>(context, trans_a, trans_b, m, n, k, Scalar(1.0),
                          param.As, param.Bs, Scalar(0.0), param.Cs,
-                         batch_b * paralle_num,
+                         batch_b * parallel_num,
                          &scratch_allocator);
-}
+#endif // TENSORFLOW_USE_ROCM
+} // LaunchIndicatorMatmul
+
 
 template struct LaunchIndicatorMatmul<GPUDevice, float, int32>;
-template struct LaunchIndicatorMatmul<GPUDevice, double, int32>;
-template struct LaunchIndicatorMatmul<GPUDevice, Eigen::half, int32>;
+// template struct LaunchIndicatorMatmul<GPUDevice, double, int32>;
+// template struct LaunchIndicatorMatmul<GPUDevice, Eigen::half, int32>;
 template struct LaunchIndicatorMatmul<GPUDevice, float, int64>;
-template struct LaunchIndicatorMatmul<GPUDevice, double, int64>;
-template struct LaunchIndicatorMatmul<GPUDevice, Eigen::half, int64>;
+// template struct LaunchIndicatorMatmul<GPUDevice, double, int64>;
+// template struct LaunchIndicatorMatmul<GPUDevice, Eigen::half, int64>;
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 }  // namespace tensorflow
