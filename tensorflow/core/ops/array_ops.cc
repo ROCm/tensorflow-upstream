@@ -1907,8 +1907,8 @@ REGISTER_OP("PlaceholderV2")
     .Deprecated(23, "Placeholder now behaves the same as PlaceholderV2.");
 
 REGISTER_OP("ConstWeightsOpV2")
-    .Output("output: dtype")
-    .Attr("dtype: type")
+    .Output("output: float")
+    // .Attr("dtype: type")
     .Attr("dense: bool")
     .Attr("model_name: string")
     .Attr("out_shape: shape")

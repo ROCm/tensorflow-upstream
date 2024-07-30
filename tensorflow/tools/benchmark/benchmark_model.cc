@@ -63,7 +63,7 @@ template <class T>
 void InitializeTensor(const std::vector<float>& initialization_values,
                       Tensor* input_tensor) {
   auto type_tensor = input_tensor->flat<T>();
-  type_tensor = type_tensor.constant(0);
+  type_tensor = type_tensor.constant(T(0));
   if (!initialization_values.empty()) {
     for (int i = 0; i < initialization_values.size(); ++i) {
       type_tensor(i) = static_cast<T>(initialization_values[i]);
@@ -79,6 +79,10 @@ void CreateTensorsFromInputInfo(
     switch (input.data_type) {
       case DT_INT32: {
         InitializeTensor<int32>(input.initialization_values, &input_tensor);
+        break;
+      }
+      case DT_HALF: {
+        InitializeTensor<Eigen::half>(input.initialization_values, &input_tensor);
         break;
       }
       case DT_FLOAT: {
@@ -540,6 +544,7 @@ int Main(int argc, char** argv) {
         LOG(ERROR) << "Any unknown sizes in the shapes (-1's) must be replaced"
                    << " with the size you want to benchmark with.";
         return -1;
+        // size = 32;
       }
       input.shape.AddDim(sizes[i]);
     }
