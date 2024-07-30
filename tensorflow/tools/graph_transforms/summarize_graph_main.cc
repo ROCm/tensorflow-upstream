@@ -111,7 +111,7 @@ void PrintBenchmarkUsage(const std::vector<const NodeDef*>& placeholders,
   std::cout << "To use with tensorflow/tools/benchmark:benchmark_model try "
                "these arguments:"
             << std::endl;
-  std::cout << "bazel run tensorflow/tools/benchmark:benchmark_model --";
+  std::cout << "bazel run --config=opt --config=rocm --action_env=HIP_PLATFORM=amd --cxxopt=-std=c++17 --host_cxxopt=-std=c++17 tensorflow/tools/benchmark:benchmark_model --";
   std::cout << " --graph=" << graph_path;
   std::cout << " --show_flops";
   std::cout << " --input_layer=" << input_layer_value;
