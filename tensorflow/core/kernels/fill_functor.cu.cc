@@ -106,6 +106,18 @@ TF_CALL_NUMBER_TYPES(DEFINE_SETONE_GPU);
 TF_CALL_bool(DEFINE_SETONE_GPU);
 #undef DEFINE_SETONE_GPU
 
+template <typename T>
+struct SetRandomFunctor<GPUDevice, T> {
+  void operator()(const GPUDevice& d, typename TTypes<T>::Flat out) {
+    To32Bit(out).device(d) = To32Bit(out).random();
+  }
+};
+
+#define DEFINE_SETRANDOM_GPU(T) template struct SetRandomFunctor<GPUDevice, T>;
+TF_CALL_NUMBER_TYPES(DEFINE_SETRANDOM_GPU);
+TF_CALL_bool(DEFINE_SETRANDOM_GPU);
+#undef DEFINE_SETRANDOM_GPU
+
 }  // end namespace functor
 }  // end namespace tensorflow
 

@@ -86,6 +86,18 @@ struct SetOneFunctor<Eigen::ThreadPoolDevice, string> {
                   typename TTypes<string>::Flat out);
 };
 
+template <typename Device, typename T>
+struct SetRandomFunctor {
+  // Computes on device "d": out = out.setOne(),
+  void operator()(const Device& d, typename TTypes<T>::Flat out);
+};
+
+template <typename T>
+struct SetRandomFunctor<Eigen::ThreadPoolDevice, T> {
+  void operator()(const Eigen::ThreadPoolDevice& d,
+                  typename TTypes<T>::Flat out);
+};
+
 }  // namespace functor
 }  // namespace tensorflow
 

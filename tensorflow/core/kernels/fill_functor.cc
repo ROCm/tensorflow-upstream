@@ -158,5 +158,29 @@ TF_CALL_INTEGRAL_TYPES(DEFINE_FILL_SYCL)
 #undef DEFINE_FILL_SYCL
 #endif  // TENSORFLOW_USE_SYCL
 
+template <typename T>
+void SetRandomFunctor<Eigen::ThreadPoolDevice, T>::operator()(
+    const Eigen::ThreadPoolDevice& d, typename TTypes<T>::Flat out) {
+  out.device(d) = out.random();
+}
+
+// Explicit instantiations.
+#define DEFINE_SETRANDOM_CPU(T) \
+  template struct SetRandomFunctor<Eigen::ThreadPoolDevice, T>;
+DEFINE_SETRANDOM_CPU(bool);
+DEFINE_SETRANDOM_CPU(Eigen::half);
+DEFINE_SETRANDOM_CPU(bfloat16);
+DEFINE_SETRANDOM_CPU(float);
+DEFINE_SETRANDOM_CPU(double);
+DEFINE_SETRANDOM_CPU(uint8);
+DEFINE_SETRANDOM_CPU(int8);
+DEFINE_SETRANDOM_CPU(uint16);
+DEFINE_SETRANDOM_CPU(int16);
+DEFINE_SETRANDOM_CPU(int32);
+DEFINE_SETRANDOM_CPU(int64);
+DEFINE_SETRANDOM_CPU(complex64);
+DEFINE_SETRANDOM_CPU(complex128);
+#undef DEFINE_SETRANDOM_CPU
+
 }  // namespace functor
 }  // namespace tensorflow

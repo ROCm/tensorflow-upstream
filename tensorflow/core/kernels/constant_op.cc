@@ -417,24 +417,23 @@ class ConstWeightsOpV2 : public OpKernel {
     const Device& d = ctx->eigen_device<Device>();
     Tensor* out = nullptr;
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, out_shape_, &out));
-    functor::SetOneFunctor<Device, float> f;
+    functor::SetRandomFunctor<Device, float> f;
     f(d, out->flat<float>());
-    // To32Bit(out->flat<T>()).device(d) = To32Bit(out->flat<T>()).random();
   }
  private:
   TensorShape out_shape_;
 };
 
-#define REGISTER_KERNEL(type, dev)                                      \
+#define REGISTER_KERNEL(dev)                                      \
   REGISTER_KERNEL_BUILDER(                                              \
       Name("ConstWeightsOpV2").Device(DEVICE_##dev), \
       ConstWeightsOpV2<dev##Device>)
 
 
-REGISTER_KERNEL(float, CPU);
+REGISTER_KERNEL(CPU);
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-REGISTER_KERNEL(float, GPU);
+REGISTER_KERNEL(GPU);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #undef REGISTER_KERNEL
