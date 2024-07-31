@@ -167,17 +167,15 @@ class ROCMBlas : public blas::BlasSupport {
   template <class T, class V, class W>
   bool DoBlasGemmImpl(Stream *stream, blas::GemmCallContext<T> ctx, V strided_fun, W fun);
 
-  rocm::BlasLt blas_lt_;
-
   // mutex that guards the rocBLAS handle for this device.
   absl::Mutex mu_;
 
   // GpuExecutor which instantiated this ROCMBlas.
   // Immutable post-initialization.
   GpuExecutor *parent_;
-
   // rocBLAS library handle on the device.
   rocblas_handle blas_ GUARDED_BY(mu_);
+  rocm::BlasLt blas_lt_;
 
   SE_DISALLOW_COPY_AND_ASSIGN(ROCMBlas);
 };

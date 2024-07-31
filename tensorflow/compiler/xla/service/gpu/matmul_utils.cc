@@ -143,7 +143,8 @@ StatusOr<Shape> GetBatchRowColumnShape(
     batch_stride = 0;
   }
 
-  return MatrixLayout(shape.element_type(), num_rows, num_cols, order, 
+  TF_ASSIGN_OR_RETURN(auto dtype, se::gpu::AsBlasDataType(shape.element_type()));
+  return MatrixLayout(dtype, num_rows, num_cols, order, 
         batch_size, leading_dim_stride, batch_stride);
 }
 
@@ -268,13 +269,10 @@ std::vector<int64> NormalizedRelativeOrder(absl::Span<const int64> dims) {
       break;
     case S32:
       TF_RET_CHECK(alpha_imag == 0);
-      if (lhs_layout.dtype != PrimitiveType::S8 ||
-          rhs_layout.dtype != PrimitiveType::S8) {
+      if (lhs_layout.dtype != se::blas::DataType::kInt8 ||
+          rhs_layout.dtype != se::blas::DataType::kInt8) {
         return Internal(
-            "For int32 gemm output only int8 input is supported, got input: "
-            "%s, %s",
-            primitive_util::LowercasePrimitiveTypeName(lhs_layout.dtype),
-            primitive_util::LowercasePrimitiveTypeName(rhs_layout.dtype));
+            "For int32 gemm output only int8 input is supported !");
       }
       break;
     default:
@@ -332,12 +330,10 @@ StatusOr<GemmConfig::DescriptorsTuple> GemmConfig::GetMatrixDescriptors(
     se::DeviceMemoryBase lhs_buf, se::DeviceMemoryBase rhs_buf,
     se::DeviceMemoryBase out_buf) const {
   auto create_matrix_desc = [](const se::gpu::MatrixLayout& layout,
-                               se::DeviceMemoryBase data)
-      -> StatusOr<se::gpu::MatrixDescriptor> {
-    TF_ASSIGN_OR_RETURN(se::blas::DataType type,
-                        se::gpu::AsBlasDataType(layout.dtype));
+                               se::DeviceMemoryBase data) {
     return se::gpu::MatrixDescriptor{
-        data, layout.leading_dim_stride, layout.batch_stride, type,
+        data, layout.leading_dim_stride, layout.batch_stride, 
+        layout.dtype,
         // BLAS is column-major by default.
         (layout.order == se::gpu::MatrixLayout::Order::kColumnMajor
              ? se::blas::Transpose::kNoTranspose
@@ -352,8 +348,7 @@ StatusOr<GemmConfig::DescriptorsTuple> GemmConfig::GetMatrixDescriptors(
     std::swap(lhs_buf, rhs_buf);
   }
 
-  TF_ASSIGN_OR_RETURN(se::gpu::OutputMatrixDescriptor out_desc,
-                      create_matrix_desc(out, out_buf));
+  se::gpu::OutputMatrixDescriptor out_desc = create_matrix_desc(out, out_buf);
   out_desc.batch_size = out.batch_size;
   out_desc.m = out.num_rows;
   out_desc.n = out.num_cols;
@@ -364,10 +359,8 @@ StatusOr<GemmConfig::DescriptorsTuple> GemmConfig::GetMatrixDescriptors(
                       se::gpu::GetBlasComputationType(
                           lhs.dtype, out.dtype, -1));
 
-  TF_ASSIGN_OR_RETURN(se::gpu::MatrixDescriptor lhs_desc,
-                      create_matrix_desc(lhs, lhs_buf));
-  TF_ASSIGN_OR_RETURN(se::gpu::MatrixDescriptor rhs_desc,
-                      create_matrix_desc(rhs, rhs_buf));
+  se::gpu::MatrixDescriptor lhs_desc = create_matrix_desc(lhs, lhs_buf),
+                            rhs_desc = create_matrix_desc(rhs, rhs_buf);
 
   return DescriptorsTuple{lhs_desc, rhs_desc, out_desc, must_swap_operands};
 }

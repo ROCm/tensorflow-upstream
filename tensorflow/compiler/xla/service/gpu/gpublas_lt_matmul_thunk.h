@@ -38,11 +38,6 @@ namespace gpu {
 
 class CublasLtMatmulThunk : public Thunk {
  public:
-  // matmul cache entry
-  struct Entry {
-    se::gpu::BlasLt::MatmulPlanPtr plan;
-    se::gpu::BlasLt::MatmulAlgorithm algorithm;
-  };
 
   CublasLtMatmulThunk(
       const HloInstruction *hlo_instruction,
@@ -64,7 +59,7 @@ class CublasLtMatmulThunk : public Thunk {
                             se::StreamExecutor* executor) override;
 
  private:
-  StatusOr<Entry *> GetCachedMatmulPlan(const se::Stream* stream);
+  StatusOr<se::gpu::BlasLt::MatmulPlan *> GetCachedMatmulPlan(const se::Stream* stream);
 
   GemmBackendConfig backend_config_;
   se::gpu::BlasLt::Epilogue epilogue_;

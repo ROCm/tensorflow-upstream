@@ -61,7 +61,7 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
     kColumnMajor,  // Elements in the same column are contiguous in memory.
   };
 
-  MatrixLayout(xla::PrimitiveType dtype_, int64 num_rows_, int64 num_cols_,
+  MatrixLayout(blas::DataType dtype_, int64 num_rows_, int64 num_cols_,
                Order order_, int64 batch_size_ = 1,
                absl::optional<int64> leading_dim_stride_ = {},
                absl::optional<int64> batch_stride_ = {},
@@ -69,7 +69,7 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
 
   void Transpose();
 
-  xla::PrimitiveType dtype;
+  blas::DataType dtype;
   // `num_rows` / `num_cols` are for the "logical" matrix shape:
   // i.e. the contracting dim has size `num_cols` for LHS operands and
   // `num_rows` for RHS operands.
@@ -169,6 +169,16 @@ struct BlasLt {
     // and TF. One set API uses scratch_allocator to allocate workspace, and one
     // set API allow uses to provide pre-allocated buffer as workspace.
 
+    // Returns a list of supported algorithms for DoMatmul. The algorithms are
+    // returned in the order of increasing estimated compute time according to
+    // an internal heuristic.
+    virtual xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
+        size_t max_algorithm_count = 128,
+        size_t max_workspace_size = 1ll << 32) const = 0;
+
+    // Algorithm needs to be set before calling ExecuteOnStream function
+    virtual void SetAlgorithm(const MatmulAlgorithm& algorithm) = 0;
+
     // The most general form: to be implemented by derived clases.
     virtual xla::Status ExecuteOnStream(
         Stream* stream, DeviceMemoryBase a_buffer, DeviceMemoryBase b_buffer,
@@ -177,17 +187,10 @@ struct BlasLt {
         DeviceMemoryBase aux_buffer,   // may be null
         DeviceMemoryBase a_scale_buffer, DeviceMemoryBase b_scale_buffer,
         DeviceMemoryBase c_scale_buffer, DeviceMemoryBase d_scale_buffer,
-        DeviceMemoryBase d_amax_buffer, const MatmulAlgorithm& algorithm,
+        DeviceMemoryBase d_amax_buffer, 
         absl::optional<DeviceMemoryBase> workspace,
         absl::optional<ScratchAllocator*> scratch_allocator = absl::nullopt,
         blas::ProfileResult* profile_result = nullptr) const = 0;
-
-    // Returns a list of supported algorithms for DoMatmul. The algorithms are
-    // returned in the order of increasing estimated compute time according to
-    // an internal heuristic.
-    virtual xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
-        size_t max_algorithm_count = 128,
-        size_t max_workspace_size = 1ll << 32) const = 0;
 
     virtual ~MatmulPlan() {}
 
@@ -201,7 +204,6 @@ struct BlasLt {
                           DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
                           DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
                           DeviceMemoryBase d_amax,
-                          const MatmulAlgorithm& algorithm,
                           absl::optional<DeviceMemoryBase> workspace,
                           absl::optional<ScratchAllocator*> scratch_allocator,
                           blas::ProfileResult* profile_result = nullptr) const {
@@ -214,7 +216,7 @@ struct BlasLt {
       }
       Scale sbeta = static_cast<Scale>(beta);
       return DoMatmul(stream, &salpha, a, b, &sbeta, c, d,
-                     algorithm, bias, aux, a_scale, b_scale, c_scale, d_scale,
+                     bias, aux, a_scale, b_scale, c_scale, d_scale,
                      d_amax, workspace, scratch_allocator, profile_result);
     }
 
@@ -222,8 +224,8 @@ struct BlasLt {
     virtual xla::Status DoMatmul(
         Stream* stream, const void* alpha, DeviceMemoryBase a,
         DeviceMemoryBase b, const void* beta, DeviceMemoryBase c,
-        DeviceMemoryBase d, const MatmulAlgorithm& algorithm,
-        DeviceMemoryBase bias, DeviceMemoryBase aux, DeviceMemoryBase a_scale,
+        DeviceMemoryBase d, DeviceMemoryBase bias, 
+        DeviceMemoryBase aux, DeviceMemoryBase a_scale,
         DeviceMemoryBase b_scale, DeviceMemoryBase c_scale,
         DeviceMemoryBase d_scale, DeviceMemoryBase d_amax,
         absl::optional<DeviceMemoryBase> workspace,

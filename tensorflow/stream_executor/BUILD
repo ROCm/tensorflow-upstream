@@ -235,7 +235,7 @@ cc_library(
         "//tensorflow/stream_executor/lib",
         "//tensorflow/stream_executor/platform",
         "//tensorflow/stream_executor/gpu:gpu_blas_lt",
-        "//tensorflow/stream_executor/gpu:gpu_grouped_gemm_blas_lt",
+        "//tensorflow/stream_executor/gpu:gpu_blas_lt_gemm_runner",
         "//third_party/eigen3",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",

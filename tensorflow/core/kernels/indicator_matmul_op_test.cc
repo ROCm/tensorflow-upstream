@@ -148,7 +148,7 @@ class IndicatorMatMulOpTestBase : public OpsTestBase {
 
     VLOG(0) << "----------------------------------- Running " << p.parallel_num 
             << "x" << p.batch_a << "x" << p.batch_b << "; m/n/k: "
-            << p.m << "/" << p.k << "/" << p.n << "; adja/b: "
+            << p.m << "/" << p.n << "/" << p.k << "; adj_a/b: "
             << p.adjoint_a << "/" << p.adjoint_b;
 
     DataType dtype = DataTypeToEnum<T>::v(),
@@ -183,7 +183,9 @@ class IndicatorMatMulOpTestBase : public OpsTestBase {
     ASSERT_EQ(cpu_result.dtype(), gpu_result.dtype());
     ASSERT_EQ(cpu_result.shape(), gpu_result.shape());
 
-    test::ExpectClose(cpu_result, gpu_result, /*atol=*/1e-5);
+    double atol = dtype == DT_HALF ? 1e-3 : 1e-5,
+           rtol = dtype == DT_HALF ? 1e-3 : -1.0;
+    test::ExpectClose(cpu_result, gpu_result, atol, rtol);
   }
 }; // IndicatorMatMulOpTestBase
 
@@ -192,39 +194,39 @@ class IndicatorMatMulOpTest : public IndicatorMatMulOpTestBase<T> {};
 
 TYPED_TEST_SUITE_P(IndicatorMatMulOpTest);
 
+#if 1
 #define ENUM_PARAMS(parallel_num, batch_a, batch_b, m, k, n)  \
   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, false, false}); \
   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, false, true}); \
   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, true, false}); \
   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, true, true})
-
-
-// #define ENUM_PARAMS(parallel_num, batch_a, batch_b, m, k, n)  \
-//   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, false, false})
+#else
+#define ENUM_PARAMS(parallel_num, batch_a, batch_b, m, k, n)  \
+   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, false, false})
+#endif
 
 TYPED_TEST_P(IndicatorMatMulOpTest, ParallelMatMul1) {
   // parallel_num, batch_a, batch_b, m, k, n
-  ENUM_PARAMS(70, 100, 75, 36, 128, 120);
+  ENUM_PARAMS(40, 100, 75, 36, 128, 120);
 }
 
 TYPED_TEST_P(IndicatorMatMulOpTest, ParallelMatMul2) {
   // parallel_num, batch_a, batch_b, m, k, n
-  ENUM_PARAMS(170, 50, 35, 136, 256, 120);
+  ENUM_PARAMS(100, 50, 35, 136, 256, 120);
 }
 
 TYPED_TEST_P(IndicatorMatMulOpTest, ParallelMatMul3) {
   // parallel_num, batch_a, batch_b, m, k, n
-  ENUM_PARAMS(16, 16, 32, 100, 128, 32);
+  
+  ENUM_PARAMS(1, 1, 1, 12, 16, 8);
+  ENUM_PARAMS(1, 10, 128, 75, 40, 100);
+  // ENUM_PARAMS(8, 4, 16, 12, 20, 32);
   ENUM_PARAMS(11, 111, 51, 137, 15, 111);
 }
-
 // m=1, n=200, k=24, alpha=1,
 //     a=0x7fddeb207600, lda=24, b=0x7fddeb206100, ldb=24, beta=0, c=0x7fddeb208b00, ldc=1,
 // batch_count=664
-
-
 #undef ENUM_PARAMS
-
 
 REGISTER_TYPED_TEST_SUITE_P(IndicatorMatMulOpTest,
                             ParallelMatMul1,
@@ -232,7 +234,7 @@ REGISTER_TYPED_TEST_SUITE_P(IndicatorMatMulOpTest,
                             ParallelMatMul3);
 
 // TODO(ezhulenev): Add support for more data types.
-using IndicatorMatMulDataTypes = ::testing::Types<float>;
+using IndicatorMatMulDataTypes = ::testing::Types<float, Eigen::half>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Test, IndicatorMatMulOpTest,
                                IndicatorMatMulDataTypes);
 

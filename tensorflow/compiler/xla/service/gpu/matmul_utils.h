@@ -56,7 +56,7 @@ bool IsDotSupportedByClassicalEmitters(const HloInstruction& dot);
 // extending plain MatrixLayout struct with creator functions
 struct MatrixLayout : public se::gpu::MatrixLayout {
 
-  MatrixLayout(xla::PrimitiveType dtype_, int64 num_rows_, int64 num_cols_,
+  MatrixLayout(se::blas::DataType dtype_, int64 num_rows_, int64 num_cols_,
                Order order_, int64 batch_size_ = 1,
                absl::optional<int64> leading_dim_stride_ = {},
                absl::optional<int64> batch_stride_ = {},

@@ -96,6 +96,8 @@ class GemmAutotuner {
   size_t solutions_limit_ = 0;
   size_t num_algorithms_left_ = 0;
   uint64_t Nops = 0;
+  float gemm_relative_tol_ = 0.1f;
+  std::string gemm_str_; // needed for PickBestResult only
 
  public:
   explicit GemmAutotuner(const AutotuneConfig& autotune_config)
@@ -112,7 +114,8 @@ class GemmAutotuner {
     }
 
     num_algorithms_left_ = 0;
-    VLOG(3) << "Starting autotune of GemmThunk " << gemm->ToString();
+    gemm_str_ = gemm->ToString();
+    VLOG(3) << "Starting autotune of GemmThunk " << gemm_str_;
 
     if(!stream_) {
       stream_ = std::make_unique< se::Stream >(autotune_config_.GetExecutor());
@@ -124,6 +127,7 @@ class GemmAutotuner {
     deterministic_ops_ = false ;//debug_options.xla_gpu_deterministic_ops() ||
                                 //debug_options.xla_gpu_exclude_nondeterministic_ops();
     solutions_limit_ = debug_options.xla_gpu_autotune_max_solutions();
+    gemm_relative_tol_ = debug_options.xla_gpu_autotune_gemm_rtol();
 
     GemmBackendConfig backend_config = gemm->
               backend_config<GemmBackendConfig>().ValueOrDie();
@@ -149,10 +153,10 @@ class GemmAutotuner {
       TF_ASSIGN_OR_RETURN(rz_buffers_[it], RedzoneBuffers::FromInstruction(
                         *gemm, autotune_config_, stream_.get(), debug_options,
                         RedzoneBuffers::kAllInputsAllOutputs));
-    }
+
     return IsCublasLtMatmul(*gemm)
-               ? TuneGpuBlasLt(gemm, gemm_config)
-               : TuneGpuBlas(gemm, gemm_config);
+           ? TuneGpuBlasLt(gemm->shape(), gemm_config, backend_config.epilogue())
+           : TuneGpuBlas(gemm->shape(), gemm_config);
   }
 
  private:
@@ -162,39 +166,30 @@ class GemmAutotuner {
     return rz_buffers_[rz_counter_].output_buffers().at(0);
   }
 
-  const Shape& GetOutputShape(const HloInstruction* gemm) {
-    return gemm->shape().IsTuple() ? gemm->shape().tuple_shapes(0)
-                                   : gemm->shape();
-  }
-
-  StatusOr<tensorflow::AutotuneResult> TuneGpuBlasLt(const HloInstruction* gemm,
-                                               const GemmConfig& gemm_config) {
+  StatusOr<tensorflow::AutotuneResult> TuneGpuBlasLt(const Shape& out_shape,
+         const GemmConfig& gemm_config, GemmBackendConfig::Epilogue epilogue) {
     
-    // TODO: no workspace buffer is yet integrated..
-    auto workspace_buffer = //absl::optional<se::DeviceMemoryBase>{};
-      rz_buffers_.output_buffers().at(gemm->shape().tuple_shapes_size() - 1);
-
-    GemmBackendConfig backend_config = 
-                    gemm->backend_config<GemmBackendConfig>().ValueOrDie();
+    auto workspace_buffer = 
+      rz_buffers_.output_buffers().at(out_shape.tuple_shapes_size() - 1);
 
     bool has_matrix_bias = gemm_config.beta != 0.;
 
     TF_ASSIGN_OR_RETURN(
         bool has_vector_bias,
-        gpublas_lt::EpilogueAddsVectorBias(backend_config.epilogue()));
+        gpublas_lt::EpilogueAddsVectorBias(epilogue));
 
     TF_ASSIGN_OR_RETURN(
         bool has_aux_output,
-        gpublas_lt::EpilogueHasAuxiliaryOutput(backend_config.epilogue()));
+        gpublas_lt::EpilogueHasAuxiliaryOutput(epilogue));
 
-    TF_ASSIGN_OR_RETURN(auto epilogue,
-                        AsBlasLtEpilogue(backend_config.epilogue()));
+    TF_ASSIGN_OR_RETURN(auto blas_epilogue,
+                        AsBlasLtEpilogue(epilogue));
 
     se::DeviceMemoryBase a_scale_buffer, b_scale_buffer, c_scale_buffer,
         d_scale_buffer, d_amax_buffer, bias_buffer, aux_buffer;
 
     TF_ASSIGN_OR_RETURN(auto plan,
-                   BlasLt::GetMatmulPlan(stream_.get(), gemm_config, epilogue));
+              BlasLt::GetMatmulPlan(stream_.get(), gemm_config, blas_epilogue));
 
     TF_ASSIGN_OR_RETURN(
         auto algorithms,
@@ -219,7 +214,7 @@ class GemmAutotuner {
       TF_RETURN_IF_ERROR(plan->ExecuteOnStream(
           stream_.get(), LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
           bias_buffer, aux_buffer, a_scale_buffer, b_scale_buffer,
-          c_scale_buffer, d_scale_buffer, d_amax_buffer, algorithm,
+          c_scale_buffer, d_scale_buffer, d_amax_buffer, 
           workspace_buffer));
 
       rz_counter_ = (rz_counter_ + 1) % rz_buffers_.size();
@@ -236,16 +231,18 @@ class GemmAutotuner {
       TF_RETURN_IF_ERROR(plan->ExecuteOnStream(
           stream_.get(), LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
           bias_buffer, aux_buffer, a_scale_buffer, b_scale_buffer,
-          c_scale_buffer, d_scale_buffer, d_amax_buffer, algorithm,
+          c_scale_buffer, d_scale_buffer, d_amax_buffer, 
           workspace_buffer, absl::nullopt, &profile_result));
       return std::move(profile_result);
     };
 
+    const auto& shape = out_shape.IsTuple() ? out_shape.tuple_shapes(0) 
+                                            : out_shape;
     return GetBestAlgorithm<BlasLt::MatmulAlgorithm>(
-        gemm, algorithms, gemm_config.beta, true, tuned_func);
+         shape, algorithms, gemm_config.beta, true, tuned_func);
   }
 
-  StatusOr<tensorflow::AutotuneResult> TuneGpuBlas(const HloInstruction* gemm,
+  StatusOr<tensorflow::AutotuneResult> TuneGpuBlas(const Shape& out_shape,
                                              const GemmConfig& gemm_config) {
 #if 0
     auto workspace_buffer = rz_buffers_.output_buffers().at(1);
@@ -287,8 +284,10 @@ class GemmAutotuner {
       return std::move(profile_result);
     };
 
+    const auto& shape = out_shape.IsTuple() ? out_shape.tuple_shapes(0) 
+                                            : out_shape;
     return GetBestAlgorithm<se::blas::AlgorithmType>(
-                      gemm, algorithms, gemm_config.beta, false, tuned_func);
+         shape, algorithms, gemm_config.beta, false, tuned_func);
 #else
   return tensorflow::AutotuneResult{};
 #endif
@@ -297,7 +296,7 @@ class GemmAutotuner {
   // Returns the index (into `algorithms`) of the fastest algorithm.
   template <typename AlgoT, typename TunedFunc>
   StatusOr<tensorflow::AutotuneResult> GetBestAlgorithm(
-      const HloInstruction* gemm, absl::Span<const AlgoT> algorithms,
+      const Shape& output_shape, absl::Span<const AlgoT> algorithms,
       double beta, bool return_algo_index, TunedFunc&& run_benchmark) {
     // static_assert(std::is_invocable_r_v<StatusOr<se::blas::ProfileResult>,
     //                                     TunedFunc, const AlgoT&>,
@@ -307,9 +306,6 @@ class GemmAutotuner {
       return Internal("Failed to synchronize GPU for autotuning.");
     }
 
-    const auto& hlo_module_config = gemm->GetModule()->config();
-    const auto& output_shape = GetOutputShape(gemm);
-
     se::DeviceMemoryBase reference_buffer;
     if (autotune_config_.should_check_correctness()) {
       TF_ASSIGN_OR_RETURN(reference_buffer,
@@ -318,8 +314,7 @@ class GemmAutotuner {
     }
 
     // Do not print error messages if should_skip_wrong_results() is ON.
-    BufferComparator comparator(output_shape, 
-        hlo_module_config.debug_options().xla_gpu_autotune_gemm_rtol(),
+    BufferComparator comparator(output_shape, gemm_relative_tol_,
         /* verbose */!autotune_config_.should_skip_wrong_results()
     );
     std::vector<tensorflow::AutotuneResult> results;
@@ -427,8 +422,7 @@ class GemmAutotuner {
     }  // for algorithms
 
     StatusOr<tensorflow::AutotuneResult> best_res =
-        PickBestResult(results, gemm->ToString());
-
+        PickBestResult(results, gemm_str_);
     if (best_res.ok()) {
       auto best = std::move(best_res.ValueOrDie());
       VLOG(0) << "Best gemm algorithm " << best.gemm().algorithm() << " took "

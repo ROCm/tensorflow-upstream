@@ -110,6 +110,7 @@ void RunGemmStridedBatched(OpKernelContext* context, bool trans_a, bool trans_b,
   int lda = trans_a ? m : k;
   int ldb = trans_b ? k : n;
   int ldc = n;
+
   auto trans_a_tf = trans_a ? se::blas::Transpose::kTranspose
                             : se::blas::Transpose::kNoTranspose;
   auto trans_b_tf = trans_b ? se::blas::Transpose::kTranspose
@@ -144,7 +145,7 @@ void RunGemmBatched(OpKernelContext* context, bool trans_a, bool trans_b,
   auto trans_b_tf = trans_b ? se::blas::Transpose::kTranspose
                             : se::blas::Transpose::kNoTranspose;
   auto* stream = context->op_device_context()->stream();
-  //VLOG(0) << "RunGemmBatched on device: " << stream->parent()->device_ordinal();
+
   bool blas_launch_status =
       stream
           ->ThenBlasGemmBatched(
@@ -204,6 +205,7 @@ __global__ void StridedCopyKernel(const uint8_t *a_in,
   __syncthreads();
 
   using Word = uint64_t;
+  using Short = uint16_t;
   constexpr uint32_t chunk_sz = sizeof(Word)*2;
 
   uint32_t bytes = p.m*p.k*p.bytes_per_scalar;
@@ -219,12 +221,12 @@ __global__ void StridedCopyKernel(const uint8_t *a_in,
   }
 
   const uint32_t bytes_mod = bytes % chunk_sz;
-  if(tid < bytes_mod / sizeof(uint32_t)) {
-    uint32_t ofs = (bytes & ~(chunk_sz-1))/sizeof(uint32_t) + tid;
-    auto r1 = LOAD((const uint32_t *)src + ofs);
-    STORE(r1, (uint32_t *)dst + ofs);
+  if(tid < bytes_mod / sizeof(Short)) {
+    uint32_t ofs = (bytes & ~(chunk_sz-1))/sizeof(Short) + tid;
+    auto r1 = LOAD((const Short *)src + ofs);
+    STORE(r1, (Short *)dst + ofs);
     // if(batch == 0) printf("bytes mod: %d, ofs: %d, src: %p dest: %p\n", 
-    //         bytes_mod, ofs, (const uint32_t *)src + ofs, (uint32_t *)dst + ofs);
+    //         bytes_mod, ofs, (const Short *)src + ofs, (Short *)dst + ofs);
   }
 }
 #endif // TENSORFLOW_USE_ROCM
@@ -328,10 +330,10 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
 
 
 template struct LaunchIndicatorMatmul<GPUDevice, float, int32>;
-// template struct LaunchIndicatorMatmul<GPUDevice, double, int32>;
-// template struct LaunchIndicatorMatmul<GPUDevice, Eigen::half, int32>;
+template struct LaunchIndicatorMatmul<GPUDevice, double, int32>;
+template struct LaunchIndicatorMatmul<GPUDevice, Eigen::half, int32>;
 template struct LaunchIndicatorMatmul<GPUDevice, float, int64>;
-// template struct LaunchIndicatorMatmul<GPUDevice, double, int64>;
-// template struct LaunchIndicatorMatmul<GPUDevice, Eigen::half, int64>;
+template struct LaunchIndicatorMatmul<GPUDevice, double, int64>;
+template struct LaunchIndicatorMatmul<GPUDevice, Eigen::half, int64>;
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 }  // namespace tensorflow

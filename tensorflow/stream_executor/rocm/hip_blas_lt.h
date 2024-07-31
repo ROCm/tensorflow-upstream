@@ -105,6 +105,11 @@ class BlasLt : public gpu::BlasLt {
 
     ~MatmulPlan() override = default;
 
+    xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
+        size_t max_algorithm_count, size_t max_workspace_size) const override;
+
+    void SetAlgorithm(const MatmulAlgorithm& algorithm) override;
+
     xla::Status ExecuteOnStream(
         Stream* stream, DeviceMemoryBase a_buffer, DeviceMemoryBase b_buffer,
         DeviceMemoryBase c_buffer, DeviceMemoryBase d_buffer,
@@ -112,19 +117,15 @@ class BlasLt : public gpu::BlasLt {
         DeviceMemoryBase aux_buffer,   // may be null
         DeviceMemoryBase a_scale_buffer, DeviceMemoryBase b_scale_buffer,
         DeviceMemoryBase c_scale_buffer, DeviceMemoryBase d_scale_buffer,
-        DeviceMemoryBase d_amax_buffer, const MatmulAlgorithm& algorithm,
+        DeviceMemoryBase d_amax_buffer, 
         absl::optional<DeviceMemoryBase> workspace,
         absl::optional<ScratchAllocator*> scratch_allocator,
         blas::ProfileResult* profile_result) const override;
-
-    xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
-        size_t max_algorithm_count, size_t max_workspace_size) const override;
 
    protected:
     xla::Status DoMatmul(Stream* stream, const void* alpha, DeviceMemoryBase a,
                           DeviceMemoryBase b, const void* beta,
                           DeviceMemoryBase c, DeviceMemoryBase d,
-                          const MatmulAlgorithm& algorithm,
                           DeviceMemoryBase bias, DeviceMemoryBase aux,
                           DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
                           DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
@@ -145,6 +146,7 @@ class BlasLt : public gpu::BlasLt {
     xla::complex128 alpha_;
     double beta_;
     bool must_swap_operands_;
+    absl::optional< MatmulAlgorithm > algorithm_; // selected algorithm
   };  // struct MatmulPlan
 
   struct GroupedMatmulPlan : public gpu::BlasLt::GroupedMatmulPlan {

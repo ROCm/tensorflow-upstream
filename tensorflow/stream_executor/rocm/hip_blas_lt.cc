@@ -149,9 +149,8 @@ xla::Status BlasLt::Init() {
 
 /*static*/ xla::StatusOr<BlasLt::MatrixLayout> BlasLt::MatrixLayout::Create(
     const gpu::MatrixLayout& m) {
-  TF_ASSIGN_OR_RETURN(auto type, gpu::AsBlasDataType(m.dtype));
 
-  auto hipblas_data_type_ = AsHipblasDataType(type);
+  auto hipblas_data_type_ = AsHipblasDataType(m.dtype);
   hipblasLtMatrixLayout_t hip_layout;
   SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtMatrixLayoutCreate(
       &hip_layout, hipblas_data_type_, m.num_rows, m.num_cols,
@@ -163,7 +162,7 @@ xla::Status BlasLt::Init() {
   TF_RETURN_IF_ERROR(SetAttr(hip_layout, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT,
                              static_cast<int32_t>(m.batch_size)));
 
-  VLOG(2) << "BlasLt::MatrixLayout::Create type: " << (int)type
+  VLOG(2) << "BlasLt::MatrixLayout::Create type: " << (int)m.dtype
           << " rows: " << m.num_rows << " cols: " << m.num_cols
           << " batch_size: " << m.batch_size
           << " leading_dim_stride: " << m.leading_dim_stride
@@ -263,6 +262,10 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
   return std::move(algorithms);
 }
 
+void BlasLt::MatmulPlan::SetAlgorithm(const MatmulAlgorithm& algorithm) {
+  algorithm_ = algorithm;
+}
+
 auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
     -> xla::StatusOr<MatmulPlanPtr> {
   auto lhs_layout = cfg.lhs_layout, rhs_layout = cfg.rhs_layout,
@@ -295,9 +298,6 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
   //   return xla::Internal("The F8 RHS must be row-major");
   // }
 
-  TF_ASSIGN_OR_RETURN(auto output_dtype,
-                      gpu::AsBlasDataType(output_layout.dtype));
-
   auto compute_type = cfg.compute_type;
   if (!compute_type) {  // obtain compute_type unless provided by the user
     TF_ASSIGN_OR_RETURN(compute_type, gpu::GetBlasComputationType(
@@ -316,7 +316,7 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
   TF_ASSIGN_OR_RETURN(
       auto op_desc,
       MatmulDesc::Create(*compute_type,
-                         gpu::GetScaleType(output_dtype, *compute_type),
+                         gpu::GetScaleType(output_layout.dtype, *compute_type),
                          trans_a, trans_b, epilogue));
 
   TF_ASSIGN_OR_RETURN(auto a_desc, MatrixLayout::Create(lhs_layout));
@@ -348,16 +348,12 @@ uint32_t checksum(const T* p, int n)
 xla::Status BlasLt::MatmulPlan::DoMatmul(
     Stream* stream, const void* alpha, DeviceMemoryBase a, DeviceMemoryBase b,
     const void* beta, DeviceMemoryBase c, DeviceMemoryBase d,
-    const MatmulAlgorithm& algorithm, DeviceMemoryBase bias,
+    DeviceMemoryBase bias,
     DeviceMemoryBase aux, DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
     DeviceMemoryBase c_scale, DeviceMemoryBase d_scale, DeviceMemoryBase d_amax,
     absl::optional<DeviceMemoryBase> workspace,
     absl::optional<ScratchAllocator*> scratch_allocator,
     blas::ProfileResult* profile_result) const {
-  // xla::Status status =
-  //     blas_lt_ref_.parent_->RecordApiTrace(StreamExecutor::GemmCallTrace{
-  //         StreamExecutor::GemmCallTrace::GemmType::kBlasLt, 0, a.size(),
-  //         b.size()});
 
   std::unique_ptr<gpu::GpuTimer, gpu::GpuTimerDeleter> timer;
   if (profile_result != nullptr) {
@@ -367,22 +363,24 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     }
   }
 
+  if(!algorithm_.has_value()) return xla::InternalError("Algorithm is not set!");
+
   void* workspace_addr = nullptr;
   uint64_t workspace_size = 0;
   if (workspace.has_value()) {
     workspace_addr = workspace.value().opaque();
     workspace_size = workspace.value().size();
-    TF_RET_CHECK(workspace_size >= algorithm.workspace_size);
-  } else if (algorithm.workspace_size > 0) {
+    TF_RET_CHECK(workspace_size >= algorithm_->workspace_size);
+  } else if (algorithm_->workspace_size > 0) {
     TF_RET_CHECK(scratch_allocator.has_value());
     TF_ASSIGN_OR_RETURN(
         DeviceMemory<uint8_t> alloc,
-        scratch_allocator.value()->AllocateBytes(algorithm.workspace_size));
+        scratch_allocator.value()->AllocateBytes(algorithm_->workspace_size));
     workspace_addr = gpu::GpuMemoryMutable(&alloc);
-    workspace_size = algorithm.workspace_size;
+    workspace_size = algorithm_->workspace_size;
   }
 
-  auto palgo = absl::any_cast<hipblasLtMatmulAlgo_t>(&algorithm.opaque_algo);
+  auto palgo = absl::any_cast<hipblasLtMatmulAlgo_t>(&algorithm_->opaque_algo);
   {
     absl::MutexLock lock(&mu_);
     TF_RET_CHECK(blas_lt_ref_.blas_lt_ != nullptr);
@@ -498,7 +496,7 @@ xla::Status BlasLt::MatmulPlan::ExecuteOnStream(
     DeviceMemoryBase d, DeviceMemoryBase bias, DeviceMemoryBase aux,
     DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
     DeviceMemoryBase c_scale, DeviceMemoryBase d_scale, DeviceMemoryBase d_amax,
-    const MatmulAlgorithm& algorithm, absl::optional<DeviceMemoryBase> workspace,
+    absl::optional<DeviceMemoryBase> workspace,
     absl::optional<ScratchAllocator*> scratch_allocator,
     blas::ProfileResult* profile_result) const {
   if (must_swap_operands_) {
@@ -512,7 +510,7 @@ xla::Status BlasLt::MatmulPlan::ExecuteOnStream(
   if (operand_types == std::make_tuple(ATYPE, BTYPE, CTYPE, DTYPE)) {      \
     return gpu::BlasLt::MatmulPlan::DoMatmul< SCALENTYPE >(                \
         stream, alpha_, a, b, beta_, c, d, bias, aux, a_scale, b_scale,    \
-        c_scale, d_scale, d_amax, algorithm, workspace, scratch_allocator, \
+        c_scale, d_scale, d_amax, workspace, scratch_allocator,            \
         profile_result);                                                   \
   }
   // Other data types:

@@ -111,7 +111,7 @@ xla::StatusOr<ComputationType> GetBlasComputationType(
   }
 }
 
-MatrixLayout::MatrixLayout(xla::PrimitiveType dtype_, int64 num_rows_,
+MatrixLayout::MatrixLayout(blas::DataType dtype_, int64 num_rows_,
                            int64 num_cols_, MatrixLayout::Order order_,
                            int64 batch_size_,
                            absl::optional<int64> leading_dim_stride_,

@@ -23,8 +23,6 @@ namespace gpu {
 
 struct MatmulPlanCache {
 
-  using Entry = CublasLtMatmulThunk::Entry;
-
   static MatmulPlanCache& i(const se::Stream *stream) {
     static absl::Mutex m(absl::kConstInit);
     // Each GPU gets different cache instance
@@ -37,15 +35,16 @@ struct MatmulPlanCache {
   }
 
   template < class Func >
-  StatusOr<Entry *> GetOrCreate(const std::string& key, Func&& create) {
+  StatusOr<se::gpu::BlasLt::MatmulPlan *> 
+          GetOrCreate(const std::string& key, Func&& create) {
     // each GPU has a different mutex => hence different GPU instances can
     // create matmul plans in parallel
     absl::MutexLock lock(mutex_.get()); 
-    auto res = map_.emplace(key, Entry{});
+    auto res = map_.emplace(key, se::gpu::BlasLt::MatmulPlanPtr{});
     if(res.second) { // new entry inserted
       TF_ASSIGN_OR_RETURN(res.first->second, create());
     } 
-    return &res.first->second;
+    return res.first->second.get();
   }
 
 private:
@@ -53,7 +52,7 @@ private:
 
 private:
   std::unique_ptr< absl::Mutex > mutex_;
-  absl::flat_hash_map<std::string, Entry> map_;
+  absl::flat_hash_map<std::string, se::gpu::BlasLt::MatmulPlanPtr> map_;
 };
 
 CublasLtMatmulThunk::CublasLtMatmulThunk(
@@ -95,7 +94,7 @@ Status CublasLtMatmulThunk::Initialize(const GpuExecutable& executable,
 
 Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
 
-  TF_ASSIGN_OR_RETURN(auto *entry, GetCachedMatmulPlan(params.stream));
+  TF_ASSIGN_OR_RETURN(auto *plan, GetCachedMatmulPlan(params.stream));
 
   VLOG(3) << "Running cublas_lt matmul thunk for instr: " << hlo_instruction()->ToString();
   const BufferAllocations& allocs = *params.buffer_allocations;
@@ -130,19 +129,19 @@ Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
     workspace = allocs.GetDeviceAddress(workspace_buffer_.value());
   }
 
-  return entry->plan->ExecuteOnStream(
+  return plan->ExecuteOnStream(
       params.stream, allocs.GetDeviceAddress(a_buffer_),
       allocs.GetDeviceAddress(b_buffer_), allocs.GetDeviceAddress(c_buffer_),
       allocs.GetDeviceAddress(d_buffer_), bias, aux, a_scale, b_scale, c_scale,
-      d_scale, d_amax, entry->algorithm, workspace);
+      d_scale, d_amax, workspace);
 }
 
 auto CublasLtMatmulThunk::GetCachedMatmulPlan(
-    const se::Stream* stream) -> StatusOr<Entry *> {
+    const se::Stream* stream) -> StatusOr<se::gpu::BlasLt::MatmulPlan *> {
 
   auto& cache = MatmulPlanCache::i(stream);
 
-  auto create = [&]() -> StatusOr<MatmulPlanCache::Entry>  {
+  auto create = [&]() ->  StatusOr<se::gpu::BlasLt::MatmulPlanPtr>  {
     VLOG(2) << this << ": Adding new MatmulPlan for stream: " << stream << 
                        " instr: " << hlo_instruction()->ToString();
     TF_ASSIGN_OR_RETURN(
@@ -158,8 +157,9 @@ auto CublasLtMatmulThunk::GetCachedMatmulPlan(
        plan->GetAlgorithms(/*max_algorithm_count*/GemmConfig::kMaxCublasLtAlgorithms,
                            /*max_workspace_size*/ max_workspace));
     TF_RET_CHECK(algorithm_idx_ >= 0 && algorithm_idx_ < algorithms.size());
+    plan->SetAlgorithm(algorithms[algorithm_idx_]);
 
-    return MatmulPlanCache::Entry{std::move(plan), algorithms[algorithm_idx_]};
+    return std::move(plan);
   };
   return cache.GetOrCreate(canonical_hlo_, create);
 }
