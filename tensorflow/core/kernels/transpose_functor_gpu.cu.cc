@@ -174,6 +174,18 @@ struct TransposeUsingTile<complex128, conjugate> {
                                                      out);                   \
     break
 
+template <typename T>
+uint32_t checksum(const T* p, uint64_t n)
+{
+  const uint32_t* pp = reinterpret_cast<const uint32_t*>(p);
+  n *= sizeof(T);
+  n /= 4;
+  uint32_t s = 0;
+  for(uint64_t i=0; i<n; i++)
+    s ^= pp[i]*(i*3789597+1);
+  return s;
+}
+
 template <typename T, bool conjugate>
 struct Transpose<GPUDevice, T, conjugate> {
   static void run(const GPUDevice& d, const Tensor& in,
@@ -182,6 +194,15 @@ struct Transpose<GPUDevice, T, conjugate> {
     if (internal::TransposeUsingTile<T, conjugate>::run(d, in, perm, out)) {
       return;
     }
+    const T* pin = reinterpret_cast<const T*>(in.tensor_data().data());
+    const T* pout = reinterpret_cast<const T*>(out->tensor_data().data());
+    gtl::InlinedVector<int32, 8> in_strides = ComputeStride<int32>(in.shape());
+    gtl::InlinedVector<int32, 8> out_strides = ComputeStride<int32>(out->shape());
+    bool fail_case = (in.dims()==4 
+      && in.NumElements() == 576000 && in_strides[0]==19200 && in_strides[1]==3200 && in_strides[2]==16
+      && perm[0]==0 && perm[1]==2 && perm[2]==1 && perm[3]==3); 
+    if (fail_case) 
+      hipMemsetAsync(const_cast<T*>(pout), 0xcc, in.NumElements()*sizeof(T), d.stream());
 
     switch (in.dims()) {
       HANDLE_DIM(2);
@@ -194,6 +215,46 @@ struct Transpose<GPUDevice, T, conjugate> {
       default:
         internal::TransposeSimple<T, conjugate>(d, in, perm, out);
         break;
+    }
+    if (fail_case) {
+        hipStreamSynchronize(d.stream());
+        std::vector<T> checks[2];
+        checks[0].resize(in.NumElements());
+        checks[1].resize(in.NumElements());
+        hipMemcpy(&checks[0][0], pin, in.NumElements()*sizeof(T), hipMemcpyDeviceToHost);
+        hipMemcpy(&checks[1][0], pout, in.NumElements()*sizeof(T), hipMemcpyDeviceToHost);
+        hipDeviceSynchronize();
+        /*
+        printf("Transpose %d  %p %x -> %p %x\n",
+          in.NumElements(),
+          pin,
+          checksum<T>(&checks[0][0], in.NumElements()),
+          pout,
+          checksum<T>(&checks[1][0], in.NumElements()));
+        for(int j=0; j<4; j++)
+          printf("%d %d %d\n", in_strides[j], out_strides[j], perm[j]); 
+        fflush(stdout);
+        */
+      int nerr = 0;
+      for(int k=0; k<30; k++)
+      for(int m=0; m<200; m++)
+      for(int j=0; j<6; j++)
+        for(int i=0; i<16; i++) 
+        {
+          if(pout[i+j*16+m*96+k*19200] != pin[i+m*16+j*3200+k*19200])
+          {
+            uint32_t v1 = ((const uint16_t*)pout)[i+j*16+m*96+k*19200];
+            uint32_t v2 = ((const uint16_t*)pin)[i+m*16+j*3200+k*19200];
+            if(nerr<100)
+              printf("%d %d  %d %d %d %d  %08x %08x\n", 
+                i+j*16+m*96+k*19200, 
+                i+m*16+j*3200+k*19200,
+                i, j, m, k, v1, v2);
+            nerr++;
+          }
+        }
+      printf("%d errors\n", nerr);
+      fflush(stdout);
     }
   }
 };
