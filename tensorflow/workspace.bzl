@@ -547,11 +547,11 @@ def tf_workspace(path_prefix = "", tf_repo_name = ""):
     tf_http_archive(
         name = "ck_archive",
         build_file = "//third_party:ck.BUILD",
-        sha256 = "521139caafa6e2ca2b3c3ed8337d0f99b8b6dbcda6fda940cf1be0d0fc92efb5",
-        strip_prefix = "composable_kernel-internal-8a271f6136c63a0cfff99aced1962969050b6e50",
+        sha256 = "01c34f921e01064d728fd8220dddc51fbb48c0c6da5c50be4da4e184fcf3ae2e",
+        strip_prefix = "composable_kernel-internal-4026e0661961717f00b27c584cde0888ce5a416c",
         urls = [
-	        "https://mirror.bazel.build/127.0.0.1:8000/composable_kernel-internal-8a271f6136c63a0cfff99aced1962969050b6e50.zip",
-	        "http://127.0.0.1:8000/composable_kernel-internal-8a271f6136c63a0cfff99aced1962969050b6e50.zip",
+	        "https://mirror.bazel.build/127.0.0.1:8000/composable_kernel-internal-4026e0661961717f00b27c584cde0888ce5a416c.zip",
+	        "http://127.0.0.1:8000/composable_kernel-internal-4026e0661961717f00b27c584cde0888ce5a416c.zip",
         ],
     )
 
