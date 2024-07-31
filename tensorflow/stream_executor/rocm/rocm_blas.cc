@@ -1735,8 +1735,8 @@ bool ROCMBlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<Eigen::half> ctx
       checksum(pc, ctx.m*ctx.n*ctx.batch_count)
       );
     fflush(stdout);
-    if (!isfinite(float(pc[0])))
-      exit(0);
+//    if (!isfinite(float(pc[0])))
+//      exit(0);
     return retval;
   }
 
@@ -1751,8 +1751,8 @@ bool ROCMBlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<Eigen::half> ctx
       checksum(pa, ctx.m*ctx.k*ctx.batch_count), checksum(pb, ctx.n*ctx.k*ctx.batch_count),
       checksum(pc, ctx.m*ctx.n*ctx.batch_count));
   fflush(stdout);
-  if (!isfinite(float(pc[0])))
-    exit(0);
+//  if (!isfinite(float(pc[0])))
+//    exit(0);
   return retval;
 }
 
@@ -1810,8 +1810,8 @@ bool ROCMBlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<float> ctx, blas
    #endif 
   }
   fflush(stdout);
-  if (!isfinite(float(pc[0])))
-    exit(0);
+//  if (!isfinite(float(pc[0])))
+//    exit(0);
 
   return retval;
 }
@@ -2260,8 +2260,8 @@ inline port::Status ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::Batche
       checksum(pc, m*n*batch_count)
       );
   fflush(stdout);
-  if (!isfinite(float(pc[0])))
-    exit(0);
+//  if (!isfinite(float(pc[0])))
+//    exit(0);
 
   if (ok) {
     return port::Status::OK();
@@ -2332,7 +2332,7 @@ inline port::Status ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::Batche
 
   auto *alpha_ptr = reinterpret_cast<MAPPED_T *>(&ctx.alpha);
   auto *beta_ptr = reinterpret_cast<MAPPED_T *>(&ctx.beta);
-#if 0
+#if 1
   bool ok = DoBlasInternal(
       rocblas_func, stream, /* pointer_mode_host = */ true,
       ROCMBlasTranspose(transa), ROCMBlasTranspose(transb), m, n, k,
@@ -2367,8 +2367,8 @@ inline port::Status ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::Batche
       checksum(pa, m*k*batch_count), checksum(pb, n*k*batch_count),
       checksum(pc, m*n*batch_count));
   fflush(stdout);
-  if (!isfinite(float(pc[0])))
-    exit(0);
+//  if (!isfinite(float(pc[0])))
+//    exit(0);
 
   if (ok) {
     return port::Status::OK();
