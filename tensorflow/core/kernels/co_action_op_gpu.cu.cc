@@ -23,6 +23,11 @@
 #define EIGEN_USE_GPU
 #include "tensorflow/core/util/gpu_kernel_helper.h"
 
+#if GOOGLE_CUDA
+constexpr int kWarpSize = 32;
+#else
+constexpr int kWarpSize = 64;
+#endif
 
 #define MAKE_SHARED2(T, Name, N, M)                                     \
   __shared__ __align__(alignof(T)) char Name##_raw[N * M * sizeof(T)]; \
@@ -65,16 +70,17 @@ __forceinline__ __device__ Scalar warpReduceSum(Scalar val) {
 
 template <typename Scalar, int M_SIZE, int N_SIZE>
 __forceinline__ __device__ Scalar blockReduceSum(Scalar val, int n) {
-  MAKE_SHARED2(Scalar, s_data, N_SIZE, 32);
-  int lane = threadIdx.x % warpSize;
-  int wid = threadIdx.x / warpSize;
-  val = warpReduceSum<Scalar, 32>(val);
+  MAKE_SHARED2(Scalar, s_data, N_SIZE, kWarpSize);
+  __syncthreads();
+  int lane = threadIdx.x % kWarpSize;
+  int wid = threadIdx.x / kWarpSize;
+  val = warpReduceSum<Scalar, kWarpSize>(val);
   if (lane == 0) {
     s_data[n][wid] = val;
   }
   __syncthreads();
   if (wid == 0) {
-    val = (threadIdx.x <= blockDim.x / warpSize) ? s_data[n][lane] : 0;
+    val = (threadIdx.x <= blockDim.x / kWarpSize) ? s_data[n][lane] : 0;
     if (M_SIZE > 128) {
       val = warpReduceSum<Scalar, 8>(val);
     } else if (M_SIZE > 64) {
@@ -115,18 +121,21 @@ __global__ void ComputeCoActionIndicator(IMatmulParam<Scalar, TIndex> param) {
 
   // step 2: pow + concat + matmul
   float C_local[N_SIZE] = {0.0f};
-#pragma unroll
-  for (int k = 0; k < K_SIZE; k++) {
-    float a_val = float(A[k]);
-#pragma unroll
-    for (int n = 0; n < N_SIZE; n++) {
-      if (blockIdx.z == 0) {
-        C_local[n] += a_val * float(Bs[k * N_SIZE + n]);
-      } else {
-        C_local[n] += a_val * a_val * float(Bs[k * N_SIZE + n]);
+
+  #pragma unroll
+    for (int k = 0; k < K_SIZE; k++) {
+      float a_val = float(A[k]);
+  #pragma unroll
+      for (int n = 0; n < N_SIZE; n++) {
+        if (blockIdx.z == 0) {
+          C_local[n] += a_val * float(Bs[k * N_SIZE + n]);
+        } else {
+          C_local[n] += a_val * a_val * float(Bs[k * N_SIZE + n]);
+        }
       }
     }
-  }
+  __syncthreads();
+
   // step 3: tanh and wrap reduce.
 #pragma unroll
   for (int n = 0; n < N_SIZE; n++) {
@@ -153,7 +162,7 @@ Status LaunchCoAction<GPUDevice, Scalar>::operator()(
   dim3 grid_dim(batch_b, paralle_num, pow_num);
   dim3 block_dim(m);
   const auto& d = context->eigen_device<GPUDevice>();
-  int shared_memory_size = k * n * sizeof(Scalar) + 32 * n * sizeof(float);
+  int shared_memory_size = k * n * sizeof(Scalar) + kWarpSize * n * sizeof(float);
   if (m == 50 && k == 5 && n == 4 && pow_num == 2) {
     TF_CHECK_OK(GpuLaunchKernel(
         ComputeCoActionIndicator<false, Scalar, int64, 2, 50, 5, 4>, grid_dim,
@@ -185,7 +194,7 @@ Status LaunchCoActionIndicator<GPUDevice, Scalar, TIndex>::operator()(
   dim3 grid_dim(batch_b, paralle_num, pow_num);
   dim3 block_dim(m);
   const auto& d = context->eigen_device<GPUDevice>();
-  int shared_memory_size = k * n * sizeof(Scalar) + 32 * n * sizeof(float);
+  int shared_memory_size = k * n * sizeof(Scalar) + kWarpSize * n * sizeof(float);
   if (m == 50 && k == 5 && n == 4 && pow_num == 2) {
     TF_CHECK_OK(GpuLaunchKernel(
         ComputeCoActionIndicator<true, Scalar, TIndex, 2, 50, 5, 4>, grid_dim,
