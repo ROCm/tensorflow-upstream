@@ -42,9 +42,9 @@ Status ComputeInternal(const GPUDevice& d, const void* mat_A, const void* mat_B,
       ck::tensor_operation::device::DeviceGatherGemv_Xdl_CShuffleV3<
           ck::tensor_operation::device::GatherGemvType::v1, ADataType,
           BDataType, CDataType, AccDataType, CShuffleDataType, AElementOp,
-          BElementOp, CElementOp, GemmDefault, 256, 128, 128, 64, 8, 8, 16, 16,
-          4, 4, S<8, 32, 1>, S<1, 0, 2>, S<1, 0, 2>, 2, 8, 8, 0, S<8, 32, 1>,
-          S<1, 0, 2>, S<1, 0, 2>, 2, 8, 8, 0, 1, 2, S<1, 32, 1, 8>, 8,
+          BElementOp, CElementOp, GemmDefault, 128, 16, 32, 64, 8, 8, 16, 16, 1,
+          1, S<8, 16, 1>, S<1, 0, 2>, S<1, 0, 2>, 2, 8, 8, 0, S<8, 16, 1>,
+          S<1, 0, 2>, S<1, 0, 2>, 2, 8, 8, 0, 1, 1, S<1, 16, 1, 8>, 4,
           ck::BlockGemmPipelineScheduler::Intrawave,
           ck::BlockGemmPipelineVersion::v1>;
 

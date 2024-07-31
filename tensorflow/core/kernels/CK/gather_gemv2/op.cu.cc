@@ -41,21 +41,21 @@ Status ComputeInternal(const GPUDevice& d, const void* mat_A, const void* mat_B,
 
   // clang-format off
   using DeviceGemmV2Instance = 
-      ck::tensor_operation::device::DeviceGatherGemv_Xdl_CShuffleV3<
-          ck::tensor_operation::device::GatherGemvType::v2,
-          ADataType,   BDataType,  CDataType,  AccDataType,  CShuffleDataType, 
-          AElementOp,  BElementOp, CElementOp, GemmDefault, 
-          128,
-          16,  64,  64,
-          8,   4,
-          16,  16,
-          1,   2,
-          S<8, 16, 1>,  S<1, 0, 2>,   S<1, 0, 2>,
-          2,   8,   8,   0,
-          S<16, 8, 1>,   S<0, 2, 1>,   S<0, 2, 1>,
-          1,   8,   4,   0,
-          1,   1,   S<1, 16, 1, 8>,   4,
-          ck::BlockGemmPipelineScheduler::Intrawave, ck::BlockGemmPipelineVersion::v1>;
+    ck::tensor_operation::device::DeviceGatherGemv_Xdl_CShuffleV3<
+        ck::tensor_operation::device::GatherGemvType::v2,
+        ADataType,   BDataType,  CDataType,  AccDataType,  CShuffleDataType, 
+        AElementOp,  BElementOp, CElementOp, GemmDefault, 
+        64,
+        16,   16,    64,
+        8,    4,
+        16,   16,
+        1,    1,
+        S<8,  8, 1>,     S<1, 0, 2>,    S<1, 0, 2>,
+        2,    8,    8,     0,
+        S<16, 4, 1>,     S<0, 2, 1>,     S<0, 2, 1>,
+        1,    4,    4,     0,
+        1,    1,    S<1, 16, 1, 4>,    4,
+        ck::BlockGemmPipelineScheduler::Intrawave, ck::BlockGemmPipelineVersion::v1>;
 
     auto get_c_element_op = [](int) {
       return CElementOp{}; 

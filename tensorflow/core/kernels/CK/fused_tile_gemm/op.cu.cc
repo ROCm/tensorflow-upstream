@@ -41,22 +41,22 @@ Status ComputeInternal(const GPUDevice& d, const void* mat_A, const void* mat_B,
       ck::tensor_operation::device::GemmSpecialization::MNKPadding;
 
   // clang-format off
-  using DeviceGemmV2Instance = 
-      ck::tensor_operation::device::DeviceBatchedGemm_Xdl_CShuffleV3<
-          ALayout,   BLayout,  CLayout,   
-          ADataType,   BDataType,  CDataType,  AccDataType,  CShuffleDataType, 
-          PassThrough, PassThrough, PassThrough, GemmDefault, 
-          128,
-          16,  64,  64,
-          8,   4,
-          16,  16,
-          1,   2,
-          S<8, 16, 1>,  S<1, 0, 2>,   S<1, 0, 2>,
-          2,   8,   8,   0,
-          S<16, 8, 1>,   S<0, 2, 1>,   S<0, 2, 1>,
-          1,   8,   4,   0,
-          1,   1,   S<1, 16, 1, 8>,   4,
-          ck::BlockGemmPipelineScheduler::Intrawave,ck::BlockGemmPipelineVersion::v1>;
+using DeviceGemmV2Instance = 
+    ck::tensor_operation::device::DeviceBatchedGemm_Xdl_CShuffleV3<
+        ALayout,   BLayout,  CLayout,   
+        ADataType,   BDataType,  CDataType,  AccDataType,  CShuffleDataType, 
+        PassThrough, PassThrough, PassThrough, GemmDefault, 
+        64,
+        16,   16,   128,
+        8,    4,
+        16,   16,
+        1,    1,
+        S<16, 4, 1>,     S<1, 0, 2>,    S<1, 0, 2>,
+        2,    8,    8,    0,
+        S<16, 4, 1>,     S<0, 2, 1>,     S<0, 2, 1>,
+        1,    4,    4,    0,    1,   1,
+        S<1, 16, 1, 4>,   4,
+        ck::BlockGemmPipelineScheduler::Intrawave,ck::BlockGemmPipelineVersion::v1>;
     const hipStream_t stream = d.stream();
     auto a_element_op = AElementOp{};
     auto b_element_op = BElementOp{};

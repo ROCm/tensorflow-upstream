@@ -20,20 +20,22 @@ class FusedGemmBiasAddOp : public OpKernel {
     int N = 1;
     int K = 1;
     Tensor* output_tensor = nullptr;
-    if(rank == 2){
-        M = context->input(0).shape().dim_size(0);
-        N = context->input(1).shape().dim_size(0);
-        K = context->input(0).shape().dim_size(1);
-        OP_REQUIRES_OK(context, context->allocate_output(0, {M, N}, &output_tensor));
-    }else if(rank == 3){
-        int d0 = context->input(0).shape().dim_size(0);
-        int d1 = context->input(0).shape().dim_size(1);
-        M = d0 * d1;
-        N = context->input(1).shape().dim_size(0);
-        K = context->input(0).shape().dim_size(2);
-        OP_REQUIRES_OK(context, context->allocate_output(0, {d0, d1, N}, &output_tensor));
+    if (rank == 2) {
+      M = context->input(0).shape().dim_size(0);
+      N = context->input(1).shape().dim_size(0);
+      K = context->input(0).shape().dim_size(1);
+      OP_REQUIRES_OK(context,
+                     context->allocate_output(0, {M, N}, &output_tensor));
+    } else if (rank == 3) {
+      int d0 = context->input(0).shape().dim_size(0);
+      int d1 = context->input(0).shape().dim_size(1);
+      M = d0 * d1;
+      N = context->input(1).shape().dim_size(0);
+      K = context->input(0).shape().dim_size(2);
+      OP_REQUIRES_OK(context,
+                     context->allocate_output(0, {d0, d1, N}, &output_tensor));
     }
-    
+
     OP_REQUIRES_OK(
         context,
         functor::FusedGemmBiasAddFunctor<Device, dataTP>::Compute(
