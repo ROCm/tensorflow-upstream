@@ -253,7 +253,7 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
 #if TENSORFLOW_USE_ROCM
   auto ind_ptr = indicator.template flat<TIndex>().data();
   const int64 size = parallel_num * batch_b * m * k;
-  VLOG(0) << "Allocating " << (size * sizeof(Scalar)) << " bytes..";
+  //VLOG(0) << "Allocating " << (size * sizeof(Scalar)) << " bytes..";
   Tensor a_strided;
   OP_REQUIRES_OK(
        context, context->allocate_temp(DataTypeToEnum<Scalar>::v(), 
@@ -261,22 +261,7 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
   
   auto a_strided_ptr = a_strided.flat<Scalar>().data();
   auto* stream = context->op_device_context()->stream();
-#if 0
-  for (int64 p = 0; p < parallel_num; p++) {
-    for (int64 b = 0; b < batch_b; b++) {
-      auto ind = (uint64)ind_ptr[b];
-      if(ind >= (uint64)batch_a) ind = 0;
 
-      uint64 sz = m*k*sizeof(Scalar);
-      auto dst = AsDeviceMemory(a_strided_ptr + (p * batch_b + b)*m*k); 
-      stream->ThenMemcpy(&dst, 
-            AsDeviceMemory(a_base_ptr + (p * batch_a + ind)*m*k), sz);
-      if(!stream->ok()) {
-        VLOG(0) << "ops stream error occurred!";
-      }
-    }
-  }
-#else
   dim3 grid(parallel_num, batch_b, 1);
   constexpr uint32_t BlockSz = 256;
   StridedCopyParams params{ (uint32_t)m, (uint32_t)n, (uint32_t)k, 
@@ -286,7 +271,7 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
                         BlockSz, 0, se::gpu::AsGpuStreamValue(stream), 
                   reinterpret_cast<const uint8_t *>(a_base_ptr), ind_ptr, 
                   reinterpret_cast<uint8_t *>(a_strided_ptr), params));
-#endif
+
   auto a_dev_ptr = AsDeviceMemory(a_strided_ptr);
   auto B = parallel_num * batch_b;
   RunGemmStridedBatched<Scalar>(context, trans_a, trans_b, m, n, k,
