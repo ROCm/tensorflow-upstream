@@ -105,8 +105,37 @@ class GemmAutotuner {
 
   size_t num_algorithms_left() const { return num_algorithms_left_; }
 
-  StatusOr<tensorflow::AutotuneResult> operator()(const HloInstruction* gemm,
-                                            const AutotuneCacheKey& key) {
+  StatusOr<tensorflow::AutotuneResult> operator()(
+          const std::string& gemm_str,
+          const GemmConfig& gemm_config, GemmBackendConfig::Epilogue epilogue,
+          std::vector< Shape >&& input_shapes, const Shape& output_shape,
+          const DebugOptions& debug_options) {
+  
+    num_algorithms_left_ = 0;
+    gemm_str_ = gemm_str;
+    VLOG(3) << "Starting autotune of GemmThunk " << gemm_str_;
+
+    if(!stream_) {
+      stream_ = std::make_unique< se::Stream >(autotune_config_.GetExecutor());
+      stream_->Init();
+    }
+
+    deterministic_ops_ = false ;//debug_options.xla_gpu_deterministic_ops() ||
+                                //debug_options.xla_gpu_exclude_nondeterministic_ops();
+    solutions_limit_ = 0; //debug_options.xla_gpu_autotune_max_solutions();
+    gemm_relative_tol_ = debug_options.xla_gpu_autotune_gemm_rtol();
+
+    // Don't run autotuning concurrently on the same GPU.
+    tensorflow::mutex_lock gpu_lock = LockGpu(stream_->parent());
+
+    TF_ASSIGN_OR_RETURN(rz_buffers_, RedzoneBuffers::FromShapes(
+         std::move(input_shapes), output_shape, autotune_config_, stream_.get(), 
+          debug_options, RedzoneBuffers::kAllInputsAllOutputs));
+    
+    return TuneGpuBlasLt(output_shape, gemm_config, epilogue);
+  }
+
+  StatusOr<tensorflow::AutotuneResult> operator()(const HloInstruction* gemm) {
 
     if (!IsCublasLtMatmul(*gemm)) {
         // Currently not implemented.
@@ -463,11 +492,10 @@ StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
     return false;
   }
 
-  AutotuneCacheKey key(config.GetModelStr(), *gemm);
   GemmAutotuner autotuner(config);
   TF_ASSIGN_OR_RETURN(tensorflow::AutotuneResult algorithm,
-                      AutotunerUtil::Autotune(
-                          gemm, config, [&] { return autotuner(gemm, key); }));
+       AutotunerUtil::Autotune(AutotunerUtil::GetKey(gemm, config), 
+                    config, [&] { return autotuner(gemm); }));
 
   VLOG(3) << "AutotunerUtil::Autotune success";
   *num_algorithms_left = autotuner.num_algorithms_left();
@@ -528,6 +556,21 @@ StatusOr<bool> RunOnComputation(HloComputation* computation,
 }
 
 }  // namespace
+
+StatusOr<tensorflow::AutotuneResult> GemmAlgorithmPicker::RunStandalone(
+     const std::string& gemm_canonical_str, const GemmConfig& gemm_config, 
+     GemmBackendConfig::Epilogue epilogue,
+     std::vector< Shape >&& input_shapes, const Shape& output_shape,
+     const DebugOptions& debug_options) {
+
+  GemmAutotuner autotuner(config_);
+  return AutotunerUtil::Autotune(
+     AutotuneCacheKey(config_.GetModelStr(), gemm_canonical_str),
+     config_, [&]{ 
+            return autotuner(gemm_canonical_str, gemm_config, 
+                epilogue, std::move(input_shapes), output_shape, debug_options); 
+  });
+}
 
 StatusOr<bool> GemmAlgorithmPicker::Run(
     HloModule* module) {

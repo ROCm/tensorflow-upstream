@@ -360,9 +360,9 @@ StatusOr<absl::optional<tensorflow::AutotuneResult>> TryFindInCache(
 }
 
 /*static*/ StatusOr<tensorflow::AutotuneResult> AutotunerUtil::Autotune(
-    const HloInstruction* instr, const AutotuneConfig& config,
+    const AutotuneCacheKey& key, const AutotuneConfig& config,
     const AutotuneNoCacheFn& autotune_fn) {
-  const AutotuneCacheKey key = GetKey(instr, config);
+
   TF_ASSIGN_OR_RETURN(absl::optional<tensorflow::AutotuneResult> opt_res,
                       TryFindInCache(key, config.autotune_cache_dir()));
   if (opt_res.has_value()) {
@@ -376,6 +376,7 @@ StatusOr<absl::optional<tensorflow::AutotuneResult>> TryFindInCache(
                                         config.autotune_cache_dir()));
   return result_and_inserted.result;
 }
+
 
 namespace {
 

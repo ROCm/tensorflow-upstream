@@ -59,6 +59,11 @@ class RedzoneBuffers {
       se::Stream *stream,
       const DebugOptions& debug_options, BuffersToCreate buffers_to_create);
 
+  static StatusOr<RedzoneBuffers> FromShapes(
+      std::vector<Shape>&& input_shapes, const Shape& output_shape,
+      const AutotuneConfig& config, se::Stream *stream,
+      const DebugOptions& debug_options, BuffersToCreate buffers_to_create);
+
   const std::vector<se::DeviceMemoryBase>& input_buffers() const {
     return input_buffers_;
   }
@@ -70,14 +75,12 @@ class RedzoneBuffers {
   se::RedzoneAllocator& RedzoneAllocator() const { return *redzone_allocator_; }
 
  private:
-  Status CreateInputs(const HloInstruction& instruction,
-                            const AutotuneConfig& config,
-                            const DebugOptions& debug_options,
+  Status CreateInputs(std::vector<Shape>&& input_shapes,
+                      const AutotuneConfig& config,
                             int64& rng_state);
 
-  Status CreateOutputs(const HloInstruction& instruction,
-                             const AutotuneConfig& config,
-                             const DebugOptions& debug_options,
+  Status CreateOutputs(const Shape& output_shape,
+                       const AutotuneConfig& config,
                              BuffersToCreate buffers_to_create,
                              int64& rng_state);
 

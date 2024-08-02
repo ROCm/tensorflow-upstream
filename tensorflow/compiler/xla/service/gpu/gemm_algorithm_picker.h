@@ -25,6 +25,7 @@ limitations under the License.
 // #include "absl/types/span.h"
 #include "tensorflow/core/protobuf/autotune_results.pb.h"
 #include "tensorflow/core/protobuf/autotuning.pb.h"
+#include "tensorflow/compiler/xla/service/gpu/backend_configs.pb.h"
 #include "tensorflow/compiler/xla/service/hlo_module.h"
 #include "tensorflow/compiler/xla/service/gpu/autotuner_util.h"
 #include "tensorflow/compiler/xla/service/hlo_module_config.h"
@@ -38,6 +39,8 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+
+struct GemmConfig;
 
 // GemmAlgorithmPicker supports two modes: device and deviceless.
 // In device mode, we run autotuning on the device and store autotune results.
@@ -56,6 +59,12 @@ class GemmAlgorithmPicker : public HloModulePass {
 
   using HloPassInterface::Run;
   StatusOr<bool> Run(HloModule* module) override;
+
+  StatusOr<tensorflow::AutotuneResult> RunStandalone(
+     const std::string& gemm_canonical_str, const GemmConfig& gemm_config, 
+     GemmBackendConfig::Epilogue epilogue,
+     std::vector< Shape >&& input_shapes, const Shape& output_shape,
+     const DebugOptions& debug_options);
 
  private:
   AutotuneConfig config_;

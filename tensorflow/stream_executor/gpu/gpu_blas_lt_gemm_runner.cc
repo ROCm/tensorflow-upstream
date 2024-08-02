@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/gpu/gpu_blas_lt_gemm_runner.h"
 #include "tensorflow/stream_executor/stream.h"
+//#include "tensorflow/compiler/xla/debug_options_flags.h"
+// #include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
 #include "tensorflow/compiler/xla/util.h"
 
 #include <algorithm>
@@ -33,18 +35,23 @@ bool operator ==(const StridedGemmConfig& rhs, const StridedGemmConfig& lhs) {
   return AsTuple(rhs) == AsTuple(lhs);
 }
 
-BlasLtGemmRunner::BlasLtGemmRunner() :
-    mutex_(std::make_unique< absl::Mutex >()) { }
+BlasLtGemmRunner::BlasLtGemmRunner(StreamExecutor *parent) :
+    mutex_(std::make_unique< absl::Mutex >())
+    // config_(std::make_unique< xla::gpu::AutotuneConfig >(
+    //       xla::gpu::DeviceConfig{parent, nullptr}, 
+    //         xla::GetDebugOptionsFromFlags())) 
+    { }
 
 /*static*/ BlasLtGemmRunner& BlasLtGemmRunner::i(const Stream *stream) {
     static absl::Mutex m(absl::kConstInit);
     // Each GPU gets different cache instance
     static absl::flat_hash_map<void *, BlasLtGemmRunner> meta;
     absl::MutexLock lock(&m);
-    auto res = meta.find(stream->parent());
+    auto exec = stream->parent();
+    auto res = meta.find(exec);
     if(res != meta.end()) return res->second;
-    BlasLtGemmRunner r;
-    return meta.emplace(stream->parent(), std::move(r)).first->second;
+    BlasLtGemmRunner r(exec);
+    return meta.emplace(exec, std::move(r)).first->second;
 }
 
 xla::Status BlasLtGemmRunner::RunBatched(Stream& stream, blas::Transpose transa, 
@@ -168,6 +175,15 @@ xla::Status BlasLtGemmRunner::RunStridedBatchedImpl(Stream& stream,
     TF_ASSIGN_OR_RETURN(auto plan_res, 
             gpu::BlasLt::GetMatmulPlan(&stream, cfg, gpu::BlasLt::Epilogue::kDefault));
     res = strided_gemm_map_.emplace(scfg, std::move(plan_res)).first;
+
+    // xla::gpu::GemmAlgorithmPicker autotuner(*config_);
+
+    // TF_ASSIGN_OR_RETURN(auto rres, autotuner.RunStandalone(
+    //  gemm_canonical_str, cfg, 
+    //  GemmBackendConfig::Epilogue epilogue,
+    //  std::vector< Shape >&& input_shapes, const Shape& output_shape,
+    //  const DebugOptions& debug_options));
+
 
     TF_ASSIGN_OR_RETURN(auto algos, res->second->GetAlgorithms());
     VLOG(2) << "+++++++++++++ added new config: " << strided_gemm_map_.size() << 

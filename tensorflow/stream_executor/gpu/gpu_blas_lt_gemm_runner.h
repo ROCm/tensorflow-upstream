@@ -19,6 +19,13 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
 
+namespace xla {
+namespace gpu {
+class AutotuneConfig;
+
+}
+}
+
 namespace stream_executor {
   
 namespace  gpu {
@@ -95,7 +102,7 @@ struct BlasLtGemmRunner {
   }
 
 private:
-  BlasLtGemmRunner();
+  explicit BlasLtGemmRunner(StreamExecutor *parent);
 
   xla::Status RunStridedBatchedImpl(Stream& stream, blas::Transpose trans_a, 
       blas::Transpose trans_b, int64 m, int64 n, int64 k, xla::complex128 alpha, 
@@ -106,8 +113,8 @@ private:
       int64 batch_count);
 
   std::unique_ptr< absl::Mutex > mutex_;
+  //std::unique_ptr< xla::gpu::AutotuneConfig > config_;
   absl::flat_hash_map<GroupedGemmConfig, BlasLt::GroupedMatmulPlanPtr> grouped_gemm_map_;
-
   absl::flat_hash_map<StridedGemmConfig, BlasLt::MatmulPlanPtr> strided_gemm_map_;
 };
 

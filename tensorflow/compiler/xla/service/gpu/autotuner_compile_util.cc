@@ -34,9 +34,23 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-StatusOr<RedzoneBuffers> RedzoneBuffers::FromInstruction(
+/* static */ StatusOr<RedzoneBuffers> RedzoneBuffers::FromInstruction(
     const HloInstruction& instruction, const AutotuneConfig& config,
-    se::Stream *stream,
+    se::Stream *stream, const DebugOptions& debug_options, 
+    BuffersToCreate buffers_to_create) {
+
+  std::vector< Shape > input_shapes;
+  input_shapes.reserve(instruction.operand_count());
+  for (const auto* operand : instruction.operands()) {
+    input_shapes.push_back(operand->shape());
+  }
+  return FromShapes(std::move(input_shapes), instruction.shape(), 
+          config, stream, debug_options, buffers_to_create);
+}
+
+/* static */ StatusOr<RedzoneBuffers> RedzoneBuffers::FromShapes(
+    std::vector<Shape>&& input_shapes, const Shape& output_shape,
+    const AutotuneConfig& config, se::Stream *stream,
     const DebugOptions& debug_options, BuffersToCreate buffers_to_create) {
   RedzoneBuffers buffers;
 
@@ -46,57 +60,52 @@ StatusOr<RedzoneBuffers> RedzoneBuffers::FromInstruction(
       std::make_unique<se::RedzoneAllocator>(std::move(rz_allocator));
 
   int64 rng_state = 0;
-
   TF_RETURN_IF_ERROR(
-      buffers.CreateInputs(instruction, config, debug_options, rng_state));
+      buffers.CreateInputs(std::move(input_shapes), config, rng_state));
 
   if (buffers_to_create == BuffersToCreate::kAllInputsAllOutputs ||
       buffers_to_create == BuffersToCreate::kAllInputsOutputsNoScratch) {
-    TF_RETURN_IF_ERROR(buffers.CreateOutputs(instruction, config, debug_options,
+    TF_RETURN_IF_ERROR(buffers.CreateOutputs(output_shape, config, 
                                              buffers_to_create, rng_state));
   }
-
   return buffers;
 }
 
-Status RedzoneBuffers::CreateInputs(const HloInstruction& instruction,
-                                          const AutotuneConfig& config,
-                                          const DebugOptions& debug_options,
-                                          int64& rng_state) {
-  for (const auto* operand : instruction.operands()) {
+Status RedzoneBuffers::CreateInputs(std::vector<Shape>&& input_shapes,
+                             const AutotuneConfig& config, int64& rng_state) {
+  input_shapes_ = std::move(input_shapes);
+  for (const auto& shape : input_shapes_) {
     TF_ASSIGN_OR_RETURN(
         se::DeviceMemoryBase buf,
-        AutotunerUtil::CreateBuffer(*redzone_allocator_, operand->shape(),
+        AutotunerUtil::CreateBuffer(*redzone_allocator_, shape,
                                     config, rng_state));
     input_buffers_.push_back(buf);
-    input_shapes_.push_back(operand->shape());
   }
   return Status::OK();
 }
 
-Status RedzoneBuffers::CreateOutputs(const HloInstruction& instruction,
+Status RedzoneBuffers::CreateOutputs(const Shape& output_shape,
                                            const AutotuneConfig& config,
-                                           const DebugOptions& debug_options,
                                            BuffersToCreate buffers_to_create,
                                            int64& rng_state) {
-  if (!instruction.shape().IsTuple()) {
+  if (!output_shape.IsTuple()) {
     TF_ASSIGN_OR_RETURN(
         se::DeviceMemoryBase buf,
-        AutotunerUtil::CreateBuffer(*redzone_allocator_, instruction.shape(),
+        AutotunerUtil::CreateBuffer(*redzone_allocator_, output_shape,
                                     config, rng_state));
     output_buffers_.push_back(buf);
-    output_shape_ = instruction.shape();
+    output_shape_ = output_shape;
     return Status::OK();
   }
 
   // The output is a tuple.
 
-  auto current_shape_it = instruction.shape().tuple_shapes().begin();
-  auto end = instruction.shape().tuple_shapes().end();
+  auto current_shape_it = output_shape.tuple_shapes().begin();
+  auto end = output_shape.tuple_shapes().end();
   end -= buffers_to_create == kAllInputsAllOutputs ? 0 : 1;
 
   output_shape_ = std::distance(current_shape_it, end) == 1
-                      ? output_shape_ = *current_shape_it
+                      ? *current_shape_it
                       : ShapeUtil::MakeTupleShape(
                             std::vector<Shape>{current_shape_it, end});
 

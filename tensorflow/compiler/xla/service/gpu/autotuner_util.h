@@ -150,8 +150,8 @@ struct AutotunerUtil {
       const AutotuneConfig& config, int64& rng_state);
 
   static StatusOr<tensorflow::AutotuneResult> Autotune(
-      const HloInstruction* instr, const AutotuneConfig& config,
-      const AutotuneNoCacheFn& autotune_fn);
+    const AutotuneCacheKey& key, const AutotuneConfig& config,
+    const AutotuneNoCacheFn& autotune_fn);
 
   // Returns the same cache key that would be used inside Autotune().
   //
