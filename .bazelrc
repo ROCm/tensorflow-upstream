@@ -289,6 +289,8 @@ build:rocm_base --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm_base --define=using_rocm_hipcc=true
 build:rocm_base --define=tensorflow_mkldnn_contraction_kernel=0
 build:rocm_base --repo_env TF_NEED_ROCM=1
+# TODO(rocm): Remove when we switch to clang 18 or later
+build:rocm_base --action_env=HIPCC_COMPILE_FLAGS_APPEND=-fclang-abi-compat=17
 
 build:rocm --config=rocm_base
 build:rocm --config=release_cpu_linux_base
