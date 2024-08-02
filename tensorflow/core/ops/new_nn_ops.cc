@@ -114,6 +114,39 @@ REGISTER_OP("GemmLayernormGemm")
     return Status::OK();
   });
 
+REGISTER_OP("GemmLayernorm")
+  .Input("matrix_a0: dataTP")
+  .Input("matrix_b0: dataTP")
+  .Input("matrix_c0: dataTP")
+  .Input("gamma: dataTP")
+  .Input("beta: dataTP")
+  .Output("output: dataTP")
+  .Attr("dataTP: {half}")
+  .Attr("head_num: int")
+  .SetShapeFn([](InferenceContext* c) {
+    int head_num;
+    TF_RETURN_IF_ERROR(c->GetAttr("head_num", &head_num));
+    // parameters checking
+    shape_inference::ShapeHandle unused_handle;
+    TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 3, &unused_handle));
+    TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 2, &unused_handle));
+    ShapeHandle s0 = c->input(0);
+    ShapeHandle s1 = c->input(1);
+    ShapeHandle out;
+    if (c->RankKnown(s0)) {
+      std::vector<DimensionHandle> dims;
+      dims.push_back(c->Dim(s0, 0));
+      dims.push_back(c->Dim(s0, 1));
+      dims.push_back(c->Dim(s1, 0));
+      out = c->MakeShape(dims);
+    } else {
+      out = c->UnknownShape();
+    }
+    for (int i = 0; i < c->num_outputs(); ++i) c->set_output(i, out);
+      return Status::OK();
+  });
+
+
 REGISTER_OP("GemvSoftmaxGemv")
   .Input("matrix_a0: dataTP")
   .Input("matrix_b0: dataTP")
