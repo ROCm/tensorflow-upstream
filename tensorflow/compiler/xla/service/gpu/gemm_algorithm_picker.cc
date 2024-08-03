@@ -128,9 +128,9 @@ class GemmAutotuner {
     // Don't run autotuning concurrently on the same GPU.
     tensorflow::mutex_lock gpu_lock = LockGpu(stream_->parent());
 
-    TF_ASSIGN_OR_RETURN(rz_buffers_, RedzoneBuffers::FromShapes(
-         std::move(input_shapes), output_shape, autotune_config_, stream_.get(), 
-          debug_options, RedzoneBuffers::kAllInputsAllOutputs));
+    //TF_ASSIGN_OR_RETURN(rz_buffers_, RedzoneBuffers::FromShapes(
+    //     std::move(input_shapes), output_shape, autotune_config_, stream_.get(), 
+    //      debug_options, RedzoneBuffers::kAllInputsAllOutputs));
     
     return TuneGpuBlasLt(output_shape, gemm_config, epilogue);
   }
@@ -182,6 +182,7 @@ class GemmAutotuner {
       TF_ASSIGN_OR_RETURN(rz_buffers_[it], RedzoneBuffers::FromInstruction(
                         *gemm, autotune_config_, stream_.get(), debug_options,
                         RedzoneBuffers::kAllInputsAllOutputs));
+    }
 
     return IsCublasLtMatmul(*gemm)
            ? TuneGpuBlasLt(gemm->shape(), gemm_config, backend_config.epilogue())
@@ -199,7 +200,7 @@ class GemmAutotuner {
          const GemmConfig& gemm_config, GemmBackendConfig::Epilogue epilogue) {
     
     auto workspace_buffer = 
-      rz_buffers_.output_buffers().at(out_shape.tuple_shapes_size() - 1);
+      rz_buffers_[rz_counter_].output_buffers().at(out_shape.tuple_shapes_size() - 1);
 
     bool has_matrix_bias = gemm_config.beta != 0.;
 
@@ -222,7 +223,7 @@ class GemmAutotuner {
 
     TF_ASSIGN_OR_RETURN(
         auto algorithms,
-        plan->GetAlgorithms(/*max_algorithm_count*/ solutions_limit_>0 ? GemmConfig::kMaxCublasLtAlgorithms : 128,,
+        plan->GetAlgorithms(/*max_algorithm_count*/ solutions_limit_>0 ? GemmConfig::kMaxCublasLtAlgorithms : 128,
                              /*max_workspace_size*/ workspace_buffer.size()));
     Nops = gemm_config.lhs_layout.num_rows * gemm_config.lhs_layout.num_cols 
             * gemm_config.rhs_layout.num_cols
@@ -230,6 +231,7 @@ class GemmAutotuner {
 
     auto tuned_func = [&](const BlasLt::MatmulAlgorithm& algorithm)
         -> StatusOr<se::blas::ProfileResult> {
+      plan->SetAlgorithm(algorithm);
       rz_counter_ = (rz_counter_ + 1) % rz_buffers_.size();
 
       if (has_vector_bias) {

@@ -450,6 +450,9 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
             checksum(pb, b_desc_.m_.num_rows*b_desc_.m_.num_cols*b_desc_.m_.batch_size), 
             checksum(pc, c_desc_.m_.num_rows*c_desc_.m_.num_cols*c_desc_.m_.batch_size)
             );
+          fflush(stdout);
+          if (!isfinite(float(pc[0])))
+            exit(0);
         } else {
           const float* pa = (const float*)(a.opaque());
           const float* pb = (const float*)(b.opaque());
@@ -461,10 +464,10 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
             checksum(pb, b_desc_.m_.num_rows*b_desc_.m_.num_cols*b_desc_.m_.batch_size), 
             checksum(pc, c_desc_.m_.num_rows*c_desc_.m_.num_cols*c_desc_.m_.batch_size)
             );
+          fflush(stdout);
+          if (!isfinite(float(pc[0])))
+            exit(0);
         }
-        fflush(stdout);
-        if (!isfinite(float(pc[0])))
-          exit(0);
       }
     } else {
       return xla::InternalError("hipblaslt: Invalid algorithm type");
