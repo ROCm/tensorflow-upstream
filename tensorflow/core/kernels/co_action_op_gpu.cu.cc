@@ -16,6 +16,7 @@
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/matmul_bcast.h"
 #include "tensorflow/core/util/work_sharder.h"
+#include "tensorflow/core/util/env_var.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -26,7 +27,8 @@
 #if GOOGLE_CUDA
 constexpr int kWarpSize = 32;
 #else
-constexpr int kWarpSize = 64;
+//constexpr int kWarpSize = 64;
+constexpr int kWarpSize = 32;
 #endif
 
 #define MAKE_SHARED2(T, Name, N, M)                                     \
@@ -183,6 +185,13 @@ Status LaunchCoActionIndicator<GPUDevice, Scalar, TIndex>::operator()(
     OpKernelContext* context, int64 m, int64 n, int64 k, const Tensor& in_a,
     const Tensor& in_b, const Tensor& indicator, Tensor* out, int64 batch_a,
     int64 batch_b, int64 paralle_num, int64 pow_num) {
+
+  static bool do_blas_logging = false;
+  static bool blas_logging_set = false;
+  if(!blas_logging_set) {
+      tensorflow::ReadBoolFromEnvVar("TF_ROCBLAS_TRACE", false, &do_blas_logging);
+      blas_logging_set = true;
+  }  
   IMatmulParam<Scalar, TIndex> param;
   param.A = const_cast<Scalar*>(in_a.template flat<Scalar>().data());
   param.B = const_cast<Scalar*>(in_b.template flat<Scalar>().data());
@@ -207,6 +216,24 @@ Status LaunchCoActionIndicator<GPUDevice, Scalar, TIndex>::operator()(
     return errors::InvalidArgument("Unsupported m, k, n, pow_num: ", m, k, n,
                                    pow_num);
   }
+    if(do_blas_logging) {
+      const Scalar* pa = param.A;
+      //int nA = batch_a * param.parallel_num * m * k;
+      const Scalar* pb = param.B;
+      const Scalar* pc = param.C;
+      int nC = pow_num * n * paralle_num * batch_b;
+      printf("ComputeCoActionIndicator: %p %p %p   %f %f %f %f -> %f %f  .. %f %f\n", 
+        pa, pb, pc,  
+        float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
+        float(pc[nC-2]), float(pc[nC-1])
+        //checksum(pa, ctx.m*ctx.k*ctx.batch_count), checksum(pb, ctx.n*ctx.k*ctx.batch_count),
+        //checksum(pc, ctx.m*ctx.n*ctx.batch_count)
+        );
+      fflush(stdout);
+      if (!isfinite(float(pc[0])))
+        exit(0);
+    }
+
   return Status::OK();
 }
 

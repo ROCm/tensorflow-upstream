@@ -54,6 +54,7 @@ namespace stream_executor {
 
 namespace gpu {
 void rocm_null_gpu_job(void* stream);
+extern bool do_blas_logging;
 };
 
 namespace rocm {
@@ -366,6 +367,18 @@ xla::Status BlasLt::MatmulPlan::ValidateInputs(
   return xla::Status::OK();
 }
 
+template <typename T>
+uint32_t checksum(const T* p, int n)
+{
+  const uint32_t* pp = reinterpret_cast<const uint32_t*>(p);
+  n *= sizeof(T);
+  n /= 4;
+  uint32_t s = 0;
+  for(int i=0; i<n; i++)
+    s ^= pp[i]*(i*3789597+1);
+  return s;
+}
+
 xla::Status BlasLt::MatmulPlan::DoMatmul(
     Stream* stream, const void* alpha, DeviceMemoryBase a, DeviceMemoryBase b,
     const void* beta, DeviceMemoryBase c, DeviceMemoryBase d,
@@ -455,13 +468,42 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
       VLOG(3)<<"Executing hipBlasLtMatmul " << a_desc_.m_.num_rows << " " << a_desc_.m_.num_cols
         << " " << b_desc_.m_.num_rows << " " << b_desc_.m_.num_cols
         <<  " with algo " << *(uint64_t*)palgo;
-      for(int i=0; i<n_iter; i++) {
-        SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatmul(
+      //for(int i=0; i<n_iter; i++) {
+       SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatmul(
             blas_lt_ref_.blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
             a_desc_.get(), b.opaque(), b_desc_.get(), beta, c.opaque(),
             c_desc_.get(), d.opaque(), d_desc_.get(), palgo, workspace_addr,
             workspace_size, gpu::AsGpuStreamValue(stream)));
+      //}
+      if(::stream_executor::gpu::do_blas_logging) {
+        if (a_desc_.type() == HIP_R_16F) {
+          const Eigen::half* pa = (const Eigen::half*)(a.opaque());
+          const Eigen::half* pb = (const Eigen::half*)(b.opaque());
+          const Eigen::half* pc = (const Eigen::half*)(c.opaque());
+          printf("Hipblaslt<half>: %p %p %p   %f %f %f %f -> %f %f  %08x %08x %08x\n", 
+          pa, pb, pc,  
+            float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
+            checksum(pa, a_desc_.m_.num_rows*a_desc_.m_.num_cols*a_desc_.m_.batch_size), 
+            checksum(pb, b_desc_.m_.num_rows*b_desc_.m_.num_cols*b_desc_.m_.batch_size), 
+            checksum(pc, c_desc_.m_.num_rows*c_desc_.m_.num_cols*c_desc_.m_.batch_size)
+            );
+        } else {
+          const float* pa = (const float*)(a.opaque());
+          const float* pb = (const float*)(b.opaque());
+          const float* pc = (const float*)(c.opaque());
+          printf("Hipblaslt<float>: %p %p %p   %f %f %f %f -> %f %f  %08x %08x %08x\n", 
+          pa, pb, pc,  
+            float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
+            checksum(pa, a_desc_.m_.num_rows*a_desc_.m_.num_cols*a_desc_.m_.batch_size), 
+            checksum(pb, b_desc_.m_.num_rows*b_desc_.m_.num_cols*b_desc_.m_.batch_size), 
+            checksum(pc, c_desc_.m_.num_rows*c_desc_.m_.num_cols*c_desc_.m_.batch_size)
+            );
+        }
+        fflush(stdout);
+        if (!isfinite(float(pc[0])))
+          exit(0);
       }
+
     } else {
       return xla::InternalError("hipblaslt: Invalid algorithm type");
     }

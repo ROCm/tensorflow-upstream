@@ -451,10 +451,15 @@ bool ROCMBlas::Init() {
   return true;
 }
 
+bool do_blas_logging = false;
+
 ROCMBlas::ROCMBlas(gpu::GpuExecutor *parent)
     : parent_(CHECK_NOTNULL(parent)), blas_(nullptr),
       blas_lt_(parent)
- {}
+{
+    tensorflow::ReadBoolFromEnvVar("TF_ROCBLAS_TRACE", false,
+                                &do_blas_logging);
+}
 
 ROCMBlas::~ROCMBlas() {
   if (blas_ != nullptr) {
@@ -1612,15 +1617,19 @@ bool ROCMBlas::DoBlasTrsv(Stream *stream, blas::UpperLower uplo,
 template <class T, class V, class W>
 bool ROCMBlas::DoBlasGemmImpl(Stream *stream, blas::GemmCallContext<T> ctx, V strided_fun, W fun)
 {
-	//VLOG(-1) << "Running DoBlasGemmImpl";
+  if (std::is_same<T, Eigen::half>::value) {
+    VLOG(1) << "Running DoBlasGemmImpl fp16";
+  } else {
+    VLOG(1) << "Running DoBlasGemmImpl fp32";
+  }
   if(ctx.output_profile_result)
   {
       LOG(ERROR) << "rocBLAS does not currently support profiling";
       return false;
   }
   
-  const T alpha(ctx.alpha);
-  const T beta(ctx.beta);
+  //const T alpha(ctx.alpha);
+  //const T beta(ctx.beta);
   typedef typename std::conditional<std::is_same<T, Eigen::half>::value, rocblas_half, T>::type DT;
 	
 	ScopedRocblasMathMode math_mode{parent_, blas_};
@@ -1632,26 +1641,28 @@ bool ROCMBlas::DoBlasGemmImpl(Stream *stream, blas::GemmCallContext<T> ctx, V st
   // we don't handle CallContext - this would not be called when XDLOPS are available (MI100 and up)
   if(ctx.stride_a>=0)
   {
+    VLOG(1) << "Using strided function";
     return DoBlasInternal(
         strided_fun, stream,
         false, /* pointer_mode_host */
         ROCMBlasTranspose(ctx.transa), ROCMBlasTranspose(ctx.transb), ctx.m, ctx.n, ctx.k,
-        reinterpret_cast<const DT *>(&alpha),
+        reinterpret_cast<const DT *>(&ctx.alpha),
         reinterpret_cast<const DT *>(GpuMemory(*ctx.pa)), ctx.lda, ctx.stride_a,
         reinterpret_cast<const DT *>(GpuMemory(*ctx.pb)), ctx.ldb, ctx.stride_b,
-        reinterpret_cast<const DT *>(&beta),
+        reinterpret_cast<const DT *>(&ctx.beta),
         reinterpret_cast<DT *>(GpuMemoryMutable(ctx.c)), ctx.ldc, ctx.stride_c,
         ctx.batch_count);
   }
   else
   {
+      VLOG(1) << "Using non-strided function";
       return DoBlasInternal(
         fun, stream, /* pointer_mode_host = */ true,
         ROCMBlasTranspose(ctx.transa), ROCMBlasTranspose(ctx.transb), ctx.m, ctx.n, ctx.k,
-        reinterpret_cast<const DT *>(&alpha),
+        reinterpret_cast<const DT *>(&ctx.alpha),
         reinterpret_cast<const DT *>(GpuMemory(*ctx.pa)), ctx.lda, 
         reinterpret_cast<const DT *>(GpuMemory(*ctx.pb)), ctx.ldb, 
-        reinterpret_cast<const DT *>(&beta),
+        reinterpret_cast<const DT *>(&ctx.beta),
         reinterpret_cast<DT *>(GpuMemoryMutable(ctx.c)), ctx.ldc);
   }
 }
@@ -1678,11 +1689,9 @@ float mean(const T* p, int n)
   return s/n;
 }
 
-bool do_blas_logging = false;
-
 bool ROCMBlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<Eigen::half> ctx, blas::ProfileResult *output_profile_result)
 {
-	//VLOG(-1) << "Running DoBlasGemm fp16";
+	VLOG(1) << "Running DoBlasGemm fp16";
   bool hasXDLOPS = false, gfx90a = false;
   auto status = GpuDriver::GetMFMASupport(hasXDLOPS, gfx90a);
   bool is_backprop =
@@ -1697,6 +1706,7 @@ bool ROCMBlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<Eigen::half> ctx
 #endif
     if(ctx.batch_count > 1)
     {
+      VLOG(1) << "Using rocblas_gemm_strided_batched_ex";
       return DoBlasInternal(
         wrap::rocblas_gemm_strided_batched_ex, stream, /* pointer_mode_host = */ true,
         ROCMBlasTranspose(ctx.transa), ROCMBlasTranspose(ctx.transb), 
@@ -1712,6 +1722,7 @@ bool ROCMBlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<Eigen::half> ctx
             rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, flags);
     }
 
+    VLOG(1) << "Using rocblas_gemm_ex";
     auto retval = DoBlasInternal(
       wrap::rocblas_gemm_ex, stream, /* pointer_mode_host = */ true,
       ROCMBlasTranspose(ctx.transa), ROCMBlasTranspose(ctx.transb), 
@@ -1724,48 +1735,51 @@ bool ROCMBlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<Eigen::half> ctx
       rocblas_datatype_f16_r, ctx.ldc,
       reinterpret_cast<void*>(GpuMemoryMutable(ctx.c)), rocblas_datatype_f16_r, ctx.ldc,
           rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, flags);
-    const Eigen::half* pa = (const Eigen::half*)(ctx.pa->opaque());
-    const Eigen::half* pb = (const Eigen::half*)(ctx.pb->opaque());
-    const Eigen::half* pc = (const Eigen::half*)(ctx.c->opaque());
-  if(do_blas_logging)
-    printf("DoBlasGemm<strided>: %p %p %p   %f %f %f %f -> %f %f  %08x %08x %08x\n", 
-    pa, pb, pc,  
-      float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
-      checksum(pa, ctx.m*ctx.k*ctx.batch_count), checksum(pb, ctx.n*ctx.k*ctx.batch_count),
-      checksum(pc, ctx.m*ctx.n*ctx.batch_count)
-      );
-    fflush(stdout);
-    if (!isfinite(float(pc[0])))
-      exit(0);
+    if(do_blas_logging) {
+      const Eigen::half* pa = (const Eigen::half*)(ctx.pa->opaque());
+      const Eigen::half* pb = (const Eigen::half*)(ctx.pb->opaque());
+      const Eigen::half* pc = (const Eigen::half*)(ctx.c->opaque());
+      printf("DoBlasGemm<strided>: %p %p %p   %f %f %f %f -> %f %f  %08x %08x %08x\n", 
+      pa, pb, pc,  
+        float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
+        checksum(pa, ctx.m*ctx.k*ctx.batch_count), checksum(pb, ctx.n*ctx.k*ctx.batch_count),
+        checksum(pc, ctx.m*ctx.n*ctx.batch_count)
+        );
+      fflush(stdout);
+      if (!isfinite(float(pc[0])))
+        exit(0);
+    }
     return retval;
   }
 
+  VLOG(1) << "Using rocblas_hgemm_strided_batched";
   auto retval = DoBlasGemmImpl(stream, ctx, wrap::rocblas_hgemm_strided_batched, wrap::rocblas_hgemm);
-  const Eigen::half* pa = (const Eigen::half*)(ctx.pa->opaque());
-  const Eigen::half* pb = (const Eigen::half*)(ctx.pb->opaque());
-  const Eigen::half* pc = (const Eigen::half*)(ctx.c->opaque());
-  if(do_blas_logging)
-  printf("DoBlasGemm<half>: %p %p %p  %f %f %f %f -> %f %f  %08x %08x %08x\n", 
-    pa, pb, pc,  
-    float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
-      checksum(pa, ctx.m*ctx.k*ctx.batch_count), checksum(pb, ctx.n*ctx.k*ctx.batch_count),
-      checksum(pc, ctx.m*ctx.n*ctx.batch_count));
-  fflush(stdout);
-  if (!isfinite(float(pc[0])))
-    exit(0);
+  if(do_blas_logging) {
+    const Eigen::half* pa = (const Eigen::half*)(ctx.pa->opaque());
+    const Eigen::half* pb = (const Eigen::half*)(ctx.pb->opaque());
+    const Eigen::half* pc = (const Eigen::half*)(ctx.c->opaque());
+    printf("DoBlasGemm<half>: %p %p %p  %f %f %f %f -> %f %f  %08x %08x %08x\n", 
+      pa, pb, pc,  
+      float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
+        checksum(pa, ctx.m*ctx.k*ctx.batch_count), checksum(pb, ctx.n*ctx.k*ctx.batch_count),
+        checksum(pc, ctx.m*ctx.n*ctx.batch_count));
+    fflush(stdout);
+    if (!isfinite(float(pc[0])))
+      exit(0);
+  }
   return retval;
 }
 
 bool ROCMBlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<float> ctx, blas::ProfileResult *output_profile_result)
 {
-	//VLOG(-1) << "Running DoBlasGemm fp32";
+	VLOG(1) << "Running DoBlasGemm fp32";
   auto retval = DoBlasGemmImpl(stream, ctx, wrap::rocblas_sgemm_strided_batched, wrap::rocblas_sgemm);
-  const float* pa = (const float*)(ctx.pa->opaque());
-  const float* pb = (const float*)(ctx.pb->opaque());
-  const float* pc = (const float*)(ctx.c->opaque());
-  int m = ctx.m, n = ctx.n, k = ctx.k;
-  int N = ctx.n*ctx.k*ctx.batch_count;
-  if(do_blas_logging)
+  if(do_blas_logging) {
+    const float* pa = (const float*)(ctx.pa->opaque());
+    const float* pb = (const float*)(ctx.pb->opaque());
+    const float* pc = (const float*)(ctx.c->opaque());
+    int m = ctx.m, n = ctx.n, k = ctx.k;
+    int N = ctx.n*ctx.k*ctx.batch_count;
     printf("DoBlasGemm<float>: %d %d %d, %p %p %p  %f %f,  %f %f .. %f %f -> %f %f   %08x %08x %08x\n",
     m, n, k,
     pa, pb, pc,  
@@ -1774,44 +1788,10 @@ bool ROCMBlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<float> ctx, blas
     float(pc[0]), float(pc[1]),
       checksum(pa, ctx.m*ctx.k*ctx.batch_count), checksum(pb, ctx.n*ctx.k*ctx.batch_count),
       checksum(pc, ctx.m*ctx.n*ctx.batch_count));
-  if(n*k==5244*166) {
-    /*
-    FILE* f=fopen("dump.bin","wb");
-    fwrite(pb, n*k*4, 1, f);
-    fclose(f);
-    exit(0);
-    */
-    #if 0
-    float* d = new float[5244*166];
-    FILE* f=fopen("dump.bin","rb");
-    fread(d, n*k*4, 1, f);
-    fclose(f);
-
-    for(int i=0; i<16; i++)
-      printf("%p %d %08x %f\n", pb+(ctx.n*ctx.k*ctx.batch_count*i)/16, ctx.n*ctx.k*ctx.batch_count/16,
-        checksum(pb+(ctx.n*ctx.k*ctx.batch_count*i)/16, ctx.n*ctx.k*ctx.batch_count/16),
-        mean(pb+(ctx.n*ctx.k*ctx.batch_count*i)/16, ctx.n*ctx.k*ctx.batch_count/16));
-    printf("%f %f %f %f\n",
-      mean(pb,5244), mean(pb+5244,5244),
-      mean(pb,1024), mean(pb+1024,1024));
-//    int print_count=0;
-    float print_level = 0;
-    for(int i=0; i<n*k; i++)
-      if(fabs(pb[i]-d[i])>print_level) {
-        printf("%d  %f %f %e\n", i, pb[i], d[i], pb[i]-d[i]);
-        if(print_level==0)
-          print_level=1.;
-        else if(print_level<1e5)
-          print_level*=10.;
-        else
-          break;
-      }
-    delete[] d;
-   #endif 
+    fflush(stdout);
+    if (!isfinite(float(pc[0])))
+      exit(0);
   }
-  fflush(stdout);
-  if (!isfinite(float(pc[0])))
-    exit(0);
 
   return retval;
 }
@@ -2222,9 +2202,11 @@ inline port::Status ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::Batche
     return port::InternalError("Failed BLAS call: unsupported irregular output batch pointers in BlasGemmBatched");
   }
 
-  auto *alpha_ptr = reinterpret_cast<MAPPED_T *>(&ctx.alpha);
-  auto *beta_ptr = reinterpret_cast<MAPPED_T *>(&ctx.beta);
 #if 1
+  auto alpha_val = T(ctx.alpha);
+  auto beta_val = T(ctx.beta);
+  auto *alpha_ptr = reinterpret_cast<MAPPED_T *>(&alpha_val);
+  auto *beta_ptr = reinterpret_cast<MAPPED_T *>(&beta_val);
   bool ok = DoBlasInternal(
       rocblas_func, stream, /* pointer_mode_host = */ true,
       ROCMBlasTranspose(transa), ROCMBlasTranspose(transb), m, n, k,
@@ -2232,6 +2214,8 @@ inline port::Status ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::Batche
       GpuMemory(b.device_mem), ldb, batch_stride_b, GpuComplex(beta_ptr),
       GpuMemoryMutable(&c.device_mem), ldc, batch_stride_c, batch_count);
 #else
+  auto *alpha_ptr = reinterpret_cast<MAPPED_T *>(&ctx.alpha);
+  auto *beta_ptr = reinterpret_cast<MAPPED_T *>(&ctx.beta);
   auto datatype = std::is_same<T, Eigen::half>::value ? rocblas_datatype_f16_r : 
       (std::is_same<T, float>::value ? rocblas_datatype_f32_r : rocblas_datatype_f64_r);
   bool ok = DoBlasInternal(
@@ -2247,22 +2231,22 @@ inline port::Status ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::Batche
         batch_count, 
         rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
 #endif  
-  const T* pa = reinterpret_cast<const T*>(a.device_mem.opaque());
-  const T* pb = reinterpret_cast<const T*>(b.device_mem.opaque());
-  const T* pc = reinterpret_cast<const T*>(c.device_mem.opaque());
-  int N = batch_count * batch_stride_c;
-  if(do_blas_logging)
-  printf("DoBlasGemmBatched:  %p %p %p   %f %f %f %f -> %f %f .. %f %f  %08x %08x %08x\n", 
-    pa, pb, pc,  
-    float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
-      float(pc[N-2]), float(pc[N-1]),
-      checksum(pa, m*k*batch_count), checksum(pb, n*k*batch_count),
-      checksum(pc, m*n*batch_count)
-      );
-  fflush(stdout);
-  if (!isfinite(float(pc[0])))
-    exit(0);
-
+  if(do_blas_logging) {
+    const T* pa = reinterpret_cast<const T*>(a.device_mem.opaque());
+    const T* pb = reinterpret_cast<const T*>(b.device_mem.opaque());
+    const T* pc = reinterpret_cast<const T*>(c.device_mem.opaque());
+    int N = batch_count * batch_stride_c;
+    printf("DoBlasGemmBatched:  %p %p %p   %f %f %f %f -> %f %f .. %f %f  %08x %08x %08x\n", 
+      pa, pb, pc,  
+      float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
+        float(pc[N-2]), float(pc[N-1]),
+        checksum(pa, m*k*batch_count), checksum(pb, n*k*batch_count),
+        checksum(pc, m*n*batch_count)
+        );
+    fflush(stdout);
+    if (!isfinite(float(pc[0])))
+      exit(0);
+  }
   if (ok) {
     return port::Status::OK();
   } else {
@@ -2355,21 +2339,21 @@ inline port::Status ROCMBlas::DoBlasGemmBatchedImpl(Stream *stream, blas::Batche
         batch_count, 
         rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
 #endif
-  const T* pa = reinterpret_cast<const T*>(a.device_mem.opaque());
-  const T* pb = reinterpret_cast<const T*>(b.device_mem.opaque());
-  const T* pc = reinterpret_cast<const T*>(c.device_mem.opaque());
-  int N = batch_count * batch_stride_c;
-  if(do_blas_logging)
-  printf("DoBlasGemmBatched2:  %p %p %p   %f %f %f %f -> %f %f .. %f %f  %08x %08x %08x\n", 
-    pa, pb, pc,  
-    float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
-      float(pc[N-2]), float(pc[N-1]),
-      checksum(pa, m*k*batch_count), checksum(pb, n*k*batch_count),
-      checksum(pc, m*n*batch_count));
-  fflush(stdout);
-  if (!isfinite(float(pc[0])))
-    exit(0);
-
+  if(do_blas_logging) {
+    const T* pa = reinterpret_cast<const T*>(a.device_mem.opaque());
+    const T* pb = reinterpret_cast<const T*>(b.device_mem.opaque());
+    const T* pc = reinterpret_cast<const T*>(c.device_mem.opaque());
+    int N = batch_count * batch_stride_c;
+    printf("DoBlasGemmBatched2:  %p %p %p   %f %f %f %f -> %f %f .. %f %f  %08x %08x %08x\n", 
+      pa, pb, pc,  
+      float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
+        float(pc[N-2]), float(pc[N-1]),
+        checksum(pa, m*k*batch_count), checksum(pb, n*k*batch_count),
+        checksum(pc, m*n*batch_count));
+    fflush(stdout);
+    if (!isfinite(float(pc[0])))
+      exit(0);
+  }
   if (ok) {
     return port::Status::OK();
   } else {
@@ -2382,10 +2366,12 @@ template port::Status ROCMBlas::DoBlasGemmBatchedImpl<float, decltype(wrap::rocb
 template port::Status ROCMBlas::DoBlasGemmBatchedImpl<double, decltype(wrap::rocblas_dgemm_strided_batched)> (Stream *stream, blas::BatchedGemmCallContext<double> ctx, decltype(wrap::rocblas_dgemm_strided_batched) rocblas_func);
 
 bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<Eigen::half> ctx) {
+  VLOG(1) << "DoBlasGemmBatchedImpl half";
   return DoBlasGemmBatchedImpl(stream, ctx, wrap::rocblas_hgemm_strided_batched).ok();
 }
 
 bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::BatchedGemmCallContext<float> ctx) {
+  VLOG(1) << "DoBlasGemmBatchedImpl float";
   return DoBlasGemmBatchedImpl(stream, ctx, wrap::rocblas_sgemm_strided_batched).ok();
 }
 
@@ -2401,6 +2387,7 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  const Eigen::half **b_array, int ldb,
                                  float beta, Eigen::half **c_array, int ldc,
                                  int batch_count, ScratchAllocator* allocator) {
+  VLOG(1) << "DoBlasGemmBatchedImpl2 half";
   blas::BatchedGemmCallContext2<Eigen::half> ctx
   {
     transa, transb, m, n, k,
@@ -2417,6 +2404,7 @@ bool ROCMBlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  int lda, const float **b_array, int ldb,
                                  float beta, float **c_array, int ldc,
                                  int batch_count, ScratchAllocator* allocator) {
+  VLOG(1) << "DoBlasGemmBatchedImpl float";
 	ScopedRocblasMathMode math_mode{parent_, blas_};
 	if (!math_mode.Init(rocblas_xf32_xdl_math_op)) {
 		return false;
@@ -2754,7 +2742,7 @@ bool ROCMBlas::DoBlasGemmStridedBatched(
   const Eigen::half alpha_half(alpha);
   const Eigen::half beta_half(beta);
 
-	//VLOG(-1) << "Running DoBlasGemmStridedBatched fp16";
+	VLOG(1) << "Running DoBlasGemmStridedBatched fp16";
   return DoBlasInternal(
       wrap::rocblas_hgemm_strided_batched, stream,
       false, /* pointer_mode_host */
@@ -2773,7 +2761,7 @@ bool ROCMBlas::DoBlasGemmStridedBatched(
     int64 stride_a, const DeviceMemory<float> &b, int ldb, int64 stride_b,
     float beta, DeviceMemory<float> *c, int ldc, int64 stride_c,
     int batch_count) {
-	//VLOG(-1) << "Running DoBlasGemmStridedBatched fp32";
+	VLOG(1) << "Running DoBlasGemmStridedBatched fp32";
   return DoBlasInternal(wrap::rocblas_sgemm_strided_batched, stream,
                         false, /* pointer_mode_host */
                         ROCMBlasTranspose(transa), ROCMBlasTranspose(transb), m,
