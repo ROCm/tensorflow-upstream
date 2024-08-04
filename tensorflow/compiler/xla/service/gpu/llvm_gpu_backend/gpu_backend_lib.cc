@@ -665,6 +665,63 @@ void AMDGPUBackendInit(const HloModuleConfig& hlo_module_config) {
 }  // namespace
 
 namespace amdgpu {
+
+
+struct HsacoCacheEntry {
+  uint64_t hash;
+  std::string ir;
+  std::string gfx;
+  std::vector<uint8_t> hsaco;
+};
+
+struct HsacoCache {
+ protected:
+  std::vector<HsacoCacheEntry> cache;
+  std::mutex m_mutex;
+  int request_count = 0;
+  int hit_count = 0;
+
+ public:
+  static bool Find(const std::string& ir, uint64_t& hash,
+                   const std::string& gfx, std::vector<uint8_t>& hsaco);
+  static void Add(const std::string& ir, uint64_t hash, const std::string& gfx,
+                  const std::vector<uint8_t>& hsaco);
+};
+
+static HsacoCache g_hsacoCache;  // NOLINT: static/global vars forbidden
+
+bool HsacoCache::Find(const std::string& ir, uint64_t& hash,
+                      const std::string& gfx, std::vector<uint8_t>& hsaco) {
+  std::lock_guard<std::mutex> lg(g_hsacoCache.m_mutex);
+  hash = std::hash<std::string>{}(ir);
+  bool hit = false;
+  for (auto& x : g_hsacoCache.cache) {
+    if (x.hash != hash) continue;
+    if (x.gfx != gfx) continue;
+    if (x.ir != ir) continue;
+    hsaco = x.hsaco;
+    hit = true;
+    break;
+  }
+  g_hsacoCache.request_count++;
+  if (hit) g_hsacoCache.hit_count++;
+  if (!(g_hsacoCache.request_count % 50))
+    VLOG(1) << "HSACO cache: " << g_hsacoCache.request_count << " requests, "
+            << g_hsacoCache.hit_count << " hits";
+  return hit;
+}
+
+void HsacoCache::Add(const std::string& ir, uint64_t hash,
+                     const std::string& gfx,
+                     const std::vector<uint8_t>& hsaco) {
+  std::lock_guard<std::mutex> lg(g_hsacoCache.m_mutex);
+  g_hsacoCache.cache.resize(g_hsacoCache.cache.size() + 1);
+  g_hsacoCache.cache.back().ir = ir;
+  g_hsacoCache.cache.back().hash = hash;
+  g_hsacoCache.cache.back().gfx = gfx;
+  g_hsacoCache.cache.back().hsaco = hsaco;
+}
+
 StatusOr<std::vector<uint8>> CompileToHsaco(
     llvm::Module* module, GpuVersion gpu_version,
     const HloModuleConfig& hlo_module_config, const string& rocdl_dir_path) {
@@ -673,6 +730,22 @@ StatusOr<std::vector<uint8>> CompileToHsaco(
 
   std::vector<uint8> hsaco;
   std::unique_ptr<llvm::TargetMachine> target_machine;
+
+  std::string str;
+  llvm::raw_string_ostream stream(str);
+  stream << *module;
+
+  // Delete the first two lines, since they usually vary even when the rest of
+  // the code is the same (but verify that they are what we expect).
+  if (str.size() >= 13 && str.substr(0, 13) == "; ModuleID = ") {
+    auto pos = str.find('\n');
+    if (pos != std::string::npos) str = str.substr(pos + 1);
+  }
+  if (str.size() >= 18 && str.substr(0, 18) == "source_filename = ") {
+    auto pos = str.find('\n');
+    if (pos != std::string::npos) str = str.substr(pos + 1);
+  }
+
   {
     tensorflow::profiler::TraceMe activity(
         [&] { return absl::StrCat("Compiling IR", module->getName().str()); },
@@ -684,6 +757,13 @@ StatusOr<std::vector<uint8>> CompileToHsaco(
       return xla::InternalError(
           "Incompatible AMD GCN ISA version was specified.");
     }
+
+    uint64_t hash;
+    if (HsacoCache::Find(str, hash, std::to_string(*amdgpu_version), hsaco)) {
+      VLOG(1) << "HSACO cache hit";
+      return hsaco;
+    }
+    VLOG(1) << "HSACO cache miss";
 
     llvm::Triple default_target_triple("amdgcn--amdhsa-amdgiz");
     // Construct LLVM TargetMachine for AMDGPU.
@@ -730,6 +810,7 @@ StatusOr<std::vector<uint8>> CompileToHsaco(
 
     // Lower optimized LLVM module to HSA code object.
     TF_ASSIGN_OR_RETURN(hsaco, EmitModuleToHsaco(module, target_machine.get(), optimized_ir_path, isabin_path, hsaco_path));
+    HsacoCache::Add(str, hash, std::to_string(*amdgpu_version), hsaco);
   }
   return hsaco;
 }
