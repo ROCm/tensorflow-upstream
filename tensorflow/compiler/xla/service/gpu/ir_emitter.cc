@@ -236,7 +236,7 @@ bool IrEmitter::MaybeEmitDirectAtomicOperation(
     if ( (target_triple.isNVPTX() || target_triple.getArch() == llvm::Triple::amdgcn) && element_type == F32) {
       // F32 + F32
       AtomicRMW(llvm::AtomicRMWInst::FAdd, output_address, source,
-                llvm::AtomicOrdering::SequentiallyConsistent);
+                llvm::AtomicOrdering::Monotonic);
       return true;
     }
     if (is_atomic_integral) {
