@@ -15,7 +15,8 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/gpu/gpu_blas_lt_gemm_runner.h"
 #include "tensorflow/stream_executor/stream.h"
-//#include "tensorflow/compiler/xla/debug_options_flags.h"
+// #include "tensorflow/compiler/xla/debug_options_flags.h"
+// #include "tensorflow/compiler/xla/service/gpu/autotuner_util.h"
 // #include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
 #include "tensorflow/compiler/xla/util.h"
 
@@ -37,9 +38,9 @@ bool operator ==(const StridedGemmConfig& rhs, const StridedGemmConfig& lhs) {
 
 BlasLtGemmRunner::BlasLtGemmRunner(StreamExecutor *parent) :
     mutex_(std::make_unique< absl::Mutex >())
-    // config_(std::make_unique< xla::gpu::AutotuneConfig >(
-    //       xla::gpu::DeviceConfig{parent, nullptr}, 
-    //         xla::GetDebugOptionsFromFlags())) 
+    // , config_(std::make_unique< xla::gpu::AutotuneConfig >(
+    //        xla::gpu::DeviceConfig{parent, nullptr}, 
+    //          xla::GetDebugOptionsFromFlags())) 
     { }
 
 /*static*/ BlasLtGemmRunner& BlasLtGemmRunner::i(const Stream *stream) {
@@ -54,12 +55,48 @@ BlasLtGemmRunner::BlasLtGemmRunner(StreamExecutor *parent) :
     return meta.emplace(exec, std::move(r)).first->second;
 }
 
-xla::Status BlasLtGemmRunner::RunBatched(Stream& stream, blas::Transpose transa, 
-      blas::Transpose transb, uint64 m, uint64 n, uint64 k, 
-      const void *alpha, blas::DataType type_a, const void** a, int lda, 
-      blas::DataType type_b, const void** b, int ldb, const void *beta,
-      blas::DataType type_c, void** c, int ldc, int batch_count) {
+template < class TuneFunc >
+xla::StatusOr< gpu::BlasLt::MatmulAlgorithm > BlasLtGemmRunner::Autotune(
+            const std::vector< gpu::BlasLt::MatmulAlgorithm >& algorithms,
+                                TuneFunc&& benchmark_func) {
+  
+  gpu::BlasLt::MatmulAlgorithm best_algo;
+  float best_ms = std::numeric_limits< float >::max(), total_ms = 0;
+  uint32_t n_warmups = 1, n_iters = 5, n_total = n_warmups + n_iters, i = 0;
+    
+  for (const auto& algo : algorithms) {
 
+    if (!benchmark_func(algo, nullptr).ok()) continue;
+
+    blas::ProfileResult profile;
+    for (i = 0, total_ms = 0; i < n_total; i++) {
+      if (!benchmark_func(algo, &profile).ok() || !profile.is_valid()) { 
+        VLOG(2) << "gemm algorithm: " << profile.algorithm() << " not valid!";
+        break;
+      }
+      if (i >= n_warmups) total_ms += profile.elapsed_time_in_ms();
+    }
+    if (i < n_total) continue; // invalid algorithm
+    total_ms /= n_iters;
+    VLOG(2) << "gemm algorithm " << profile.algorithm() << " took " 
+                  << total_ms << "ms, workspace: " << algo.workspace_size;
+    if (total_ms < best_ms) {
+      best_ms = total_ms, best_algo = algo;
+    }
+  } // for algos
+  if (!best_algo.opaque_algo.has_value()) {
+    return xla::InternalError("No valid gemm algorithms found!");
+  }
+  return best_algo;
+}
+
+xla::Status BlasLtGemmRunner::RunBatchedImpl(Stream& stream, 
+      blas::Transpose trans_a, blas::Transpose trans_b, int64 m, int64 n, int64 k, 
+      const void *alpha, blas::DataType type_a, const void** a, int64 lda, 
+      blas::DataType type_b, const void** b, int64 ldb, const void *beta,
+      blas::DataType type_c, void** c, int64 ldc, int64 batch_count,
+      ScratchAllocator* allocator)
+{
   TF_ASSIGN_OR_RETURN(auto compute_type, 
             gpu::GetBlasComputationType(type_a, type_c, 0));
 
@@ -68,8 +105,8 @@ xla::Status BlasLtGemmRunner::RunBatched(Stream& stream, blas::Transpose transa,
     .n = (int64)n,
     .k = (int64)k,
     .batch_count = (int64)batch_count,
-    .trans_a = transa,
-    .trans_b = transb,
+    .trans_a = trans_a,
+    .trans_b = trans_b,
     .alpha = alpha,
     .beta = beta,
     .type_a = type_a,
@@ -91,18 +128,28 @@ xla::Status BlasLtGemmRunner::RunBatched(Stream& stream, blas::Transpose transa,
 
   auto res = grouped_gemm_map_.find(cfg);
   if(res == grouped_gemm_map_.end()) {
+
+    // NOTE: we assume that pointers a,b,c come from the device mem
+    // hence we need to block stream here
+
     TF_ASSIGN_OR_RETURN(auto plan_res, 
-            gpu::BlasLt::GetGroupedMatmulPlan(&stream, nullptr, cfg));
+            gpu::BlasLt::CreateGroupedMatmulPlan(&stream, cfg));
     res = grouped_gemm_map_.emplace(cfg, std::move(plan_res)).first;
 
     TF_ASSIGN_OR_RETURN(auto algos, res->second->GetAlgorithms());
-    VLOG(2) << "++++++++++++++++ added new config: " << grouped_gemm_map_.size() << 
-        " algos found: " << algos.size();
-    if(algos.empty()) {
-      return xla::InternalError("No valid algorithms found!");
-    }
-    res->second->SetAlgorithm(algos[0]);
-  }
+    VLOG(1) << stream.parent() << ": new GGemm config: " << 
+          grouped_gemm_map_.size() << " #valid algorithms: " << algos.size();
+
+    TF_ASSIGN_OR_RETURN(auto best_algo, Autotune(algos, 
+      [&](const gpu::BlasLt::MatmulAlgorithm& algo, blas::ProfileResult *profile){
+          if(profile == nullptr) {
+            return res->second->SetAlgorithm(algo, allocator);
+          }
+          return res->second->ExecuteOnStream(&stream, cfg, profile);
+    })); 
+
+    TF_RETURN_IF_ERROR(res->second->SetAlgorithm(best_algo, allocator));
+  } 
   return res->second->ExecuteOnStream(&stream, cfg);
 }
 
@@ -113,7 +160,7 @@ xla::Status BlasLtGemmRunner::RunStridedBatchedImpl(Stream& stream,
       blas::DataType type_b, const DeviceMemoryBase& b, int64 ldb, int64 stride_b,
       double beta,
       blas::DataType type_c, DeviceMemoryBase *c, int64 ldc, int64 stride_c, 
-      int64 batch_count)
+      int64 batch_count, ScratchAllocator* allocator)
 {
   TF_ASSIGN_OR_RETURN(auto compute_type, 
             gpu::GetBlasComputationType(type_a, type_c, 0));
@@ -184,14 +231,29 @@ xla::Status BlasLtGemmRunner::RunStridedBatchedImpl(Stream& stream,
     //  std::vector< Shape >&& input_shapes, const Shape& output_shape,
     //  const DebugOptions& debug_options));
 
-
     TF_ASSIGN_OR_RETURN(auto algos, res->second->GetAlgorithms());
-    VLOG(2) << "+++++++++++++ added new config: " << strided_gemm_map_.size() << 
-        " algos found: " << algos.size();
-    if(algos.empty()) {
-      return xla::InternalError("No valid algorithms found!");
-    }
-    res->second->SetAlgorithm(algos[0]);
+    VLOG(1) << stream.parent() << ": new StridedBatched config: " << 
+        strided_gemm_map_.size() << " #algorithms: " << algos.size();
+
+    TF_ASSIGN_OR_RETURN(auto best_algo, Autotune(algos, 
+        [&](const gpu::BlasLt::MatmulAlgorithm& algo, blas::ProfileResult *profile){
+          if(profile == nullptr) {
+            return res->second->SetAlgorithm(algo);
+          }
+          return res->second->ExecuteOnStream(
+              &stream, a, b, *c, *c,
+              DeviceMemoryBase{}, // bias
+              DeviceMemoryBase{}, // aux
+              DeviceMemoryBase{}, // a_scale
+              DeviceMemoryBase{}, // b_scale
+              DeviceMemoryBase{}, // c_scale
+              DeviceMemoryBase{}, // d_scale
+              DeviceMemoryBase{}, // d_amax
+              absl::nullopt, // workspace
+              allocator,          // allocator
+              profile);
+    })); 
+    res->second->SetAlgorithm(best_algo);
   }
   return res->second->ExecuteOnStream(
       &stream, a, b, *c, *c,
@@ -202,7 +264,8 @@ xla::Status BlasLtGemmRunner::RunStridedBatchedImpl(Stream& stream,
       DeviceMemoryBase{}, // c_scale
       DeviceMemoryBase{}, // d_scale
       DeviceMemoryBase{}, // d_amax
-      DeviceMemoryBase{}); // workspace
+      absl::nullopt, 
+      allocator); // workspace
 }
 
 

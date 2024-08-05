@@ -405,8 +405,8 @@ static void InitializeTypedBuffer(se::Stream* stream,
   int64 second_size = std::min<int64>(host_index, elements_to_fill);
   CHECK_LE(first_size + second_size, host_buffer_size);
   // = buffer.GetByteSlice(first_size * sizeof(T), second_size * sizeof(T));
-  se::DeviceMemoryBase mem(buffer.opaque() + first_size * sizeof(T),
-                           second_size * sizeof(T));
+  se::DeviceMemoryBase mem(static_cast< uint8_t *>(buffer.opaque()) 
+        + first_size * sizeof(T), second_size * sizeof(T));
 
   stream->ThenMemcpy(&mem, host_buffer->data(), mem.size());
   elements_to_fill -= second_size;

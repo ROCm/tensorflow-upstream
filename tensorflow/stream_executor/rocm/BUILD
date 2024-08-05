@@ -1,12 +1,11 @@
 # Description:
 #   ROCm-platform specific StreamExecutor support code.
 
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 load(
     "//tensorflow/stream_executor:build_defs.bzl",
     "stream_executor_friends",
 )
-load("//tensorflow:tensorflow.bzl", "tf_copts")
+load("//tensorflow:tensorflow.bzl", "tf_copts", "tf_cc_test")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts")
 load("//tensorflow/core/platform:default/build_config_root.bzl", "if_static")
 
@@ -192,18 +191,24 @@ cc_library(
     alwayslink = True,
 )
 
-# cc_library(
-#     name = "hipblaslt_if_static",
-#     deps = [
-#         "@local_config_rocm//rocm:hipblaslt",
-#     ],
-# )
+cc_library(
+    name = "hipblas_lt_kernel",
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+    ]),
+    srcs = if_rocm_is_configured(["hip_blas_lt.cu.cc"]),
+    copts = rocm_copts(),
+    deps = if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+        #MATH_DEPS
+    ])
+)
 
 cc_library(
     name = "amdhipblaslt_plugin",
     srcs = if_rocm_is_configured([
             "hip_blas_lt.cc",
-            "hip_blas_utils.cc"
+            "hip_blas_utils.cc",
     ]),
     hdrs = if_rocm_is_configured([
         "hip_blas_lt.h",
@@ -214,6 +219,7 @@ cc_library(
     deps = if_rocm_is_configured([
         # keep sorted
         ":hipblas_lt_header",
+        ":hipblas_lt_kernel",
         ":rocm_platform_id",
         "@com_google_absl//absl/types:any",
         "//tensorflow/stream_executor/gpu:gpu_blas_lt",
@@ -231,12 +237,10 @@ cc_library(
         "//tensorflow/stream_executor:scratch_allocator",
         "@local_config_rocm//rocm:rocm_headers",
     ]),
-    # + if_static([
-    #     ":hipblaslt_if_static",
-    # ]),
     linkopts = ["-lhipblaslt"],
     alwayslink = True,
 )
+
 
 cc_library(
     name = "hipblas_lt_header",
