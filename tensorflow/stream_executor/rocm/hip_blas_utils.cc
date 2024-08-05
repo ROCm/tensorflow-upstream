@@ -16,6 +16,7 @@ limitations under the License.
 #include "tensorflow/stream_executor/rocm/hip_blas_utils.h"
 #include "tensorflow/stream_executor/blas.h"
 #include "tensorflow/compiler/xla/util.h"
+#include "tensorflow/core/util/env_var.h"
 
 namespace stream_executor {
 namespace rocm {
@@ -51,12 +52,22 @@ hipDataType AsHipblasDataType(blas::DataType type) {
   }
 }
 
+static bool TF32_Enabled() {
+  static std::atomic_bool result{[] {
+    bool value = false;
+    tensorflow::ReadBoolFromEnvVar("ROCM_XF32",
+                     /*default_value=*/false, &value);
+    return value;
+  }()};
+  return result;
+}
+
 hipblasComputeType_t AsHipblasComputeType(blas::ComputationType type) {
-  if (type == blas::ComputationType::kF32)
+  if (type == blas::ComputationType::kF32) {
       //|| type == blas::ComputationType::kTF32AsF32)
-    return HIPBLAS_COMPUTE_32F;
-  else
-    LOG(FATAL) << "unsupported hipblaslt computation type";
+    return TF32_Enabled() ? HIPBLAS_COMPUTE_32F_FAST_TF32 : HIPBLAS_COMPUTE_32F; 
+  } 
+  LOG(FATAL) << "unsupported hipblaslt computation type";
 }
 
 hipblasOperation_t AsHipblasOperation(blas::Transpose trans) {
