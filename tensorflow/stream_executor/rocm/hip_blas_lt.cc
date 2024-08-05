@@ -56,8 +56,7 @@ namespace stream_executor {
 
 namespace gpu {
 void rocm_null_gpu_job(void* stream);
-extern bool do_blas_logging;
-};
+}
 
 namespace rocm {
 
@@ -139,6 +138,27 @@ static xla::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
 
 }  // namespace
 
+
+
+template <typename T>
+uint32_t checksum(const T* p, int n, int& n_inf)
+{
+  const uint32_t* pp = reinterpret_cast<const uint32_t*>(p);
+  n *= sizeof(T);
+  n /= 4;
+  n_inf = 0;
+  uint32_t s = 0;
+  for(int i=0; i<n; i++) {
+    s ^= pp[i]*(i*3789597+1);
+    if(sizeof(T)==4)
+      n_inf += !isfinite(p[i]);
+    else
+      n_inf += (isfinite(float(p[2*i]))?0:1) + (isfinite(float(p[2*i+1]))?0:1);
+  }
+  return s;
+}
+
+
 xla::Status BlasLt::Init() {
   hipblasLtHandle_t blas_lt;
   SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtCreate(&blas_lt));
@@ -214,7 +234,7 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
   std::vector<hipblasLtMatmulHeuristicResult_t> results(max_algorithm_count);
 
   {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(&blas_lt_ref_.mu_);
     TF_RET_CHECK(blas_lt_ref_.blas_lt_ != nullptr);
 
     hipblasLtMatmulPreference_t hip_preference;
@@ -329,20 +349,8 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
                                       std::move(a_desc), std::move(b_desc),
                                       std::move(c_desc), std::move(d_desc),
                                       cfg.alpha, cfg.beta, must_swap_operands);
+
   return xla::StatusOr<MatmulPlanPtr>{std::move(M)};
-}
-
-
-template <typename T>
-uint32_t checksum(const T* p, int n)
-{
-  const uint32_t* pp = reinterpret_cast<const uint32_t*>(p);
-  n *= sizeof(T);
-  n /= 4;
-  uint32_t s = 0;
-  for(int i=0; i<n; i++)
-    s ^= pp[i]*(i*3789597+1);
-  return s;
 }
 
 xla::Status BlasLt::MatmulPlan::DoMatmul(
@@ -354,6 +362,7 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     absl::optional<DeviceMemoryBase> workspace,
     absl::optional<ScratchAllocator*> scratch_allocator,
     blas::ProfileResult* profile_result) const {
+  VLOG(1) << "BlasLt::MatmulPlan::DoMatmul";
 
   std::unique_ptr<gpu::GpuTimer, gpu::GpuTimerDeleter> timer;
   if (profile_result != nullptr) {
@@ -382,7 +391,7 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
 
   auto palgo = absl::any_cast<hipblasLtMatmulAlgo_t>(&algorithm_->opaque_algo);
   {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(&blas_lt_ref_.mu_);
     TF_RET_CHECK(blas_lt_ref_.blas_lt_ != nullptr);
     // We must set the bias and aux pointers while holding the mutex, to avoid a
     // potential race condition from multiple threads sharing the same plan.
@@ -417,38 +426,29 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
 
     gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_};
 
-
-    int64 null_jobs = 0;
-    tensorflow::ReadInt64FromEnvVar("ROCM_NULL_JOBS", 0,
-                                &null_jobs);
-
-    for(int it=0; it<null_jobs; it++)
-      gpu::rocm_null_gpu_job(gpu::AsGpuStreamValue(stream));
-
     if (palgo != nullptr) {
-      //int n_iter = 1;
-      //if (algorithm.run_count.has_value()) 
-      //  n_iter = *algorithm.run_count;
-      VLOG(3)<<"Executing hipBlasLtMatmul " << a_desc_.m_.num_rows << " " << a_desc_.m_.num_cols
-        << " " << b_desc_.m_.num_rows << " " << b_desc_.m_.num_cols
-        <<  " with algo " << *(uint64_t*)palgo;
       SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtMatmul(
           blas_lt_ref_.blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
           a_desc_.get(), b.opaque(), b_desc_.get(), beta, c.opaque(),
           c_desc_.get(), d.opaque(), d_desc_.get(), palgo, workspace_addr,
           workspace_size, gpu::AsGpuStreamValue(stream)));
 
-      if(::stream_executor::gpu::do_blas_logging) {
+        uint32_t checksums[3];
+        int inf_counts[3];
+
+      if(false) {
         if (a_desc_.type() == HIP_R_16F) {
           const Eigen::half* pa = (const Eigen::half*)(a.opaque());
           const Eigen::half* pb = (const Eigen::half*)(b.opaque());
           const Eigen::half* pc = (const Eigen::half*)(c.opaque());
-          printf("Hipblaslt<half>: %p %p %p   %f %f %f %f -> %f %f  %08x %08x %08x\n", 
+          checksums[0]=checksum(pa, a_desc_.m_.num_rows*a_desc_.m_.num_cols*a_desc_.m_.batch_size, inf_counts[0]); 
+          checksums[1]=checksum(pb, b_desc_.m_.num_rows*b_desc_.m_.num_cols*b_desc_.m_.batch_size, inf_counts[1]); 
+          checksums[2]=checksum(pc, c_desc_.m_.num_rows*c_desc_.m_.num_cols*c_desc_.m_.batch_size, inf_counts[2]);
+
+          printf("Hipblaslt<half>: %p %p %p   %f %f %f %f -> %f %f  %08x %08x %08x   %d %d %d\n", 
           pa, pb, pc,  
             float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
-            checksum(pa, a_desc_.m_.num_rows*a_desc_.m_.num_cols*a_desc_.m_.batch_size), 
-            checksum(pb, b_desc_.m_.num_rows*b_desc_.m_.num_cols*b_desc_.m_.batch_size), 
-            checksum(pc, c_desc_.m_.num_rows*c_desc_.m_.num_cols*c_desc_.m_.batch_size)
+            checksums[0], checksums[1], checksums[2], inf_counts[0], inf_counts[1], inf_counts[2]
             );
           fflush(stdout);
           if (!isfinite(float(pc[0])))
@@ -457,18 +457,20 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
           const float* pa = (const float*)(a.opaque());
           const float* pb = (const float*)(b.opaque());
           const float* pc = (const float*)(c.opaque());
-          printf("Hipblaslt<float>: %p %p %p   %f %f %f %f -> %f %f  %08x %08x %08x\n", 
+          checksums[0]=checksum(pa, a_desc_.m_.num_rows*a_desc_.m_.num_cols*a_desc_.m_.batch_size, inf_counts[0]); 
+          checksums[1]=checksum(pb, b_desc_.m_.num_rows*b_desc_.m_.num_cols*b_desc_.m_.batch_size, inf_counts[1]); 
+          checksums[2]=checksum(pc, c_desc_.m_.num_rows*c_desc_.m_.num_cols*c_desc_.m_.batch_size, inf_counts[2]);
+          printf("Hipblaslt<float>: %p %p %p   %f %f %f %f -> %f %f  %08x %08x %08x   %d %d %d\n", 
           pa, pb, pc,  
             float(pa[0]), float(pa[1]), float(pb[0]), float(pb[1]), float(pc[0]), float(pc[1]),
-            checksum(pa, a_desc_.m_.num_rows*a_desc_.m_.num_cols*a_desc_.m_.batch_size), 
-            checksum(pb, b_desc_.m_.num_rows*b_desc_.m_.num_cols*b_desc_.m_.batch_size), 
-            checksum(pc, c_desc_.m_.num_rows*c_desc_.m_.num_cols*c_desc_.m_.batch_size)
+            checksums[0], checksums[1], checksums[2], inf_counts[0], inf_counts[1], inf_counts[2]
             );
           fflush(stdout);
           if (!isfinite(float(pc[0])))
             exit(0);
         }
       }
+
     } else {
       return xla::InternalError("hipblaslt: Invalid algorithm type");
     }
@@ -714,7 +716,7 @@ xla::Status BlasLt::GroupedMatmulPlan::SetAlgorithm(
 
 xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(Stream *stream,
           const gpu::GroupedGemmConfig& cfg) {
-  
+  VLOG(1) << "BlasLt::GroupedMatmulPlan::ExecuteOnStream";
   if((size_t)cfg.batch_count != device_args_.size()) {
     return xla::InternalError("GroupedGemm config mismatch !");
   }

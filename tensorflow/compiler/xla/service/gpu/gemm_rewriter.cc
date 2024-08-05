@@ -74,7 +74,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
  
   Status HandleDot(HloInstruction *instr) override {
     if (IsMatrixMultiplication(*instr)) {
-      VLOG(-1) << "Handling Dot";
+      VLOG(1) << "Handling Dot";
       CHECK(!instr->IsRank2Transpose());
       HloInstruction *lhs = instr->mutable_operand(0);
       HloInstruction *rhs = instr->mutable_operand(1);
@@ -270,7 +270,7 @@ private:
     constexpr int kMaxDimensionSize{4194240};
     if (output_shape.element_type() != C64) {
       // Does not match type in unsupported case.
-      VLOG(-1) << "Converting to cublaslt";
+      VLOG(1) << "Converting to cublaslt";
       return true;
     }
 

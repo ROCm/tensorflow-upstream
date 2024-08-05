@@ -250,7 +250,7 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
                                   Scalar(0.0), &out_dev_ptr, m * n, batch_b);
     return;
   }
-#if TENSORFLOW_USE_ROCM
+#if 0 // TENSORFLOW_USE_ROCM
   auto ind_ptr = indicator.template flat<TIndex>().data();
   const int64 size = parallel_num * batch_b * m * k;
   //VLOG(0) << "Allocating " << (size * sizeof(Scalar)) << " bytes..";
