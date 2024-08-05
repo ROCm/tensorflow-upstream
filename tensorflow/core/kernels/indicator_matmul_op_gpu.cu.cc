@@ -8,6 +8,7 @@
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/type_traits.h"
 #include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/util/env_var.h"
 #include "tensorflow/core/kernels/fill_functor.h"
 #include "tensorflow/core/kernels/indicator_matmul_op.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -104,7 +105,8 @@ void RunGemmStridedBatched(OpKernelContext* context, bool trans_a, bool trans_b,
                            const se::DeviceMemory<Scalar>& a, int64 stride_a,
                            const se::DeviceMemory<Scalar>& b, int64 stride_b,
                            Scalar beta, se::DeviceMemory<Scalar>* c,
-                           int64 stride_c, int64 batch_count) {
+                           int64 stride_c, int64 batch_count,
+                           se::ScratchAllocator* allocator) {
   typedef typename HalfAsFloat<Scalar>::type CUDA_T;
   int lda = trans_a ? m : k;
   int ldb = trans_b ? k : n;
@@ -120,7 +122,7 @@ void RunGemmStridedBatched(OpKernelContext* context, bool trans_a, bool trans_b,
           ->ThenBlasGemmStridedBatched(
               trans_b_tf, trans_a_tf, n, m, k, static_cast<CUDA_T>(alpha), b,
               ldb, stride_b, a, lda, stride_a, static_cast<CUDA_T>(beta), c,
-              ldc, stride_c, batch_count)
+              ldc, stride_c, batch_count, allocator)
           .ok();
   if (!blas_launch_status) {
     context->SetStatus(errors::Internal(
@@ -133,7 +135,7 @@ template <typename Scalar>
 void RunGemmBatched(OpKernelContext* context, bool trans_a, bool trans_b,
                     int64 m, int64 n, int64 k, Scalar alpha, Scalar** a_ptrs,
                     Scalar** b_ptrs, Scalar beta, Scalar** c_ptrs,
-                    int64 batch_count) {
+                    int64 batch_count, se::ScratchAllocator* allocator) {
   typedef typename HalfAsFloat<Scalar>::type CUDA_T;
   int lda = trans_a ? m : k;
   int ldb = trans_b ? k : n;
@@ -150,7 +152,8 @@ void RunGemmBatched(OpKernelContext* context, bool trans_a, bool trans_b,
               trans_b_tf, trans_a_tf, n, m, k, static_cast<CUDA_T>(alpha),
               const_cast<const Scalar**>(b_ptrs), ldb,
               const_cast<const Scalar**>(a_ptrs), lda,
-              static_cast<CUDA_T>(beta), c_ptrs, ldc, batch_count)
+              static_cast<CUDA_T>(beta), c_ptrs, ldc, batch_count,
+              allocator)
           .ok();
 
   if (!blas_launch_status) {
@@ -241,6 +244,7 @@ void RunGemmBatched(OpKernelContext* context, bool trans_a, bool trans_b,
 }
 #endif // TENSORFLOW_USE_ROCM
 
+
 template <typename Scalar, typename TIndex>
 void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
     OpKernelContext* context, bool trans_a, bool trans_b, int64 m, int64 n,
@@ -259,6 +263,7 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
   auto a_base_ptr = in_a.template flat<Scalar>().data();
   auto b_base_ptr = in_b.template flat<Scalar>().data();
   auto c_base_ptr = out->template flat<Scalar>().data();
+  BlasScratchAllocator scratch_allocator(context);
 
   auto b_dev_ptr = AsDeviceMemory(b_base_ptr);
   auto out_dev_ptr = AsDeviceMemory(c_base_ptr);
@@ -266,10 +271,13 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
     auto a_dev_ptr = AsDeviceMemory(a_base_ptr);
     RunGemmStridedBatched<Scalar>(context, trans_a, trans_b, m, n, k,
                                   Scalar(1.0), a_dev_ptr, 0, b_dev_ptr, k * n,
-                                  Scalar(0.0), &out_dev_ptr, m * n, batch_b);
+                                  Scalar(0.0), &out_dev_ptr, m * n, batch_b,
+                                  &scratch_allocator);
     return;
   }
-#if TENSORFLOW_USE_ROCM
+//#if TENSORFLOW_USE_ROCM
+
+  if(!UseGroupedGemm()) {
   auto ind_ptr = indicator.template flat<TIndex>().data();
   const int64 size = parallel_num * batch_b * m * k;
   //VLOG(0) << "Allocating " << (size * sizeof(Scalar)) << " bytes..";
@@ -295,9 +303,10 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
   auto B = parallel_num * batch_b;
   RunGemmStridedBatched<Scalar>(context, trans_a, trans_b, m, n, k,
                             Scalar(1.0), a_dev_ptr, m * k, b_dev_ptr, k * n,
-                            Scalar(0.0), &out_dev_ptr, m * n, B);
-
-#else // !TENSORFLOW_USE_ROCM
+                            Scalar(0.0), &out_dev_ptr, m * n, B,
+                            &scratch_allocator);
+  } else {
+//#else // !TENSORFLOW_USE_ROCM
 
   IMatmulParam<Scalar, TIndex> param;
   param.A = const_cast<Scalar*>(a_base_ptr);
@@ -324,7 +333,7 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
   TF_CHECK_OK(GpuLaunchKernel(ComputePtrsKernel<Scalar, TIndex>, parallel_num,
                               config.thread_per_block, 0, d.stream(), param));
   auto* stream = context->op_device_context()->stream();
-  //TF_CHECK_OK(stream->BlockHostUntilDone());
+  TF_CHECK_OK(stream->BlockHostUntilDone());
   RunGemmBatched<Scalar>(context, trans_a, trans_b, m, n, k, Scalar(1.0),
                          param.As, param.Bs, Scalar(0.0), param.Cs,
                          batch_b * paralle_num,
