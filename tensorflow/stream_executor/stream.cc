@@ -3886,7 +3886,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     uint64 k, float alpha, const DeviceMemory<Eigen::half> &a, int lda,
     int64 stride_a, const DeviceMemory<Eigen::half> &b, int ldb, int64 stride_b,
     float beta, DeviceMemory<Eigen::half> *c, int ldc, int64 stride_c,
-    int batch_count) {
+    int batch_count, ScratchAllocator* allocator) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(stride_a), PARAM(b),
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
@@ -3896,7 +3896,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     auto& r = gpu::BlasLtGemmRunner::i(this);
     CheckStatus(r.RunStridedBatched(*this, transa, transb, m, n, k, alpha, 
         a, lda, stride_a, b, ldb, stride_b, beta,
-        c, ldc, stride_c, batch_count));
+        c, ldc, stride_c, batch_count, allocator));
     return *this;
   }
 
@@ -3915,7 +3915,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     uint64 k, float alpha, const DeviceMemory<float> &a, int lda,
     int64 stride_a, const DeviceMemory<float> &b, int ldb, int64 stride_b,
     float beta, DeviceMemory<float> *c, int ldc, int64 stride_c,
-    int batch_count) {
+    int batch_count, ScratchAllocator* allocator) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(stride_a), PARAM(b),
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
@@ -3925,7 +3925,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     auto& r = gpu::BlasLtGemmRunner::i(this);
     CheckStatus(r.RunStridedBatched(*this, transa, transb, m, n, k, alpha, 
         a, lda, stride_a, b, ldb, stride_b, beta,
-        c, ldc, stride_c, batch_count));
+        c, ldc, stride_c, batch_count, allocator));
     return *this;
   }
 
@@ -3944,7 +3944,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     uint64 k, double alpha, const DeviceMemory<double> &a, int lda,
     int64 stride_a, const DeviceMemory<double> &b, int ldb, int64 stride_b,
     double beta, DeviceMemory<double> *c, int ldc, int64 stride_c,
-    int batch_count) {
+    int batch_count, ScratchAllocator* allocator) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(stride_a), PARAM(b),
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
@@ -3954,7 +3954,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     auto& r = gpu::BlasLtGemmRunner::i(this);
     CheckStatus(r.RunStridedBatched(*this, transa, transb, m, n, k, alpha, 
         a, lda, stride_a, b, ldb, stride_b, beta,
-        c, ldc, stride_c, batch_count));
+        c, ldc, stride_c, batch_count, allocator));
     return *this;
   }
 
@@ -3974,7 +3974,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     const DeviceMemory<std::complex<float>> &a, int lda, int64 stride_a,
     const DeviceMemory<std::complex<float>> &b, int ldb, int64 stride_b,
     std::complex<float> beta, DeviceMemory<std::complex<float>> *c, int ldc,
-    int64 stride_c, int batch_count) {
+    int64 stride_c, int batch_count, ScratchAllocator* allocator) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(stride_a), PARAM(b),
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
@@ -3997,7 +3997,7 @@ Stream &Stream::ThenBlasGemmStridedBatched(
     const DeviceMemory<std::complex<double>> &a, int lda, int64 stride_a,
     const DeviceMemory<std::complex<double>> &b, int ldb, int64 stride_b,
     std::complex<double> beta, DeviceMemory<std::complex<double>> *c, int ldc,
-    int64 stride_c, int batch_count) {
+    int64 stride_c, int batch_count, ScratchAllocator* allocator) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(stride_a), PARAM(b),
             PARAM(ldb), PARAM(stride_b), PARAM(beta), PARAM(c), PARAM(ldc),
@@ -4019,10 +4019,18 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     uint64 k, float alpha,
                                     const Eigen::half** a, int lda,
                                     const Eigen::half** b, int ldb, float beta,
-                                    Eigen::half** c, int ldc, int batch_count) {
+                                    Eigen::half** c, int ldc, int batch_count,
+                                    ScratchAllocator* allocator) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
+
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, 
+        a, lda, b, ldb, beta, c, ldc, batch_count, allocator));
+    return *this;
+  }
 
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, float,
                const Eigen::half**, int, const Eigen::half**, int, float,
@@ -4037,10 +4045,18 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     uint64 k, float alpha, const float** a,
                                     int lda, const float** b, int ldb,
                                     float beta, float** c, int ldc,
-                                    int batch_count) {
+                                    int batch_count,
+                                    ScratchAllocator* allocator) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
+
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, 
+        a, lda, b, ldb, beta, c, ldc, batch_count, allocator));
+    return *this;
+  }
 
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, float,
                const float**, int, const float**, int, float, float**, int, int>
@@ -4054,10 +4070,18 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     uint64 k, double alpha, const double** a,
                                     int lda, const double** b, int ldb,
                                     double beta, double** c, int ldc,
-                                    int batch_count) {
+                                    int batch_count,
+                                    ScratchAllocator* allocator) {
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
+
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, 
+        a, lda, b, ldb, beta, c, ldc, batch_count, allocator));
+    return *this;
+  }
 
   ThenBlasImpl<blas::Transpose, blas::Transpose, uint64, uint64, uint64, double,
                const double**, int, const double**, int, double, double**, int,

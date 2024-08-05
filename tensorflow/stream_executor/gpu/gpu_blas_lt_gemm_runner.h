@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
+#include "tensorflow/stream_executor/scratch_allocator.h"
 
 namespace xla {
 namespace gpu {
@@ -79,11 +80,20 @@ struct BlasLtGemmRunner {
 
   static BlasLtGemmRunner& i(const Stream *stream);
 
-  xla::Status RunBatched(Stream& stream, blas::Transpose transa, 
-      blas::Transpose transb, uint64 m, uint64 n, uint64 k, 
-      const void *alpha, blas::DataType type_a, const void** a, int lda, 
-      blas::DataType type_b, const void** b, int ldb, const void *beta,
-      blas::DataType type_c, void** c, int ldc, int batch_count);
+  template < class Scalar, class T >
+  xla::Status RunBatched(Stream& stream, blas::Transpose trans_a, 
+      blas::Transpose trans_b, int64 m, int64 n, int64 k, 
+      Scalar alpha, const T** a, int64 lda, 
+      const T** b, int64 ldb, Scalar beta,
+      T** c, int64 ldc, int64 batch_count, ScratchAllocator* allocator) {
+
+    // NOTE: Scalar types shall be verified for correctness vs T!!
+    auto type = dnn::ToDataType<T>::value;
+    return RunBatchedImpl(stream, trans_a, trans_b, m, n, k, 
+      &alpha, type, reinterpret_cast< const void **>(a), lda, 
+      type, reinterpret_cast< const void **>(b), ldb, &beta, 
+      type, reinterpret_cast< void **>(c), ldc, batch_count, allocator);
+  }
 
   template < class Scalar, class T >
   xla::Status RunStridedBatched(Stream& stream, blas::Transpose trans_a, 
@@ -91,18 +101,30 @@ struct BlasLtGemmRunner {
     Scalar alpha, const DeviceMemory<T>& a, int64 lda, int64 stride_a, 
     const DeviceMemory<T>& b, int64 ldb, int64 stride_b,
     Scalar beta, DeviceMemory<T> *c, int64 ldc, int64 stride_c,
-    int64 batch_count) {
+    int64 batch_count, ScratchAllocator* allocator) {
     
     auto type = dnn::ToDataType<T>::value;
     return RunStridedBatchedImpl(stream, trans_a, trans_b, m, n, k, 
       static_cast<double>(alpha), 
       type, a, lda, stride_a, type, b, ldb, stride_b, 
       static_cast<double>(beta), 
-      type, c, ldc, stride_c, batch_count);
+      type, c, ldc, stride_c, batch_count, allocator);
   }
 
 private:
   explicit BlasLtGemmRunner(StreamExecutor *parent);
+
+  template < class TuneFunc >
+  xla::StatusOr< gpu::BlasLt::MatmulAlgorithm > Autotune(
+            const std::vector< gpu::BlasLt::MatmulAlgorithm >& algorithms,
+                                TuneFunc&& benchmark_func);
+
+  xla::Status RunBatchedImpl(Stream& stream, blas::Transpose trans_a, 
+      blas::Transpose trans_b, int64 m, int64 n, int64 k, 
+      const void *alpha, blas::DataType type_a, const void** a, int64 lda, 
+      blas::DataType type_b, const void** b, int64 ldb, const void *beta,
+      blas::DataType type_c, void** c, int64 ldc, int64 batch_count,
+      ScratchAllocator* allocator);
 
   xla::Status RunStridedBatchedImpl(Stream& stream, blas::Transpose trans_a, 
       blas::Transpose trans_b, int64 m, int64 n, int64 k, xla::complex128 alpha, 
@@ -110,10 +132,10 @@ private:
       blas::DataType type_b, const DeviceMemoryBase& b, int64 ldb, int64 stride_b,
       double beta,
       blas::DataType type_c, DeviceMemoryBase *c, int64 ldc, int64 stride_c, 
-      int64 batch_count);
+      int64 batch_count, ScratchAllocator* allocator);
 
   std::unique_ptr< absl::Mutex > mutex_;
-  //std::unique_ptr< xla::gpu::AutotuneConfig > config_;
+  // std::unique_ptr< xla::gpu::AutotuneConfig > config_;
   absl::flat_hash_map<GroupedGemmConfig, BlasLt::GroupedMatmulPlanPtr> grouped_gemm_map_;
   absl::flat_hash_map<StridedGemmConfig, BlasLt::MatmulPlanPtr> strided_gemm_map_;
 };

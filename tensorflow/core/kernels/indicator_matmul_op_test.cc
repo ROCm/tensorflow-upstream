@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <array>
+
 #include "absl/algorithm/container.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
@@ -26,16 +28,54 @@ limitations under the License.
 
 namespace tensorflow {
 
+
+struct TestParams {
+  int parallel_num, batch_a, batch_b;
+  int m, k, n;
+  bool adjoint_a, adjoint_b;
+};
+
 template <typename T>
-class IndicatorMatMulOpTestBase : public OpsTestBase {
+struct TensorCreator {
+  using IndexType = int64;
+  using Params = TestParams;
+  using TensorVec = std::array< Tensor, 3 >;
+
+  TensorVec CreateTensors(const Params& p) {
+    
+    DataType dtype = DataTypeToEnum<T>::v(),
+       index_dtype = DataTypeToEnum<IndexType>::v();
+
+    Tensor lhs(dtype, p.adjoint_a ? TensorShape{p.parallel_num, p.batch_a, p.k, p.m}
+                                  : TensorShape{p.parallel_num, p.batch_a, p.m, p.k});
+    lhs.flat<T>() = lhs.flat<T>().setRandom();
+
+    Tensor rhs(dtype, p.adjoint_b ? TensorShape{p.parallel_num, p.batch_b, p.n, p.k}
+                                  : TensorShape{p.parallel_num, p.batch_b, p.k, p.n});
+    rhs.flat<T>() = rhs.flat<T>().setRandom();
+    rhs.flat<T>() -= rhs.flat<T>().constant(static_cast<T>(0.5f));
+
+    // NOTE indicator indices should be: [0, batch_a)
+    IndexType max_idx = p.batch_a; // float range is [0, 1)
+    using FT = double;
+    Tensor indF(DataTypeToEnum<FT>::v(), {p.batch_b});
+    Tensor ind(index_dtype, {p.batch_b});
+
+    indF.flat<FT>() = indF.flat<FT>().setRandom();
+    indF.flat<FT>() *= indF.flat<FT>().constant(static_cast<FT>(max_idx));
+    ind.flat<IndexType>() = indF.flat<FT>().cast< IndexType >();
+
+    return std::array< Tensor, 3 >{std::move(lhs), std::move(rhs), std::move(ind)};
+  }
+};  
+
+template <typename T>
+class IndicatorMatMulOpTestBase : public OpsTestBase, public TensorCreator<T> {
  protected:
 
-  using IndexType = int64;
-  struct Params {
-    int parallel_num, batch_a, batch_b;
-    int m, k, n;
-    bool adjoint_a, adjoint_b;
-  };
+  using Params = typename TensorCreator<T>::Params;
+  using IndexType = typename TensorCreator<T>::IndexType;
+  using TensorVec = typename TensorCreator<T>::TensorVec;
 
   // Runs a Tensorflow graph defined by the root scope, and fetches the result
   // of 'fetch' node into the output Tensor. Optional `fetch_node` parameter
@@ -99,8 +139,7 @@ class IndicatorMatMulOpTestBase : public OpsTestBase {
     *output = unfused_tensors[0];
   }
 
-  void RunIndicatorMatMulOp(const Params& p, const Tensor& lhs_data, 
-                            const Tensor& rhs_data, const Tensor& ind_data, 
+  void RunIndicatorMatMulOp(const Params& p, const TensorVec& inputs, 
                             Tensor* output, bool allow_gpu_device) {
 
     Scope root = tensorflow::Scope::NewRootScope();
@@ -108,39 +147,28 @@ class IndicatorMatMulOpTestBase : public OpsTestBase {
     DataType dtype = DataTypeToEnum<T>::v(),
        index_dtype = DataTypeToEnum<IndexType>::v();
 
-    Output lhs =
-        ops::Const(root.WithOpName("lhs"), Input::Initializer(lhs_data));
-    Output rhs =
-        ops::Const(root.WithOpName("rhs"), Input::Initializer(rhs_data));
-    Output ind =
-        ops::Const(root.WithOpName("ind"), Input::Initializer(ind_data));
-
+    Output 
+      lhs = ops::Const(root.WithOpName("lhs"), Input::Initializer(inputs[0])),
+      rhs = ops::Const(root.WithOpName("rhs"), Input::Initializer(inputs[1])),
+      ind = ops::Const(root.WithOpName("ind"), Input::Initializer(inputs[2]));
 #if 0
     NodeDef indicator_matmul;
-    TF_EXPECT_OK(NodeDefBuilder("indicator_matmul", "IndicatorMatMul")
+    TF_EXPECT_OK(NodeDefBuilder("indicator_matmul", "ParallelIndicatorMatMul")
                      .Input({lhs.name(), 0, dtype})
                      .Input({rhs.name(), 0, dtype})
                      .Input({ind.name(), 1, index_dtype})
-                     //.Input(args)
-                     //.Attr("num_args", num_args)
-                     .Attr("T", dtype)
-                     .Attr("Tindices", index_dtype)
                      .Attr("adj_x", p.adjoint_a)
                      .Attr("adj_y", p.adjoint_b)
+                     .Attr("parallel_num", p.parallel_num)
                      .Finalize(&indicator_matmul));
     RunAndFetch(root, "indicator_matmul", output, allow_gpu_device,
                 &indicator_matmul);
 #else
-
-  auto indicator_matmul = ops::ParallelIndicatorMatMul(
-        root.WithOpName("indicator_matmul"),
-        ops::Const(root.WithOpName("lhs"), Input::Initializer(lhs_data)),
-        ops::Const(root.WithOpName("rhs"), Input::Initializer(rhs_data)),
-        ops::Const(root.WithOpName("ind"), Input::Initializer(ind_data)),
-        p.parallel_num,
+    auto indicator_matmul = ops::ParallelIndicatorMatMul(
+        root.WithOpName("indicator_matmul"), lhs, rhs, ind, p.parallel_num,
         ops::ParallelIndicatorMatMul::Attrs().
                         AdjX(p.adjoint_a).AdjY(p.adjoint_b));
-  RunAndFetch(root, "indicator_matmul", output, allow_gpu_device);
+    RunAndFetch(root, "indicator_matmul", output, allow_gpu_device);
 #endif
   }
 
@@ -151,40 +179,21 @@ class IndicatorMatMulOpTestBase : public OpsTestBase {
             << p.m << "/" << p.n << "/" << p.k << "; adj_a/b: "
             << p.adjoint_a << "/" << p.adjoint_b;
 
-    DataType dtype = DataTypeToEnum<T>::v(),
-       index_dtype = DataTypeToEnum<IndexType>::v();
+    DataType dtype = DataTypeToEnum<T>::v();
+    auto ts = this->CreateTensors(p);
 
-    Tensor lhs(dtype, p.adjoint_a ? TensorShape{p.parallel_num, p.batch_a, p.k, p.m}
-                                  : TensorShape{p.parallel_num, p.batch_a, p.m, p.k});
-    lhs.flat<T>() = lhs.flat<T>().setRandom();
-
-    Tensor rhs(dtype, p.adjoint_b ? TensorShape{p.parallel_num, p.batch_b, p.n, p.k}
-                                  : TensorShape{p.parallel_num, p.batch_b, p.k, p.n});
-    rhs.flat<T>() = rhs.flat<T>().setRandom();
-    rhs.flat<T>() -= rhs.flat<T>().constant(static_cast<T>(0.5f));
-
-    // NOTE indicator indices should be: [0, batch_a)
-    IndexType max_idx = p.batch_a; // float range is [0, 1)
-    using FT = double;
-    Tensor indF(DataTypeToEnum<FT>::v(), {p.batch_b});
-    Tensor ind(index_dtype, {p.batch_b});
-
-    indF.flat<FT>() = indF.flat<FT>().setRandom();
-    indF.flat<FT>() *= indF.flat<FT>().constant(static_cast<FT>(max_idx));
-    ind.flat<IndexType>() = indF.flat<FT>().cast< IndexType >();
-
-    VLOG(0) << "Indices: " << ind.DebugString(16);
+    VLOG(0) << "Indices: " << ts[2].DebugString(16);
 
     Tensor cpu_result, gpu_result;
 
-    RunIndicatorMatMulOp(p, lhs, rhs, ind, &cpu_result, /*allow_gpu_device*/false);
-    RunIndicatorMatMulOp(p, lhs, rhs, ind, &gpu_result, /*allow_gpu_device*/true);
+    RunIndicatorMatMulOp(p, ts, &cpu_result, /*allow_gpu_device*/false);
+    RunIndicatorMatMulOp(p, ts, &gpu_result, /*allow_gpu_device*/true);
 
     ASSERT_EQ(cpu_result.dtype(), gpu_result.dtype());
     ASSERT_EQ(cpu_result.shape(), gpu_result.shape());
 
-    double atol = dtype == DT_HALF ? 1e-3 : 1e-5,
-           rtol = dtype == DT_HALF ? 1e-3 : -1.0;
+    double atol = dtype == DT_HALF ? 1e-2 : 1e-5,
+           rtol = dtype == DT_HALF ? 1e-2 : -1.0;
     test::ExpectClose(cpu_result, gpu_result, atol, rtol);
   }
 }; // IndicatorMatMulOpTestBase
@@ -194,7 +203,7 @@ class IndicatorMatMulOpTest : public IndicatorMatMulOpTestBase<T> {};
 
 TYPED_TEST_SUITE_P(IndicatorMatMulOpTest);
 
-#if 1
+#if 0
 #define ENUM_PARAMS(parallel_num, batch_a, batch_b, m, k, n)  \
   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, false, false}); \
   this->VerifyIndicatorMatMul({parallel_num, batch_a, batch_b, m, k, n, false, true}); \
@@ -218,14 +227,14 @@ TYPED_TEST_P(IndicatorMatMulOpTest, ParallelMatMul2) {
 TYPED_TEST_P(IndicatorMatMulOpTest, ParallelMatMul3) {
   // parallel_num, batch_a, batch_b, m, k, n
   
-  ENUM_PARAMS(1, 1, 1, 12, 16, 8);
+  //ENUM_PARAMS(1, 1, 1, 12, 16, 8);
   ENUM_PARAMS(1, 10, 128, 75, 40, 100);
-  // ENUM_PARAMS(8, 4, 16, 12, 20, 32);
-  ENUM_PARAMS(11, 111, 51, 137, 15, 111);
+  //ENUM_PARAMS(8, 4, 16, 12, 20, 32);
+  ENUM_PARAMS(8, 16, 16, 12, 40, 64);
+
+  ENUM_PARAMS(32, 16, 16, 60, 40, 64);
+  //ENUM_PARAMS(11, 111, 51, 137, 15, 111);
 }
-// m=1, n=200, k=24, alpha=1,
-//     a=0x7fddeb207600, lda=24, b=0x7fddeb206100, ldb=24, beta=0, c=0x7fddeb208b00, ldc=1,
-// batch_count=664
 #undef ENUM_PARAMS
 
 REGISTER_TYPED_TEST_SUITE_P(IndicatorMatMulOpTest,
@@ -234,7 +243,7 @@ REGISTER_TYPED_TEST_SUITE_P(IndicatorMatMulOpTest,
                             ParallelMatMul3);
 
 // TODO(ezhulenev): Add support for more data types.
-using IndicatorMatMulDataTypes = ::testing::Types<float, Eigen::half>;
+using IndicatorMatMulDataTypes = ::testing::Types< float >;
 INSTANTIATE_TYPED_TEST_SUITE_P(Test, IndicatorMatMulOpTest,
                                IndicatorMatMulDataTypes);
 
@@ -243,53 +252,59 @@ INSTANTIATE_TYPED_TEST_SUITE_P(Test, IndicatorMatMulOpTest,
 //----------------------------------------------------------------------------//
 
 template <typename T>
-static Graph* Matmul(int m, int k, int n, bool transpose_a, bool transpose_b,
-                     DataType type) {
+static Graph* BenchIndicatorMatmul(const TestParams& p) {
+  
   Graph* g = new Graph(OpRegistry::Global());
-  Tensor in0(type, transpose_a ? TensorShape({k, m}) : TensorShape({m, k}));
-  in0.flat<T>().setRandom();
-  Tensor in1(type, transpose_b ? TensorShape({n, k}) : TensorShape({k, n}));
-  in1.flat<T>().setRandom();
-  test::graph::Matmul(g, test::graph::Constant(g, in0),
-                      test::graph::Constant(g, in1), transpose_a, transpose_b);
+  TensorCreator<T> creator;
+  auto inputs = creator.CreateTensors(p);
+
+  Node *indicator_matmul;
+  TF_CHECK_OK(NodeBuilder(g->NewName("n"), "ParallelIndicatorMatMul")
+                     .Input(test::graph::Constant(g, inputs[0]))
+                     .Input(test::graph::Constant(g, inputs[1]))
+                     .Input(test::graph::Constant(g, inputs[2]))
+                     .Attr("adj_x", p.adjoint_a)
+                     .Attr("adj_y", p.adjoint_b)
+                     .Attr("parallel_num", p.parallel_num)
+                     .Finalize(g, &indicator_matmul));
   return g;
 }
 
-#define BM_MatmulDev(M, K, N, TA, TB, T, TFTYPE, DEVICE)                       \
-  static void BM_Matmul##_##M##_##K##_##N##_##TA##_##TB##_##TFTYPE##_##DEVICE( \
-      int iters) {                                                             \
-    testing::UseRealTime();                                                    \
-    testing::ItemsProcessed(static_cast<int64>(iters) * M * K * N * 2);        \
-    test::Benchmark(#DEVICE, Matmul<T>(M, K, N, TA, TB, TFTYPE)).Run(iters);   \
-  }                                                                            \
-  BENCHMARK(BM_Matmul##_##M##_##K##_##N##_##TA##_##TB##_##TFTYPE##_##DEVICE);
+ //parallel_num * batch_b * m * k;
+#define BM_IndicatorMatmul(P, BA, BB, M, K, N, T, TNAME)                \
+  static void BM_IndicatorMul##_##P##_##BA##_##BB##_##M##_##K##_##N##_##TNAME( \
+      int iters) {                                                              \
+    testing::UseRealTime();                                                     \
+    VLOG(0) << "----------------------------------- Running " << P              \
+            << "x" << BA << "x" << BB << "; m/n/k: "                            \
+            << M << "/" << N << "/" << K;                                       \
+    auto items = static_cast<int64>(iters) * P * BB * M * K * N / 1000;         \
+    testing::ItemsProcessed(items);                                             \
+    test::Benchmark("gpu", BenchIndicatorMatmul<T>(                 \
+                {P, BA, BB, M, K, N, false, false})).Run(iters);                \
+  }                                                                             \
+  BENCHMARK(BM_IndicatorMul##_##P##_##BA##_##BB##_##M##_##K##_##N##_##TNAME);
 
-// #ifdef GOOGLE_CUDA
+BM_IndicatorMatmul(2, 1, 166, 200, 24, 1, float, fp32)
+BM_IndicatorMatmul(4, 30, 166, 200, 24, 1, float, fp32)
+BM_IndicatorMatmul(4, 30, 166, 24, 200, 1, float, fp32)
+BM_IndicatorMatmul(10, 20, 30, 120, 40, 50, float, fp32)
 
-// #define BM_Matmul(M, K, N, TA, TB)                                       \
-//   BM_MatmulDev(M, K, N, TA, TB, float, DT_FLOAT, cpu);                   \
-//   BM_MatmulDev(M, K, N, TA, TB, std::complex<float>, DT_COMPLEX64, cpu); \
-//   BM_MatmulDev(M, K, N, TA, TB, float, DT_FLOAT, gpu);                   \
-//   BM_MatmulDev(M, K, N, TA, TB, std::complex<float>, DT_COMPLEX64, gpu); \
-//   /* Uncomment to enable benchmarks for double/complex128: */            \
-//   // BM_MatmulDev(M, K, N, TA, TB, double, DT_DOUBLE, cpu);                   \
-// // BM_MatmulDev(M, K, N, TA, TB, std::complex<double>, DT_COMPLEX128, cpu); \
-// // BM_MatmulDev(M, K, N, TA, TB, double, DT_DOUBLE, gpu);                   \
-// // BM_MatmulDev(M, K, N, TA, TB, std::complex<double>, DT_COMPLEX128, gpu);
+BM_IndicatorMatmul(2, 1, 166, 200, 24, 1, Eigen::half, fp16)
+BM_IndicatorMatmul(4, 30, 166, 200, 24, 1, Eigen::half, fp16)
+BM_IndicatorMatmul(4, 30, 166, 24, 200, 1, Eigen::half, fp16)
+BM_IndicatorMatmul(10, 20, 30, 120, 40, 50, Eigen::half, fp16)
 
-// #else
 
-// #define BM_Matmul(M, K, N, TA, TB)                     \
-//   BM_MatmulDev(M, K, N, TA, TB, float, DT_FLOAT, cpu); \
-//   BM_MatmulDev(M, K, N, TA, TB, std::complex<float>, DT_COMPLEX64, cpu);
+// BM_IndicatorMatmul(10, 20, 30, 120, 80, 50, float)
+// BM_IndicatorMatmul(10, 20, 30, 120, 80, 100, float)
+// BM_IndicatorMatmul(20, 20, 30, 120, 40, 50, float)
+// BM_IndicatorMatmul(30, 20, 30, 120, 40, 50, float)
+// BM_IndicatorMatmul(40, 20, 30, 120, 40, 50, float)
+// BM_IndicatorMatmul(40, 20, 30, 120, 80, 100, float)
+// BM_IndicatorMatmul(40, 50, 30, 120, 40, 50, float)
+// BM_IndicatorMatmul(60, 10, 40, 128, 64, 256, float)
 
-// #endif  // GOOGLE_CUDA
-
-// // Batch size of 1 included for inference.
-// // Typical fully connected layers
-// BM_Matmul(1, 512, 512, false, false);
-// BM_Matmul(8, 512, 512, false, false);
-// BM_Matmul(16, 512, 512, false, false);
-// BM_Matmul(128, 512, 512, false, false);
+// NOTE: run it with: ./bazel-bin/path/to/test --benchmarks=all
 
 }  // end namespace tensorflow

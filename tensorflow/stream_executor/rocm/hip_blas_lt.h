@@ -107,7 +107,7 @@ class BlasLt : public gpu::BlasLt {
     xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
         size_t max_algorithm_count, size_t max_workspace_size) const override;
 
-    void SetAlgorithm(const MatmulAlgorithm& algorithm) override;
+    xla::Status SetAlgorithm(const MatmulAlgorithm& algorithm) override;
 
     xla::Status ExecuteOnStream(
         Stream* stream, DeviceMemoryBase a_buffer, DeviceMemoryBase b_buffer,
@@ -156,13 +156,17 @@ class BlasLt : public gpu::BlasLt {
     GroupedMatmulPlan(const BlasLt& blas_lt);
 
     xla::Status ExecuteOnStream(Stream *stream,
-          const gpu::GroupedGemmConfig& cfg) override;
+          const gpu::GroupedGemmConfig& cfg,
+          blas::ProfileResult* profile_result) override;
 
     xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
         size_t max_algorithm_count,
         size_t max_workspace_size) override;
 
-    xla::Status SetAlgorithm(const MatmulAlgorithm& algorithm) override;
+    xla::Status SetAlgorithm(const MatmulAlgorithm& algorithm, 
+              ScratchAllocator * scratch_allocator) override;
+
+    //xla::Status UpdateArgs(Stream *stream, const gpu::GroupedGemmConfig& cfg);
 
     ~GroupedMatmulPlan() override;
 
@@ -171,6 +175,7 @@ class BlasLt : public gpu::BlasLt {
     GroupedGemmPtr grouped_gemm_;
     hipblaslt_ext::UserArguments *host_args_ = nullptr;
     DeviceMemoryArgs device_args_;
+    absl::optional< MatmulAlgorithm > algorithm_; // selected algorithm
 
     SE_DISALLOW_COPY_AND_ASSIGN(GroupedMatmulPlan);
   };
@@ -183,8 +188,7 @@ class BlasLt : public gpu::BlasLt {
   xla::StatusOr<MatmulPlanPtr> GetMatmulPlan(const gpu::GemmConfig& cfg,
                                               Epilogue epilogue) const override;
 
-  xla::StatusOr<GroupedMatmulPlanPtr> GetGroupedMatmulPlan(
-        DeviceMemoryAllocator *allocator, 
+  xla::StatusOr<GroupedMatmulPlanPtr> GetGroupedMatmulPlan(Stream *stream, 
         const gpu::GroupedGemmConfig& config) const override;
 
   ~BlasLt() override = default;
