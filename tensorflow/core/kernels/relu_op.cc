@@ -45,7 +45,10 @@ typedef Eigen::SyclDevice SYCLDevice;
       Relu6Op<CPUDevice, type>);                                      \
   REGISTER_KERNEL_BUILDER(                                            \
       Name("Relu6Grad").Device(DEVICE_CPU).TypeConstraint<type>("T"), \
-      Relu6GradOp<CPUDevice, type>)
+      Relu6GradOp<CPUDevice, type>)                                   \
+  REGISTER_KERNEL_BUILDER(                                            \
+      Name("LeakyRelu").Device(DEVICE_CPU).TypeConstraint<type>("T"),  \
+      Relu6Op<CPUDevice, type>)                                     
 
 TF_CALL_REAL_NUMBER_TYPES(REGISTER_RELU_KERNELS);
 #undef REGISTER_RELU_KERNELS
@@ -97,7 +100,9 @@ namespace functor {
       typename TTypes<T>::ConstTensor features,                                \
       typename TTypes<T>::Tensor backprops);                                   \
   extern template struct Relu6Grad<GPUDevice, T>;                              \
-                                                                               \
+  template <>                                                        \
+  void LeakyRelu<GPUDevice, T>::operator()(LeakyReluArgs args);                \
+  extern template struct LeakyRelu<GPUDevice, T>;                              \
   template <>                                                                  \
   void Elu<GPUDevice, T>::operator()(const GPUDevice& d,                       \
                                      typename TTypes<T>::ConstTensor features, \
@@ -150,6 +155,9 @@ TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_SPEC);
   REGISTER_KERNEL_BUILDER(                                            \
       Name("Relu6Grad").Device(DEVICE_GPU).TypeConstraint<type>("T"), \
       Relu6GradOp<GPUDevice, type>);                                  \
+  REGISTER_KERNEL_BUILDER(                                            \
+      Name("LeakyRelu").Device(DEVICE_GPU).TypeConstraint<type>("T"),     \
+      Relu6Op<GPUDevice, type>);                                      \
   REGISTER_KERNEL_BUILDER(                                            \
       Name("Elu").Device(DEVICE_GPU).TypeConstraint<type>("T"),       \
       EluOp<GPUDevice, type>);                                        \

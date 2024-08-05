@@ -6636,6 +6636,7 @@ tf_kernel_library(
         "//tensorflow/core/kernels/CK/gather_gemv:gather_gemv",
         "//tensorflow/core/kernels/CK/gather_gemv2:gather_gemv2",
         "//tensorflow/core/kernels/CK/gemm_layernorm_gemm:gemm_layernorm_gemm",
+        "//tensorflow/core/kernels/CK/gemm_layernorm:gemm_layernorm",
         "//tensorflow/core/kernels/CK/gemm_layernorm_gemm_softmax_gemm:gemm_layernorm_gemm_softmax_gemm",
         "//tensorflow/core/kernels/CK/gemm_row_softmax_gemm:gemm_row_softmax_gemm",
         "//tensorflow/core/kernels/CK/gemv_softmax_gemv:gemv_softmax_gemv",

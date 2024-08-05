@@ -156,6 +156,7 @@ struct Relu<Device, qint8> {
   template struct functor::ReluGrad<GPUDevice, T>;  \
   template struct functor::Relu6<GPUDevice, T>;     \
   template struct functor::Relu6Grad<GPUDevice, T>; \
+  template struct functor::LeakyRelu<GPUDevice, T>; \
   template struct functor::Elu<GPUDevice, T>;       \
   template struct functor::EluGrad<GPUDevice, T>;   \
   template struct functor::Selu<GPUDevice, T>;      \

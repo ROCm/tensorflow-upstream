@@ -56,6 +56,30 @@ struct ReluGrad {
   }
 };
 
+template <typename Device, typename T>
+struct LeakyRelu {
+  // Computes LeakyRelu activation.
+  //
+  // features: any shape.
+  // activations: same shape as "features".
+
+  // Need to bundle the args (to the LeakyRelu functor) within a struct
+  // Not doing so leads to Eigen kernel args not getting populated
+  // corretly for Eigen::half type (when building on the ROCM platform)
+  struct LeakyReluArgs {
+    const Device& d;
+    typename TTypes<T>::ConstTensor features;
+    T alpha;
+    typename TTypes<T>::Tensor activations;
+  };
+  void operator()(LeakyReluArgs args) {
+    // Note that alpha might be > 1 or < 0, so we don't use cwiseMax here.
+    args.activations.device(args.d) =
+        (args.features > static_cast<T>(0))
+            .select(args.features, args.features * args.alpha);
+  }
+};
+
 // Functor used by Relu6Op to do the computations.
 template <typename Device, typename T>
 struct Relu6 {

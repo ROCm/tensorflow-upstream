@@ -6,7 +6,34 @@
 #include "tensorflow/core/framework/op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
-extern float gemm_ln_fp16(gemm_ln_args& param, ck_tile::stream_config stream);
+#include "ck_tile/06_gemm_ln/gemm_ln_dispatch.hpp"
+
+// clang-format off
+extern template float run_gemm_ln<ck_tile::fp16_t, 16>(const gemm_ln_args& param, ck_tile::stream_config stream);
+extern template float run_gemm_ln<ck_tile::fp16_t, 32>(const gemm_ln_args& param, ck_tile::stream_config stream);
+extern template float run_gemm_ln<ck_tile::fp16_t, 128>(const gemm_ln_args& param, ck_tile::stream_config stream);
+// clang-format on
+
+float gemm_ln_fp16(gemm_ln_args& param, ck_tile::stream_config stream)
+{
+    if(param.N0 / param.nhead <= 16)
+    {
+        return run_gemm_ln<ck_tile::fp16_t, 16>(param, stream);
+    }
+    else if(param.N0 / param.nhead <= 32)
+    {
+        return run_gemm_ln<ck_tile::fp16_t, 32>(param, stream);
+    }
+    else if(param.N0 / param.nhead <= 128)
+    {
+        return run_gemm_ln<ck_tile::fp16_t, 128>(param, stream);
+    }
+    else
+    {
+        throw std::runtime_error("Head-dim sizes not supported!");
+    }
+};
+
 namespace tensorflow {
 using GPUDevice = Eigen::GpuDevice;
 
@@ -50,7 +77,7 @@ using ODataType     = typename TypeConfig::ODataType;
 }
 namespace functor {
 template <typename T>
-struct GemmLayernormGemmFunctor<GPUDevice, T> {
+struct GemmLayernormFunctor<GPUDevice, T> {
  public:
   static Status Compute(const GPUDevice& d, const void* mat_A0,
                         const void* mat_B0, const void* mat_C,
@@ -65,6 +92,6 @@ struct GemmLayernormGemmFunctor<GPUDevice, T> {
   }
 };  // struct Fused_Gemm_Bias_Add_Functor
 }  // namespace functor
-template struct functor::GemmLayernormGemmFunctor<GPUDevice, Eigen::half>;
+template struct functor::GemmLayernormFunctor<GPUDevice, Eigen::half>;
 }  // namespace tensorflow
 #endif

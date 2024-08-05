@@ -37,7 +37,7 @@ tf_gpu_kernel_library(
     name = "gemm_layernorm_cu",
     srcs = [
         "op.cu.cc",
-    ],
+    ]+ glob(["instances/*.cpp"]),
     hdrs = [
         "op.h",
     ],

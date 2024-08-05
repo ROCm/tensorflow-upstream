@@ -42,6 +42,25 @@ class ReluOp : public UnaryElementWiseOp<T, ReluOp<Device, T>> {
   }
 };
 
+template <typename Device, typename T>
+class LeakyReluOp : public UnaryElementWiseOp<T, LeakyReluOp<Device, T>> {
+ public:
+  explicit LeakyReluOp(OpKernelConstruction* context)
+      : UnaryElementWiseOp<T, LeakyReluOp<Device, T>>(context) {
+    float alpha_tmp;
+    OP_REQUIRES_OK(context, context->GetAttr("alpha", &alpha_tmp));
+    alpha_ = T(alpha_tmp);
+  }
+
+  void Operate(OpKernelContext* context, const Tensor& input, Tensor* output) {
+    functor::LeakyRelu<Device, T> functor;
+    functor({context->eigen_device<Device>(), input.flat<T>(), alpha_,
+             output->flat<T>()});
+  }
+
+ private:
+  T alpha_;
+};
 // Out of line check to save code space (we have this code once, rather
 // than once for every NDIMS * NumTypes * Num_different_relu_variants
 // functions.

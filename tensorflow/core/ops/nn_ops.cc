@@ -93,6 +93,12 @@ REGISTER_OP("AvgPoolGrad")
       return Status::OK();
     });
 
+REGISTER_OP("LeakyRelu")
+    .Input("features: T")
+    .Output("activations: T")
+    .Attr("alpha: float = 0.2")
+    .Attr("T: {half, bfloat16, float, double} = DT_FLOAT")
+    .SetShapeFn(shape_inference::UnchangedShape);
 // --------------------------------------------------------------------------
 
 REGISTER_OP("BatchNormWithGlobalNormalization")

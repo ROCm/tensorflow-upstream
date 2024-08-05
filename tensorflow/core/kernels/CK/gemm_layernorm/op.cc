@@ -9,9 +9,9 @@ namespace {
 using GPUDevice = Eigen::GpuDevice;
 
 template <typename Device, typename dataTP>
-class GemmLayernormGemmOp : public OpKernel {
+class GemmLayernormOp : public OpKernel {
  public:
-  explicit GemmLayernormGemmOp(OpKernelConstruction* context)
+  explicit GemmLayernormOp(OpKernelConstruction* context)
       : OpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("head_num", &head_num_));
   }
@@ -43,7 +43,7 @@ class GemmLayernormGemmOp : public OpKernel {
 
     OP_REQUIRES_OK(
         context,
-        functor::GemmLayernormGemmFunctor<Device, dataTP>::Compute(
+        functor::GemmLayernormFunctor<Device, dataTP>::Compute(
             context->eigen_device<Device>(),
             reinterpret_cast<const void*>(matrix_a0->flat<dataTP>().data()),
             reinterpret_cast<const void*>(matrix_b0->flat<dataTP>().data()),
@@ -62,10 +62,10 @@ class GemmLayernormGemmOp : public OpKernel {
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define REGISTER_GPU(dataTP)                                     \
-  REGISTER_KERNEL_BUILDER(Name("GemmLayernormGemm")              \
+  REGISTER_KERNEL_BUILDER(Name("GemmLayernorm")              \
                               .Device(DEVICE_GPU)                \
                               .TypeConstraint<dataTP>("dataTP"), \
-                          GemmLayernormGemmOp<GPUDevice, dataTP>)
+                          GemmLayernormOp<GPUDevice, dataTP>)
 
 REGISTER_GPU(Eigen::half);
 

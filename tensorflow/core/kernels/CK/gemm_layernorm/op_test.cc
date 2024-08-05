@@ -24,9 +24,9 @@
 
 namespace tensorflow {
 namespace {
-class GemmLayernormGemmTest : public OpsTestBase {
+class GemmLayernormTest : public OpsTestBase {
  protected:
-  void RunUnfusedGemmLayernormGemmTest(const std::vector<Eigen::half>& mat_A0,
+  void RunUnfusedGemmLayernormTest(const std::vector<Eigen::half>& mat_A0,
                                        const std::vector<Eigen::half>& mat_B0,
                                        const std::vector<Eigen::half>& mat_C,
                                        const std::vector<Eigen::half>& mat_B1,
@@ -100,7 +100,7 @@ class GemmLayernormGemmTest : public OpsTestBase {
     }
   }
 
-  void RunGemmLayernormGemmTest(const std::vector<Eigen::half>& mat_A0,
+  void RunGemmLayernormTest(const std::vector<Eigen::half>& mat_A0,
                                 const std::vector<Eigen::half>& mat_B0,
                                 const std::vector<Eigen::half>& mat_C,
                                 const std::vector<Eigen::half>& mat_B1,
@@ -114,7 +114,7 @@ class GemmLayernormGemmTest : public OpsTestBase {
               std::unique_ptr<tensorflow::Device>(DeviceFactory::NewDevice(
                   "GPU", {}, "/job:a/replica:0/task:0")));
 
-    TF_EXPECT_OK(NodeDefBuilder("gemm_layernorm_gemm", "GemmLayernormGemm")
+    TF_EXPECT_OK(NodeDefBuilder("gemm_layernorm_gemm", "GemmLayernorm")
                      .Input(FakeInput(DT_HALF))
                      .Input(FakeInput(DT_HALF))
                      .Input(FakeInput(DT_HALF))
@@ -147,7 +147,7 @@ class GemmLayernormGemmTest : public OpsTestBase {
   }
 };
 
-TEST_F(GemmLayernormGemmTest, Half) {
+TEST_F(GemmLayernormTest, Half) {
   srand(10);
 
   std::vector<Eigen::half> mat_A0;
@@ -202,10 +202,10 @@ TEST_F(GemmLayernormGemmTest, Half) {
     mat_D.push_back(Eigen::half(128));
   }
 
-  RunUnfusedGemmLayernormGemmTest(mat_A0, mat_B0, mat_C, mat_B1, Gamma, Beta,
+  RunUnfusedGemmLayernormTest(mat_A0, mat_B0, mat_C, mat_B1, Gamma, Beta,
                                   mat_D, K, M, N0, N1, head_num, lrelu_alpha,
                                   do_layer_norm, do_leaky_relu);
-  RunGemmLayernormGemmTest(mat_A0, mat_B0, mat_C, mat_B1, Gamma, Beta, mat_D, K,
+  RunGemmLayernormTest(mat_A0, mat_B0, mat_C, mat_B1, Gamma, Beta, mat_D, K,
                            M, N0, N1, head_num, lrelu_alpha, do_layer_norm,
                            do_leaky_relu);
 }
