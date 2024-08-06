@@ -15,7 +15,6 @@
 # limitations under the License.
 # ==============================================================================
 setup_file() {
-    cd /tf/tensorflow
     bazel version  # Start the bazel server
 }
 
@@ -151,14 +150,11 @@ _test_lib$
 //tensorflow:no_tensorflow_py_deps
 //tensorflow/tools/pip_package:win_pip_package_marker
 //tensorflow/core:image_testdata
-//tensorflow/core/lib/lmdb:lmdb_testdata
-//tensorflow/core/lib/lmdb/testdata:lmdb_testdata
 //tensorflow/core/kernels/cloud:bigquery_reader_ops
 //tensorflow/python:extra_py_tests_deps
 //tensorflow/python:mixed_precision
 //tensorflow/python:tf_optimizer
 //tensorflow/python:compare_test_proto_py
-//tensorflow/python/framework:test_ops_2
 //tensorflow/python/framework:test_file_system.so
 //tensorflow/python/debug:grpc_tensorflow_server.par
 //tensorflow/python/feature_column:vocabulary_testdata
@@ -302,7 +298,7 @@ EOF
 # anything with a Windows-only toolchain, and bazel errors if trying to build
 # that directory.
 @test "bazel nobuild passes on all of TF except TF Lite and win toolchains" {
-    bazel build --experimental_cc_shared_library --nobuild --keep_going -- //tensorflow/... -//tensorflow/lite/... -//tensorflow/tools/toolchains/win/... -//tensorflow/tools/toolchains/win_1803/... -//tensorflow/compiler/xla/stream_executor/cuda/...
+    bazel build --experimental_cc_shared_library --nobuild --keep_going -- //tensorflow/... -//tensorflow/lite/... -//tensorflow/tools/toolchains/win/... -//tensorflow/tools/toolchains/win_1803/...
 }
 
 
