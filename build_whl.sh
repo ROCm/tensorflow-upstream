@@ -13,10 +13,7 @@ TF_PKG_LOC=/tmp/tensorflow_pkg
 rm -f $TF_PKG_LOC/tensorflow*.whl
 
 export USE_BAZEL_VERSION=0.26.1
-export CUDA_TOOLKIT_PATH=/usr/local/cuda-11
-#export TF_CUDA_VERSION=12.3
 
-#yes "" | TF_NEED_ROCM=1 ROCM_TOOLKIT_PATH=${ROCM_INSTALL_DIR} PYTHON_BIN_PATH=/usr/bin/python3 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
 yes "" | TF_NEED_CUDA=1 TF_CUDA_VERSION=11.7 CUDA_TOOLKIT_PATH=/usr/local/cuda-11.7 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
 pip3 uninstall -y tensorflow || true
 bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=cuda \
