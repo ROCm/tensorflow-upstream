@@ -9,10 +9,24 @@
 #***************************************************************#
 set -e 
 
-bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=cuda //tensorflow:libtensorflow_cc.so
-bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=cuda //tensorflow:libtensorflow_framework.so
-bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=cuda //tensorflow/tools/pip_package:build_pip_package
-bazel-bin/tensorflow/tools/pip_package/build_pip_package ~/tensorflow_pkg
+TF_PKG_LOC=/tmp/tensorflow_pkg
+rm -f $TF_PKG_LOC/tensorflow*.whl
 
-echo y| pip uninstall tensorflow
-pip install  ~/tensorflow_pkg/tensorflow-1.15.5-cp37-cp37m-linux_x86_64.whl
+export USE_BAZEL_VERSION=0.26.1
+export CUDA_TOOLKIT_PATH=/usr/local/cuda-11
+#export TF_CUDA_VERSION=12.3
+
+#yes "" | TF_NEED_ROCM=1 ROCM_TOOLKIT_PATH=${ROCM_INSTALL_DIR} PYTHON_BIN_PATH=/usr/bin/python3 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
+yes "" | TF_NEED_CUDA=1 TF_CUDA_VERSION=11.7 CUDA_TOOLKIT_PATH=/usr/local/cuda-11.7 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
+pip3 uninstall -y tensorflow || true
+bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=cuda \
+        --copt -Wno-sign-compare \
+        --copt -DCUB_NS_QUALIFIER=::cub \
+        --action_env=TF_CUDA_COMPUTE_CAPABILITIES=7.0 \
+        //tensorflow:libtensorflow_cc.so \
+        //tensorflow:libtensorflow_framework.so
+#bazel build --config=opt --config=rocm //tensorflow/tools/pip_package:build_pip_package --verbose_failures  &&
+#bazel-bin/tensorflow/tools/pip_package/build_pip_package $TF_PKG_LOC
+
+#echo y| pip uninstall tensorflow
+#pip install $TF_PKG_LOC/tensorflow-1.15.5-cp37-cp37m-linux_x86_64.whl
