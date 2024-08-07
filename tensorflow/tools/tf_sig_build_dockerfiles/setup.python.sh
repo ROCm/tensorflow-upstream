@@ -50,7 +50,7 @@ else
 source ~/.bashrc
 VERSION=$1
 REQUIREMENTS=$2
-PY_VERSION="python${VERSION}"
+PY_VERSION="${VERSION}"
 
 # Add deadsnakes repo for Python installation
 DEBIAN_FRONTEND=noninteractive apt-get --allow-unauthenticated update
