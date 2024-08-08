@@ -77,21 +77,22 @@ if [[ "$DISTRO" == "focal" ]] || [[ "$DISTRO" == "jammy" ]]; then
         wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | \
             gpg --dearmor | tee /etc/apt/keyrings/rocm.gpg > /dev/null
 
-        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] $ROCM_DEB_REPO $ROCM_BUILD_NAME $ROCM_BUILD_NUM" | tee /etc/apt/sources.list.d/amdgpu.list
-        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] $AMDGPU_DEB_REPO/ubuntu $ROCM_BUILD_NAME $ROCM_BUILD_NUM" | tee --append /etc/apt/sources.list.d/rocm.list
-	echo "Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600" | tee /etc/apt/preferences.d/rocm-pin-600
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] $AMDGPU_DEB_REPO/ubuntu $ROCM_BUILD_NAME $ROCM_BUILD_NUM" | tee --append /etc/apt/sources.list.d/amdgpu.list
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] $ROCM_DEB_REPO $ROCM_BUILD_NAME $ROCM_BUILD_NUM" | tee /etc/apt/sources.list.d/rocm.list
+        echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' \
+             | tee /etc/apt/preferences.d/rocm-pin-600
     else
         bash "/${CUSTOM_INSTALL}"
     fi
     apt-get update --allow-insecure-repositories
 
-    wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -;
-    echo "deb [arch=amd64 trusted=yes] http://apt.llvm.org/$DISTRO/ llvm-toolchain-$DISTRO-17 main" | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+    wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+    echo "deb [arch=amd64 trusted=yes] http://apt.llvm.org/$DISTRO/ llvm-toolchain-$DISTRO-17 main" | tee /etc/apt/sources.list.d/llvm.list
+    apt-get update --allow-insecure-repositories
 
     # install rocm
     /setup.packages.sh /devel.packages.rocm.txt
 
-    apt-get update --allow-insecure-repositories
     MIOPENKERNELS=$( \
                         apt-cache search --names-only miopen-hip-gfx | \
                         awk '{print $1}' | \
