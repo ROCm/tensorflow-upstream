@@ -219,6 +219,9 @@ def _rocm_include_path(repository_ctx, rocm_config):
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/17/include")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/17/include")
 
+    inc_dirs.append("/opt/rocm/lib/llvm/lib/clang/18/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/18/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/18/include")
 
     inc_entries = []
     for inc_dir in inc_dirs:

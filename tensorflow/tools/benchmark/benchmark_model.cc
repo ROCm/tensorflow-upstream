@@ -642,6 +642,7 @@ int Main(int argc, char** argv) {
     LOG(INFO) << "FLOPs/second: "
               << strings::HumanReadableNum(
                      static_cast<int64>(total_flops / mean_run_time));
+    LOG(INFO) << "Wall time: " << mean_run_time;
   }
 
   if (!benchmark_name.empty() && !output_prefix.empty()) {
