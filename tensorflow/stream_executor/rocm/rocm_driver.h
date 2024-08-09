@@ -291,6 +291,9 @@ class ROCMDriver {
   static port::Status GetAMDGPUISAVersion(int *version,
                                           hipDevice_t device);
 
+  // tests the current device for MFMA insn support (ROCm only)
+  static port::Status GetMFMASupport(bool& support);
+
   // Returns the number of multiprocessors on the device (note that the device
   // may be multi-GPU-per-board).
   static port::StatusOr<int> GetMultiprocessorCount(hipDevice_t device);
