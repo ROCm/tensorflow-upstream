@@ -83,6 +83,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "tsl/platform/cuda_libdevice_path.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
@@ -854,7 +855,10 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   }
   // Locate lld.
   std::string lld_path;
-  if (std::getenv("ROCM_PATH")) {
+  if (std::getenv("LLVM_PATH")) {
+       lld_path = tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin");
+  }
+  else if (std::getenv("ROCM_PATH")) {
        lld_path = tsl::io::JoinPath(std::getenv("ROCM_PATH"), "llvm/bin");
   }
   else {
