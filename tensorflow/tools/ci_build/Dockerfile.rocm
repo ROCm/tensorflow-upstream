@@ -3,10 +3,10 @@
 FROM ubuntu:focal
 MAINTAINER Jeff Poznanovic <jeffrey.poznanovic@amd.com>
 
-ARG ROCM_DEB_REPO=https://repo.radeon.com/rocm/apt/6.1/
+ARG ROCM_DEB_REPO=https://repo.radeon.com/rocm/apt/6.2/
 ARG ROCM_BUILD_NAME=ubuntu
 ARG ROCM_BUILD_NUM=main
-ARG ROCM_PATH=/opt/rocm-6.1.0
+ARG ROCM_PATH=/opt/rocm-6.2.0
 ARG GPU_DEVICE_TARGETS="gfx942"
 
 ENV DEBIAN_FRONTEND noninteractive
@@ -24,7 +24,7 @@ RUN bin/bash -c 'if [[ $ROCM_DEB_REPO == https://repo.radeon.com/rocm/*  ]] ; th
       echo "deb [arch=amd64 trusted=yes] $ROCM_DEB_REPO $ROCM_BUILD_NAME $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/rocm.list ; \
     fi'
 RUN echo "deb [arch=amd64 trusted=yes] http://apt.llvm.org/focal/ llvm-toolchain-focal-17 main" > /etc/apt/sources.list.d/llvm.list
-RUN echo "deb [arch=amd64] https://repo.radeon.com/amdgpu/6.1/ubuntu focal $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/amdgpu.list
+RUN echo "deb [arch=amd64] https://repo.radeon.com/amdgpu/6.2/ubuntu focal $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/amdgpu.list
 
 # Install rocm pkgs
 #RUN apt-get update --allow-insecure-repositories && \
