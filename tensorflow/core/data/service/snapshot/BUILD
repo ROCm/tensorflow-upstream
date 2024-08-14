@@ -1,9 +1,9 @@
 # Distributed snapshot library.
 
+load("@local_xla//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//tensorflow:tensorflow.bzl", "tf_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "tf_grpc_cc_dependencies", "tf_kernel_library")
 load("//tensorflow/core/platform:build_config.bzl", "tf_protos_profiler_service")
-load("@local_tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -127,6 +127,7 @@ cc_library(
         "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:path",
+        "@local_tsl//tsl/platform:random",
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/profiler/lib:traceme",
     ],
@@ -306,6 +307,7 @@ cc_library(
         "//tensorflow/core/data/service:dispatcher_proto_cc",
         "//tensorflow/core/data/service:split_provider",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
@@ -407,6 +409,8 @@ tf_cc_test(
         "//tensorflow/core:framework",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
+        "//tensorflow/core/data:serialization_utils",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -458,7 +462,7 @@ cc_library(
 
 tf_cc_test(
     name = "snapshot_stream_writer_checkpoint_test",
-    size = "small",
+    size = "medium",
     srcs = ["snapshot_stream_writer_checkpoint_test.cc"],
     deps = [
         ":path_utils",

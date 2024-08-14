@@ -15,20 +15,34 @@ limitations under the License.
 
 #include "xla/stream_executor/dnn.h"
 
+#include <Eigen/Core>
 #include <algorithm>
+#include <complex>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <memory>
+#include <optional>
+#include <ostream>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/btree_map.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "xla/stream_executor/data_type.h"
+#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/numeric_options.h"
 #include "tsl/lib/strings/proto_serialization.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "tsl/protobuf/dnn.pb.h"
 
 namespace stream_executor {
@@ -221,37 +235,38 @@ DnnSupport::FusedConvolveRunnerFromDesc(
 
 absl::StatusOr<std::unique_ptr<const dnn::NormRunner>>
 DnnSupport::NormRunnerFromDesc(
-    Stream* stream, const dnn::AlgorithmDesc& algorithm_desc, double epsilon,
-    const dnn::TensorDescriptor& input_descriptor,
+    Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
+    dnn::NormKind kind, double epsilon,
+    const dnn::TensorDescriptor& x_descriptor,
     const dnn::TensorDescriptor& scale_descriptor,
-    const dnn::TensorDescriptor& bias_descriptor,
-    const dnn::TensorDescriptor& output_descriptor,
+    const dnn::TensorDescriptor& y_or_dx_descriptor,
+    std::optional<dnn::TensorDescriptor> bias_descriptor,
+    std::optional<dnn::TensorDescriptor> dy_descriptor,
     std::optional<dnn::TensorDescriptor> expectation_descriptor,
-    std::optional<dnn::TensorDescriptor> norm_factor_descriptor) {
+    std::optional<dnn::TensorDescriptor> norm_factor_descriptor,
+    std::optional<dnn::TensorDescriptor> dscale_descriptor,
+    std::optional<dnn::TensorDescriptor> dbias_descriptor) {
   return absl::UnimplementedError("NormRunnerFromDesc not implemented.");
 }
 
 absl::StatusOr<std::unique_ptr<const dnn::FusedMHARunner>>
 DnnSupport::FusedMHARunnerFromDesc(
     Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
-    dnn::FusedMHAKind kind,
     const dnn::MatmulTensorDescriptor& bmm1_lhs_descriptor,
     const dnn::MatmulTensorDescriptor& bmm1_rhs_descriptor,
     const dnn::MatmulTensorDescriptor& bmm2_rhs_descriptor,
     const dnn::MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
     const dnn::TensorDescriptor& output_descriptor,
     std::optional<dnn::TensorDescriptor> activation_descriptor,
-    std::optional<dnn::TensorDescriptor> mask_descriptor,
     std::optional<dnn::TensorDescriptor> bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed,
-    bool is_flash_attention, bool is_causal_mask) {
+    dnn::FMHAMaskKind mask_type) {
   return absl::UnimplementedError("FusedMHARunnerFromDesc not implemented.");
 }
 
 absl::StatusOr<std::unique_ptr<const dnn::FusedMHABackwardRunner>>
 DnnSupport::FusedMHABackwardRunnerFromDesc(
     Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
-    dnn::FusedMHAKind kind,
     const MatmulTensorDescriptor& bmm1_grad_gemm1_rhs_descriptor,
     const MatmulTensorDescriptor& bmm1_grad_gemm2_rhs_descriptor,
     const MatmulTensorDescriptor& bmm2_grad_gemm1_lhs_descriptor,
@@ -261,19 +276,19 @@ DnnSupport::FusedMHABackwardRunnerFromDesc(
     const TensorDescriptor& d_bmm1_rhs_descriptor,
     const TensorDescriptor& d_bmm2_rhs_descriptor,
     std::optional<dnn::TensorDescriptor> d_s_descriptor,
-    std::optional<dnn::TensorDescriptor> mask_descriptor,
     std::optional<dnn::TensorDescriptor> d_bias_descriptor,
     std::optional<dnn::TensorDescriptor> fwd_output_descriptor,
     std::optional<dnn::TensorDescriptor> bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed,
-    bool is_flash_attention, bool is_causal_mask) {
+    dnn::FMHAMaskKind mask_type) {
   return absl::UnimplementedError(
       "FusedMHABackwardRunnerFromDesc not implemented.");
 }
 
 bool DnnSupport::GetMIOpenConvolveAlgorithms(
     dnn::ConvolutionKind /*kind*/, dnn::DataType /*element_type*/,
-    Stream* /*stream*/, const dnn::BatchDescriptor& /*input_descriptor*/,
+    dnn::DataType /*output_type*/, Stream* /*stream*/,
+    const dnn::BatchDescriptor& /*input_descriptor*/,
     DeviceMemoryBase input_data,
     const dnn::FilterDescriptor& /*filter_descriptor*/,
     DeviceMemoryBase filter_data,

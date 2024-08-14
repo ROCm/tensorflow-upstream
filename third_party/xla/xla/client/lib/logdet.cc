@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "absl/status/statusor.h"
 #include "xla/client/lib/arithmetic.h"
 #include "xla/client/lib/constants.h"
 #include "xla/client/lib/loops.h"
@@ -30,13 +31,13 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/statusor.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
 
 SignAndLogDet SLogDet(XlaOp a) {
-  StatusOr<SignAndLogDet> result = [&]() -> StatusOr<SignAndLogDet> {
+  absl::StatusOr<SignAndLogDet> result =
+      [&]() -> absl::StatusOr<SignAndLogDet> {
     TF_ASSIGN_OR_RETURN(Shape a_shape, a.builder()->GetShape(a));
     auto qr = Qr(a);
 

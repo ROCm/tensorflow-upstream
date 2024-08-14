@@ -240,7 +240,7 @@ class SGD(_Optimizer):
       clip_weight_min: Optional[float] = None,
       clip_weight_max: Optional[float] = None,
       weight_decay_factor: Optional[float] = None,
-      multiply_weight_decay_factor_by_learning_rate: bool = None,
+      multiply_weight_decay_factor_by_learning_rate: Optional[bool] = None,
       clipvalue: Optional[ClipValueType] = None,
       low_dimensional_packing_status: bool = False,
   ):
@@ -357,7 +357,7 @@ class Adagrad(_Optimizer):
       clip_weight_min: Optional[float] = None,
       clip_weight_max: Optional[float] = None,
       weight_decay_factor: Optional[float] = None,
-      multiply_weight_decay_factor_by_learning_rate: bool = None,
+      multiply_weight_decay_factor_by_learning_rate: Optional[bool] = None,
       slot_variable_creation_fn: Optional[SlotVarCreationFnType] = None,
       clipvalue: Optional[ClipValueType] = None,
       low_dimensional_packing_status: bool = False,
@@ -490,7 +490,7 @@ class AdagradMomentum(_Optimizer):
       clip_weight_min: Optional[float] = None,
       clip_weight_max: Optional[float] = None,
       weight_decay_factor: Optional[float] = None,
-      multiply_weight_decay_factor_by_learning_rate: bool = None,
+      multiply_weight_decay_factor_by_learning_rate: Optional[bool] = None,
       slot_variable_creation_fn: Optional[SlotVarCreationFnType] = None,
       clipvalue: Optional[ClipValueType] = None,
       low_dimensional_packing_status: bool = False,
@@ -640,7 +640,7 @@ class FTRL(_Optimizer):
       clip_weight_min: Optional[float] = None,
       clip_weight_max: Optional[float] = None,
       weight_decay_factor: Optional[float] = None,
-      multiply_weight_decay_factor_by_learning_rate: bool = None,
+      multiply_weight_decay_factor_by_learning_rate: Optional[bool] = None,
       slot_variable_creation_fn: Optional[SlotVarCreationFnType] = None,
       clipvalue: Optional[ClipValueType] = None,
       multiply_linear_by_learning_rate: bool = False,
@@ -815,7 +815,7 @@ class Adam(_Optimizer):
       clip_weight_min: Optional[float] = None,
       clip_weight_max: Optional[float] = None,
       weight_decay_factor: Optional[float] = None,
-      multiply_weight_decay_factor_by_learning_rate: bool = None,
+      multiply_weight_decay_factor_by_learning_rate: Optional[bool] = None,
       slot_variable_creation_fn: Optional[SlotVarCreationFnType] = None,
       clipvalue: Optional[ClipValueType] = None,
       low_dimensional_packing_status: bool = False,
@@ -935,7 +935,7 @@ class QuantizationConfig:
   if input > upper
     input = upper
   quantum = (upper - lower) / (num_buckets - 1)
-  input = math.floor((input - lower) / quantum + 0.5) * quantium + lower
+  input = math.floor((input - lower) / quantum + 0.5) * quantum + lower
   ```
 
   See tensorflow/core/protobuf/tpu/optimization_parameters.proto for more

@@ -53,8 +53,8 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/multi_platform_manager.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_process_state.h"
@@ -72,11 +72,11 @@ limitations under the License.
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/refcount.h"
 #include "tensorflow/core/platform/status.h"
-#include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/platform/types.h"
 #include "tsl/lib/strings/proto_serialization.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
+#include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "xla/stream_executor/gpu/gpu_executor.h"
@@ -105,7 +105,7 @@ const char* const kTfCallbackCustomCall = "GenericTfCallbackGPU";
 // "check out" an element from the list, removing it.  When we're done, we add
 // it back.  If there are no available elements in the list, we create one.
 struct KernelInstantiation {
-  static StatusOr<std::unique_ptr<KernelInstantiation>> Create(
+  static absl::StatusOr<std::unique_ptr<KernelInstantiation>> Create(
       TfCallbackData callback_data) {
     auto instantiation = std::make_unique<KernelInstantiation>();
     instantiation->input_shapes.reserve(callback_data.inputs_size());
@@ -135,7 +135,7 @@ struct KernelInstantiation {
       devices_and_kernels ABSL_GUARDED_BY(mu);
 };
 
-StatusOr<std::string> MakeOpaque(TfCallbackData callback_data) {
+absl::StatusOr<std::string> MakeOpaque(TfCallbackData callback_data) {
   // Clear the `name` field in the callback_data, because this contains the full
   // TF op name scope.  We want ops with different names to map to the same
   // Instantiation (so that if the same op with the same shape appears 10 times
@@ -155,7 +155,8 @@ StatusOr<std::string> MakeOpaque(TfCallbackData callback_data) {
       absl::Base64Escape(serialized_data), callback_data.op().op());
 }
 
-StatusOr<KernelInstantiation*> GetInstantiation(absl::string_view opaque) {
+absl::StatusOr<KernelInstantiation*> GetInstantiation(
+    absl::string_view opaque) {
   constexpr absl::string_view kFingerprintPrefix = "fingerprint128=";
   if (!absl::StartsWith(opaque, kFingerprintPrefix)) {
     return xla::Internal("Invalid opaque; must start with '%s', but was '%s'",
@@ -224,7 +225,7 @@ StatusOr<KernelInstantiation*> GetInstantiation(absl::string_view opaque) {
 
 }  // namespace
 
-static StatusOr<Tensor> TensorFromProto(const TensorProto& proto) {
+static absl::StatusOr<Tensor> TensorFromProto(const TensorProto& proto) {
   Tensor out;
   if (!out.FromProto(proto)) {
     return tsl::errors::Internal("Failed deserializing a TensorProto");
@@ -379,7 +380,7 @@ Status LightOutsideCompilationOp::CompileToCustomCallCallingTfKernel(
                    output_shape.IsTuple() ? xla::GetTupleElement(out, i) : out);
   }
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 namespace {
@@ -553,11 +554,11 @@ Status PopulateMetadataBufferIfNeeded(OpKernelContext& ctx,
       void* location = static_cast<char*>(allocated->data()) +
                        xla::ShapeUtil::ByteSizeOf(xla_shape);
       se::DeviceMemoryBase m{location, num_dimensions * sizeof(int32_t)};
-      stream->ThenMemcpy(&m, shape_info.data(),
-                         num_dimensions * sizeof(int32_t));
+      TF_RETURN_IF_ERROR(stream->Memcpy(&m, shape_info.data(),
+                                        num_dimensions * sizeof(int32_t)));
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 class FakeDeviceContext : public DeviceContext {
@@ -574,8 +575,8 @@ Status CallTfKernel(void* stream_handle, void** buffers, const char* opaque,
   // Look up the platform only once, for a small performance gain.
   static Status* platform_status = nullptr;
   static se::Platform* platform = [&]() -> se::Platform* {
-    StatusOr<se::Platform*> p =
-        se::MultiPlatformManager::PlatformWithName(PLATFORM);
+    absl::StatusOr<se::Platform*> p =
+        se::PlatformManager::PlatformWithName(PLATFORM);
     if (!p.ok()) {
       platform_status = new Status(p.status());
       return nullptr;
@@ -713,7 +714,7 @@ Status CallTfKernel(void* stream_handle, void** buffers, const char* opaque,
   }
 
   TF_RETURN_IF_ERROR(ctx.status());
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 void GenericTfCallback(void* stream_handle, void** buffers, const char* opaque,

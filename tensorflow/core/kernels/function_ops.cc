@@ -31,7 +31,6 @@ limitations under the License.
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/graph/algorithm.h"
 #include "tensorflow/core/platform/macros.h"
-#include "tensorflow/core/platform/tracing.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/core/util/device_name_utils.h"
 
@@ -52,7 +51,7 @@ void ArgOp::Compute(OpKernelContext* ctx) {
 
   auto validate_type = [this](const Tensor& val) {
     if (val.dtype() == dtype_) {
-      return OkStatus();
+      return absl::OkStatus();
     } else {
       return errors::InvalidArgument("Type mismatch: actual ",
                                      DataTypeString(val.dtype()),

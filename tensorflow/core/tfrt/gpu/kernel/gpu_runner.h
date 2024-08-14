@@ -18,7 +18,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/core/common_runtime/serving_device_selector.h"
+#include "xla/tsl/framework/serving_device_selector.h"
 #include "tensorflow/core/framework/resource_mgr.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/platform/status.h"
@@ -47,16 +47,17 @@ struct GpuRunInputs {
 
 class GpuRunner {
  public:
-  explicit GpuRunner(ServingDeviceSelector* serving_device_selector)
+  explicit GpuRunner(tsl::ServingDeviceSelector* serving_device_selector)
       : serving_device_selector_(serving_device_selector) {}
 
   // This compiles the given program and runs the given input tensors in
   // `run_inputs`, and returns the output tensor AsyncValues.
-  StatusOr<llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>>>
+  absl::StatusOr<
+      llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>>>
   Run(const GpuRunInputs& run_inputs);
 
  private:
-  ServingDeviceSelector* serving_device_selector_;
+  tsl::ServingDeviceSelector* serving_device_selector_;
   tfrt::gpu::GpuVariablesTable vars_table_;
 };
 

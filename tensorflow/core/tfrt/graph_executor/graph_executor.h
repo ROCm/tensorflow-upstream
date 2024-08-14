@@ -33,6 +33,8 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/OwningOpRef.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/translate/mlir_roundtrip_flags.h"
+#include "tensorflow/compiler/mlir/tfrt/backend_compiler.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "tensorflow/core/common_runtime/process_function_library_runtime.h"
 #include "tensorflow/core/framework/cancellation.h"
 #include "tensorflow/core/framework/function.h"
@@ -55,7 +57,7 @@ limitations under the License.
 #include "tensorflow/core/tfrt/runtime/stream.h"
 #include "tensorflow/core/tfrt/runtime/work_queue_interface.h"
 #include "tensorflow/core/tfrt/utils/tfrt_graph_execution_state.h"
-#include "tsl/concurrency/ref_count.h"
+#include "tsl/lib/monitoring/sampler.h"
 #include "tsl/platform/thread_annotations.h"
 #include "tfrt/bef/bef_buffer.h"  // from @tf_runtime
 #include "tfrt/bef_executor/bef_file.h"  // from @tf_runtime
@@ -94,7 +96,7 @@ struct SymbolUids {
 // Note: `resource_context` is per-graph-executor and
 // `client_graph_resource_context` is per-loaded-client-graph. See the comment
 // above `GraphExecutor::resource_context_` about the todo to merge these two.
-StatusOr<std::unique_ptr<RequestInfo>> CreateRequestInfo(
+absl::StatusOr<std::unique_ptr<RequestInfo>> CreateRequestInfo(
     const GraphExecutionOptions& options,
     const GraphExecutionRunOptions& run_options,
     tensorflow::tfrt_stub::WorkQueueInterface* work_queue,
@@ -156,7 +158,8 @@ class GraphExecutor {
                       mlir::OwningOpRef<mlir::ModuleOp> tfrt_mlir,
                       std::shared_ptr<ExecutableContext> executable_context,
                       std::optional<StreamCallbackId> stream_callback_id,
-                      bool is_restore, FunctionLibraryDefinition flib_def);
+                      bool is_restore, FunctionLibraryDefinition flib_def,
+                      tsl::monitoring::SamplerCell* latency_sampler);
 
     // Returns this instance's CostRecorder if it is time to update costs,
     // else returns nullptr. Only allows one non-null return value at a time
@@ -192,6 +195,7 @@ class GraphExecutor {
         const {
       return pflr_;
     }
+    tsl::monitoring::SamplerCell* latency_sampler() { return latency_sampler_; }
 
    private:
     std::string name_;
@@ -230,11 +234,13 @@ class GraphExecutor {
     bool is_restore_;
     FunctionLibraryDefinition flib_def_;
     ProcessFunctionLibraryRuntime pflr_;
+    tsl::monitoring::SamplerCell* latency_sampler_;
   };
 
   // A subgraph constructed by specifying input/output tensors.
   struct ClientGraph {
-    // A unique name by joining all the input/output/target names.
+    // The human-readable name for the graph, e.g. the signature_name in the
+    // saved model.
     std::string name;
     // The feed nodes for the corresponding inputs, but they might not be in the
     // original order and if there are more than one original inputs mapped to
@@ -247,7 +253,7 @@ class GraphExecutor {
   };
 
   // Creates a `GraphExecutor` given the args.
-  static StatusOr<std::unique_ptr<GraphExecutor>> Create(
+  static absl::StatusOr<std::unique_ptr<GraphExecutor>> Create(
       Options options, std::unique_ptr<FallbackState> fallback_state,
       std::unique_ptr<tfrt::ResourceContext> resource_context,
       tensorflow::GraphDef graph_def,
@@ -315,19 +321,21 @@ class GraphExecutor {
 
  private:
   // A set of methods to load a client graph.
-  StatusOr<std::unique_ptr<GraphExecutor::LoadedClientGraph>> LoadClientGraph(
+  absl::StatusOr<std::unique_ptr<GraphExecutor::LoadedClientGraph>>
+  LoadClientGraph(
       const GraphExecutor::ClientGraph& client_graph,
       tensorflow::tfrt_stub::WorkQueueInterface* work_queue,
       absl::Span<const std::pair<std::string, tensorflow::Tensor>> inputs);
-  StatusOr<std::unique_ptr<GraphExecutor::LoadedClientGraph>>
+  absl::StatusOr<std::unique_ptr<GraphExecutor::LoadedClientGraph>>
   ImportAndCompileClientGraph(
       const GraphExecutor::ClientGraph& client_graph,
       absl::Span<const std::pair<std::string, tensorflow::Tensor>> inputs);
-  tensorflow::StatusOr<
+  absl::StatusOr<
       std::pair<FunctionLibraryDefinition, mlir::OwningOpRef<mlir::ModuleOp>>>
   ImportClientGraphToMlirModule(const GraphExecutor::ClientGraph& client_graph,
                                 mlir::MLIRContext* context) const;
-  StatusOr<tfrt::BefBuffer> CompileMlirModuleToBef(mlir::ModuleOp module) const;
+  absl::StatusOr<tfrt::BefBuffer> CompileMlirModuleToBef(
+      mlir::ModuleOp module) const;
 
   tensorflow::Status InitBef(
       LoadedClientGraph* loaded_client_graph,
@@ -337,7 +345,7 @@ class GraphExecutor {
 
   // Returns a `LoadedClientGraph` given input/output tensor info. If there is
   // no existing one yet, creates one first.
-  StatusOr<std::reference_wrapper<GraphExecutor::LoadedClientGraph>>
+  absl::StatusOr<std::reference_wrapper<GraphExecutor::LoadedClientGraph>>
   GetOrCreateLoadedClientGraph(
       const RunOptions& run_options,
       absl::Span<const std::string> input_tensor_names,
@@ -376,7 +384,8 @@ class GraphExecutor {
   int num_recompilations_ TF_GUARDED_BY(num_recompilations_mu_) = 0;
 };
 
-void RegisterMlirDialect(mlir::DialectRegistry& registry);
+void RegisterMlirDialect(mlir::DialectRegistry& registry,
+                         tensorflow::BackendCompiler* backend_compiler);
 
 }  // namespace tfrt_stub
 }  // namespace tensorflow

@@ -21,15 +21,20 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
+#include "xla/service/gpu/model/gpu_indexing_performance_model.h"
+#include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -68,13 +73,20 @@ class GpuPerformanceModelTest : public HloTestBase {
         fused_consumers);
   }
 
+  mlir::MLIRContext mlir_context_;
   GpuHloCostAnalysis::Options options_{ShapeSizeBytesFunction(),
                                        /*per_second_rates=*/{},
                                        /*count_multiple_input_accesses=*/true};
   // The reference times in the test cases below are measured
   // on A6000 by profiling the execution of the HLOs.
-  se::DeviceDescription dev_info_{TestGpuDeviceInfo::RTXA6000DeviceInfo()};
-  GpuHloCostAnalysis analysis_{options_, &dev_info_};
+  se::DeviceDescription device_info_{TestGpuDeviceInfo::RTXA6000DeviceInfo()};
+  HloFusionAnalysisCache fusion_analysis_cache_{device_info_};
+  GpuHloCostAnalysis analysis_{options_, &device_info_};
+
+  GpuPerformanceModelWithIndexingAnalysis indexing_cost_model_{
+      &device_info_, &fusion_analysis_cache_, ShapeSizeBytesFunction(),
+      &mlir_context_};
+
   GpuPerformanceModelTest() : HloTestBase() {}
 };
 
@@ -103,6 +115,9 @@ ENTRY e {
   auto prio_t = EstimateRunTimesForPriorityFusion(root);
   // Dominated by the DRAM bandwidth.
   EXPECT_NEAR(absl::ToInt64Microseconds(prio_t.time_unfused), 53, 10);
+
+  auto indexing_t = indexing_cost_model_.EstimateRunTimes(root);
+  EXPECT_NEAR(absl::ToInt64Microseconds(indexing_t.time_unfused), 53, 10);
 }
 
 TEST_F(GpuPerformanceModelTest, SmallReadWrite) {
@@ -132,11 +147,14 @@ ENTRY e {
 
   GpuPerformanceModel::RecordEstimatedRunTime(
       root, &analysis_, GpuPerformanceModelOptions::Default());
-  double recorded_cycles = root->backend_config<GpuBackendConfig>()
-                               ->fusion_backend_config()
-                               .reification_cost()
-                               .end_to_end_cycles();
-  EXPECT_NEAR(recorded_cycles, 257.7, 0.1);
+  auto reification_cost = root->backend_config<GpuBackendConfig>()
+                              ->fusion_backend_config()
+                              .reification_cost();
+  EXPECT_NEAR(reification_cost.end_to_end_cycles(), 257.7, 0.1);
+  EXPECT_NEAR(reification_cost.exec_time_us(), 0, 1);
+
+  auto indexing_t = indexing_cost_model_.EstimateRunTimes(root);
+  EXPECT_NEAR(absl::ToInt64Microseconds(indexing_t.time_unfused), 1, 1);
 }
 
 TEST_F(GpuPerformanceModelTest, LargeReadWrite) {
@@ -166,11 +184,13 @@ ENTRY e {
 
   GpuPerformanceModel::RecordEstimatedRunTime(
       root, &analysis_, GpuPerformanceModelOptions::Default());
-  double recorded_cycles = root->backend_config<GpuBackendConfig>()
-                               ->fusion_backend_config()
-                               .reification_cost()
-                               .end_to_end_cycles();
-  EXPECT_NEAR(recorded_cycles, 220284, 100);
+  auto reification_cost = root->backend_config<GpuBackendConfig>()
+                              ->fusion_backend_config()
+                              .reification_cost();
+  EXPECT_NEAR(reification_cost.end_to_end_cycles(), 220284, 100);
+  EXPECT_NEAR(reification_cost.exec_time_us(), 156, 10);
+  EXPECT_NEAR(reification_cost.compute_time_us(), 1, 1);
+  EXPECT_NEAR(reification_cost.memory_access_time_us(), 156, 10);
 }
 
 TEST_F(GpuPerformanceModelTest, L1CacheEffect) {
@@ -261,23 +281,6 @@ TEST_F(GpuPerformanceModelTest, UnusedParameter) {
   EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 1, 1);
 }
 
-using GpuPerformanceWithCollectiveModelTest = GpuPerformanceModelTest;
-
-TEST_F(GpuPerformanceWithCollectiveModelTest, TestNvmlLibraryLoading) {
-#if GOOGLE_CUDA
-  EXPECT_TRUE(GpuPerformanceWithCollectiveModel::InitNvml());
-  // After successful init, we try to use one of the
-  // nvml functions to see if the result is good.
-  nvmlDevice_t nvml_device;
-  nvmlReturn_t get_device_result =
-      xla_nvmlDeviceGetHandleByIndex(0, &nvml_device);
-  EXPECT_TRUE(get_device_result == NVML_SUCCESS);
-
-  EXPECT_TRUE(GpuPerformanceWithCollectiveModel::InitNvml());
-
-#endif  // GOOGLE_CUDA
-}
-
 TEST_F(GpuPerformanceModelTest, ComputeBoundReducesWithSameLaunchDimensions) {
   // We compare two compute-bound reduces that do ~the same amount of compute
   // and have the same launch dimensions. The result should be approximately
@@ -331,7 +334,7 @@ ENTRY fusion {
   auto run = [&](absl::string_view hlo_text)
       -> absl::StatusOr<GpuPerformanceModel::RunTimes> {
     TF_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_text));
-    GpuHloCostAnalysis analysis(options_, &dev_info_);
+    GpuHloCostAnalysis analysis(options_, &device_info_);
     TF_RETURN_IF_ERROR(module->entry_computation()->Accept(&analysis));
 
     auto* producer =
@@ -377,6 +380,48 @@ ENTRY fusion {
 
   auto* producer =
       module->entry_computation()->GetInstructionWithName("transpose.1");
+  std::vector<HloInstruction*> consumers{
+      module->entry_computation()->GetInstructionWithName("reduce.1")};
+
+  auto t = EstimateRunTimesForPriorityFusion(producer, consumers);
+  EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 105, 10);
+  EXPECT_NEAR(absl::ToInt64Microseconds(t.time_fused), 514, 10);
+}
+
+// Same as FusingTransposeIntoReduceIsSlow, but artificially wrapping the
+// transpose in a multi-output fusion with 1 output, to check that we still get
+// the same results.
+TEST_F(GpuPerformanceModelTest,
+       FusingTransposeMultiOutputFusionIntoReduceIsSlow) {
+  constexpr absl::string_view kHlo = R"(
+HloModule testmodule
+
+max {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT max = f32[] maximum(p0, p1)
+}
+
+transpose_fusion {
+  param0 = f32[1500,32,128] parameter(0)
+  transpose.1 = f32[1500,128,32] transpose(param0), dimensions={0,2,1}
+  ROOT res = (f32[1500,128,32]) tuple(transpose.1)
+}
+
+ENTRY fusion {
+  c = f32[] constant(-inf)
+  p0 = f32[1500,32,128] parameter(0)
+  fusion = (f32[1500,128,32]) fusion(p0), kind=kInput, calls=transpose_fusion
+  gte = f32[1500,128,32] get-tuple-element(fusion), index=0
+  ROOT reduce.1 = f32[1500,32] reduce(gte, c), dimensions={1}, to_apply=max
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+
+  auto* producer =
+      module->entry_computation()->GetInstructionWithName("fusion");
   std::vector<HloInstruction*> consumers{
       module->entry_computation()->GetInstructionWithName("reduce.1")};
 
@@ -616,6 +661,42 @@ ENTRY fusion {
       exp_producer_runtimes.time_unfused - exp_producer_runtimes.time_fused;
 
   EXPECT_LT(exp_producer_priority, exp_consumer_priority);
+}
+
+TEST_F(GpuPerformanceModelTest, DontFuseExpensiveElementwiseIntoSmallReduce) {
+  constexpr absl::string_view kHlo = R"(
+HloModule testmodule
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+
+fused_computation.0 {
+  p0 = f32[4,28672,32] parameter(0)
+  tanh = f32[4,28672,32] tanh(p0)
+  c1 = f32[] constant(72)
+  broadcast = f32[4,28672,32] broadcast(c1), dimensions={}
+  ROOT mul = f32[4,28672,32] multiply(tanh, broadcast)
+}
+
+ENTRY fusion {
+  p0 = f32[4,28672,32] parameter(0)
+  fusion = f32[4,28672,32] fusion(p0), kind=kLoop, calls=fused_computation.0
+  c0 = f32[] constant(0)
+  ROOT reduce = f32[4,32] reduce(fusion, c0), to_apply=add, dimensions={1}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+
+  auto* fusion = module->entry_computation()->GetInstructionWithName("fusion");
+  auto* reduce = module->entry_computation()->GetInstructionWithName("reduce");
+
+  auto t = EstimateRunTimesForPriorityFusion(fusion, {reduce});
+
+  EXPECT_LT(t.time_unfused, t.time_fused);
 }
 
 }  // namespace

@@ -19,6 +19,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "llvm/IR/IRBuilder.h"
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -26,9 +27,8 @@ limitations under the License.
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/indexing_analysis.h"
+#include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/llvm_ir/ir_array.h"
-#include "xla/status.h"
 
 namespace xla {
 namespace gpu {
@@ -40,7 +40,11 @@ class LoopFusion : public KernelFusionEmitterBase {
   LaunchDimensions launch_dimensions() const override;
 
   std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
-      int64_t output_id, mlir::MLIRContext* ctx) const override;
+      int64_t root_index, mlir::MLIRContext* ctx) const override;
+
+  std::optional<IndexingMap> ComputeThreadIdToInputIndexing(
+      int64_t root_index, int64_t hero_operand_index,
+      mlir::MLIRContext* ctx) const override;
 
  protected:
   absl::Status EmitKernel(IrEmitterContext& ir_emitter_context,
@@ -54,6 +58,9 @@ class LoopFusion : public KernelFusionEmitterBase {
   const HloFusionAnalysis& analysis_;
   LaunchDimensionsConfig config_;
 };
+
+LaunchDimensionsConfig ComputeLoopFusionConfig(
+    const HloFusionAnalysis& analysis);
 
 }  // namespace gpu
 }  // namespace xla

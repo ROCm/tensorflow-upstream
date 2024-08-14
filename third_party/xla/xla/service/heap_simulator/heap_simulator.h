@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -52,7 +53,6 @@ limitations under the License.
 #include "xla/service/hlo_value.h"
 #include "xla/service/memory_space_assignment/repacking.h"
 #include "xla/service/tuple_points_to_analysis.h"
-#include "xla/statusor.h"
 
 namespace xla {
 
@@ -145,20 +145,20 @@ class HeapSimulator {
   // Returns the minimum memory required to compute an HLO module where all
   // computations have been scheduled (represented by the given
   // schedule), assuming no fragmentation.
-  static StatusOr<int64_t> MinimumMemoryForModule(
+  static absl::StatusOr<int64_t> MinimumMemoryForModule(
       const HloSchedule& schedule,
       const LogicalBuffer::SizeFunction& size_function);
 
   // Returns the minimum memory required to compute the given computation,
   // assuming no fragmentation.
-  static StatusOr<int64_t> MinimumMemoryForComputation(
+  static absl::StatusOr<int64_t> MinimumMemoryForComputation(
       const HloComputation& computation, const HloInstructionSequence& sequence,
       const HloAliasAnalysis& alias_analysis,
       const LogicalBuffer::SizeFunction& size_function,
       const absl::flat_hash_map<const HloComputation*, int64_t>*
           memory_by_computation = nullptr);
 
-  static StatusOr<int64_t> MinimumMemoryForComputation(
+  static absl::StatusOr<int64_t> MinimumMemoryForComputation(
       const HloComputation& computation, const HloInstructionSequence& sequence,
       const HloAliasAnalysis& alias_analysis,
       const LogicalBuffer::SizeFunction& size_function,
@@ -173,7 +173,7 @@ class HeapSimulator {
   // to running on a per-computation basis, since we can re-use buffer space for
   // called sub-computations.
   //
-  static StatusOr<Result<HloValue>> Run(
+  static absl::StatusOr<Result<HloValue>> Run(
       std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
       const HloModule& module, const HloSchedule& schedule,
       const HloAliasAnalysis& alias_analysis,
@@ -184,7 +184,7 @@ class HeapSimulator {
   // must contain a topologically-consistent total ordering of all instructions
   // in the computation. The result is invalid if instructions are not run in
   // exactly this sequence.
-  static StatusOr<Result<HloValue>> Run(
+  static absl::StatusOr<Result<HloValue>> Run(
       std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
       const HloComputation& computation,
       const HloInstructionSequence& instruction_sequence,
@@ -196,7 +196,7 @@ class HeapSimulator {
 
   // Same as above, but runs on with a schedule that covers all nested
   // computations.
-  static StatusOr<Result<HloValue>> Run(
+  static absl::StatusOr<Result<HloValue>> Run(
       std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
       const HloComputation& computation,
       const HloInstructionSequence& instruction_sequence,
@@ -215,10 +215,10 @@ class HeapSimulator {
                     memory_by_computation = nullptr);
   ~HeapSimulator();
 
-  Status RunComputation(const HloComputation& computation,
-                        const HloInstructionSequence& instruction_sequence,
-                        const HloAliasAnalysis& alias_analysis,
-                        HloLiveRange* live_range);
+  absl::Status RunComputation(
+      const HloComputation& computation,
+      const HloInstructionSequence& instruction_sequence,
+      const HloAliasAnalysis& alias_analysis, HloLiveRange* live_range);
 
   bool IgnoreBuffer(const HloValue* buffer) const;
   void Alloc(const HloValue* buffer, const HloInstruction* instruction);
@@ -236,7 +236,7 @@ class HeapSimulator {
   //  Two buffers belong to the same shared group.
   //  Eight of the buffer has no shared group assigned.
   bool InSameSharedGroup(const HloValue* left, const HloValue* right);
-  StatusOr<Result<HloValue>> Finish();
+  absl::StatusOr<Result<HloValue>> Finish();
 
   void FillDebugTrace(HeapSimulatorTrace::Event::Kind kind,
                       const HloValue* buffer, const HloInstruction* instruction,
@@ -316,7 +316,7 @@ class HeapAlgorithm {
 
   // Finish collects the buffer offset assignment results.  Finish may only be
   // called once, after all Alloc and Free calls.
-  virtual StatusOr<Result> Finish() = 0;
+  virtual absl::StatusOr<Result> Finish() = 0;
 };
 
 // NoFragmentationStatsHeap computes the heap size assuming no fragmentation;
@@ -340,7 +340,7 @@ class NoFragmentationStatsHeap : public HeapAlgorithm<BufferType> {
 
   void Free(const BufferType* buffer, int64_t size) override;
 
-  StatusOr<Result> Finish() override;
+  absl::StatusOr<Result> Finish() override;
 
  private:
   int64_t current_heap_size_ = 0;
@@ -756,14 +756,14 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
     // (spatially) should be allocated. Such a slice has size
     // sorted_slice_sizes_[i] and would be allocated at offset +
     // sum(sorted_slice_sizes[j], for j in [0, i-1]).
-    Status DoesPermutationFit(
+    absl::Status DoesPermutationFit(
         absl::Span<const int64_t> permutation_of_slice_times,
         const FreeChunkRoot& root, int64_t offset) const;
 
     // Only DoesSlicedPermutationFit() should call this method directly. Other
     // callers should call DoesSlicedPermutationFit(), which contains some
     // wrapper VLOGGING.
-    Status DoesPermutationFitImpl(
+    absl::Status DoesPermutationFitImpl(
         absl::Span<const int64_t> permutation_of_slice_times,
         const FreeChunkRoot& root, int64_t offset) const;
 
@@ -811,7 +811,7 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
   void ShareWith(const BufferType* buffer, const BufferType* share_with,
                  int64_t size) override;
 
-  StatusOr<Result> Finish() override;
+  absl::StatusOr<Result> Finish() override;
 
   // Return a BufferIntervalCompare function that sort by spatial size. We don't
   // look at co-locates as they should have the same size.
@@ -954,7 +954,7 @@ class ConstrainedGlobalDecreasingSizeBestFitHeap
         size_limit_per_heap_(size_limit_per_heap) {}
   ~ConstrainedGlobalDecreasingSizeBestFitHeap() override {}
 
-  StatusOr<Result> Finish() override;
+  absl::StatusOr<Result> Finish() override;
 
  private:
   uint64_t size_limit_per_heap_;
@@ -992,7 +992,7 @@ class ChooseBestHeapAlgorithm : public HeapAlgorithm<BufferType> {
     }
   }
 
-  StatusOr<Result> Finish() override;
+  absl::StatusOr<Result> Finish() override;
 
  private:
   std::vector<std::unique_ptr<HeapAlgorithm<BufferType>>> algorithms_;

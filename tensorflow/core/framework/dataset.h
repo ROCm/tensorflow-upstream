@@ -15,9 +15,12 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_FRAMEWORK_DATASET_H_
 #define TENSORFLOW_CORE_FRAMEWORK_DATASET_H_
 
+#include <cstdlib>
 #include <deque>
+#include <functional>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -25,7 +28,10 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "xla/tsl/framework/allocator.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/attr_value_util.h"
 #include "tensorflow/core/framework/cancellation.h"
@@ -55,7 +61,6 @@ limitations under the License.
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/refcount.h"
 #include "tensorflow/core/platform/status.h"
-#include "tensorflow/core/platform/tracing.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/thread_annotations.h"
 
@@ -83,6 +88,10 @@ void MergeOptions(const protobuf::MessageLite& source,
 }  // namespace internal
 
 using TraceMeMetadata = std::vector<std::pair<StringPiece, string>>;
+
+// Maps the index of dataset elements to a globally shuffled index. See the
+// comment for IteratorContext::Params::index_mapper for more details.
+using IndexMapperFn = std::function<absl::StatusOr<size_t>(size_t)>;
 
 constexpr char kTFDataFunction[] = "_tf_data_function";
 
@@ -416,6 +425,10 @@ class SplitProvider {
   // Cancels the split provider. After cancelling, all other existing and future
   // calls should return quickly without blocking.
   virtual void Cancel() {}
+  // Used to determine if the split provider is dynamic. Dynamic split providers
+  // are expected to be non-deterministic and may return different splits upon
+  // reinitialization.
+  virtual bool IsDynamic() const { return false; }
 };
 
 // Returns the runner threadpool size from an OpKernelContext.
@@ -657,7 +670,8 @@ class IteratorContext {
  public:
   struct Params {
     explicit Params(IteratorContext* ctx)
-        : allocator_getter(ctx->allocator_getter()),
+        : accelerator_device_info(ctx->accelerator_device_info()),
+          allocator_getter(ctx->allocator_getter()),
           cancellation_manager(ctx->cancellation_manager()),
           collective_executor(ctx->collective_executor()),
           env(ctx->env()),
@@ -666,6 +680,7 @@ class IteratorContext {
           interleave_depth(ctx->interleave_depth()),
           is_restoring(ctx->is_restoring()),
           model(ctx->model()),
+          options(ctx->options()),
           ram_budget_manager(ctx->ram_budget_manager()),
           resource_mgr(ctx->resource_mgr()),
           runner(*(ctx->runner())),
@@ -676,7 +691,8 @@ class IteratorContext {
           thread_factory(ctx->thread_factory()),
           thread_pool(ctx->thread_pool()),
           id_registry(ctx->id_registry()),
-          warm_start(ctx->warm_start()) {}
+          warm_start(ctx->warm_start()),
+          index_mapper(ctx->index_mapper()) {}
 
     explicit Params(OpKernelContext* ctx)
         : collective_executor(ctx->collective_executor()),
@@ -685,6 +701,7 @@ class IteratorContext {
       // NOTE: need reinterpret_cast because function.h forward-declares Device.
       DeviceBase* device =
           reinterpret_cast<DeviceBase*>(ctx->function_library()->device());
+      accelerator_device_info = device->tensorflow_accelerator_device_info();
       allocator_getter = [device](AllocatorAttributes attrs) {
         return device->GetAllocator(attrs);
       };
@@ -706,6 +723,9 @@ class IteratorContext {
           },
           *ctx->runner(), std::placeholders::_1);
     }
+
+    // If non-null, information about the GPU or TPU on which the op is placed.
+    const DeviceBase::AcceleratorDeviceInfo* accelerator_device_info = nullptr;
 
     // The Allocator to be used to allocate the output of an iterator.
     std::function<Allocator*(AllocatorAttributes)> allocator_getter = nullptr;
@@ -736,11 +756,11 @@ class IteratorContext {
     // If non-null, identifies the object used for performance modeling.
     std::shared_ptr<model::Model> model = nullptr;
 
-    // Manager for the ram budget when using autotune.
-    std::shared_ptr<model::RamBudgetManager> ram_budget_manager = nullptr;
-
     // The input pipeline options.
     const Options* options = nullptr;
+
+    // Manager for the ram budget when using autotune.
+    std::shared_ptr<model::RamBudgetManager> ram_budget_manager = nullptr;
 
     // A resource manager for storing dataset-related state, e.g. random
     // seeds or cached tensors. Not owned.
@@ -781,6 +801,16 @@ class IteratorContext {
 
     // Specifies the tf.data pipeline run mode.
     RunMode run_mode = RunMode::DEFAULT;
+
+    // Maps the index of dataset elements to a shuffled index. In other words,
+    // given an index i, returns the permuted index p(i) for the iterator. Used
+    // to support global shuffling of datasets that support random access.
+    IndexMapperFn index_mapper = nullptr;
+
+    // Records the number of elements that have been produced prior to a
+    // checkpoint. This is set by globally shuffled iterators so that upstream
+    // iterators can restore the element counts in the random access mode.
+    std::optional<size_t> restored_element_count = std::nullopt;
   };
 
   explicit IteratorContext(IteratorContext* ctx)
@@ -801,6 +831,10 @@ class IteratorContext {
 
   std::shared_ptr<MemoryCheckpoint::IdRegistry> id_registry() {
     return params_.id_registry;
+  }
+
+  const DeviceBase::AcceleratorDeviceInfo* accelerator_device_info() {
+    return params_.accelerator_device_info;
   }
 
   Allocator* allocator(AllocatorAttributes attrs) {
@@ -835,6 +869,8 @@ class IteratorContext {
 
   const std::shared_ptr<model::Model>& model() const { return params_.model; }
 
+  const Options* options() const { return params_.options; }
+
   const std::shared_ptr<model::RamBudgetManager>& ram_budget_manager() {
     return params_.ram_budget_manager;
   }
@@ -866,6 +902,18 @@ class IteratorContext {
   bool warm_start() { return params_.warm_start; }
 
   RunMode run_mode() { return params_.run_mode; }
+
+  IndexMapperFn index_mapper() const { return params_.index_mapper; }
+
+  std::optional<int64_t> restored_element_count() const {
+    return params_.restored_element_count;
+  }
+
+  void SetModel(std::shared_ptr<model::Model> model) { params_.model = model; }
+
+  void SetIndexMapper(const IndexMapperFn& index_mapper) {
+    params_.index_mapper = index_mapper;
+  };
 
   std::unique_ptr<thread::ThreadPool> CreateThreadPool(const string& name,
                                                        int num_threads) {
@@ -950,6 +998,26 @@ class IteratorContext {
   MemoryCheckpoint checkpoint_;
 };
 
+// Generic context that can be constructed with either an `OpKernelContext` or
+// `IteratorContext`.
+struct AnyContext {
+  Allocator* allocator;
+  std::function<void(std::function<void()>)>* runner;
+  int64_t runner_threadpool_size;
+
+  explicit AnyContext(IteratorContext* ctx) {
+    allocator = ctx->allocator({});
+    runner = ctx->runner();
+    runner_threadpool_size = ctx->runner_threadpool_size();
+  }
+
+  explicit AnyContext(OpKernelContext* ctx) {
+    allocator = ctx->get_allocator({});
+    runner = ctx->runner();
+    runner_threadpool_size = GetRunnerThreadpoolSizeFromOpKernelContext(ctx);
+  }
+};
+
 // Represents the current position in a range of outputs, where the
 // range of outputs is typically represented by an `DatasetBase`,
 // defined below.
@@ -994,6 +1062,13 @@ class IteratorBase : public Checkpointable {
   Status GetNext(IteratorContext&& ctx, std::vector<Tensor>* out_tensors,
                  bool* end_of_sequence) {
     return GetNext(&ctx, out_tensors, end_of_sequence);
+  }
+
+  // If a dataset needs to provide its own index mapper behavior to support
+  // global shuffling, implement this method.
+  virtual IndexMapperFn GetIndexMapper(
+      IndexMapperFn parent_index_mapper) const {
+    return parent_index_mapper;
   }
 
   // Skips the next `num_to_skip` outputs from the range that this iterator
@@ -1268,6 +1343,10 @@ class DatasetBase : public core::RefCounted {
   // Returns the number of bytes allocated for tensors of this dataset.
   virtual int64_t AllocatedBytes() const { return 0; }
 
+  // Returns the estimated element size based on `output_shapes()` and
+  // `output_dtypes()`.
+  virtual std::optional<int64_t> GetEstimatedElementSize() const;
+
   // Returns the estimated number of bytes used for tensors of this dataset.
   virtual int64_t TotalBytes() const { return 0; }
 
@@ -1310,11 +1389,23 @@ class DatasetBase : public core::RefCounted {
   virtual Status Get(OpKernelContext* ctx, int64 index,
                      std::vector<Tensor>* out_tensors) const;
 
+  // Same as above, but with an `AnyContext`, which can be constructed from
+  // either an `OpKernelContext` or `IteratorContext`. Used to support datasets
+  // that provide random access through both the dataset and iterator APIs.
+  virtual Status Get(AnyContext ctx, int64 index,
+                     std::vector<Tensor>* out_tensors) const;
+
+  // Returns true if the dataset and its inputs support random access.
+  virtual absl::Status RandomIndexingCompatible() const {
+    return absl::FailedPreconditionError(
+        absl::StrCat(type_string(), " does not support random access."));
+  }
+
   // Return a finalized version of the dataset.  The returned DatasetBase is
   // unowned and lives for as long as this dataset.
-  virtual StatusOr<DatasetBase*> Finalize(
+  virtual absl::StatusOr<DatasetBase*> Finalize(
       OpKernelContext* ctx,
-      std::function<StatusOr<core::RefCountPtr<DatasetBase>>()>
+      std::function<absl::StatusOr<core::RefCountPtr<DatasetBase>>()>
           make_finalized_dataset) const;
 
   // Wrapper around a GraphDefBuilder which provides support for serializing
@@ -1436,6 +1527,16 @@ class DatasetBaseIterator : public IteratorBase {
     VLOG(2) << "Attempting to save checkpoints on iterator (prefix: "
             << prefix() << ") from " << dataset()->DebugString();
     return IteratorBase::Save(ctx, writer);
+  }
+
+  // Returns a copy of the `status` where the error message is prepended with
+  // dataset name and the iterator prefix.
+  Status AddErrorContext(const Status& status) const {
+    return Status(status.code(),
+                  strings::StrCat("Error in user-defined function passed to ",
+                                  dataset()->metadata().name(),
+                                  " transformation with iterator: ", prefix(),
+                                  ": ", status.message()));
   }
 
  protected:

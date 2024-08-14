@@ -172,13 +172,12 @@ void EventMgr::EnqueueCallback(se::Stream* stream, std::function<void()> func) {
   // Events are created on demand, and repeatedly reused.  There is no
   // limit placed here on the number of allocated Events.
   if (free_events_.empty()) {
-    free_events_.push_back(std::make_unique<se::Event>(exec_));
-    free_events_.back()->Init();
+    free_events_.emplace_back(exec_->CreateEvent().value());
   }
 
   std::unique_ptr<se::Event> e = std::move(free_events_.back());
   free_events_.pop_back();
-  stream->ThenRecordEvent(e.get());
+  stream->RecordEvent(e.get()).IgnoreError();
 
   bool was_empty = callbacks_.empty();
   callbacks_[stream].push_back({std::move(e), std::move(func)});

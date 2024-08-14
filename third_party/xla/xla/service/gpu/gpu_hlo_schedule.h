@@ -16,20 +16,33 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_GPU_HLO_SCHEDULE_H_
 #define XLA_SERVICE_GPU_GPU_HLO_SCHEDULE_H_
 
+#include <cstdint>
+
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
 
-int64_t GetSizeOfShape(const Shape& shape, int pointer_size);
+// Returns `absl::OkStatus` if every instruction in the profile is present in
+// the module. `absl::InvalidArgumentError` with missing culprit costs/latencies
+// otherwise.
+absl::Status IsProfileApplicable(
+    const HloModule* module,
+    const tensorflow::profiler::ProfiledInstructionsProto& profile);
 
 struct ScheduleMetadata {
   int64_t scheduler_mem_limit;
 };
 
 // Determines the schedule of HLO instructions for a module run on the GPU.
-StatusOr<ScheduleMetadata> ScheduleGpuModule(
+absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
     HloModule* module, int64_t pointer_size,
     const se::DeviceDescription& gpu_device_info);
 

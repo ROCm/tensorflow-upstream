@@ -19,12 +19,13 @@ limitations under the License.
 
 #include "xla/status_macros.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
 namespace {
 
-StatusOr<SpatialDimensionOutputSizeAndPadding> GetWindowedOutputSize(
+absl::StatusOr<SpatialDimensionOutputSizeAndPadding> GetWindowedOutputSize(
     int64_t input_size, int64_t filter_size, int64_t dilation_rate,
     int64_t stride, Padding padding_type) {
   if (stride <= 0) {
@@ -65,7 +66,7 @@ StatusOr<SpatialDimensionOutputSizeAndPadding> GetWindowedOutputSize(
 
 }  // namespace
 
-StatusOr<SpatialDimensionOutputSizeAndPadding>
+absl::StatusOr<SpatialDimensionOutputSizeAndPadding>
 ConvGradExtractAndVerifyDimension(int64_t input_size, int64_t filter_size,
                                   int64_t output_size, int64_t dilation,
                                   int64_t stride, Padding padding) {

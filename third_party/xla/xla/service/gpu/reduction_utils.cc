@@ -18,20 +18,24 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <ostream>
 
 #include "absl/algorithm/container.h"
+#include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/util.h"
 #include "tsl/platform/logging.h"
 
 #ifdef GOOGLE_CUDA
 #include "xla/service/gpu/gpu_asm_opts_util.h"
-#include "xla/stream_executor/gpu/asm_compiler.h"
+#include "xla/stream_executor/cuda/cuda_asm_compiler.h"
 #endif  // GOOGLE_CUDA
 
 namespace xla {
@@ -178,6 +182,20 @@ bool ReductionIsRaceFree(const HloModuleConfig& hlo_module_config,
                                          reduction_dimensions);
 }
 
+std::ostream& operator<<(std::ostream& os,
+                         const ReductionDimensions& reduction_dimensions) {
+  bool is_row_reduction = reduction_dimensions.is_row_reduction;
+  os << (is_row_reduction ? "row " : "column ") << "reduction ["
+     << absl::StrJoin(reduction_dimensions.dimensions, ",") << "] -> ["
+     << reduction_dimensions.dimensions[0] << ", "
+     << reduction_dimensions
+            .dimensions[is_row_reduction
+                            ? ReductionDimensions::kRowKeptDimension
+                            : ReductionDimensions::kColMinorKeptDimension]
+     << "]";
+  return os;
+}
+
 ReductionDimensions GetReductionKindAndContiguousComponents(
     const HloInstruction& reduce) {
   Shape input_shape = reduce.operand(0)->shape();
@@ -227,6 +245,14 @@ bool IsRealReductionHero(const HloInstruction& root,
   return &root == &hero ||
          ReductionIsRaceFree(hero.GetModule()->config(),
                              GetReductionKindAndContiguousComponents(hero));
+}
+
+bool AreReductionsMultiOutputFusionCompatible(
+    const HloInstruction* reduce_hero, const HloInstruction* first_reduce) {
+  // The reduction kind must be the same for all reduce heroes inside of a
+  // multioutput fusion.
+  return GetReductionKindAndContiguousComponents(*reduce_hero) ==
+         GetReductionKindAndContiguousComponents(*first_reduce);
 }
 
 }  // namespace gpu

@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_LAZY_OP_RUNNER_H_
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,10 +28,23 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/protobuf/dnn.pb.h"
 
 namespace stream_executor {
 namespace dnn {
+
+namespace internal {
+// Returns the DnnSupport object for the given stream.
+inline absl::StatusOr<DnnSupport*> GetDnnFromStream(Stream* stream) {
+  auto dnn = stream->parent()->AsDnn();
+  if (dnn == nullptr) {
+    return absl::InternalError("No DNN support for stream");
+  }
+  return dnn;
+}
+}  // namespace internal
 
 // A lazily-initialized OpRunner from an AlgorithmDesc.
 //
@@ -52,7 +66,7 @@ namespace dnn {
 //   struct Config;
 //
 //   // Use a StreamExecutor to create an OpRunner.
-//   static StatusOr<OpRunner<Config>> OpRunnerFromDesc(
+//   static absl::StatusOr<OpRunner<Config>> OpRunnerFromDesc(
 //       const AlgorithmDesc& desc, Config config, StreamExecutor* stream);
 // };
 template <typename Op>
@@ -154,8 +168,9 @@ struct ConvOp {
   static absl::StatusOr<std::unique_ptr<const OpRunner<ConvSignature>>>
   RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
                           Stream* stream) {
-    return stream->ConvolveRunnerFromDesc(
-        desc, config.kind, config.input_type, config.output_type,
+    TF_ASSIGN_OR_RETURN(auto dnn, internal::GetDnnFromStream(stream));
+    return dnn->ConvolveRunnerFromDesc(
+        stream, desc, config.kind, config.input_type, config.output_type,
         config.input_descriptor, config.filter_descriptor,
         config.output_descriptor, config.convolution_descriptor);
   }
@@ -179,8 +194,9 @@ struct GraphConvOp {
   static absl::StatusOr<std::unique_ptr<const OpRunner<Signature>>>
   RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
                           Stream* stream) {
-    return stream->GraphConvolveRunnerFromDesc(
-        desc, config.kind, config.input_type, config.output_type,
+    TF_ASSIGN_OR_RETURN(auto dnn, internal::GetDnnFromStream(stream));
+    return dnn->GraphConvolveRunnerFromDesc(
+        stream, desc, config.kind, config.input_type, config.output_type,
         config.input_descriptor, config.filter_descriptor,
         config.output_descriptor, config.convolution_descriptor,
         config.serialized_graph);
@@ -206,8 +222,9 @@ struct FusedConvOp {
   static absl::StatusOr<std::unique_ptr<const OpRunner<FusedConvSignature>>>
   RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
                           Stream* stream) {
-    return stream->FusedConvolveRunnerFromDesc(
-        desc, config.kind, config.input_type, config.bias_type,
+    TF_ASSIGN_OR_RETURN(auto dnn, internal::GetDnnFromStream(stream));
+    return dnn->FusedConvolveRunnerFromDesc(
+        stream, desc, config.kind, config.input_type, config.bias_type,
         config.output_type, config.conv_scale, config.side_input_scale,
         config.leakyrelu_alpha, config.input_descriptor,
         config.filter_descriptor, config.bias_descriptor,
@@ -221,22 +238,29 @@ struct NormOp {
   using Signature = NormSignature;
 
   struct Config {
+    NormKind kind;
     double epsilon;
-    const TensorDescriptor& input_descriptor;
+    const TensorDescriptor& x_descriptor;
     const TensorDescriptor& scale_descriptor;
-    const TensorDescriptor& bias_descriptor;
-    const TensorDescriptor& output_descriptor;
-    std::optional<dnn::TensorDescriptor> expectation_descriptor;
-    std::optional<dnn::TensorDescriptor> norm_factor_descriptor;
+    const TensorDescriptor& y_or_dx_descriptor;
+    std::optional<TensorDescriptor> bias_descriptor;
+    std::optional<TensorDescriptor> dy_descriptor;
+    std::optional<TensorDescriptor> expectation_descriptor;
+    std::optional<TensorDescriptor> norm_factor_descriptor;
+    std::optional<TensorDescriptor> dscale_descriptor;
+    std::optional<TensorDescriptor> dbias_descriptor;
   };
 
   static absl::StatusOr<std::unique_ptr<const OpRunner<Signature>>>
   RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
                           Stream* stream) {
-    return stream->NormRunnerFromDesc(
-        desc, config.epsilon, config.input_descriptor, config.scale_descriptor,
-        config.bias_descriptor, config.output_descriptor,
-        config.expectation_descriptor, config.norm_factor_descriptor);
+    TF_ASSIGN_OR_RETURN(auto dnn, internal::GetDnnFromStream(stream));
+    return dnn->NormRunnerFromDesc(
+        stream, desc, config.kind, config.epsilon, config.x_descriptor,
+        config.scale_descriptor, config.y_or_dx_descriptor,
+        config.bias_descriptor, config.dy_descriptor,
+        config.expectation_descriptor, config.norm_factor_descriptor,
+        config.dscale_descriptor, config.dbias_descriptor);
   }
 };
 
@@ -259,7 +283,6 @@ struct FusedMatmulOp {
 struct FusedMHAOp {
   using Signature = FusedMHASignature;
   struct Config {
-    FusedMHAKind kind;
     double scale;
     const MatmulTensorDescriptor& bmm1_lhs_descriptor;
     const MatmulTensorDescriptor& bmm1_rhs_descriptor;
@@ -267,24 +290,22 @@ struct FusedMHAOp {
     const MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor;
     const TensorDescriptor& output_descriptor;
     std::optional<TensorDescriptor> bias_descriptor;
-    std::optional<TensorDescriptor> mask_descriptor;
     std::optional<TensorDescriptor> activation_descriptor;
     std::optional<double> dropout_rate;
     std::optional<int64_t> seed;
-    bool is_flash_attention;
-    bool is_causal_mask;
+    FMHAMaskKind mask_type;
   };
 
   static absl::StatusOr<std::unique_ptr<const OpRunner<FusedMHASignature>>>
   RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
                           Stream* stream) {
-    return stream->FusedMHARunnerFromDesc(
-        desc, config.kind, config.bmm1_lhs_descriptor,
-        config.bmm1_rhs_descriptor, config.bmm2_rhs_descriptor,
-        config.intermediate_bmm2_lhs_descriptor, config.output_descriptor,
-        config.activation_descriptor, config.mask_descriptor,
+    TF_ASSIGN_OR_RETURN(auto dnn, internal::GetDnnFromStream(stream));
+    return dnn->FusedMHARunnerFromDesc(
+        stream, desc, config.bmm1_lhs_descriptor, config.bmm1_rhs_descriptor,
+        config.bmm2_rhs_descriptor, config.intermediate_bmm2_lhs_descriptor,
+        config.output_descriptor, config.activation_descriptor,
         config.bias_descriptor, config.scale, config.dropout_rate, config.seed,
-        config.is_flash_attention, config.is_causal_mask);
+        config.mask_type);
   }
 };
 
@@ -292,7 +313,6 @@ struct FusedMHABackwardOp {
   using Signature = FusedMHABackwardSignature;
 
   struct Config {
-    FusedMHAKind kind;
     double scale;
     const MatmulTensorDescriptor& bmm1_grad_gemm1_rhs_descriptor;
     const MatmulTensorDescriptor& bmm1_grad_gemm2_rhs_descriptor;
@@ -303,31 +323,29 @@ struct FusedMHABackwardOp {
     const TensorDescriptor& d_bmm1_rhs_descriptor;
     const TensorDescriptor& d_bmm2_rhs_descriptor;
     std::optional<TensorDescriptor> d_s_descriptor;
-    std::optional<TensorDescriptor> mask_descriptor;
     std::optional<TensorDescriptor> d_bias_descriptor;
     std::optional<TensorDescriptor> fwd_output_descriptor;
     std::optional<TensorDescriptor> bias_descriptor;
     std::optional<double> dropout_rate;
     std::optional<int64_t> seed;
-    bool is_flash_attention;
-    bool is_causal_mask;
+    FMHAMaskKind mask_type;
   };
 
   static absl::StatusOr<
       std::unique_ptr<const OpRunner<FusedMHABackwardSignature>>>
   RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
                           Stream* stream) {
-    return stream->FusedMHABackwardRunnerFromDesc(
-        desc, config.kind, config.bmm1_grad_gemm1_rhs_descriptor,
+    TF_ASSIGN_OR_RETURN(auto dnn, internal::GetDnnFromStream(stream));
+    return dnn->FusedMHABackwardRunnerFromDesc(
+        stream, desc, config.bmm1_grad_gemm1_rhs_descriptor,
         config.bmm1_grad_gemm2_rhs_descriptor,
         config.bmm2_grad_gemm1_lhs_descriptor,
         config.bmm2_grad_gemm2_rhs_descriptor, config.d_output_descriptor,
         config.d_bmm1_lhs_descriptor, config.d_bmm1_rhs_descriptor,
         config.d_bmm2_rhs_descriptor, config.d_s_descriptor,
-        config.mask_descriptor, config.d_bias_descriptor,
-        config.fwd_output_descriptor, config.bias_descriptor, config.scale,
-        config.dropout_rate, config.seed, config.is_flash_attention,
-        config.is_causal_mask);
+        config.d_bias_descriptor, config.fwd_output_descriptor,
+        config.bias_descriptor, config.scale, config.dropout_rate, config.seed,
+        config.mask_type);
   }
 };
 

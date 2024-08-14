@@ -23,12 +23,15 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "tensorflow/core/common_runtime/cost_constants.h"
 #include "tensorflow/core/common_runtime/cost_measurement.h"
 #include "tensorflow/core/common_runtime/cost_measurement_registry.h"
 #include "tensorflow/core/common_runtime/request_cost.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/kernels/batching_util/batch_stats.h"
+#include "tsl/platform/criticality.h"
 
 namespace tensorflow {
 namespace serving {
@@ -36,6 +39,58 @@ namespace {
 
 using ::testing::Pair;
 using ::testing::UnorderedElementsAre;
+
+TEST(BatchTaskCriticalityTest, CriticalityDefaultsToCritical) {
+  BatchResourceBase::BatchTask batch_task;
+  EXPECT_EQ(batch_task.criticality(), tsl::criticality::Criticality::kCritical);
+}
+
+#if defined(PLATFORM_GOOGLE)
+TEST(BatchTaskCriticalityTest, CriticalitySuccessfullyPropagated) {
+  std::vector<BatchResourceBase::BatchTask> batch_tasks;
+  // Tasks created with the scoped criticalities must have proper criticalities
+  // set.
+  {
+    tsl::criticality::ScopedCriticality scoped_criticality(
+        tsl::criticality::Criticality::kCriticalPlus);
+    ASSERT_EQ(tsl::criticality::GetCriticality(),
+              tsl::criticality::Criticality::kCriticalPlus);
+    batch_tasks.push_back(BatchResourceBase::BatchTask());
+  }
+  {
+    tsl::criticality::ScopedCriticality scoped_criticality(
+        tsl::criticality::Criticality::kCritical);
+    ASSERT_EQ(tsl::criticality::GetCriticality(),
+              tsl::criticality::Criticality::kCritical);
+    batch_tasks.push_back(BatchResourceBase::BatchTask());
+  }
+  {
+    tsl::criticality::ScopedCriticality scoped_criticality(
+        tsl::criticality::Criticality::kSheddablePlus);
+    ASSERT_EQ(tsl::criticality::GetCriticality(),
+              tsl::criticality::Criticality::kSheddablePlus);
+    batch_tasks.push_back(BatchResourceBase::BatchTask());
+  }
+  {
+    tsl::criticality::ScopedCriticality scoped_criticality(
+        tsl::criticality::Criticality::kSheddable);
+    ASSERT_EQ(tsl::criticality::GetCriticality(),
+              tsl::criticality::Criticality::kSheddable);
+    batch_tasks.push_back(BatchResourceBase::BatchTask());
+  }
+  batch_tasks.push_back(BatchResourceBase::BatchTask());
+  EXPECT_EQ(batch_tasks[0].criticality(),
+            tsl::criticality::Criticality::kCriticalPlus);
+  EXPECT_EQ(batch_tasks[1].criticality(),
+            tsl::criticality::Criticality::kCritical);
+  EXPECT_EQ(batch_tasks[2].criticality(),
+            tsl::criticality::Criticality::kSheddablePlus);
+  EXPECT_EQ(batch_tasks[3].criticality(),
+            tsl::criticality::Criticality::kSheddable);
+  EXPECT_EQ(batch_tasks[4].criticality(),
+            tsl::criticality::Criticality::kCritical);
+}
+#endif
 
 class TestTpuCostMeasurement : public CostMeasurement {
  public:
@@ -71,7 +126,8 @@ TEST(SplitBatchCostsAndRecordMetricsTest, SkipOnNoCostMeasurement) {
 
   std::vector<std::unique_ptr<CostMeasurement>> batch_cost_measurements;
   BatchResourceBase::SplitBatchCostsAndRecordMetrics(
-      "model_name", batch_cost_measurements, /*processed_size=*/16, batch);
+      "model_name", "op_name", batch_cost_measurements, /*processed_size=*/16,
+      batch);
   EXPECT_TRUE(batch.task(0).request_cost->GetCosts().empty());
   EXPECT_THAT(batch.task(0).request_cost->GetBatchMetrics(),
               ::testing::ElementsAre(::testing::FieldsAre(
@@ -90,7 +146,8 @@ TEST(SplitBatchCostsAndRecordMetricsTest, SkipOnZeroCost) {
   batch_cost_measurements.push_back(
       CostMeasurementRegistry::CreateByNameOrNull("no_op", context));
   BatchResourceBase::SplitBatchCostsAndRecordMetrics(
-      "model_name", batch_cost_measurements, /*processed_size=*/16, batch);
+      "model_name", "op_name", batch_cost_measurements, /*processed_size=*/16,
+      batch);
   EXPECT_TRUE(batch.task(0).request_cost->GetCosts().empty());
   EXPECT_THAT(batch.task(0).request_cost->GetBatchMetrics(),
               ::testing::ElementsAre(::testing::FieldsAre(
@@ -107,7 +164,8 @@ TEST(SplitBatchCostsAndRecordMetricsTest, SkipOnZeroBatchSize) {
   batch_cost_measurements.push_back(
       CostMeasurementRegistry::CreateByNameOrNull("test_tpu", context));
   BatchResourceBase::SplitBatchCostsAndRecordMetrics(
-      "model_name", batch_cost_measurements, /*processed_size=*/0, batch);
+      "model_name", "op_name", batch_cost_measurements, /*processed_size=*/0,
+      batch);
 }
 
 TEST(SplitBatchCostsAndRecordMetricsTest, SkipOnNoRequestCost) {
@@ -121,7 +179,8 @@ TEST(SplitBatchCostsAndRecordMetricsTest, SkipOnNoRequestCost) {
   batch_cost_measurements.push_back(
       CostMeasurementRegistry::CreateByNameOrNull("test_tpu", context));
   BatchResourceBase::SplitBatchCostsAndRecordMetrics(
-      "model_name", batch_cost_measurements, /*processed_size=*/16, batch);
+      "model_name", "op_name", batch_cost_measurements, /*processed_size=*/16,
+      batch);
 
   EXPECT_EQ(batch.task(0).request_cost, nullptr);
   EXPECT_EQ(batch.task(1).request_cost, nullptr);
@@ -139,7 +198,8 @@ TEST(SplitBatchCostsAndRecordMetricsTest, SplitSingleCostType) {
   batch_cost_measurements.push_back(
       CostMeasurementRegistry::CreateByNameOrNull("test_tpu", context));
   BatchResourceBase::SplitBatchCostsAndRecordMetrics(
-      "model_name", batch_cost_measurements, /*processed_size=*/20, batch);
+      "model_name", "op_name", batch_cost_measurements, /*processed_size=*/20,
+      batch);
 
   EXPECT_THAT(
       batch.task(0).request_cost->GetCosts(),
@@ -175,7 +235,8 @@ TEST(SplitBatchCostsAndRecordMetricsTest, SplitMultiCostTypes) {
   batch_cost_measurements.push_back(
       CostMeasurementRegistry::CreateByNameOrNull("test_gcu", context));
   BatchResourceBase::SplitBatchCostsAndRecordMetrics(
-      "model_name", batch_cost_measurements, /*processed_size=*/20, batch);
+      "model_name", "op_name", batch_cost_measurements, /*processed_size=*/20,
+      batch);
 
   EXPECT_THAT(
       batch.task(0).request_cost->GetCosts(),
@@ -218,7 +279,8 @@ TEST(SplitBatchCostsAndRecordMetricsTest, SplitOnlyNonZeroCostTypes) {
   batch_cost_measurements.push_back(
       CostMeasurementRegistry::CreateByNameOrNull("test_tpu", context));
   BatchResourceBase::SplitBatchCostsAndRecordMetrics(
-      "model_name", batch_cost_measurements, /*processed_size=*/20, batch);
+      "model_name", "op_name", batch_cost_measurements, /*processed_size=*/20,
+      batch);
 
   EXPECT_THAT(
       batch.task(0).request_cost->GetCosts(),
@@ -239,6 +301,42 @@ TEST(SplitBatchCostsAndRecordMetricsTest, SplitOnlyNonZeroCostTypes) {
       ::testing::ElementsAre(::testing::FieldsAre(
           /*processed_size=*/20, /*input_size=*/9, /*padding_size=*/10,
           UnorderedElementsAre(Pair("test_tpu", absl::Milliseconds(100))))));
+}
+
+TEST(SplitBatchCostsAndRecordMetricsTest, UpdatesGlobalBatchStats) {
+  // Create batch_cost_measurements with one TPU cost.
+  class FakeTpuCostMeasurement : public CostMeasurement {
+   public:
+    using CostMeasurement::CostMeasurement;
+    absl::Duration GetTotalCost() override { return absl::Hours(555); }
+    absl::string_view GetCostType() const override { return kTpuCostName; }
+  };
+  CostMeasurement::Context context{/* is_per_query= */ false};
+  std::vector<std::unique_ptr<CostMeasurement>> batch_cost_measurements;
+  batch_cost_measurements.push_back(
+      std::make_unique<FakeTpuCostMeasurement>(context));
+
+  // Create a non-empty batch.
+  BatchResourceBase::BatchT batch;
+  batch.AddTask(MakeBatchTask(/* task_size= */ 1, nullptr));
+  batch.Close();
+
+  // Pick a model name that no other test would pick. This is so that we are
+  // sure that the CPU cost for this model name has either never been reported
+  // before or, if this test is executed multiple times, has been reported by
+  // this only.
+  const char kModelName[] = __FILE__;
+
+  BatchResourceBase::SplitBatchCostsAndRecordMetrics(
+      /* model_name= */ kModelName, /* op_name= */ "op_name",
+      batch_cost_measurements, /* processed_size= */ 17, batch);
+
+  EXPECT_EQ(GlobalBatchStats()
+                .model(/* model_name= */ kModelName, /* op_name= */ "op_name")
+                .batch_size(17)
+                .tpu_cost()
+                .mean(),
+            absl::Hours(555));
 }
 
 }  // namespace

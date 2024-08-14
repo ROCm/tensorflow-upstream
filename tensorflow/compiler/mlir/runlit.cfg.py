@@ -33,7 +33,7 @@ config.name = 'MLIR ' + os.path.basename(config.mlir_test_dir)
 config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)
 
 # suffixes: A list of file extensions to treat as test files.
-config.suffixes = ['.cc', '.hlo', '.hlotxt', '.json', '.mlir', '.pbtxt', '.py']
+config.suffixes = ['.cc', '.hlo', '.json', '.mlir', '.pbtxt', '.py']
 
 # test_source_root: The root path where tests are located.
 config.test_source_root = config.mlir_test_dir
@@ -63,7 +63,7 @@ llvm_config.config.substitutions.append(
 # Tweak the PATH to include the tools dir.
 llvm_config.with_environment('PATH', config.llvm_tools_dir, append_path=True)
 
-for key in ['HIP_VISIBLE_DEVICES', 'CUDA_VISIBLE_DEVICES',
+for key in ['ROCM_PATH', 'HIP_VISIBLE_DEVICES', 'CUDA_VISIBLE_DEVICES',
             'TF_PER_DEVICE_MEMORY_LIMIT_MB']:
   value = os.environ.get(key, None)
   if value != None:
@@ -77,19 +77,15 @@ tool_names = [
     'flatbuffer_to_string',
     'flatbuffer_translate',
     'hlo_to_kernel',
-    'hlo_to_llvm_ir',
-    'ifrt-opt',
     'json_to_flatbuffer',
     'kernel-gen-opt',
-    'lhlo-tfrt-opt',
-    'mlir-bisect',
     'mlir-hlo-opt',
-    'mlir-interpreter-runner',
     'mlir-opt',
     'mlir-tflite-runner',
     'mlir-translate',
     'odml-to-stablehlo-opt',
     'odml_to_stablehlo',
+    'odml-converter',
     'stable-quant-opt',
     'tac-opt-all-backends',
     'tac-translate',
@@ -105,13 +101,6 @@ tool_names = [
     'tfg-transforms-opt',
     'tfg-translate',
     'tfjs-opt',
-    'xla-cpu-opt',
-    'xla-gpu-opt',
-    'xla-mlir-gpu-opt',
-    'xla-runtime-opt',
-    'xla-translate',
-    'xla-translate-gpu-opt',
-    'xla-translate-opt',
 ]
 tools = [ToolSubst(s, unresolved='ignore') for s in tool_names]
 llvm_config.add_tool_substitutions(tools, tool_dirs)

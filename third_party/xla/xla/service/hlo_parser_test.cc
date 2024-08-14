@@ -1766,6 +1766,45 @@ ENTRY dot {
 )"
 },
 {
+"DotSparseOperand",
+R"(HloModule dot, entry_computation_layout={(f16[32,32]{1,0}, f16[64,32]{1,0}, u16[32,4]{1,0})->f16[32,32]{1,0}}
+
+ENTRY dot {
+  a = f16[32,32]{1,0} parameter(0)
+  b = f16[64,32]{1,0} parameter(1)
+  meta = u16[32,4]{1,0} parameter(2)
+  ROOT dot = f16[32,32]{1,0} dot(a, b, meta), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
+}
+
+)"
+},
+{
+"DotSparseOperands",
+R"(HloModule dot, entry_computation_layout={(f16[32,32]{1,0}, f16[32,32]{1,0}, u16[32,4]{1,0}, u16[4,32]{1,0})->f16[32,32]{1,0}}
+
+ENTRY dot {
+  a = f16[32,32]{1,0} parameter(0)
+  b = f16[32,32]{1,0} parameter(1)
+  a_meta = u16[32,4]{1,0} parameter(2)
+  b_meta = u16[4,32]{1,0} parameter(3)
+  ROOT dot = f16[32,32]{1,0} dot(a, b, a_meta, b_meta), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4_R.0@2:4
+}
+
+)"
+},
+{
+"DotWithAlgorithm",
+R"(HloModule dot, entry_computation_layout={(f32[2,10]{1,0}, f32[10,2]{1,0})->f32[2]{0}}
+
+ENTRY dot {
+  a = f32[2,10]{1,0} parameter(0)
+  b = f32[10,2]{1,0} parameter(1)
+  ROOT dot = f32[2]{0} dot(a, b), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={1}, rhs_contracting_dims={0}, algorithm=dot_tf32_tf32_f32
+}
+
+)"
+},
+{
 "gather",
 R"(HloModule gather, entry_computation_layout={(f32[50,49,48,47,46]{4,3,2,1,0}, s64[10,9,8,7,5]{4,3,2,1,0})->f32[10,9,8,7,30,29,28,27,26]{8,7,6,5,4,3,2,1,0}}
 
@@ -1946,6 +1985,19 @@ ENTRY AllToAllWithSubgroups {
   p0 = f32[128,32]{0,1} parameter(0)
   p1 = f32[128,32]{0,1} parameter(1)
   ROOT a2a = (f32[128,32]{0,1}, f32[128,32]{0,1}) all-to-all(p0, p1), replica_groups={{1,2},{3,0}}
+}
+
+)",
+/*replica_count=*/4,
+},
+// collective-broadcast
+{
+"CollectiveBroadcast",
+R"(HloModule CollectiveBroadcast, entry_computation_layout={(f32[128,32]{0,1})->f32[128,32]{0,1}}, replica_count=4
+
+ENTRY CollectiveBroadcast {
+  input = f32[128,32]{0,1} parameter(0)
+  ROOT cb = f32[128,32]{0,1} collective-broadcast(input), replica_groups={{1,0},{2,3}}
 }
 
 )",
@@ -2545,8 +2597,8 @@ class HloParserTest : public ::testing::Test {
     EXPECT_TRUE(absl::StrContains(s, expected))
         << "'" << s << "' does not contain '" << expected << "'";
   }
-  StatusOr<std::unique_ptr<VerifiedHloModule>> ParseAndReturnVerifiedModule(
-      absl::string_view hlo_text) {
+  absl::StatusOr<std::unique_ptr<VerifiedHloModule>>
+  ParseAndReturnVerifiedModule(absl::string_view hlo_text) {
     auto module = std::make_unique<VerifiedHloModule>(
         ::testing::UnitTest::GetInstance()->current_test_info()->name(),
         HloModuleConfig(),
@@ -2561,14 +2613,14 @@ class HloParserTest : public ::testing::Test {
 TEST_F(HloParserTest, Empty) {
   const std::string original = "";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, Garbage) {
   const std::string original =
       "HloModule thi$ str1ng makes# N0 sen$e @all!*&^%$";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, WrongOpcode) {
@@ -2582,7 +2634,7 @@ ENTRY %blabla (x: f32[], y: f32[]) -> f32[] {
 
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, MetadataWithCholesky) {
@@ -2593,7 +2645,7 @@ ENTRY %blabla (a: f32[1,291,291]) -> f32[1,291,291] {
 }
 )";
   auto result = ParseAndReturnVerifiedModule(original);
-  EXPECT_EQ(OkStatus(), result.status());
+  EXPECT_EQ(absl::OkStatus(), result.status());
   EXPECT_EQ("Cholesky", result.value()
                             ->entry_computation()
                             ->root_instruction()
@@ -2621,7 +2673,7 @@ ENTRY %blabla (x: g32[]) -> g32[] {
 
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, WrongOperandsSize) {
@@ -2634,7 +2686,7 @@ ENTRY %blabla (x: f32[]) -> pred[] {
 
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, OperandNotFound) {
@@ -2645,7 +2697,7 @@ ENTRY %blabla (x: f32[]) -> pred[] {
 }
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, MoreConstants) {
@@ -2687,7 +2739,7 @@ ENTRY %some_2x3 () -> f32[2,3] {
 
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(), "unexpected '}' token");
 }
 
@@ -2700,7 +2752,7 @@ ENTRY %some_2 () -> f32[2] {
 
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "expects nested array in rank 1, but sees larger");
 }
@@ -2714,7 +2766,7 @@ ENTRY %some_2x3 () -> f32[2,3] {
 
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "expects nested array in rank 2, but sees 1");
 }
@@ -2728,7 +2780,7 @@ ENTRY %some_2x3x2 () -> f32[2,3,2] {
 
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "expects 3 elements in the [0]th element");
 }
@@ -2743,7 +2795,7 @@ ENTRY %ConstantF16Overflow.v4 () -> f16[] {
 
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "is out of range for literal's primitive type F16");
 }
@@ -2755,7 +2807,7 @@ TEST_F(HloParserTest, ConstantBf16NoOverflow) {
   ENTRY test {
     ROOT c = bf16[] constant(-65505)
   })";
-  EXPECT_EQ(OkStatus(), ParseAndReturnVerifiedModule(original).status());
+  EXPECT_EQ(absl::OkStatus(), ParseAndReturnVerifiedModule(original).status());
 }
 
 TEST_F(HloParserTest, ConstantBf16Overflow) {
@@ -2776,7 +2828,7 @@ TEST_F(HloParserTest, ConstantU4Underflow) {
         ROOT %constant = u4[] constant(-1)
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "is out of range for literal's primitive type U4");
 }
@@ -2788,7 +2840,7 @@ TEST_F(HloParserTest, ConstantU4Overflow) {
         ROOT %constant = u4[] constant(16)
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "is out of range for literal's primitive type U4");
 }
@@ -2800,7 +2852,7 @@ TEST_F(HloParserTest, ConstantS4Underflow) {
         ROOT %constant = s4[] constant(-9)
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "is out of range for literal's primitive type S4");
 }
@@ -2812,7 +2864,7 @@ TEST_F(HloParserTest, ConstantS4Overflow) {
         ROOT %constant = s4[] constant(8)
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "is out of range for literal's primitive type S4");
 }
@@ -2824,7 +2876,7 @@ TEST_F(HloParserTest, ConstantUnsignedUnderflow) {
         ROOT %constant = u64[] constant(-1)
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_EQ(OkStatus(), result.status());
+  EXPECT_EQ(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, ConstantUnsignedOverflow) {
@@ -2834,7 +2886,7 @@ TEST_F(HloParserTest, ConstantUnsignedOverflow) {
         ROOT %constant = u32[] constant(4294967296)
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "is out of range for literal's primitive type U32");
 }
@@ -2846,7 +2898,7 @@ TEST_F(HloParserTest, ConstantUnsignedInt64Overflow) {
         ROOT %constant = u64[] constant(9223372036854775808)
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_EQ(OkStatus(), result.status());
+  EXPECT_EQ(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, ConstantC64Overflow) {
@@ -2856,7 +2908,7 @@ TEST_F(HloParserTest, ConstantC64Overflow) {
         ROOT c = c64[] constant((1e100, 0))
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, ConstantC64Underflow) {
@@ -2866,7 +2918,7 @@ TEST_F(HloParserTest, ConstantC64Underflow) {
         ROOT c = c64[] constant((0, -1e100))
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, ConstantF64Overflow) {
@@ -2876,7 +2928,7 @@ TEST_F(HloParserTest, ConstantF64Overflow) {
         ROOT c = f64[] constant(1.8e308)
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, ConstantF64Underflow) {
@@ -2886,7 +2938,7 @@ TEST_F(HloParserTest, ConstantF64Underflow) {
         ROOT c = f64[] constant(-1.8e308)
       })";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
 }
 
 TEST_F(HloParserTest, ConstantWithExp) {
@@ -2928,7 +2980,7 @@ ENTRY %NegativeNan () -> bf16[2] {
 
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_EQ(OkStatus(), result.status());
+  EXPECT_EQ(absl::OkStatus(), result.status());
   EXPECT_EQ(result.value()->ToString(HloPrintOptions()), original);
 }
 
@@ -2942,7 +2994,7 @@ ENTRY %NanPayload () -> bf16[2] {
 
 )";
   auto result = ParseAndReturnUnverifiedModule(original);
-  EXPECT_EQ(OkStatus(), result.status());
+  EXPECT_EQ(absl::OkStatus(), result.status());
   EXPECT_EQ(result.value()->ToString(HloPrintOptions()), original);
 }
 
@@ -3695,7 +3747,7 @@ TEST(HloParserSingleOpTest, SingleOp) {
 TEST(HloParserSingleOpTest, SingleOpNoShapeProducesError) {
   const std::string text =
       "multiply(f32[2,4]{1,0} %broadcast, f32[2,4]{1,0} %x)";
-  StatusOr<std::unique_ptr<HloModule>> module =
+  absl::StatusOr<std::unique_ptr<HloModule>> module =
       ParseAndReturnUnverifiedModule(text);
   ASSERT_TRUE(!module.status().ok());
   LOG(INFO) << "Status: " << module.status();
@@ -3705,7 +3757,7 @@ TEST(HloParserSingleOpTest, SingleOpNoShapeProducesError) {
 
 TEST(HloParserSingleOpTest, SingleOpNoOperandShapesProducesError) {
   const std::string text = "%multiply = f32[2,4]{1,0} multiply(%broadcast, %x)";
-  StatusOr<std::unique_ptr<HloModule>> module =
+  absl::StatusOr<std::unique_ptr<HloModule>> module =
       ParseAndReturnUnverifiedModule(text);
   ASSERT_TRUE(!module.status().ok());
   LOG(INFO) << "Status: " << module.status();
@@ -4138,7 +4190,7 @@ TEST_F(HloParserTest, ParseShapeStringWithElementSizeInBits) {
   std::string shape_string = "s4[123,456]{1,0:T(2,128)E(4)}";
   TF_ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape(shape_string));
   Shape expected = ShapeUtil::MakeShapeWithDenseLayout(S4, {123, 456}, {1, 0},
-                                                       {Tile({2, 128})}, 4);
+                                                       {Tile({2, 128})}, 1, 4);
   EXPECT_EQ(expected, actual)
       << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
       << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
@@ -4148,8 +4200,8 @@ TEST_F(HloParserTest, ParseShapeStringWithMemorySpaceLayout) {
   // Tile, element size, and memory space.
   std::string shape_string = "pred[123,456]{1,0:T(2,128)S(3)}";
   TF_ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape(shape_string));
-  Shape expected = ShapeUtil::MakeShapeWithDenseLayout(PRED, {123, 456}, {1, 0},
-                                                       {Tile({2, 128})}, 0, 3);
+  Shape expected = ShapeUtil::MakeShapeWithDenseLayout(
+      PRED, {123, 456}, {1, 0}, {Tile({2, 128})}, 1, 0, 3);
   EXPECT_EQ(expected, actual)
       << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
       << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
@@ -4157,8 +4209,8 @@ TEST_F(HloParserTest, ParseShapeStringWithMemorySpaceLayout) {
   // Element size and memory space.
   shape_string = "pred[123,456]{1,0:S(3)}";
   TF_ASSERT_OK_AND_ASSIGN(actual, ParseShape(shape_string));
-  expected =
-      ShapeUtil::MakeShapeWithDenseLayout(PRED, {123, 456}, {1, 0}, {}, 0, 3);
+  expected = ShapeUtil::MakeShapeWithDenseLayout(PRED, {123, 456}, {1, 0}, {},
+                                                 1, 0, 3);
   EXPECT_EQ(expected, actual)
       << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
       << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
@@ -4166,8 +4218,8 @@ TEST_F(HloParserTest, ParseShapeStringWithMemorySpaceLayout) {
   // Memory space only.
   shape_string = "pred[123,456]{1,0:S(3)}";
   TF_ASSERT_OK_AND_ASSIGN(actual, ParseShape(shape_string));
-  expected =
-      ShapeUtil::MakeShapeWithDenseLayout(PRED, {123, 456}, {1, 0}, {}, 0, 3);
+  expected = ShapeUtil::MakeShapeWithDenseLayout(PRED, {123, 456}, {1, 0}, {},
+                                                 1, 0, 3);
   EXPECT_EQ(expected, actual)
       << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
       << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
@@ -4180,6 +4232,37 @@ TEST_F(HloParserTest, ParseShapeStringWithDynamicShapeMetadataPrefix) {
   Shape expected = ShapeUtil::MakeShapeWithDenseLayout(F32, {123, 456}, {1, 0},
                                                        {Tile({16, 128})});
   expected.mutable_layout()->set_dynamic_shape_metadata_prefix_bytes(1024);
+  EXPECT_EQ(expected, actual)
+      << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
+      << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
+}
+
+TEST_F(HloParserTest, ParseShapeStringWithSplitConfigLayout) {
+  // Tile, memory space, and split config.
+  std::string shape_string = "pred[123,456]{1,0:T(2,128)S(3)SC(1:200)}";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape(shape_string));
+  Shape expected = ShapeUtil::MakeShapeWithDenseLayout(
+      PRED, {123, 456}, {1, 0}, {Tile({2, 128})}, 1, 0, 3,
+      {SplitConfig(1, {200})});
+  EXPECT_EQ(expected, actual)
+      << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
+      << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
+
+  // Memory space and split config.
+  shape_string = "pred[123,456]{1,0:S(3)SC(0:10)(1:4,5)}";
+  TF_ASSERT_OK_AND_ASSIGN(actual, ParseShape(shape_string));
+  expected = ShapeUtil::MakeShapeWithDenseLayout(
+      PRED, {123, 456}, {1, 0}, {}, 1, 0, 3,
+      {SplitConfig(0, {10}), SplitConfig(1, {4, 5})});
+  EXPECT_EQ(expected, actual)
+      << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
+      << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
+
+  // Split config only.
+  shape_string = "pred[123,456]{1,0:SC(1:50,200)}";
+  TF_ASSERT_OK_AND_ASSIGN(actual, ParseShape(shape_string));
+  expected = ShapeUtil::MakeShapeWithDenseLayout(
+      PRED, {123, 456}, {1, 0}, {}, 1, 0, 0, {SplitConfig(1, {50, 200})});
   EXPECT_EQ(expected, actual)
       << "expected: " << ShapeUtil::HumanStringWithLayout(expected)
       << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
@@ -4205,7 +4288,7 @@ TEST_F(HloParserTest, ParseInvalidShapeString) {
   std::string shape_strings[] = {"f32[123,456]foobar{0,1}", "f32[123,456]{foo}",
                                  "f32[123,456]dense{foo}"};
   for (const std::string& shape_string : shape_strings) {
-    StatusOr<Shape> result = ParseShape(shape_string);
+    absl::StatusOr<Shape> result = ParseShape(shape_string);
     ASSERT_FALSE(result.ok()) << "shape: " << shape_string;
   }
 }
@@ -4232,7 +4315,7 @@ TEST_F(HloParserTest, ParseDynamicTuple) {
 
 TEST_F(HloParserTest, ParseInvalidDimLevel) {
   constexpr std::string_view shape_string = "f32[123]{0:D(D+~)}";
-  StatusOr<Shape> result = ParseShape(shape_string);
+  absl::StatusOr<Shape> result = ParseShape(shape_string);
   ASSERT_THAT(
       result.status(),
       tsl::testing::StatusIs(
@@ -4296,7 +4379,7 @@ TEST_F(HloParserTest, CheckIndexedConditionalDimension) {
   }
   )";
   auto result = ParseAndReturnUnverifiedModule(hlo_string);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   EXPECT_THAT(result.status().message(),
               HasSubstr("The first operand must be a scalar"));
 }
@@ -4323,7 +4406,7 @@ TEST_F(HloParserTest, CheckIndexedConditionalElementType) {
   }
   )";
   auto result = ParseAndReturnUnverifiedModule(hlo_string);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   EXPECT_THAT(result.status().message(),
               HasSubstr("The first operand must be a scalar of PRED or S32"));
 }
@@ -4351,7 +4434,7 @@ TEST_F(HloParserTest,
   }
   )";
   auto result = ParseAndReturnUnverifiedModule(hlo_string);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   EXPECT_THAT(result.status().message(),
               HasSubstr("unexpected attribute \"branch_computations\""));
 }
@@ -4415,6 +4498,21 @@ ENTRY InferDotShape {
   a = f32[2,10]{1,0} parameter(0)
   b = f32[10,2]{1,0} parameter(1)
   ROOT dot = dot(a, b), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={1}, rhs_contracting_dims={0}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
+  EXPECT_TRUE(ShapeUtil::Equal(
+      module->entry_computation()->ComputeProgramShape().result(),
+      ShapeUtil::MakeShape(F32, {2}, {0})));
+}
+
+TEST_F(HloParserTest, InferSparseDotShape) {
+  constexpr char text[] = R"(HloModule InferSparseDotShapeTest
+ENTRY InferSparseDotShape {
+  a = f32[2,16]{1,0} parameter(0)
+  b = f32[32,2]{1,0} parameter(1)
+  meta = u16[2,2]{1,0} parameter(2)
+  ROOT dot = dot(a, b, meta), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
@@ -4529,6 +4627,50 @@ ENTRY TestComputation {
             "attr_value");
 }
 
+TEST_F(HloParserTest, CheckAllowSpmdShardingPropagationToParameters) {
+  const char* const hlo_string = R"(
+HloModule TestModule, allow_spmd_sharding_propagation_to_parameters=true
+
+ENTRY TestComputation {
+    p0 = f16[2048,1024] parameter(0)
+    p1 = f16[2048,1024] parameter(1)
+    ROOT root = (f16[2048,1024], f16[2048,1024]) tuple(p0, p1)
+}
+)";
+  auto result = ParseAndReturnVerifiedModule(hlo_string);
+  TF_EXPECT_OK(result.status());
+  EXPECT_EQ((*result)
+                ->config()
+                .allow_spmd_sharding_propagation_to_parameters()
+                .size(),
+            1);
+  EXPECT_TRUE(
+      (*result)->config().allow_spmd_sharding_propagation_to_parameters()[0]);
+}
+
+TEST_F(HloParserTest, CheckAllowSpmdShardingPropagationToParametersVec) {
+  const char* const hlo_string = R"(
+HloModule TestModule, allow_spmd_sharding_propagation_to_parameters={true,false}
+
+ENTRY TestComputation {
+    p0 = f16[2048,1024] parameter(0)
+    p1 = f16[2048,1024] parameter(1)
+    ROOT root = (f16[2048,1024], f16[2048,1024]) tuple(p0, p1)
+}
+)";
+  auto result = ParseAndReturnVerifiedModule(hlo_string);
+  TF_EXPECT_OK(result.status());
+  EXPECT_EQ((*result)
+                ->config()
+                .allow_spmd_sharding_propagation_to_parameters()
+                .size(),
+            2);
+  EXPECT_TRUE(
+      (*result)->config().allow_spmd_sharding_propagation_to_parameters()[0]);
+  EXPECT_FALSE(
+      (*result)->config().allow_spmd_sharding_propagation_to_parameters()[1]);
+}
+
 TEST_F(HloParserTest, CheckAllowSpmdShardingPropagationToOutput) {
   const char* const hlo_string = R"(
 HloModule TestModule, allow_spmd_sharding_propagation_to_output=true
@@ -4577,7 +4719,7 @@ ENTRY test {
 }
 )";
   auto result = ParseAndReturnVerifiedModule(hlo_string);
-  EXPECT_NE(OkStatus(), result.status());
+  EXPECT_NE(absl::OkStatus(), result.status());
   EXPECT_THAT(result.status().message(), HasSubstr("dimensions"));
 }
 
@@ -5055,6 +5197,113 @@ ENTRY %Entry (p0: f32[10]) -> f32[20] {
                   tsl::error::INVALID_ARGUMENT,
                   HasSubstr("Expect async_execution_thread to be main, "
                             "but got foo_thread")));
+}
+
+TEST_F(HloParserTest, PipelinedSendRecv) {
+  const std::string hlo_string = R"(
+  HloModule test
+  cond {
+    param = (u32[], (u32[2], u32[], token[]), (u32[2], u32[], token[])) parameter(0)
+    count = get-tuple-element(%param), index=0
+    ub = u32[] constant(1)
+    ROOT result = pred[] compare(count, ub), direction=LT
+  }
+
+  body {
+    param = (u32[], (u32[2], u32[], token[]), (u32[2], u32[], token[])) parameter(0)
+    count = get-tuple-element(%param), index=0
+
+    recv.0 = (u32[2], u32[], token[]) get-tuple-element(param), index=1
+    recv-done.0 = (u32[2], token[]) recv-done(recv.0), channel_id=1,
+      frontend_attributes={
+        _xla_send_recv_pipeline="0"
+      }
+    recv-data.0 = u32[2] get-tuple-element(recv-done.0), index=0
+
+    c1 = u32[] constant(1)
+    new_count = u32[] add(count, c1)
+
+    send.0 = (u32[2], u32[], token[]) get-tuple-element(param), index=2
+    send-done.0 = (u32[2], token[]) recv-done(send.0), channel_id=1,
+      frontend_attributes={
+        _xla_send_recv_pipeline="0"
+      }
+
+    after-all.0.n = token[] after-all()
+    recv.0.n = (u32[2], u32[], token[]) recv(after-all.0.n), channel_id=1,
+      frontend_attributes={
+        _xla_send_recv_source_target_pairs="{{1,0}}",
+        _xla_send_recv_pipeline="0"
+      }
+
+
+    after-all.1.n = token[] after-all()
+    send.0.n = (u32[2], u32[], token[]) send(recv-data.0, after-all.1.n),
+      channel_id=1,
+      frontend_attributes={
+        _xla_send_recv_source_target_pairs="{{1,0}}",
+        _xla_send_recv_pipeline="0"
+      }
+
+    ROOT result = (u32[], (u32[2], u32[], token[]), (u32[2], u32[], token[])) tuple(new_count, recv.0.n, send.0.n)
+  }
+
+  ENTRY test_computation {
+    c0 = u32[] constant(0)
+    init = u32[2] broadcast(c0), dimensions={}
+    after-all.0.p = token[] after-all()
+    recv.0.p = (u32[2], u32[], token[]) recv(after-all.0.p), channel_id=1,
+      frontend_attributes={
+        _xla_send_recv_source_target_pairs="{{1,0}}",
+        _xla_send_recv_pipeline="0"
+      }
+
+    after-all.1.p = token[] after-all()
+    send.0.p = (u32[2], u32[], token[]) send(init, after-all.1.p),
+      channel_id=1,
+      frontend_attributes={
+        _xla_send_recv_source_target_pairs="{{1,0}}",
+        _xla_send_recv_pipeline="0"
+      }
+
+    while_init = (u32[], (u32[2], u32[], token[]), (u32[2], u32[], token[])) tuple(c0, recv.0.p, send.0.p)
+    while_result = (u32[], (u32[2], u32[], token[]), (u32[2], u32[], token[])) while(while_init), body=body, condition=cond
+
+    recv.0.q = (u32[2], u32[], token[]) get-tuple-element(while_result), index=1
+    recv-done.0.q = (u32[2], token[]) recv-done(recv.0.q), channel_id=1,
+      frontend_attributes={
+        _xla_send_recv_pipeline="0"
+      }
+    send.0.q = (u32[2], u32[], token[]) get-tuple-element(while_result), index=2
+    send-done.0.q = token[] send-done(send.0.q), channel_id=1,
+      frontend_attributes={
+        _xla_send_recv_pipeline="0"
+      }
+
+    ROOT recv-data.0.q = u32[2] get-tuple-element(recv-done.0.q), index=0
+      })";
+  auto result = ParseAndReturnUnverifiedModule(hlo_string);
+  EXPECT_EQ(absl::OkStatus(), result.status());
+}
+
+TEST_F(HloParserTest, ReplicaIdWithLayout) {
+  const char* const hlo_string = R"(
+  HloModule ReplicaId
+
+  ENTRY ReplicaId {
+    ROOT replica-id.18600 = u32[]{:T(128)} replica-id()
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+  EXPECT_TRUE(
+      module->entry_computation()->root_instruction()->shape().has_layout());
+  EXPECT_FALSE(module->entry_computation()
+                   ->root_instruction()
+                   ->shape()
+                   .layout()
+                   .tiles()
+                   .empty());
 }
 
 }  // namespace

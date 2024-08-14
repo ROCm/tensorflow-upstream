@@ -18,6 +18,8 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/base/thread_annotations.h"
+#include "absl/synchronization/mutex.h"
 #include "xla/service/gpu/infeed_manager.h"
 #include "xla/service/gpu/outfeed_manager.h"
 

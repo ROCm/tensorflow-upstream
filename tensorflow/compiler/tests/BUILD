@@ -1,12 +1,12 @@
-load("//tensorflow/compiler/tests:build_defs.bzl", "generate_backend_suites", "tf_xla_py_strict_test")
 load("//tensorflow:strict.default.bzl", "py_strict_library", "py_strict_test")
-load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "tf_cuda_cc_test")
 load("//tensorflow/compiler/aot:tfcompile.bzl", "tf_library")
+load("//tensorflow/compiler/tests:build_defs.bzl", "generate_backend_suites", "tf_xla_py_strict_test")
 load(
     "//tensorflow/core/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
+load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 load("//tensorflow/python/tpu:tpu.bzl", "tpu_py_strict_test")
 
 package(
@@ -260,6 +260,7 @@ tf_xla_py_strict_test(
         "cpu",
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     python_version = "PY3",
     shard_count = 2,
@@ -679,6 +680,7 @@ tf_xla_py_strict_test(
         "cpu",
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     python_version = "PY3",
     tags = [
@@ -752,10 +754,6 @@ tf_xla_py_strict_test(
     name = "eager_test",
     size = "medium",
     srcs = ["eager_test.py"],
-    # copybara:uncomment_begin
-    # #TODO(b/287111047): Remove once the bug is fixed.
-    # disable_tpu_tfrt = True,
-    # copybara:uncomment_end
     enable_mlir_bridge = False,
     python_version = "PY3",
     tags = [
@@ -925,6 +923,7 @@ tf_xla_py_strict_test(
         "cpu",
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     python_version = "PY3",
     shard_count = 10,
@@ -1213,7 +1212,8 @@ tf_xla_py_strict_test(
     shard_count = 5,
     tags = [
         "no_pip",  # TODO(b/149738646): fix pip install so these tests run on kokoro pip
-        "optonly"
+        "nozapfhahn",
+        "optonly",
     ],
     deps = [
         ":xla_test",
@@ -1409,6 +1409,7 @@ tf_xla_py_strict_test(
     shard_count = 6,
     tags = [
         "no_pip",  # TODO(b/149738646): fix pip install so these tests run on kokoro pip
+        "nozapfhahn",
         "optonly",
     ],
     deps = [
@@ -1517,19 +1518,19 @@ tf_xla_py_strict_test(
     disabled_backends = [
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     enable_mlir_bridge = True,
     python_version = "PY3",
     shard_count = 10,
     tags = [
-        "no_oss",  # b/170479349
         "no_pip",  # TODO(b/149738646): fix pip install so these tests run on kokoro pip
-        "notap",  # b/170479349
         "optonly",
     ],
     deps = [
         ":xla_test",
         "//tensorflow/python/client",
+        "//tensorflow/python/client:device_lib",
         "//tensorflow/python/eager:def_function",
         "//tensorflow/python/framework:config",
         "//tensorflow/python/framework:dtypes",
@@ -1555,12 +1556,14 @@ tf_xla_py_strict_test(
     disabled_backends = [
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     enable_mlir_bridge = True,
     python_version = "PY3",
     shard_count = 10,
     tags = [
         "no_pip",  # TODO(b/149738646): fix pip install so these tests run on kokoro pip
+        "nozapfhahn",  # Times out under coverage
         "optonly",
     ],
     deps = [
@@ -1592,6 +1595,7 @@ tf_xla_py_strict_test(
     disabled_backends = [
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     # TODO(b/232442915): Enable MLIR.
     enable_mlir_bridge = False,
@@ -1716,6 +1720,7 @@ tf_xla_py_strict_test(
     shard_count = 20,
     tags = [
 		"no_rocm",
+        "no_aarch64",  # TODO(b/348125886)
         "no_cuda_asan",  # times out
         "no_pip",  # TODO(b/149738646): fix pip install so these tests run on kokoro pip
         "noasan",  #times out
@@ -1941,6 +1946,7 @@ tf_xla_py_strict_test(
     # Times out in fastbuild mode.
     tags = [
         "no_pip",  # TODO(b/149738646): fix pip install so these tests run on kokoro pip
+        "nozapfhahn",
         "optonly",
     ],
     deps = [
@@ -2077,7 +2083,7 @@ cuda_py_strict_test(
 
 cuda_py_strict_test(
     name = "dense_layer_test",
-    size = "medium",
+    size = "large",
     srcs = ["dense_layer_test.py"],
     tags = [
         "no_pip",  # TODO(b/149738646): fix pip install so these tests run on kokoro pip
@@ -2344,6 +2350,7 @@ tf_xla_py_strict_test(
     disabled_backends = [
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     enable_mlir_bridge = True,
     python_version = "PY3",
@@ -2379,6 +2386,7 @@ tf_xla_py_strict_test(
     disabled_backends = [
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     enable_mlir_bridge = False,
     python_version = "PY3",
@@ -2606,6 +2614,7 @@ tf_xla_py_strict_test(
         "cpu",
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     tags = [
         "no_pip",
@@ -2634,6 +2643,7 @@ tf_xla_py_strict_test(
         "cpu_ondemand",
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     enable_mlir_bridge = False,
     main = "where_op_test.py",
@@ -2720,6 +2730,7 @@ tf_xla_py_strict_test(
         "cpu_ondemand",
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     enable_mlir_bridge = False,
     python_version = "PY3",
@@ -2884,6 +2895,7 @@ tf_xla_py_strict_test(
         "cpu",
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     python_version = "PY3",
     tags = [

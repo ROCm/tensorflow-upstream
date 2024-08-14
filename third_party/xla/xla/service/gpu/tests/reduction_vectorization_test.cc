@@ -13,18 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <memory>
+#include <string>
 #include <utility>
 
 #include "absl/strings/str_replace.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/gpu/gpu_executable.h"
+#include "xla/error_spec.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
-#include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_parser.h"
-#include "xla/statusor.h"
-#include "xla/tests/filecheck.h"
-#include "xla/tests/hlo_test_base.h"
-#include "tsl/lib/core/status_test_util.h"
+#include "xla/stream_executor/device_description.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 
 namespace xla {
@@ -142,7 +140,7 @@ CHECK-NOT: SHUFFLE
       expected_optimized_llvm_ir,
       {{"X_THREAD", is_built_with_rocm_ ? "@llvm.amdgcn.workitem.id.x"
                                         : "@llvm.nvvm.read.ptx.sreg.tid.x"},
-       {"SHUFFLE", is_built_with_rocm_ ? "llvm.amdgcn.ds.bpermute"
+       {"SHUFFLE", is_built_with_rocm_ ? "@llvm.amdgcn.ds.swizzle"
                                        : "llvm.nvvm.shfl.sync.down.f32"}});
 
   CompileAndVerifyIr(hlo_text, expected_optimized_llvm_ir, true);

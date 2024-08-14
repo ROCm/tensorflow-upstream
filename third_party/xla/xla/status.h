@@ -16,13 +16,6 @@ limitations under the License.
 #ifndef XLA_STATUS_H_
 #define XLA_STATUS_H_
 
-#include "tsl/platform/status.h"  // IWYU pragma: export
-
-namespace xla {
-// NOLINTBEGIN(misc-unused-using-decls)
-using tsl::OkStatus;
-using tsl::Status;  // TENSORFLOW_STATUS_OK
-// NOLINTEND(misc-unused-using-decls)
-}  // namespace xla
+// This is an obsolete header.  Please use absl/status/status.h instead.
 
 #endif  // XLA_STATUS_H_

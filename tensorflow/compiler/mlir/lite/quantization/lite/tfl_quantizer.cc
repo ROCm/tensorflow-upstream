@@ -15,14 +15,15 @@ limitations under the License.
 
 #include <iostream>
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/raw_ostream.h"
 #include "tensorflow/compiler/mlir/lite/quantization/lite/quantize_model.h"
-#include "tensorflow/lite/model.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/compiler/mlir/lite/schema/schema_generated.h"
+#include "tensorflow/lite/c/c_api_types.h"
 
 using llvm::cl::opt;
 
@@ -36,11 +37,10 @@ namespace {
 
 TfLiteStatus QuantizeAnnotatedModel(llvm::StringRef buffer,
                                     std::string& output_buffer) {
-  tflite::StderrReporter error_reporter;
   return mlir::lite::QuantizeModel(
       buffer, tflite::TensorType_INT8, tflite::TensorType_INT8,
       tflite::TensorType_INT8, {}, /*disable_per_channel=*/false,
-      /*fully_quantize=*/true, output_buffer, &error_reporter);
+      /*fully_quantize=*/true, output_buffer);
 }
 
 }  // namespace

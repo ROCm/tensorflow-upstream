@@ -18,8 +18,8 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/status/statusor.h"
 #include "xla/service/test_compilation_environment.pb.h"
-#include "xla/statusor.h"
 #include "xla/test.h"
 #include "xla/xla.pb.h"
 #include "tsl/lib/core/status_test_util.h"
@@ -208,6 +208,13 @@ TEST_F(CompilationEnvironmentsTest, ProtoRoundTrip) {
   EXPECT_EQ(envs_deserialized->GetEnv<TestCompilationEnvironment2>()
                 .some_other_flag(),
             20);
+}
+
+TEST_F(CompilationEnvironmentsTest, EnvTypePresenceCheck) {
+  CompilationEnvironments envs;
+  EXPECT_FALSE(envs.HasEnv<TestCompilationEnvironment1>());
+  envs.GetEnv<TestCompilationEnvironment1>();
+  EXPECT_TRUE(envs.HasEnv<TestCompilationEnvironment1>());
 }
 
 }  // namespace

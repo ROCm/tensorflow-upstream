@@ -23,7 +23,7 @@ N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
 rocm-smi -i
 STATUS=$?
 if [ $STATUS -ne 0 ]; then TF_GPU_COUNT=1; else
-   TF_GPU_COUNT=$(rocm-smi -i|grep 'ID' |grep 'GPU' |wc -l)
+   TF_GPU_COUNT=$(rocm-smi -i|grep 'Device ID' |grep 'GPU' |wc -l)
 fi
 TF_TESTS_PER_GPU=1
 N_TEST_JOBS=$(expr ${TF_GPU_COUNT} \* ${TF_TESTS_PER_GPU})
@@ -37,7 +37,7 @@ if [[ -n $1 ]]; then
     ROCM_INSTALL_DIR=$1
 else
     if [[ -z "${ROCM_PATH}" ]]; then
-        ROCM_INSTALL_DIR=/opt/rocm-6.0.0
+        ROCM_INSTALL_DIR=/opt/rocm-6.1.2
     else
         ROCM_INSTALL_DIR=$ROCM_PATH
     fi
@@ -53,6 +53,10 @@ export ROCM_PATH=$ROCM_INSTALL_DIR
 
 if [ -f /usertools/rocm.bazelrc ]; then
 	# Use the bazelrc files in /usertools if available
+ 	if [ ! -d /tf ];then
+           # The bazelrc files in /usertools expect /tf to exist
+           mkdir /tf
+        fi
 	bazel \
 	     --bazelrc=/usertools/rocm.bazelrc \
              test \

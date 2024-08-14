@@ -26,9 +26,7 @@ extern "C" {
 
 SE_Platform* TpuPlatform_New();
 void TpuPlatform_Free(SE_Platform* platform);
-void TpuPlatform_Initialize(SE_Platform* platform, size_t options_size,
-                            const char** options_key,
-                            const char** options_value, TF_Status* status);
+void TpuPlatform_Initialize(SE_Platform* platform, TF_Status* status);
 bool TpuPlatform_Initialized(SE_Platform* platform);
 SE_StreamExecutor* TpuPlatform_GetExecutor(SE_Platform* platform,
                                            SE_StreamExecutorConfig* config,
@@ -40,8 +38,7 @@ SE_TpuTopology* TpuPlatform_GetTopologyPtr(SE_Platform* platform);
 SE_TpuTopology_Host* TpuPlatform_GetHostLocation(SE_Platform* platform);
 TpuRuntimeVersion TpuPlatform_GetRuntimeVersion(SE_Platform* platform);
 
-void TpuExecutor_Init(SE_StreamExecutor* executor, int device_ordinal,
-                      SE_DeviceOptions* device_options, TF_Status* status);
+void TpuExecutor_Init(SE_StreamExecutor* executor, TF_Status* status);
 void TpuExecutor_Free(SE_StreamExecutor* executor);
 
 SE_DeviceMemoryBase TpuExecutor_Allocate(SE_StreamExecutor* executor,
@@ -65,10 +62,6 @@ SE_TpuTopology_Core* TpuExecutor_GetCoreLocation(SE_StreamExecutor* executor);
 
 void TpuExecutor_AllocateEvent(SE_StreamExecutor* executor, SE_Event* event,
                                TF_Status* status);
-void TpuExecutor_DeallocateEvent(SE_StreamExecutor* executor, SE_Event* event,
-                                 TF_Status* status);
-int TpuExecutor_PollForEventStatus(SE_StreamExecutor* executor,
-                                   SE_Event* event);
 void TpuExecutor_RecordEvent(SE_StreamExecutor* executor, SE_Stream* stream,
                              SE_Event* event, TF_Status* status);
 void TpuExecutor_WaitForEvent(SE_StreamExecutor* executor, SE_Stream* stream,
@@ -82,14 +75,15 @@ void TpuExecutor_SynchronousMemcpyFromHost(SE_StreamExecutor* executor,
                                            SE_DeviceMemoryBase* device_dst,
                                            const void* host_src, uint64_t size,
                                            TF_Status* status);
-bool TpuExecutor_MemcpyToHost(SE_StreamExecutor* executor, SE_Stream* stream,
+void TpuExecutor_MemcpyToHost(SE_StreamExecutor* executor, SE_Stream* stream,
                               void* host_dst,
                               const SE_DeviceMemoryBase* device_src,
-                              uint64_t size);
+                              uint64_t size, TF_Status* status);
 
-bool TpuExecutor_MemcpyFromHost(SE_StreamExecutor* executor, SE_Stream* stream,
+void TpuExecutor_MemcpyFromHost(SE_StreamExecutor* executor, SE_Stream* stream,
                                 SE_DeviceMemoryBase* device_dst,
-                                const void* host_src, uint64_t size);
+                                const void* host_src, uint64_t size,
+                                TF_Status* status);
 
 void TpuExecutor_EnqueueInfeed(SE_StreamExecutor* executor,
                                int32_t infeed_queue_index, const uint8_t* data,
@@ -97,18 +91,9 @@ void TpuExecutor_EnqueueInfeed(SE_StreamExecutor* executor,
 void TpuExecutor_DequeueOutfeed(SE_StreamExecutor* executor,
                                 int32_t outfeed_queue_index, uint8_t* data,
                                 int64_t size, TF_Status* status);
-void TpuExecutor_WaitForInfeedReady(SE_StreamExecutor* executor,
-                                    int32_t infeed_queue_index,
-                                    TF_Status* status);
-void TpuExecutor_WaitForOutfeedReady(SE_StreamExecutor* executor,
-                                     int32_t outfeed_queue_index,
-                                     TF_Status* status);
 
 void TpuExecutor_BlockHostUntilDone(SE_StreamExecutor* executor,
                                     SE_Stream* stream, TF_Status* status);
-void TpuExecutor_BlockUntilDoneOrFailed(SE_StreamExecutor* executor,
-                                        TF_Status* status);
-void TpuExecutor_SyncAndForgetFailedStreams(SE_StreamExecutor* executor);
 bool TpuExecutor_SynchronizeAllActivity(SE_StreamExecutor* executor);
 
 void TpuExecutor_UnloadAllPrograms(SE_StreamExecutor* executor,
@@ -156,9 +141,6 @@ void TpuDeviceDescription_Free(SE_DeviceDescription* description);
 void TpuExecutor_CreateDeviceDescription(SE_StreamExecutor* executor,
                                          SE_DeviceDescription* description,
                                          TF_Status* status);
-
-SE_DeviceOptions* TpuExecutor_NewDeviceOptions(unsigned flags);
-void TpuExecutor_FreeDeviceOptions(SE_DeviceOptions* options);
 
 bool TpuExecutor_HostCallback(SE_StreamExecutor* executor, SE_Stream* stream,
                               SE_StatusCallback callback_fn, void* ctx);
@@ -402,8 +384,6 @@ struct TfTpu_ExecutorApiFn {
   TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_GetStatus);
   TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_GetCoreLocation);
   TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_AllocateEvent);
-  TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_DeallocateEvent);
-  TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_PollForEventStatus);
   TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_RecordEvent);
   TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_WaitForEvent);
   TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_SynchronousMemcpyToHost);
@@ -445,8 +425,6 @@ struct TfTpu_ExecutorApiFn {
   TFTPU_ADD_FN_IN_STRUCT(TpuDeviceDescription_Free);
 
   TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_CreateDeviceDescription);
-  TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_NewDeviceOptions);
-  TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_FreeDeviceOptions);
   TFTPU_ADD_FN_IN_STRUCT(TpuExecutor_HostCallback);
 
   TFTPU_ADD_FN_IN_STRUCT(TpuTransferManager_New);

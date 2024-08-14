@@ -27,8 +27,8 @@ if [[ "$TFCI_NIGHTLY_UPDATE_VERSION_ENABLE" == 1 ]]; then
   export TFCI_BUILD_PIP_PACKAGE_ARGS="$(echo $TFCI_BUILD_PIP_PACKAGE_ARGS | sed 's/tensorflow/tf_nightly/')"
 fi
 
-tfrun bazel build $TFCI_BAZEL_COMMON_ARGS //tensorflow/tools/pip_package/v2:wheel $TFCI_BUILD_PIP_PACKAGE_ARGS
-tfrun cp -a "./bazel-bin/tensorflow/tools/pip_package/v2/wheel_house/." "$TFCI_OUTPUT_DIR"
+tfrun bazel build $TFCI_BAZEL_COMMON_ARGS //tensorflow/tools/pip_package:wheel $TFCI_BUILD_PIP_PACKAGE_ARGS
+tfrun find ./bazel-bin/tensorflow/tools/pip_package -iname "*.whl" -exec cp {} $TFCI_OUTPUT_DIR \;
 tfrun ./ci/official/utilities/rename_and_verify_wheels.sh
 
 if [[ "$TFCI_ARTIFACT_STAGING_GCS_ENABLE" == 1 ]]; then

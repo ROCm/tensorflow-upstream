@@ -27,8 +27,10 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_pass_interface.h"
@@ -38,8 +40,8 @@ namespace xla {
 
 struct CanonicalAsyncOp {
   HloOpcode outer;  // kAsyncStart or kAsyncDone
-  HloOpcode inner;  // kAllReduce, kAllGather, kAllToAll, kCollectivePermute,
-                    // or kReduceScatter
+  HloOpcode inner;  // kAllReduce, kAllGather, kAllToAll, kCollectiveBroadcast,
+                    // kCollectivePermute, or kReduceScatter
 };
 
 CanonicalAsyncOp DefaultGetCanonicalAsyncOp(const HloInstruction& hlo);
@@ -56,11 +58,13 @@ enum class ResourceType {
   kAllGather = 2,
   kAllReduce = 3,
   kCollectivePermute = 4,
-  kReduceScatter = 5,
-  kSendRecv = 6,
-  kSendHost = 7,
-  kRecvHost = 8,
-  kNumResources = 9,
+  kCopy = 5,
+  kReduceScatter = 6,
+  kSendRecv = 7,
+  kSendHost = 8,
+  kRecvHost = 9,
+  kCollectiveBroadcast = 10,
+  kNumResources = 11,
   kTargetDefinedResourcesBound = 10000,
 };
 
@@ -73,7 +77,12 @@ enum class ResourceUsageType {
 enum class ResourceHazardType {
   kShareable = 0,
   kSerial = 1,
-  kUnshareable = 2,
+  // The following hazard type represents the resources that are used by the
+  // async ops and should be released right after the estimated time cost has
+  // past. This hazard type is useful to prevent increasing such ops' overlaps
+  // more than necessary.
+  kNonextendable = 2,
+  kUnshareable = 3,
 };
 
 constexpr int64_t ResourceTypeToIndex(ResourceType resource_type) {
@@ -92,6 +101,7 @@ class HloGraphNode;
 class HloScheduleGraph;
 
 struct SchedulerConfig {
+  int64_t collective_broadcast_overlap_limit = 1;
   int64_t collective_permute_overlap_limit = 1;
   int64_t all_to_all_overlap_limit = 1;
   int64_t all_gather_overlap_limit = 1;
@@ -99,6 +109,7 @@ struct SchedulerConfig {
   int64_t reduce_scatter_overlap_limit = 1;
   int64_t send_recv_overlap_limit = 1;
   int64_t send_recv_host_overlap_limit = 1;
+  int64_t copy_overlap_limit = 1;
   uint64_t memory_limit = UINT64_MAX;
   bool schedule_send_recvs = false;
   // Consider send recv as the same resource. Some platforms do not take well
@@ -131,6 +142,7 @@ class LatencyEstimator {
     return get_canonical_async_op_(hlo);
   }
   bool IsAsyncPair(const HloGraphNode& from, const HloGraphNode& target) const;
+  bool IsP2pPair(const HloGraphNode& from, const HloGraphNode& target) const;
   explicit LatencyEstimator(
       GetCanonicalAsyncOpFunc func = DefaultGetCanonicalAsyncOp)
       : get_canonical_async_op_(func) {}
@@ -247,6 +259,12 @@ class AsyncTracker {
   virtual absl::InlinedVector<int64_t, 1> GetOccupiedSerialResourcesFromVector(
       const ResourcesVector& resources) const;
 
+  // Returns the list of the released nonextendable resources filtered from the
+  // given resources vector.
+  virtual absl::InlinedVector<int64_t, 1>
+  GetReleasedNonextendableResourcesFromVector(
+      const ResourcesVector& resources) const;
+
   inline CanonicalAsyncOp GetCanonicalAsyncOp(const HloInstruction& hlo) const {
     return get_canonical_async_op_(hlo);
   }
@@ -271,8 +289,8 @@ class AsyncTracker {
 // Base class for the core scheduling algorithm.
 class SchedulerCore {
  public:
-  virtual Status InitializeScheduler(const HloModule* module) = 0;
-  virtual StatusOr<std::vector<HloInstruction*>> ScheduleComputation(
+  virtual absl::Status InitializeScheduler(const HloModule* module) = 0;
+  virtual absl::StatusOr<std::vector<HloInstruction*>> ScheduleComputation(
       const HloComputation* computation) = 0;
   virtual ~SchedulerCore() = default;
   virtual int64_t GetMemoryPeak() = 0;
@@ -338,6 +356,8 @@ class HloGraphNode {
   void SetGraphDepth(TimeCost graph_depth) { graph_depth_ = graph_depth; }
   bool GetForceDelay() const { return force_delay_; }
   void SetForceDelay(bool force_delay) { force_delay_ = force_delay; }
+  bool GetForceEarly() const { return force_early_; }
+  void SetForceEarly(bool force_early) { force_early_ = force_early; }
   ResourcesVector GetResources() const { return resources_; }
   bool DoesOccupyAnyResource() const {
     return absl::c_any_of(resources_, [](const ResourcePair& resource) {
@@ -410,6 +430,7 @@ class HloGraphNode {
     absl::StrAppend(&result, "Depth: ", depth_, "\n");
     absl::StrAppend(&result, "Graph Depth: ", graph_depth_, "\n");
     absl::StrAppend(&result, "Force Delay: ", force_delay_, "\n");
+    absl::StrAppend(&result, "Force Early: ", force_early_, "\n");
     absl::StrAppend(&result, "Predecessors:\n");
     for (const HloEdge& e : predecessors_) {
       absl::StrAppend(&result, e.ToString());
@@ -462,6 +483,8 @@ class HloGraphNode {
   ResourcesVector resources_;
   // Force the scheduling of the nodes with attribute set as late as possible.
   bool force_delay_ = false;
+  // Force the scheduling of the nodes with attribute set as early as possible.
+  bool force_early_ = false;
   // Whether this node has been scheduled or not yet.
   bool scheduled_ = false;
   // Shareable resources released by this node.
@@ -602,8 +625,9 @@ class MemoryPressureTracker {
   const MemoryPressureState& pressure_state() const { return pressure_state_; }
 
  private:
-  static bool ShouldSkipBufferAllocations(const HloInstruction* instruction,
-                                          const ShapeIndex& idx) {
+  static bool ShouldSkipBufferAllocations(
+      const HloInstruction* instruction, const ShapeIndex& idx,
+      const HloInstruction* first_definition) {
     // Make GetTupleElement/kBitcast make alive only the tuple pointer if not
     // array shape.
     if ((instruction->opcode() == HloOpcode::kGetTupleElement ||
@@ -611,11 +635,16 @@ class MemoryPressureTracker {
         !idx.empty()) {
       return true;
     }
+    // Skip entry computation parameters because their memory usage is already
+    // accounted for.
+    if (first_definition->opcode() == HloOpcode::kParameter &&
+        first_definition->parent()->IsEntryComputation()) {
+      return true;
+    }
     return false;
   }
   static bool ShouldSkipBufferReleases(const HloInstruction* instruction) {
-    // Make GetTupleElement/kBitcast make alive only the tuple pointer if not
-    // array shape.
+    // Do not release parameter buffers as they are still in use by the caller.
     if (instruction->opcode() == HloOpcode::kParameter) {
       return true;
     }
@@ -824,8 +853,8 @@ class DefaultSchedulerCore : public SchedulerCore {
         target_scheduling_rule_(target_scheduling_rule),
         early_target_scheduling_rule_(early_target_scheduling_rule),
         post_processing_fn_(post_processing_fn) {}
-  Status InitializeScheduler(const HloModule* module) override;
-  StatusOr<std::vector<HloInstruction*>> ScheduleComputation(
+  absl::Status InitializeScheduler(const HloModule* module) override;
+  absl::StatusOr<std::vector<HloInstruction*>> ScheduleComputation(
       const HloComputation* computation) override;
   static bool AddOccupierToResource(
       HloGraphNode::TimeCost current_time, HloEdge& new_edge,
@@ -845,13 +874,13 @@ class DefaultSchedulerCore : public SchedulerCore {
  protected:
   virtual void LogInstruction(const HloInstruction* instr) const;
   // Update node that has been scheduled.
-  virtual StatusOr<HloGraphNode::TimeCost> ScheduleNode(
+  virtual absl::StatusOr<HloGraphNode::TimeCost> ScheduleNode(
       HloGraphNode* n, SchedulingState* sched_state) const;
   // Perform the scheduling of one or more instructions. Called every time the
   // ready set is not empty.
-  virtual Status SchedulingStep(SchedulingState* sched_state);
+  virtual absl::Status SchedulingStep(SchedulingState* sched_state);
   // Pick a node to schedule according to cost model.
-  virtual HloGraphNode* FindAndExtractBestNodeAvailable(
+  virtual absl::StatusOr<HloGraphNode*> FindAndExtractBestNodeAvailable(
       SchedulingState& sched_state,
       DefaultSchedulerCore::ShouldSkipNodeFunction should_skip_node);
   void DumpLatencyHidingSchedule(
@@ -878,6 +907,7 @@ class LatencyHidingScheduler : public HloModulePass {
     const HloComputation* computation = nullptr;
     double all_gather_wasted_cycles = 0;
     double all_reduce_wasted_cycles = 0;
+    double collective_broadcast_wasted_cycles = 0;
     double collective_permute_wasted_cycles = 0;
     double all_to_all_wasted_cycles = 0;
     double reduce_scatter_wasted_cycles = 0;
@@ -910,7 +940,7 @@ class LatencyHidingScheduler : public HloModulePass {
   static std::string SchedulerStatisticsString(
       const SchedulerStatistics& sched_stats);
   using HloPassInterface::Run;
-  StatusOr<bool> Run(
+  absl::StatusOr<bool> Run(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 

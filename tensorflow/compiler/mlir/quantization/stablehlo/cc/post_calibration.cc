@@ -14,23 +14,27 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/compiler/mlir/quantization/stablehlo/cc/post_calibration.h"
 
+#include <memory>
+
 #include "absl/base/nullability.h"
 #include "absl/log/die_if_null.h"
 #include "absl/status/statusor.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project  // IWYU: keep
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
+#include "tensorflow/compiler/mlir/quantization/stablehlo/cc/config.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/cc/pass_pipeline.h"
-#include "tensorflow/compiler/mlir/quantization/stablehlo/passes/passes.h"
+#include "tensorflow/compiler/mlir/quantization/stablehlo/instrumentations/save_report.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/quantization_config.pb.h"
 #include "tensorflow/compiler/mlir/quantization/tensorflow/cc/run_passes.h"
-#include "tensorflow/compiler/mlir/quantization/tensorflow/passes/passes.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "tsl/platform/errors.h"
 
 namespace mlir::quant::stablehlo {
 
+using ::stablehlo::quantization::GetReportFilePath;
+using ::stablehlo::quantization::PipelineConfig;
 using ::stablehlo::quantization::QuantizationConfig;
+using ::stablehlo::quantization::QuantizationSpecs;
 using ::tensorflow::quantization::RunPasses;
 
 PostCalibrationComponent::PostCalibrationComponent(
@@ -39,20 +43,24 @@ PostCalibrationComponent::PostCalibrationComponent(
 
 absl::StatusOr<ModuleOp> PostCalibrationComponent::Run(
     ModuleOp module_op, const QuantizationConfig& config) {
-  TF_RETURN_IF_ERROR(
-      RunPasses(/*name=*/kName,
-                /*add_passes_func=*/[this](PassManager& pm) { AddPasses(pm); },
-                *ctx_, module_op));
+  TF_RETURN_IF_ERROR(RunPasses(
+      kName, /*add_passes_func=*/
+      [&config](PassManager& pm) {
+        // Add instrumentation to save quantization report after quantization.
+        pm.addInstrumentation(
+            std::make_unique<SaveQuantizationReportInstrumentation>(
+                GetReportFilePath(config)));
+
+        AddPostCalibrationPasses(pm, config.pipeline_config(), config.specs());
+      },
+      *ctx_, module_op));
   return module_op;
 }
 
-void PostCalibrationComponent::AddPasses(OpPassManager& pm) const {
-  pm.addNestedPass<func::FuncOp>(
-      CreateConvertCustomAggregationOpToQuantStatsPass());
-  pm.addPass(createQuantizeCompositeFunctionsPass());
-  pm.addPass(createOptimizeGraphPass());
-  AddStablehloQuantToIntPasses(pm);
-  AddCallModuleSerializationPasses(pm);
+void PostCalibrationComponent::AddPasses(
+    OpPassManager& pm, const QuantizationSpecs& specs,
+    const PipelineConfig& pipeline_config) const {
+  AddPostCalibrationPasses(pm, pipeline_config, specs);
 }
 
 }  // namespace mlir::quant::stablehlo

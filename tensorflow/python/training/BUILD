@@ -1,8 +1,9 @@
-# Placeholder: load py_proto_library
-load("//tensorflow/core/platform:build_config.bzl", "tf_proto_library")
-load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "tf_py_strict_test")
-load("//tensorflow/core/platform:distribute.bzl", "distribute_py_strict_test")
 load("//tensorflow:strict.default.bzl", "py_strict_library")
+
+# Placeholder: load py_proto_library
+load("//tensorflow:tensorflow.default.bzl", "cuda_py_strict_test", "tf_py_strict_test")
+load("//tensorflow/core/platform:build_config.bzl", "tf_proto_library")
+load("//tensorflow/core/platform:distribute.bzl", "distribute_py_strict_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -1238,6 +1239,7 @@ cuda_py_strict_test(
     size = "medium",
     srcs = ["basic_loops_test.py"],
     python_version = "PY3",
+    tags = ["no_rocm"], #TODO(ROCm) Re-enable after issue is fixed.
     deps = [
         ":basic_loops",
         ":supervisor",

@@ -1,6 +1,6 @@
+load("@local_xla//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm")
 load("//tensorflow:tensorflow.bzl", "if_libtpu", "if_with_tpu_support", "tf_cc_test", "tf_copts", "tf_cuda_cc_test", "tf_cuda_only_cc_test")
 load("//tensorflow:tensorflow.default.bzl", "cc_header_only_library", "filegroup", "tf_custom_op_py_strict_library")
-load("@local_xla//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm")
 load("//tensorflow/core/platform:build_config.bzl", "tf_additional_all_protos", "tf_proto_library")
 load(
     "//tensorflow/core/platform:build_config_root.bzl",
@@ -131,6 +131,7 @@ cc_library(
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:lib",
         "@com_google_absl//absl/memory",
+        "@local_xla//xla/stream_executor:platform_manager",
     ] + if_libtpu(
         if_false = [
             "@local_xla//xla/service:cpu_plugin",  # buildcleaner: keep
@@ -160,6 +161,7 @@ cc_library(
         "//tensorflow/core:lib",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
+        "@local_xla//xla/stream_executor:platform_manager",
         "@local_xla//xla/stream_executor/gpu:gpu_init",
     ] + if_libtpu(
         if_false = [
@@ -197,6 +199,7 @@ cc_library(
         "//tensorflow/core/tpu:tpu_node_device_util",
         "//tensorflow/core/tpu:virtual_device",
         "@com_google_absl//absl/types:optional",
+        "@local_tsl//tsl/platform:statusor",
         "@local_xla//xla/stream_executor/tpu:c_api_conversions",
         "@local_xla//xla/stream_executor/tpu:status_helper",
         "@local_xla//xla/stream_executor/tpu:tpu_api",
@@ -312,6 +315,7 @@ cc_library(
         "//tensorflow/core/common_runtime:dma_helper",
         "//tensorflow/core/framework:allocator",
         "@com_google_absl//absl/synchronization",
+        "@local_tsl//tsl/platform:statusor",
         "@local_xla//xla:util",
         "@local_xla//xla/client:global_data",
         "@local_xla//xla/client:local_client",
@@ -357,13 +361,14 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
-        "@local_tsl//tsl/framework:device_id_utils",
         "@local_xla//xla:executable_run_options",
         "@local_xla//xla/hlo/ir:hlo",
         "@local_xla//xla/pjrt:pjrt_client",
         "@local_xla//xla/pjrt:tf_pjrt_client",
         "@local_xla//xla/service:compiler",
         "@local_xla//xla/service:executable",
+        "@local_xla//xla/stream_executor:platform_manager",
+        "@local_xla//xla/tsl/framework:device_id_utils",
     ],
     alwayslink = 1,
 )
@@ -517,10 +522,7 @@ cc_library(
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
-        "//tensorflow/core:protos_all_cc",
-        "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:statusor",
-        "@local_xla//xla:status_macros",
         "@local_xla//xla/pjrt:pjrt_client",
     ],
 )
@@ -582,22 +584,26 @@ cc_library(
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/common_runtime:dma_helper",
+        "//tensorflow/core/common_runtime/gpu:gpu_serving_device_selector",
         "//tensorflow/core/tfrt/common:async_value_tensor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
-        "@local_tsl//tsl/framework:device_id_utils",
         "@local_xla//xla:shape_util",
         "@local_xla//xla:status_macros",
         "@local_xla//xla/client:local_client",
         "@local_xla//xla/pjrt:pjrt_client",
+        "@local_xla//xla/pjrt:pjrt_common",
         "@local_xla//xla/pjrt:pjrt_future",
         "@local_xla//xla/pjrt:pjrt_stream_executor_client",
         "@local_xla//xla/pjrt:tracked_device_buffer",
         "@local_xla//xla/service:shaped_buffer",
         "@local_xla//xla/stream_executor:device_memory_allocator",
+        "@local_xla//xla/stream_executor:platform_manager",
+        "@local_xla//xla/tsl/framework:device_id_utils",
+        "@local_xla//xla/tsl/framework:serving_device_selector_policies",
     ],
 )
 
@@ -624,13 +630,14 @@ tf_cc_test(
         "//tensorflow/core/tfrt/common:pjrt_util",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/framework:device_id_utils",
         "@local_tsl//tsl/lib/core:status_test_util",
         "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:statusor",
         "@local_xla//xla/pjrt:pjrt_client",
+        "@local_xla//xla/pjrt:pjrt_common",
         "@local_xla//xla/pjrt:tfrt_cpu_pjrt_client",
         "@local_xla//xla/tests:literal_test_util",
+        "@local_xla//xla/tsl/framework:device_id_utils",
     ],
 )
 
@@ -951,10 +958,11 @@ cc_library(
         ":shape_inference_helpers",
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
-        "//tensorflow/core:graph",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
-        "@local_xla//xla:statusor",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -983,11 +991,15 @@ tf_cc_test(
         "//tensorflow/cc:cc_ops_internal",
         "//tensorflow/cc:ops",
         "//tensorflow/cc:resource_variable_ops",
+        "//tensorflow/cc:scope",
+        "//tensorflow/core:core_cpu_base",
         "//tensorflow/core:framework",
         "//tensorflow/core:ops",
+        "//tensorflow/core:portable_gif_internal",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core/kernels:constant_op",
+        "@local_tsl//tsl/platform:status",
     ],
 )
 
@@ -1098,10 +1110,10 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
         "@local_xla//xla:status_macros",
-        "@local_xla//xla:statusor",
         "@local_xla//xla:union_find",
         "@local_xla//xla:util",
         "@local_xla//xla:xla_data_proto_cc",
@@ -1127,10 +1139,10 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
         "@local_xla//xla:status_macros",
-        "@local_xla//xla:statusor",
         "@local_xla//xla/service/graphcycles",
     ],
 )
@@ -1146,10 +1158,11 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/numeric:bits",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@local_xla//xla:status_macros",
-        "@local_xla//xla:statusor",
     ],
 )
 
@@ -1363,9 +1376,9 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
-        "@local_xla//xla:statusor",
         "@local_xla//xla:union_find",
         "@local_xla//xla:util",
         "@local_xla//xla/service/graphcycles",
@@ -1668,9 +1681,10 @@ cc_library(
         "//tensorflow/core/tfrt/common:async_value_tensor",
         "//tensorflow/core/tfrt/common:create_pjrt_client_util",
         "@com_google_absl//absl/status",
-        "@local_tsl//tsl/c:tsl_status_internal",
-        "@local_tsl//tsl/framework:device_id_utils",
         "@local_xla//xla/pjrt:pjrt_client",
+        "@local_xla//xla/pjrt:pjrt_common",
+        "@local_xla//xla/tsl/c:tsl_status_internal",
+        "@local_xla//xla/tsl/framework:device_id_utils",
     ],
 )
 
@@ -1734,7 +1748,7 @@ tf_cuda_only_cc_test(
         "@local_xla//xla:shape_util",
         "@local_xla//xla/stream_executor",
         "@local_xla//xla/stream_executor:device_memory",
-        "@local_xla//xla/stream_executor:multi_platform_manager",
+        "@local_xla//xla/stream_executor:platform_manager",
     ],
 )
 
@@ -1814,9 +1828,6 @@ tf_cc_test(
 tf_cuda_cc_test(
     name = "device_compiler_test",
     srcs = ["device_compiler_test.cc"],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_enable_xla_runtime_executable",
-    },
     tags = [
         "config-cuda-only",
         "no_oss",  # This test only runs with GPU.
@@ -1845,6 +1856,7 @@ tf_cuda_cc_test(
         "//tensorflow/core/platform:statusor",
         "@com_google_googletest//:gtest_main",
         "@local_xla//xla/client:client_library",
+        "@local_xla//xla/stream_executor:platform_manager",
     ],
 )
 

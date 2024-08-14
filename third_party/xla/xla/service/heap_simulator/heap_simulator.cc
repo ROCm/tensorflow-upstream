@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/service/hlo_value.h"
 #include "xla/service/memory_space_assignment/repacking.h"
 #include "xla/service/time_utils.h"
-#include "xla/status.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -86,7 +86,7 @@ std::ostream& operator<<(std::ostream& stream,
 }
 
 /*static*/
-StatusOr<int64_t> HeapSimulator::MinimumMemoryForModule(
+absl::StatusOr<int64_t> HeapSimulator::MinimumMemoryForModule(
     const HloSchedule& schedule,
     const LogicalBuffer::SizeFunction& size_function) {
   if (schedule.empty()) {
@@ -110,7 +110,7 @@ StatusOr<int64_t> HeapSimulator::MinimumMemoryForModule(
 }
 
 /*static*/
-StatusOr<int64_t> HeapSimulator::MinimumMemoryForComputation(
+absl::StatusOr<int64_t> HeapSimulator::MinimumMemoryForComputation(
     const HloComputation& computation, const HloInstructionSequence& sequence,
     const HloAliasAnalysis& alias_analysis,
     const LogicalBuffer::SizeFunction& size_function,
@@ -124,7 +124,7 @@ StatusOr<int64_t> HeapSimulator::MinimumMemoryForComputation(
   return result.heap_size;
 }
 
-StatusOr<int64_t> HeapSimulator::MinimumMemoryForComputation(
+absl::StatusOr<int64_t> HeapSimulator::MinimumMemoryForComputation(
     const HloComputation& computation, const HloInstructionSequence& sequence,
     const HloAliasAnalysis& alias_analysis,
     const LogicalBuffer::SizeFunction& size_function,
@@ -138,7 +138,7 @@ StatusOr<int64_t> HeapSimulator::MinimumMemoryForComputation(
 }
 
 /*static*/
-StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
+absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
     std::unique_ptr<HeapAlgorithm<HloValue>> algorithm, const HloModule& module,
     const HloSchedule& schedule, const HloAliasAnalysis& alias_analysis,
     const BufferValue::SizeFunction& size_fn, const Options& options) {
@@ -156,7 +156,7 @@ StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
 }
 
 /*static*/
-StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
+absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
     std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
     const HloComputation& computation,
     const HloInstructionSequence& instruction_sequence,
@@ -177,7 +177,7 @@ StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
 }
 
 /*static*/
-StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
+absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
     std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
     const HloComputation& computation,
     const HloInstructionSequence& instruction_sequence,
@@ -196,7 +196,7 @@ StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
 
 // Runs a heap simulation for the given 'computation', assuming the given
 // 'instruction_sequence'.
-Status HeapSimulator::RunComputation(
+absl::Status HeapSimulator::RunComputation(
     const HloComputation& computation,
     const HloInstructionSequence& instruction_sequence,
     const HloAliasAnalysis& alias_analysis, HloLiveRange* hlo_live_range) {
@@ -383,7 +383,7 @@ Status HeapSimulator::RunComputation(
       Free(value, value->instruction());
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 HeapSimulator::HeapSimulator(
@@ -464,7 +464,7 @@ int64_t HeapSimulator::GetBufferSize(const HloValue* buffer) const {
   return it->second;
 }
 
-StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Finish() {
+absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Finish() {
   TF_ASSIGN_OR_RETURN(Result<HloValue> result, algorithm_->Finish());
 
   // Post-process the result to add chunks for shared buffers.  An empty chunk
@@ -557,7 +557,7 @@ void NoFragmentationStatsHeap<BufferType>::Free(const BufferType* buffer,
 }
 
 template <typename BufferType>
-StatusOr<HeapSimulator::Result<BufferType>>
+absl::StatusOr<HeapSimulator::Result<BufferType>>
 NoFragmentationStatsHeap<BufferType>::Finish() {
   // The result.chunk_map is empty, since we only collect stats, and don't
   // actually compute chunk assignments.
@@ -939,7 +939,9 @@ void GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedBufferInterval::Slice(
         full_buffer_interval_.need_allocation});
   }
 
-  CHECK_EQ(size_total, full_buffer_interval_.size);
+  CHECK_EQ(size_total, full_buffer_interval_.size)
+      << " slice sizes: {" << absl::StrJoin(slice_sizes_sorted_by_offset, ", ")
+      << "};";
 }
 
 template <typename BufferType>
@@ -1868,9 +1870,8 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::Find()
   if (preferred_offset_ >= 0) {
     ChunksSortedBySliceTime chunks = FindForOffset(preferred_offset_);
     if (!chunks.empty()) {
-      VLOG(1) << "SlicedAllocationFinder found chunks: "
-              << "{ " << absl::StrJoin(chunks, ", ", absl::StreamFormatter())
-              << " }";
+      VLOG(1) << "SlicedAllocationFinder found chunks: " << "{ "
+              << absl::StrJoin(chunks, ", ", absl::StreamFormatter()) << " }";
       return chunks;
     }
   }
@@ -1902,9 +1903,8 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::Find()
     VLOG(3) << "SlicedAllocationFinder::Find() searching " << root->ToString();
     ChunksSortedBySliceTime chunks = FindInRoot(*root);
     if (!chunks.empty()) {
-      VLOG(1) << "SlicedAllocationFinder found chunks: "
-              << "{ " << absl::StrJoin(chunks, ", ", absl::StreamFormatter())
-              << " }";
+      VLOG(1) << "SlicedAllocationFinder found chunks: " << "{ "
+              << absl::StrJoin(chunks, ", ", absl::StreamFormatter()) << " }";
       return chunks;
     }
   }
@@ -1938,10 +1938,11 @@ GlobalDecreasingSizeBestFitHeap<
 }
 
 template <typename BufferType>
-Status GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::
-    DoesPermutationFit(absl::Span<const int64_t> permutation_of_slice_times,
-                       const FreeChunkRoot& root, int64_t offset) const {
-  Status result =
+absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
+    SlicedAllocationFinder::DoesPermutationFit(
+        absl::Span<const int64_t> permutation_of_slice_times,
+        const FreeChunkRoot& root, int64_t offset) const {
+  absl::Status result =
       DoesPermutationFitImpl(permutation_of_slice_times, root, offset);
   VLOG(3) << "SlicedAllocationFinder::DoesPermutationFit\n"
           << "  permutation of slice times: [ "
@@ -1953,9 +1954,10 @@ Status GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::
 }
 
 template <typename BufferType>
-Status GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::
-    DoesPermutationFitImpl(absl::Span<const int64_t> permutation_of_slice_times,
-                           const FreeChunkRoot& root, int64_t offset) const {
+absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
+    SlicedAllocationFinder::DoesPermutationFitImpl(
+        absl::Span<const int64_t> permutation_of_slice_times,
+        const FreeChunkRoot& root, int64_t offset) const {
   if (permutation_of_slice_times.size() != sorted_slice_sizes_.size()) {
     return InvalidArgumentStrCat(
         sorted_slice_sizes_.size(), " slices times expected in permutation. ",
@@ -2036,7 +2038,7 @@ Status GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::
                           "have caught such a condition earlier.");
   }
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Future opportunities:
@@ -2119,7 +2121,7 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::
 }
 
 template <typename BufferType>
-StatusOr<HeapSimulator::Result<BufferType>>
+absl::StatusOr<HeapSimulator::Result<BufferType>>
 GlobalDecreasingSizeBestFitHeap<BufferType>::Finish() {
   std::vector<BufferInterval> sorted_buffer_intervals =
       GetSortedBufferIntervals();
@@ -2343,7 +2345,7 @@ void GlobalDecreasingSizeBestFitHeap<BufferType>::AddToChunkMap(
   DCHECK(emplace_result.second);
 }
 
-StatusOr<HeapSimulator::Result<HloValue>>
+absl::StatusOr<HeapSimulator::Result<HloValue>>
 ConstrainedGlobalDecreasingSizeBestFitHeap::Finish() {
   std::vector<BufferInterval> sorted_buffer_vec = GetSortedBufferIntervals();
   // Convert into std::list so that erase() is O(1).
@@ -2396,7 +2398,7 @@ ConstrainedGlobalDecreasingSizeBestFitHeap::Finish() {
 }
 
 template <typename BufferType>
-StatusOr<HeapSimulator::Result<BufferType>>
+absl::StatusOr<HeapSimulator::Result<BufferType>>
 ChooseBestHeapAlgorithm<BufferType>::Finish() {
   DCHECK(!algorithms_.empty());
   std::vector<Result> results(algorithms_.size());

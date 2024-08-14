@@ -1,8 +1,8 @@
 # Placeholder: load py_proto_library
 load(
-    "//tsl:tsl.bzl",
+    "@local_xla//xla/tsl:tsl.bzl",
     "if_google",
-    "set_external_visibility",
+    "internal_visibility",
 )
 load(
     "//tsl/platform:build_config.bzl",
@@ -10,7 +10,12 @@ load(
 )
 
 package(
-    default_visibility = ["//visibility:public"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    default_visibility = internal_visibility([
+        "//tensorflow/core:__subpackages__",
+        "@local_xla//xla/tsl:internal",
+        "//tensorflow_models:__subpackages__",
+    ]),
     features = if_google(["-parse_headers"]),
     licenses = ["notice"],
 )
@@ -26,6 +31,7 @@ tf_proto_library(
     name = "dnn_proto",
     srcs = ["dnn.proto"],
     make_default_target_header_only = True,
+    protodeps = if_google(["//google/protobuf:wrappers"]),
     visibility = ["//visibility:public"],
 )
 
@@ -33,6 +39,7 @@ tf_proto_library(
     name = "error_codes_proto_impl",
     srcs = ["error_codes.proto"],
     make_default_target_header_only = True,
+    protodeps = if_google(["//google/protobuf:any"]),
     visibility = ["//visibility:public"],
 )
 
@@ -68,6 +75,7 @@ tf_proto_library(
     create_grpc_library = True,
     create_java_proto = False,
     create_service = True,
+    protodeps = if_google(["//google/protobuf:any"]),
     visibility = ["//visibility:public"],
 )
 
@@ -98,7 +106,14 @@ tf_proto_library(
     name = "test_log_proto",
     srcs = ["test_log.proto"],
     make_default_target_header_only = True,
-    visibility = ["//visibility:public"],
+    protodeps = if_google([
+        "//google/protobuf:any",
+        "//google/protobuf:wrappers",
+    ]),
+    visibility = internal_visibility([
+        "//tensorflow/core:__subpackages__",
+        "@local_xla//xla/tsl/util:__pkg__",
+    ]),
 )
 
 tf_proto_library(
@@ -116,6 +131,6 @@ tf_proto_library(
         ":rpc_options_proto",
         ":status_proto",
         ":test_log_proto",
-    ],
+    ] + if_google(["//google/protobuf:any"]),
     visibility = ["//visibility:public"],
 )

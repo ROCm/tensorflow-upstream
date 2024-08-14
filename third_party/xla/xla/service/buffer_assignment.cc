@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -74,7 +75,7 @@ absl::flat_hash_map<int64_t, const HloInstruction*> BuildIdToHloInstructionMap(
   return id_to_hlo_instruction;
 }
 
-StatusOr<absl::flat_hash_map<int64_t, const HloValue*>>
+absl::StatusOr<absl::flat_hash_map<int64_t, const HloValue*>>
 BuildIdToLogicalBufferMap(
     const BufferAssignmentProto& proto,
     const absl::flat_hash_map<int64_t, const HloInstruction*>&
@@ -117,7 +118,7 @@ BuildIdToLogicalBufferMap(
 
 }  // namespace
 
-Status GatherComputationsByAllocationType(
+absl::Status GatherComputationsByAllocationType(
     const HloModule* module,
     std::vector<const HloComputation*>* thread_local_computations,
     std::vector<const HloComputation*>* global_computations) {
@@ -223,12 +224,12 @@ Status GatherComputationsByAllocationType(
     // will not appear in either thread_local_set or global_set. We don't bother
     // assigning buffers for these.
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 std::string BufferAllocation::Slice::ToString() const {
-  return absl::StrCat("{index:", index(), ", offset:", offset_,
-                      ", size:", size_, "}");
+  return absl::StrCat("{index:", allocation_ == nullptr ? -1 : index(),
+                      ", offset:", offset_, ", size:", size_, "}");
 }
 
 BufferAllocation::Slice BufferAllocation::GetSlice(
@@ -335,7 +336,7 @@ static const HloInstruction* GetOutputInstruction(
   return nullptr;
 }
 
-std::string BufferAllocation::ToString() const {
+std::string BufferAllocation::ToShortString() const {
   std::string output;
   StrAppendFormat(&output, "allocation %d: size %d", index_, size());
   if (color() != 0) {
@@ -365,6 +366,11 @@ std::string BufferAllocation::ToString() const {
     StrAppend(&output, ", preallocated-temp");
   }
   StrAppend(&output, ":\n");
+  return output;
+}
+
+std::string BufferAllocation::ToString() const {
+  std::string output = ToShortString();
   // Dump the assigned buffers ordered by id.
   std::vector<const HloValue*> sorted_buffers;
   for (const auto& buffer_offset_size : assigned_buffers_) {
@@ -470,7 +476,7 @@ bool BufferAssignment::HasTopLevelAllocation(
   return HasAllocationAt(instruction, /*index=*/{});
 }
 
-StatusOr<BufferAllocation::Slice> BufferAssignment::GetUniqueSlice(
+absl::StatusOr<BufferAllocation::Slice> BufferAssignment::GetUniqueSlice(
     const HloInstruction* instruction, const ShapeIndex& index) const {
   VLOG(3) << "Trying to find unique slice for " << instruction->name() << " ["
           << index << "]";
@@ -502,7 +508,8 @@ StatusOr<BufferAllocation::Slice> BufferAssignment::GetUniqueSlice(
   return result;
 }
 
-StatusOr<BufferAllocation::Slice> BufferAssignment::GetUniqueTopLevelSlice(
+absl::StatusOr<BufferAllocation::Slice>
+BufferAssignment::GetUniqueTopLevelSlice(
     const HloInstruction* instruction) const {
   return GetUniqueSlice(instruction, /*index=*/{});
 }
@@ -521,15 +528,16 @@ bool BufferAssignment::HaveDisjointSlices(const HloInstruction* hlo_a,
   // assigned slice, returns the empty set.
   auto collect_slices = [&](const HloInstruction* instr) -> SliceSet {
     SliceSet slices;
-    Status status = ShapeUtil::ForEachSubshapeWithStatus(
+    absl::Status status = ShapeUtil::ForEachSubshapeWithStatus(
         instr->shape(),
-        [&](const Shape& /*subshape*/, const ShapeIndex& index) {
+        [&](const Shape& /*subshape*/,
+            const ShapeIndex& index) -> absl::Status {
           auto shape_slices = GetAllSlices(instr, index);
           if (shape_slices.empty()) {
             return InvalidArgument("No slices assigned to part of instr.");
           }
           slices.insert(shape_slices.begin(), shape_slices.end());
-          return OkStatus();
+          return absl::OkStatus();
         });
     if (!status.ok()) {
       return {};
@@ -548,7 +556,7 @@ bool BufferAssignment::HaveDisjointSlices(const HloInstruction* hlo_a,
          });
 }
 
-StatusOr<BufferAllocation::Slice>
+absl::StatusOr<BufferAllocation::Slice>
 BufferAssignment::GetUniqueTopLevelOutputSlice() const {
   return GetUniqueTopLevelSlice(
       module_->entry_computation()->root_instruction());
@@ -721,7 +729,7 @@ void BufferAssignment::CombineTempAllocations(
   }
 }
 
-Status BufferAssignment::ComputeSummaryStats() {
+absl::Status BufferAssignment::ComputeSummaryStats() {
   for (auto& allocation : Allocations()) {
     if (allocation.is_entry_computation_parameter()) {
       stats_.parameter_allocation_count++;
@@ -765,7 +773,7 @@ Status BufferAssignment::ComputeSummaryStats() {
     stats_.total_fragmentation_bytes = stats_.total_allocation_bytes - min_size;
   }
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 std::string BufferAssignment::Stats::ToString() const {
@@ -995,7 +1003,7 @@ BufferAssignmentProto BufferAssignment::ToProto() const {
 }
 
 /* static */
-StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
+absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
     const BufferAssignmentProto& proto, const HloModule* module,
     BufferValue::SizeFunction buffer_size,
     HloDataflowAnalysis::CanShareBuffer can_share_buffer) {
@@ -1072,7 +1080,7 @@ StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
 }
 
 /* static */
-StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::Run(
+absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::Run(
     const HloModule* module, std::unique_ptr<HloOrdering> hlo_ordering,
     BufferValue::SizeFunction buffer_size,
     LogicalBuffer::AlignmentFunction color_alignment,
@@ -1275,7 +1283,7 @@ bool BufferAssigner::MaybeAssignBuffer(BufferAllocation* allocation,
   return true;
 }  // namespace xla
 
-Status BufferAssigner::AssignSingleHloBuffer(
+absl::Status BufferAssigner::AssignSingleHloBuffer(
     const HloBuffer* hlo_buffer, bool is_thread_local,
     absl::flat_hash_map<const HloComputation*,
                         absl::flat_hash_set<const HloValue*>>*
@@ -1293,7 +1301,7 @@ Status BufferAssigner::AssignSingleHloBuffer(
                 << *hlo_buffer << " value ptr: " << value;
       }
       VLOG(3) << "Not allocating buffer for constant";
-      return OkStatus();
+      return absl::OkStatus();
     }
 
     const HloInstruction* instruction = value->instruction();
@@ -1319,7 +1327,7 @@ Status BufferAssigner::AssignSingleHloBuffer(
       }
       VLOG(3) << "New allocation #" << allocation->index()
               << " marked as entry computation parameter: " << *hlo_buffer;
-      return OkStatus();
+      return absl::OkStatus();
     }
   }
 
@@ -1329,7 +1337,7 @@ Status BufferAssigner::AssignSingleHloBuffer(
     allocation->set_is_thread_local(true);
     VLOG(3) << "New allocation #" << allocation->index()
             << " for thread-local: " << *hlo_buffer;
-    return OkStatus();
+    return absl::OkStatus();
   }
 
   for (const HloValue* value : hlo_buffer->values()) {
@@ -1339,7 +1347,7 @@ Status BufferAssigner::AssignSingleHloBuffer(
       allocation->set_is_tuple(true);
       VLOG(3) << "New allocation #" << allocation->index()
               << " for tuple-shaped buffer: " << *hlo_buffer;
-      return OkStatus();
+      return absl::OkStatus();
     }
 
     if (value->IsTopLevel() && !value->IsTuple()) {
@@ -1352,7 +1360,7 @@ Status BufferAssigner::AssignSingleHloBuffer(
           if (MaybeAssignBuffer(allocation, *hlo_buffer, assignment)) {
             VLOG(3) << "Reusing (operand) allocation #" << allocation->index()
                     << " for: " << *hlo_buffer;
-            return OkStatus();
+            return absl::OkStatus();
           }
         }
       }
@@ -1368,7 +1376,7 @@ Status BufferAssigner::AssignSingleHloBuffer(
     if (MaybeAssignBuffer(allocation, *hlo_buffer, assignment)) {
       VLOG(3) << "Reusing allocation #" << allocation->index()
               << " for: " << *hlo_buffer;
-      return OkStatus();
+      return absl::OkStatus();
     }
   }
 
@@ -1397,7 +1405,7 @@ Status BufferAssigner::AssignSingleHloBuffer(
         (*buffers_to_assign_sequentially)[computation].insert(hlo_value);
         VLOG(3) << "Delaying assignment of temp buffer: " << *hlo_value;
       }
-      return OkStatus();
+      return absl::OkStatus();
     }
   }
 
@@ -1410,10 +1418,10 @@ Status BufferAssigner::AssignSingleHloBuffer(
   }
 
   TF_RET_CHECK(assignment->HasAllocation(*hlo_buffer));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status BufferAssigner::AssignBuffersForComputations(
+absl::Status BufferAssigner::AssignBuffersForComputations(
     const std::vector<const HloComputation*>& computations,
     bool is_thread_local,
     absl::flat_hash_map<const HloComputation*,
@@ -1421,7 +1429,7 @@ Status BufferAssigner::AssignBuffersForComputations(
         buffers_to_assign_sequentially,
     BufferAssignment* assignment) {
   if (computations.empty()) {
-    return OkStatus();
+    return absl::OkStatus();
   }
   std::vector<const HloBuffer*> sorted_buffers;
 
@@ -1457,7 +1465,7 @@ Status BufferAssigner::AssignBuffersForComputations(
     if (absl::c_linear_search(computations, node.computation())) {
       reverse_post_order_computations.push_back(node.computation());
     }
-    return OkStatus();
+    return absl::OkStatus();
   }));
   absl::c_reverse(reverse_post_order_computations);
   for (auto* computation : reverse_post_order_computations) {
@@ -1528,7 +1536,7 @@ Status BufferAssigner::AssignBuffersForComputations(
                                              buffers_to_assign_sequentially,
                                              &allocation_indices, assignment));
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 flat_hash_map<LogicalBuffer::Color, flat_hash_set<const HloValue*>>
@@ -1563,11 +1571,11 @@ BufferAssigner::SplitBuffersByPrivateStackComputation(
   return computation_map;
 }
 
-Status BufferAssigner::AssignPresetBuffers(
+absl::Status BufferAssigner::AssignPresetBuffers(
     absl::flat_hash_set<const HloBuffer*>* assigned_buffers,
     BufferAssignment* assignment) {
   if (!preset_assignments_) {
-    return OkStatus();
+    return absl::OkStatus();
   }
 
   // Create an allocation for each preset color.
@@ -1611,10 +1619,10 @@ Status BufferAssigner::AssignPresetBuffers(
   // method is called again, it does not assign the same buffers multiple times.
   preset_assignments_ = {};
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status BufferAssigner::AssignBuffersWithSequentialOrdering(
+absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
     const flat_hash_map<const HloComputation*, flat_hash_set<const HloValue*>>&
         buffers_to_assign_sequentially,
     bool run_whole_module_heap_simulation, BufferAssignment* assignment,
@@ -1760,7 +1768,7 @@ Status BufferAssigner::AssignBuffersWithSequentialOrdering(
       }
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 namespace {
@@ -1983,7 +1991,8 @@ void BufferAssigner::AssignBuffersFromHeapSimulator(
   }
 }
 
-StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::CreateAssignment(
+absl::StatusOr<std::unique_ptr<BufferAssignment>>
+BufferAssigner::CreateAssignment(
     const HloModule* module, std::unique_ptr<HloOrdering> hlo_ordering,
     BufferValue::SizeFunction buffer_size,
     LogicalBuffer::AlignmentFunction color_alignment,

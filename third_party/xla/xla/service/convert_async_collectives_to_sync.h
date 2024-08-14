@@ -36,11 +36,11 @@ class ConvertAsyncCollectivesToSync : public HloModulePass {
   }
 
   using HloPassInterface::Run;
-  StatusOr<bool> Run(
+  absl::StatusOr<bool> Run(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
-  virtual Status ConvertAsyncInstructionsToSync(
+  virtual absl::Status ConvertAsyncInstructionsToSync(
       HloComputation* computation,
       absl::Span<const std::pair<HloInstruction*, HloInstruction*>> async_pairs)
       const {
@@ -49,7 +49,7 @@ class ConvertAsyncCollectivesToSync : public HloModulePass {
 
   // Helper utility to replace a list of pairs of async-start/done ops in a
   // computation with their synchronous variants and update the schedule.
-  static Status ReplaceAsyncInstructionsWithSync(
+  static absl::Status ReplaceAsyncInstructionsWithSync(
       HloComputation* computation,
       absl::Span<const std::pair<HloInstruction*, HloInstruction*>>
           async_pairs);
@@ -58,7 +58,7 @@ class ConvertAsyncCollectivesToSync : public HloModulePass {
       "async_collective_name";
 
  private:
-  StatusOr<bool> RunOnComputation(HloComputation* computation);
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation);
   HloPredicate is_nop_;
 };
 }  // namespace xla

@@ -16,44 +16,46 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_GPU_EXECUTABLE_H_
 #define XLA_SERVICE_GPU_GPU_EXECUTABLE_H_
 
-#include <atomic>
 #include <cstdint>
-#include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
-#include <utility>
 #include <variant>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/strings/string_view.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "absl/types/variant.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/non_atomically_upgradeable_rw_lock.h"
 #include "xla/service/gpu/runtime/annotation.h"
-#include "xla/service/gpu/runtime/executable.h"
-#include "xla/service/gpu/thunk.h"
+#include "xla/service/gpu/runtime/sequential_thunk.h"
+#include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/hlo_execution_profile.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/scoped_module_handle.h"
 #include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
 namespace gpu {
-
-// Returns whether GpuExecutable runs with Xla Runtime.
-bool IsXlaRuntimeExecutableEnabled(const HloModuleConfig& config);
 
 // GPU-targeting implementation of the XLA Executable interface.
 //
@@ -62,9 +64,6 @@ bool IsXlaRuntimeExecutableEnabled(const HloModuleConfig& config);
 // This is an immutable data type after initialization, and thus thread safe.
 class GpuExecutable : public Executable {
  public:
-  using OwnedThunkSequence = std::unique_ptr<const ThunkSequence>;
-  using OwnedGpuRuntimeProgram = std::unique_ptr<GpuRuntimeProgram>;
-
   struct ConstantInfo {
     std::string symbol_name;
     DenseDataIntermediate content;
@@ -86,11 +85,9 @@ class GpuExecutable : public Executable {
   struct Params {
     std::string asm_text;
     std::vector<uint8_t> binary;
+    Thunk::BinaryMap dnn_compiled_graphs;
     se::GpuComputeCapability gpu_version;
-    // The GpuExecutable will either execute Thunks, XLA runtime executable
-    // (native function) or experimental XLA runtime executable (IREE VM
-    // function) depending on which is supplied.
-    std::variant<OwnedThunkSequence, OwnedGpuRuntimeProgram> executable;
+    std::unique_ptr<SequentialThunk> executable;
     std::vector<ConstantInfo> constants;
     absl::flat_hash_map<ShapeIndex, OutputInfo> output_info;
     std::string module_name;
@@ -101,38 +98,6 @@ class GpuExecutable : public Executable {
     std::unique_ptr<HloModule> debug_module = nullptr;
     bool enable_debug_info_manager = true;
   };
-
-  // Analyze the entry function to construct buffer allocation and other output
-  // information.
-  //
-  // TODO(ezhulenev): Once Xla runtime enabled by default, hide this method as
-  // an implementation detail of GpuExecutable.
-  static absl::Status SetUpMlirAllocation(
-      mlir::func::FuncOp func, llvm::ArrayRef<int64_t> buffer_sizes,
-      std::vector<BufferAllocation>* allocations,
-      absl::flat_hash_map<ShapeIndex, OutputInfo>* output_info,
-      Shape* output_shape);
-
-  // Returns an Executable that is loaded from an object file (XLA program
-  // compiled to a native function using the XLA Runtime stack).
-  static absl::StatusOr<std::unique_ptr<Executable>> LoadFromObjFile(
-      std::shared_ptr<HloModule> hlo_module, absl::string_view obj_file,
-      absl::string_view mlir_module, DebugOptions debug_options,
-      absl::string_view asm_text, absl::string_view binary,
-      std::vector<ConstantInfo> constants,
-      se::GpuComputeCapability gpu_version);
-
-  // Constructor to use when loading a GpuExecutable from an object file (native
-  // function compiled for XLA Runtime). Omits setting class members that aren't
-  // used in XLA Runtime execution mode.
-  GpuExecutable(std::shared_ptr<HloModule> hlo_module, std::string asm_text,
-                std::vector<uint8_t> binary,
-                std::vector<ConstantInfo> constants,
-                se::GpuComputeCapability gpu_version,
-                absl::string_view module_name, Shape xla_output_shape,
-                std::vector<BufferAllocation> allocations,
-                absl::flat_hash_map<ShapeIndex, OutputInfo> output_info,
-                std::unique_ptr<GpuRuntimeExecutable> runtime_executable);
 
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> Create(Params params);
   ~GpuExecutable() override;
@@ -163,6 +128,10 @@ class GpuExecutable : public Executable {
   // compiled.
   const std::vector<uint8_t>& binary() const { return binary_; }
 
+  const Thunk::BinaryMap& dnn_compiled_graphs() const {
+    return dnn_compiled_graphs_;
+  }
+
   // ExecuteAsyncOnStream will fail if the compute capability of the stream
   // doesn't match the compute capability passed to this object's constructor.
   absl::StatusOr<ExecutionOutput> ExecuteAsyncOnStream(
@@ -181,7 +150,7 @@ class GpuExecutable : public Executable {
       const ServiceExecutableRunOptions* run_options,
       VariantArguments arguments);
 
-  absl::Span<const BufferAllocation> GetAllocations() const {
+  absl::Span<const BufferAllocation> GetAllocations() const override {
     // A GpuExecutable can get its allocations in three ways:
     // 1 - From a regular compilation that uses allocations from MLIR.
     // 2 - From a regular compilation that uses the original allocations from
@@ -197,14 +166,7 @@ class GpuExecutable : public Executable {
                                     : buffer_assignment_->Allocations();
   }
 
-  bool IsXlaRuntimeEnabled() const {
-    return gpu_runtime_executable_ != nullptr;
-  }
-
   const std::vector<ConstantInfo>& constants() const { return constants_; }
-
-  absl::StatusOr<std::string_view> GetObjFile() const;
-  absl::StatusOr<std::string_view> GetMlirModule() const;
 
   const BufferAssignment* buffer_assignment() const {
     return buffer_assignment_.get();
@@ -213,16 +175,6 @@ class GpuExecutable : public Executable {
  private:
   // Use GpuExecutable::Create() to create an instance.
   explicit GpuExecutable(Params params);
-
-  // If `block_host_until_done` is false, execution will not block the host
-  // until the kernels have completed. This is used as an optimization for
-  // clients, such as Tensorflow, that use a single stream of execution for
-  // computations, and allow host-side deallocation from the allocator before
-  // GPU execution completes.
-  absl::Status ExecuteThunksOrXlaRuntime(
-      const ServiceExecutableRunOptions* run_options,
-      const BufferAllocations& buffer_allocations, bool block_host_until_done,
-      NonAtomicallyUpgradeableRWLock& gpu_lock);
 
   using BufferAllocToDeviceMemoryMap =
       absl::flat_hash_map<BufferAllocation::Index, se::DeviceMemoryBase>;
@@ -272,30 +224,19 @@ class GpuExecutable : public Executable {
   // compute_capability_.
   //
   // May be empty, in which case we leave compilation up to the GPU driver.
-#ifdef TENSORFLOW_USE_ROCM
   std::vector<uint8_t> binary_;
-#else
-  const std::vector<uint8_t> binary_;
-#endif
+
+  Thunk::BinaryMap dnn_compiled_graphs_;
+
   // The GPU version for compute compatibility check.
   se::GpuComputeCapability gpu_version_;
 
   // The thunks to be invoked by this GpuExecutable. They are generated by the
   // IrEmitter (null if XLA:GPU runtime is enabled).
-  OwnedThunkSequence thunks_;
+  std::unique_ptr<SequentialThunk> thunks_;
 
-  // A flag that signals if `thunks_` initialization is completed. Thunks
-  // initialization might allocate new control data structures on device, which
-  // can lead to deadlocks if executed concurrently with other replicas.
-  //
-  // We use atomic CAS operations to decide if a thread running XLA executable
-  // should join the rendezvous, see implementation for details.
-  std::atomic<int64_t> thunks_initialized_{0};
-
-  // Gpu runtime executable that encapsulates all the state for running Gpu
-  // runtime custom calls implementing gpu abstraction layer (available only if
-  // Xla runtime is enabled).
-  std::unique_ptr<GpuRuntimeExecutable> gpu_runtime_executable_;
+  // Additional execution streams requested by `thunks_`.
+  absl::flat_hash_set<ExecutionStreamId> execution_stream_ids_;
 
   std::string module_name_;
 
@@ -313,7 +254,12 @@ class GpuExecutable : public Executable {
   // This object is also used for dumping debug info.
   std::unique_ptr<const xla::BufferAssignment> buffer_assignment_;
 
-  std::optional<ModuleAnnotations> annotation_info_;
+  ModuleAnnotations module_annotations_ = [this] {
+    if (has_module()) {
+      return ModuleAnnotations(module());
+    }
+    return ModuleAnnotations(module_name_);
+  }();
 
   int64_t debug_buffer_assignment_show_max_;
 
@@ -326,6 +272,12 @@ class GpuExecutable : public Executable {
   absl::flat_hash_map<stream_executor::StreamExecutor*,
                       std::unique_ptr<BufferAllocToDeviceMemoryMap>>
       module_globals_ ABSL_GUARDED_BY(module_handle_mutex_);
+
+  // Cache previous memory allocations for current module, this is used to help
+  // identify if user's model have unstable pointers by turning on VLOG(5).
+  absl::flat_hash_map<stream_executor::StreamExecutor*,
+                      std::vector<se::DeviceMemoryBase>>
+      module_allocations_ ABSL_GUARDED_BY(module_handle_mutex_);
 
   std::vector<ConstantInfo> constants_;
   const absl::flat_hash_map<ShapeIndex, OutputInfo> output_info_;

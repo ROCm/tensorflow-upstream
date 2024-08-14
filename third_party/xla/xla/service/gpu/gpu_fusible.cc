@@ -16,21 +16,31 @@ limitations under the License.
 #include "xla/service/gpu/gpu_fusible.h"
 
 #include <algorithm>
-#include <iterator>
+#include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <stack>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/permutation_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/reduction_utils.h"
+#include "xla/service/hlo_dataflow_analysis.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -107,22 +117,53 @@ bool IsPhysicallyTransposing(const HloInstruction& instr) {
                                          instr.shape(), instr.dimensions()));
 }
 
+namespace {
+std::pair<int64_t, int64_t> MostMinorNonTrivialDimension(const Shape& shape) {
+  int64_t position_of_first_non_trivial_dim = 0;
+  for (int64_t dim : shape.layout().minor_to_major()) {
+    if (shape.dimensions()[dim] > 1) {
+      return {dim, position_of_first_non_trivial_dim};
+    }
+    ++position_of_first_non_trivial_dim;
+  }
+  return {-1, position_of_first_non_trivial_dim};
+}
+}  // namespace
+
 bool TransposesMinorDimension(const HloInstruction* instr) {
   switch (instr->opcode()) {
     case HloOpcode::kFusion:
       return absl::c_any_of(instr->fused_instructions(),
                             TransposesMinorDimension);
-    case HloOpcode::kCopy:
-      return instr->shape().layout().minor_to_major(0) !=
-             instr->operand(0)->shape().layout().minor_to_major(0);
+    // TODO(akuegel): This can be simplified by just calling
+    // GetDescriptionForTiledTransposeEmitter() once it returns a value for all
+    // transposes that affect the most minor non-trivial dimension. Right now,
+    // there are also cases with transposes that affect the most minor
+    // non-trivial dimension which are not supported by the transpose emitter,
+    // so GetDescriptionForTiledTransposeEmitter would return std::nullopt.
+    case HloOpcode::kCopy: {
+      int64_t first_non_trivial_operand_dim =
+          MostMinorNonTrivialDimension(instr->operand(0)->shape()).first;
+      int64_t first_non_trivial_output_dim =
+          MostMinorNonTrivialDimension(instr->shape()).first;
+      return first_non_trivial_operand_dim != first_non_trivial_output_dim;
+    }
     case HloOpcode::kTranspose: {
-      // We have an input ([a,b,c]{x,y,z}) that's being transposed. We need to
-      // check if the minor-most dimension (x) is still the minor-most dimension
-      // after the transpose.
-      int64_t minor_input =
-          instr->operand(0)->shape().layout().minor_to_major(0);
-      int64_t minor_output = instr->shape().layout().minor_to_major(0);
-      return minor_input != instr->dimensions().at(minor_output);
+      auto position_in_minor_to_major = InversePermutation(
+          instr->operand(0)->shape().layout().minor_to_major());
+      int64_t position_of_first_non_trivial_dim =
+          MostMinorNonTrivialDimension(instr->operand(0)->shape()).second;
+      for (int64_t output_dim : instr->shape().layout().minor_to_major()) {
+        if (instr->shape().dimensions()[output_dim] == 1) {
+          continue;
+        }
+        int64_t operand_dim = instr->dimensions().at(output_dim);
+        // Check if there is any operand dimension with size > 1 that is more
+        // minor than 'operand_dim'
+        return position_in_minor_to_major[operand_dim] >
+               position_of_first_non_trivial_dim;
+      }
+      return false;
     }
     default:
       return false;
@@ -191,28 +232,6 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
   return fused_expression_root->operands()[0];
 }
 
-// Returns whether the output of a fusion with reduction are consistent with
-// `first_reduce`.
-static bool IsFusedReductionOutputConsistent(
-    const HloInstruction* inst, const HloInstruction* first_reduce) {
-  const auto& hero = FindNonTrivialHero(*inst);
-  if (IsRealReductionHero(*inst, hero)) {
-    // Shapes, layouts and dimensions must be the same for all reduces
-    // inside of this fusion.
-    return ShapeUtil::EqualIgnoringElementType(first_reduce->shape(),
-                                               inst->shape()) &&
-           ShapeUtil::EqualIgnoringElementType(
-               first_reduce->operand(0)->shape(), inst->operand(0)->shape()) &&
-           ShapeUtil::EqualIgnoringElementType(
-               first_reduce->operand(1)->shape(), inst->operand(1)->shape()) &&
-           first_reduce->dimensions() == inst->dimensions();
-  }
-  return ShapeUtil::CompatibleIgnoringElementType(
-             first_reduce->operand(0)->shape(), inst->shape()) &&
-         LayoutUtil::Equal(first_reduce->operand(0)->shape().layout(),
-                           inst->shape().layout());
-}
-
 FusionDecision FusionHeroesAreCompatible(const HloInstruction* hero1,
                                          const HloInstruction* hero2) {
   auto hero1_is_unnested_reduce =
@@ -227,7 +246,7 @@ FusionDecision FusionHeroesAreCompatible(const HloInstruction* hero1,
   bool hero2_is_unnested_transpose = tiled_transpose_hero2.has_value();
 
   if (hero1_is_unnested_reduce && hero2_is_unnested_reduce &&
-      !IsFusedReductionOutputConsistent(hero2, hero1)) {
+      !AreReductionsMultiOutputFusionCompatible(hero2, hero1)) {
     return "tiled reductions with different shapes";
   } else if (hero1_is_unnested_transpose && hero2_is_unnested_transpose &&
              // After normalization to rank 3, the transposes should have the
@@ -287,7 +306,9 @@ FusionDecision ShapesCompatibleForMultiOutputFusion(
     // Special-case reduction-to-vector ops: The loop dimensions are determined
     // by the shape of the first operand.
     // TODO(jreiffers): Compute the non-trivial hero only once here.
-    const auto& hero = FindNonTrivialHero(*element_instr);
+    const auto& hero = element_instr->parent()->IsFusionComputation()
+                           ? FindNonTrivialHero(*element_instr)
+                           : *element_instr;
     if (IsReductionFromOrToContiguousDimensions(*element_instr) ||
         GetDescriptionForTiledTransposeEmitter(*element_instr, hero)
             .has_value()) {
@@ -586,9 +607,9 @@ static int64_t SharedMemoryUsageNoCache(const HloInstruction& instr) {
       // __shared__[32] is used for row reduction.
       return 32 * primitive_size * num_variadic;
     } else {
-      // __shared__[2][32][33] cache is used for column reduction ("2" comes
+      // __shared__[4][32][33] cache is used for column reduction ("4" comes
       // from potential x-tiling).
-      return 2 * 32 * 33 * primitive_size * num_variadic;
+      return 4 * 32 * 33 * primitive_size * num_variadic;
     }
   } else if (GetDescriptionForTiledTransposeEmitter(instr, instr).has_value()) {
     // Tile size for transposition.
@@ -617,25 +638,6 @@ int64_t SharedMemoryUsage(const HloInstruction& instr, FusionInfoCache* cache) {
     it->second = SharedMemoryUsageNoCache(instr);
   }
   return it->second;
-}
-
-int64_t ReductionProjectedShmemUsageBytes(
-    const ReductionDimensions& reduction_dimensions,
-    const std::vector<std::vector<const HloInstruction*>>& instr_index_groups) {
-  int64_t out = 0;
-  // Different groups are computed in parallel on different blocks, so they are
-  // not sharing the shmem budget. The overall usage is given by the largest
-  // one.
-  for (const auto& group : instr_index_groups) {
-    int64_t sum = 0;
-    for (const HloInstruction* root : group) {
-      if (IsReductionFromOrToContiguousDimensions(*root)) {
-        sum += SharedMemoryUsage(*root);
-      }
-    }
-    out = std::max(out, sum);
-  }
-  return out;
 }
 
 // Codegen'ing unnested reductions requires a lot of registers, so a MOF
@@ -751,10 +753,9 @@ FusionDecision FusionFitsInBudget(const HloInstruction& instr1,
       MaxOperandsAndOutputsPerFusion()) {
     return {};
   } else {
-    VLOG(5) << "Operand count of "
-            << "(" << instr1.ToString() << " ) = " << instr1.operand_count()
-            << " and ( " << instr2.ToString()
-            << " ) = " << instr2.operand_count()
+    VLOG(5) << "Operand count of " << "(" << instr1.ToString()
+            << " ) = " << instr1.operand_count() << " and ( "
+            << instr2.ToString() << " ) = " << instr2.operand_count()
             << " and num_output_buffers = " << num_output_buffers
             << " is bigger than the bound of "
             << MaxOperandsAndOutputsPerFusion();
@@ -912,16 +913,17 @@ size_t GetOutputSizeOfFusible(const HloInstruction& instr) {
 // Recursive helper for GetFusionRoots below.
 static void GetFusionRootsRec(const HloInstruction* root,
                               std::vector<const HloInstruction*>& out) {
-  if (root->opcode() == HloOpcode::kGetTupleElement) {
-    return GetFusionRootsRec(root->operand(0), out);
+  if (root->opcode() == HloOpcode::kGetTupleElement &&
+      root->operand(0)->opcode() == HloOpcode::kTuple) {
+    return GetFusionRootsRec(root->operand(0)->operand(root->tuple_index()),
+                             out);
+  } else if (root->opcode() == HloOpcode::kGetTupleElement) {
+    out.push_back(root->operand(0));
   } else if (root->opcode() == HloOpcode::kTuple) {
     for (int i = 0; i < root->operand_count(); i++) {
       GetFusionRootsRec(root->operand(i), out);
     }
   } else {
-    if (!out.empty() && out.back() == root) {
-      return;
-    }
     CHECK(!absl::c_linear_search(out, root))
         << "Fusion root contains instruction " << root->ToString()
         << " multiple times";
@@ -936,13 +938,14 @@ std::vector<const HloInstruction*> GetFusionRoots(
   return out;
 }
 
-bool IsTritonSoftmaxFusion(const HloInstruction& instr) {
+bool IsGenericTritonFusion(const HloInstruction& instr) {
+  // TODO(b/332649307): Eventually turn this into a generic fusion.
   return instr.opcode() == HloOpcode::kFusion &&
          instr.fusion_kind() == HloInstruction::FusionKind::kCustom &&
          instr.backend_config<GpuBackendConfig>().ok() &&
          instr.backend_config<GpuBackendConfig>()
                  ->fusion_backend_config()
-                 .kind() == kTritonSoftmaxFusionKind;
+                 .kind() == kTritonFusionKind;
 }
 
 bool MayPreventVectorization(const HloFusionAdaptor& fusion) {
@@ -969,6 +972,36 @@ bool MayPreventVectorization(const HloFusionAdaptor& fusion) {
         return false;
     }
   });
+}
+
+std::vector<HloComputation*> GetFusibleComputations(
+    const HloModule& module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  auto result = module.MakeComputationPostOrder(execution_threads);
+  absl::flat_hash_set<const HloComputation*> computations_not_to_fuse;
+  for (const auto* computation : result) {
+    for (const auto* instr : computation->instructions()) {
+      // Don't fuse within called computations, unless they are for control
+      // flow. See also fusion_wrapper.cc, which does the same.
+      if (HloInstruction::MightHaveCalledComputations(instr->opcode()) &&
+          instr->opcode() != HloOpcode::kWhile &&
+          instr->opcode() != HloOpcode::kConditional &&
+          // No need to add fusion computations, just check the flag.
+          instr->opcode() != HloOpcode::kFusion) {
+        for (auto* called : instr->called_computations()) {
+          computations_not_to_fuse.insert(called);
+        }
+      }
+    }
+  }
+  result.erase(
+      std::remove_if(result.begin(), result.end(),
+                     [&](HloComputation* computation) {
+                       return computation->IsFusionComputation() ||
+                              computations_not_to_fuse.contains(computation);
+                     }),
+      result.end());
+  return result;
 }
 
 }  // namespace gpu

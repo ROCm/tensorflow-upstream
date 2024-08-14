@@ -19,6 +19,7 @@ limitations under the License.
 #include <numeric>
 #include <vector>
 
+#include "absl/status/statusor.h"
 #include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "xla/client/lib/matrix.h"
 #include "xla/client/xla_builder.h"
 #include "xla/literal.h"
-#include "xla/statusor.h"
 #include "xla/test.h"
 #include "xla/tests/client_library_test_base.h"
 #include "xla/tests/literal_test_util.h"
@@ -277,6 +277,10 @@ class RandomEighTest : public ClientLibraryTestBase,
                        public ::testing::WithParamInterface<EighTestCase> {};
 
 XLA_TEST_P(RandomEighTest, Random) {
+#if TENSORFLOW_USE_ROCM
+  GTEST_SKIP() << "RandomEighTest.Random is currently not supported on ROCm.";
+#endif  // TENSORFLOW_USE_ROCM
+
   XlaBuilder builder(TestName());
   int64_t size = GetParam();
   Array2D<float> a_val = GenerateRandomSymmetricMatrix(size);

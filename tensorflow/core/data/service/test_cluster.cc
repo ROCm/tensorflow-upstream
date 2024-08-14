@@ -38,7 +38,10 @@ namespace {
 constexpr const char kProtocol[] = "grpc";
 }  // namespace
 
-TestCluster::TestCluster(int num_workers) : num_workers_(num_workers) {}
+TestCluster::TestCluster(int num_workers,
+                         std::optional<std::string> data_transfer_protocol)
+    : num_workers_(num_workers),
+      data_transfer_protocol_(data_transfer_protocol) {}
 
 TestCluster::TestCluster(const TestCluster::Config& config)
     : num_workers_(config.num_workers), config_(config) {}
@@ -72,24 +75,32 @@ Status TestCluster::Initialize() {
       config_.job_gc_check_interval_ms);
   dispatcher_config.set_job_gc_timeout_ms(config_.job_gc_timeout_ms);
   dispatcher_config.set_client_timeout_ms(config_.client_timeout_ms);
+  dispatcher_config.set_worker_max_concurrent_snapshots(
+      config_.worker_max_concurrent_snapshots);
   TF_RETURN_IF_ERROR(NewDispatchServer(dispatcher_config, dispatcher_));
   TF_RETURN_IF_ERROR(dispatcher_->Start());
   dispatcher_address_ = absl::StrCat("localhost:", dispatcher_->BoundPort());
   workers_.reserve(num_workers_);
   worker_addresses_.reserve(num_workers_);
   for (int i = 0; i < num_workers_; ++i) {
-    TF_RETURN_IF_ERROR(AddWorker());
+    TF_RETURN_IF_ERROR(
+        AddWorker(/*port=*/std::nullopt, data_transfer_protocol_));
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status TestCluster::AddWorker(std::optional<int> port) {
+Status TestCluster::AddWorker(
+    std::optional<int> port,
+    std::optional<std::string> data_transfer_protocol) {
   std::unique_ptr<WorkerGrpcDataServer> worker;
   experimental::WorkerConfig config;
   if (port.has_value()) {
     config.set_port(*port);
   }
   config.set_protocol(kProtocol);
+  if (data_transfer_protocol.has_value()) {
+    config.set_data_transfer_protocol(*data_transfer_protocol);
+  }
   config.set_dispatcher_address(dispatcher_address_);
   std::string worker_address =
       port.has_value() ? absl::StrCat("localhost:", *port) : "localhost:%port%";
@@ -99,7 +110,7 @@ Status TestCluster::AddWorker(std::optional<int> port) {
   TF_RETURN_IF_ERROR(worker->Start());
   worker_addresses_.push_back(absl::StrCat("localhost:", worker->BoundPort()));
   workers_.push_back(std::move(worker));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 std::string TestCluster::DispatcherAddress() const {

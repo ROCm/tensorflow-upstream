@@ -17,12 +17,12 @@ limitations under the License.
 #define XLA_SERVICE_GPU_GPU_SORT_REWRITER_H_
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
-#include "xla/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -37,7 +37,13 @@ class GpuSortRewriter : public HloModulePass {
 
   // CUB radix sort is slower than XLA sort on small shapes, so do not rewrite
   // tensors with sizes below this limit.
-  static constexpr int kSortSizeThreshold = 100000;
+  static int SortSizeThreshold() { return sort_size_threshold_; }
+  static void SetSortSizeThresholdForTestingOnly(int threshold) {
+    // We need to be able to reduce the threshold for testing, so that the tests
+    // can run and compare against the reference interpreter, which is quite
+    // slow.
+    sort_size_threshold_ = threshold;
+  }
 
   using HloPassInterface::Run;
   absl::StatusOr<bool> Run(
@@ -47,6 +53,8 @@ class GpuSortRewriter : public HloModulePass {
  private:
   absl::StatusOr<bool> RunOnInstruction(HloSortInstruction* sort_op);
   absl::StatusOr<bool> RunOnComputation(HloComputation* computation);
+
+  static inline int sort_size_threshold_ = 33000;
 };
 
 }  // namespace gpu

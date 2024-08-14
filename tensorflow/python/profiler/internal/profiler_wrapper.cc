@@ -160,7 +160,7 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
 
         std::string tool_name = std::string(py_tool_name);
         ToolOptions tool_options = ToolOptionsFromPythonDict(options);
-        ::tensorflow::StatusOr<std::string> status_or_tool_data;
+        absl::StatusOr<std::string> status_or_tool_data;
         {
           py::gil_scoped_release release;
           status_or_tool_data =
@@ -169,7 +169,9 @@ PYBIND11_MODULE(_pywrap_profiler, m) {
         }
         if (!status_or_tool_data.ok()) {
           LOG(ERROR) << status_or_tool_data.status().message();
-          return py::make_tuple(py::bytes(""), py::bool_(false));
+          return py::make_tuple(
+              py::bytes(status_or_tool_data.status().message()),
+              py::bool_(false));
         }
         return py::make_tuple(py::bytes(status_or_tool_data.value()),
                               py::bool_(true));

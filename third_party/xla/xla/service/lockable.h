@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "tsl/platform/logging.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -73,7 +74,13 @@ class Lockable {
   };
 
   Lockable() = default;
+
   explicit Lockable(T value) : value_(std::move(value)) {
+    VLOG(2) << "Constructed " << LockableName::ToString(value_);
+  }
+
+  template <typename... Args>
+  explicit Lockable(Args&&... args) : value_(std::forward<Args>(args)...) {
     VLOG(2) << "Constructed " << LockableName::ToString(value_);
   }
 
@@ -87,6 +94,11 @@ class Lockable {
   }
 
   Lock Acquire() {
+    tsl::profiler::TraceMe trace([&] {
+      return tsl::profiler::TraceMeEncode("Lockable::Lock::Acquire",
+                                          {{"lockable", ToString()}});
+    });
+
     absl::MutexLock lock(&mutex_);
     mutex_.Await(absl::Condition(&is_unlocked_));
     VLOG(2) << "Acquired " << LockableName::ToString(value_);
@@ -95,7 +107,24 @@ class Lockable {
     return Lock(this);
   }
 
+  Lock TryAcquire() {
+    absl::MutexLock lock(&mutex_);
+
+    // Someone already locked this object, return an empty lock.
+    if (is_unlocked_ == false) {
+      VLOG(2) << "Failed to acquire " << LockableName::ToString(value_);
+      return Lock();
+    }
+
+    VLOG(2) << "Acquired " << LockableName::ToString(value_);
+    is_unlocked_ = false;
+    return Lock(this);
+  }
+
   std::string ToString() const { return LockableName::ToString(value_); }
+
+ protected:
+  const T& value() const { return value_; }
 
  private:
   friend class Lock;

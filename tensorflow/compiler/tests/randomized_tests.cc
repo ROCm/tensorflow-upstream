@@ -281,7 +281,7 @@ Status OpTestBuilder::BuildGraph(const string& name_prefix,
     *test_node_def = test_def;
   }
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Test fixture. The fixture manages the random number generator and its seed,
@@ -536,7 +536,7 @@ int64_t ShapeNumVals(absl::Span<const int64_t> shape) {
 }
 }  // namespace
 
-// TensorGenerator is an abstact class that has one implementing class for each
+// TensorGenerator is an abstract class that has one implementing class for each
 // (DataType,T) pair. The implementing class implements RandomVals, which is
 // the only Tensor generation code that is specific to the DataType.
 template <typename T>
@@ -1386,7 +1386,7 @@ Status TensorsAreCloseImpl(const Tensor& x, const Tensor& y, double atol,
                        " rtol = ", rtol, " tol = ", atol + rtol * Abs(Tx(i))));
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 template <typename T>
@@ -1400,7 +1400,7 @@ Status TensorsAreEqualImpl(const Tensor& x, const Tensor& y) {
           Str(Ty(i)), ". x = ", x.DebugString(), "y = ", y.DebugString()));
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 Status TensorsAreEqualImplBfloat16(const Tensor& x, const Tensor& y) {
@@ -1414,7 +1414,7 @@ Status TensorsAreEqualImplBfloat16(const Tensor& x, const Tensor& y) {
           "y = ", y.DebugString()));
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Tests if "x" and "y" are tensors of the same type, same shape, and with
@@ -2124,7 +2124,11 @@ TEST_F(OpTest, ClipByValue) {
   //                    compiled ClipByValue fails in this case.
   //                    --tf_xla_random_seed=200839030
   Repeatedly([this]() {
-    auto type = Choose<DataType>({DT_INT32, DT_INT64, DT_FLOAT});
+    auto type = Choose<DataType>({DT_INT32, 
+#if GOOGLE_CUDA
+                                  DT_INT64, 
+#endif 
+                                  DT_FLOAT});
     // ClipByValue requires that broadcasting min and max tensors do not cause
     // the returned shape to be larger than the input shape.
     auto input_dims = RandomDims();

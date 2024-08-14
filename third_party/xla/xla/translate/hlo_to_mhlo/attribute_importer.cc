@@ -21,7 +21,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/statusor.h"
 #include "xla/layout_util.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -55,8 +57,9 @@ mlir::mhlo::GatherDimensionNumbersAttr ConvertGatherDimensionNumbers(
   std::vector<int64_t> start_index_map(dnums.start_index_map().begin(),
                                        dnums.start_index_map().end());
   return mlir::mhlo::GatherDimensionNumbersAttr::get(
-      builder->getContext(), offset_dims, collapsed_slice_dims, start_index_map,
-      dnums.index_vector_dim());
+      builder->getContext(), offset_dims, collapsed_slice_dims,
+      /*operandBatchingDims=*/{}, /*startIndicesBatchingDims=*/{},
+      start_index_map, dnums.index_vector_dim());
 }
 
 mlir::mhlo::ScatterDimensionNumbersAttr ConvertScatterDimensionNumbers(
@@ -70,6 +73,7 @@ mlir::mhlo::ScatterDimensionNumbersAttr ConvertScatterDimensionNumbers(
       dnums.scatter_dims_to_operand_dims().end());
   return mlir::mhlo::ScatterDimensionNumbersAttr::get(
       builder->getContext(), update_window_dims, inserted_window_dims,
+      /*inputBatchingDims=*/{}, /*scatterIndicesBatchingDims=*/{},
       scatter_dims_to_operand_dims, dnums.index_vector_dim());
 }
 
@@ -127,7 +131,19 @@ mlir::ArrayAttr ConvertOutputOperandAliasing(
   return builder->getArrayAttr(attrs);
 }
 
-StatusOr<mlir::mhlo::FftType> ConvertFftType(FftType type) {
+absl::StatusOr<mlir::mhlo::SparsityDescriptorAttr> ConvertSparsityDescriptor(
+    xla::SparsityDescriptor sparsity_descriptor, mlir::Builder* builder) {
+  switch (sparsity_descriptor.type()) {
+    case SPARSITY_STRUCTURED_N_M:
+      return mlir::mhlo::SparsityDescriptorAttr::get(
+          builder->getContext(), sparsity_descriptor.dimension(),
+          sparsity_descriptor.n(), sparsity_descriptor.m());
+    default:
+      return InvalidArgument("Unknown sparsity descriptor type");
+  }
+}
+
+absl::StatusOr<mlir::mhlo::FftType> ConvertFftType(FftType type) {
   switch (type) {
     case FftType::FFT:
       return mlir::mhlo::FftType::FFT;
@@ -142,7 +158,7 @@ StatusOr<mlir::mhlo::FftType> ConvertFftType(FftType type) {
   }
 }
 
-StatusOr<mlir::mhlo::Transpose> ConvertTranspose(
+absl::StatusOr<mlir::mhlo::Transpose> ConvertTranspose(
     xla::TriangularSolveOptions_Transpose transpose) {
   switch (transpose) {
     case TriangularSolveOptions::NO_TRANSPOSE:
@@ -158,7 +174,7 @@ StatusOr<mlir::mhlo::Transpose> ConvertTranspose(
   }
 }
 
-StatusOr<mlir::mhlo::CustomCallApiVersion> ConvertCustomCallApiVersion(
+absl::StatusOr<mlir::mhlo::CustomCallApiVersion> ConvertCustomCallApiVersion(
     xla::CustomCallApiVersion api_version) {
   switch (api_version) {
     case xla::CustomCallApiVersion::API_VERSION_UNSPECIFIED:
@@ -179,7 +195,7 @@ StatusOr<mlir::mhlo::CustomCallApiVersion> ConvertCustomCallApiVersion(
   }
 }
 
-StatusOr<mlir::ArrayAttr> ExtractLayoutsFromShapes(
+absl::StatusOr<mlir::ArrayAttr> ExtractLayoutsFromShapes(
     const absl::Span<const Shape> shapes_with_layouts, mlir::Builder* builder) {
   std::vector<mlir::Attribute> layouts;
   for (auto& shape_and_layout : shapes_with_layouts) {
@@ -216,8 +232,8 @@ StatusOr<mlir::ArrayAttr> ExtractLayoutsFromShapes(
   return builder->getArrayAttr(layouts);
 }
 
-StatusOr<mlir::ArrayAttr> ExtractLayoutsFromTuple(const Shape shape,
-                                                  mlir::Builder* builder) {
+absl::StatusOr<mlir::ArrayAttr> ExtractLayoutsFromTuple(
+    const Shape shape, mlir::Builder* builder) {
   if (!shape.IsTuple()) return InvalidArgument("Expected shape to be Tuple");
   return ExtractLayoutsFromShapes(shape.tuple_shapes(), builder);
 }

@@ -709,6 +709,10 @@ void WarnProtoConflicts(const protobuf::Message& src, protobuf::Message* dst) {
                         set_dst.end(), std::back_inserter(in_both));
 
   for (auto field : in_both) {
+    // Used for Job Instrumentation, users should not be warned.
+    if (field->name() == "framework_type") {
+      continue;
+    }
     if (field->type() == protobuf::FieldDescriptor::TYPE_MESSAGE) {
       WarnProtoConflicts(reflection->GetMessage(src, field),
                          reflection->MutableMessage(dst, field));
@@ -827,13 +831,19 @@ Status DatasetBase::CheckRandomAccessCompatible(const int64 index) const {
 
 Status DatasetBase::Get(OpKernelContext* ctx, int64 index,
                         std::vector<Tensor>* out_tensors) const {
-  return errors::Unimplemented(
-      "Random access is not implemented for this dataset.");
+  return errors::Unimplemented("Random access is not implemented for dataset ",
+                               DebugString());
 }
 
-StatusOr<DatasetBase*> DatasetBase::Finalize(
+Status DatasetBase::Get(AnyContext ctx, int64 index,
+                        std::vector<Tensor>* out_tensors) const {
+  return errors::Unimplemented("Random access is not implemented for dataset ",
+                               DebugString());
+}
+
+absl::StatusOr<DatasetBase*> DatasetBase::Finalize(
     OpKernelContext* ctx,
-    std::function<StatusOr<core::RefCountPtr<DatasetBase>>()>
+    std::function<absl::StatusOr<core::RefCountPtr<DatasetBase>>()>
         make_finalized_dataset) const {
   mutex_lock l(mu_);
   if (!finalized_dataset_) {
@@ -910,6 +920,30 @@ Status DatasetBase::MakeSplitProviders(
         "), and no custom implementation of `MakeSplitProvider` is defined.");
   }
   return inputs[0]->MakeSplitProviders(split_providers);
+}
+
+std::optional<int64_t> DatasetBase::GetEstimatedElementSize() const {
+  const auto& shapes = output_shapes();
+  const auto& dtypes = output_dtypes();
+  if (shapes.size() != dtypes.size()) {
+    LOG(ERROR) << "This should not happen because the sizes of output_shapes() "
+                  "and output_dtypes() should always be "
+                  "the same.";
+    return std::nullopt;
+  }
+
+  size_t num_outputs = shapes.size();
+  int64_t element_size = 0;
+  for (int i = 0; i < num_outputs; ++i) {
+    const auto& partial_shape = shapes[i];
+    const auto& dtype = dtypes[i];
+    auto num_elements = partial_shape.num_elements();
+    if (num_elements == -1) {
+      return std::nullopt;
+    }
+    element_size += num_elements * DataTypeSize(dtype);
+  }
+  return element_size;
 }
 
 int64_t DatasetBase::Cardinality() const {

@@ -1,15 +1,15 @@
 # Placeholder: load py_proto_library
 load(
-    "//tensorflow/core/platform:build_config.bzl",
-    "tf_proto_library",
-)
-load(
     "//tensorflow:tensorflow.bzl",
     "tf_cc_binary",
     "tf_cc_test",
     "tf_copts",
 )
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
+load(
+    "//tensorflow/core/platform:build_config.bzl",
+    "tf_proto_library",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -38,6 +38,7 @@ tf_proto_library(
     make_default_target_header_only = True,
     protodeps = [
         "//tensorflow/compiler/mlir/quantization/stablehlo:quantization_options_proto",
+        "//tensorflow/compiler/mlir/quantization/stablehlo:quantization_config_proto",
         "//tensorflow/compiler/mlir/lite/debug:debug_options_proto",
         ":types_proto",
     ],
@@ -87,6 +88,7 @@ cc_library(
     hdrs = [
         "model.h",
     ],
+    compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
     deps = [
         ":model_flags_proto_cc",
@@ -105,6 +107,7 @@ cc_library(
     hdrs = [
         "toco_graphviz_dump_options.h",
     ],
+    compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
 )
 
@@ -116,6 +119,7 @@ cc_library(
     hdrs = [
         "toco_cmdline_flags.h",
     ],
+    compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
     deps = [
         ":model_cmdline_flags",
@@ -139,6 +143,7 @@ cc_library(
         "args.h",
         "model_cmdline_flags.h",
     ],
+    compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
     deps = [
         ":model_flags_proto_cc",
@@ -161,6 +166,7 @@ cc_library(
         "toco_port.h",
         "toco_types.h",
     ],
+    compatible_with = get_compatible_with_portable(),
     deps = [
         "//tensorflow/core:framework_lite",
         "//tensorflow/core:lib",
@@ -282,6 +288,7 @@ cc_library(
         "graph_transformations/identify_util.h",
         "graph_transformations/lstm_utils.h",
     ],
+    compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
     deps = [
         ":model",
@@ -317,6 +324,7 @@ cc_library(
         "tensorflow_util.h",
         "toco_tooling.h",
     ],
+    compatible_with = get_compatible_with_portable(),
     copts = tf_copts(),
     visibility = ["//visibility:public"],
     deps = [
@@ -368,6 +376,7 @@ cc_library(
         "dump_graphviz.h",
         "tooling_util.h",
     ],
+    compatible_with = get_compatible_with_portable(),
     copts = tf_copts(),
     visibility = ["//visibility:public"],
     deps = [
@@ -405,6 +414,7 @@ cc_library(
     name = "toco_convert",
     srcs = ["toco_convert.cc"],
     hdrs = ["toco_convert.h"],
+    compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
     deps = [
         ":model",

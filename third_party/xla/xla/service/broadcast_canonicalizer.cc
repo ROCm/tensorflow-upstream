@@ -15,13 +15,26 @@ limitations under the License.
 
 #include "xla/service/broadcast_canonicalizer.h"
 
+#include <cstdint>
+#include <iterator>
+#include <vector>
+
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/hlo_creation_utils.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
 BroadcastCanonicalizer::BroadcastCanonicalizer() {}
 
-StatusOr<bool> BroadcastCanonicalizer::Run(
+absl::StatusOr<bool> BroadcastCanonicalizer::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;

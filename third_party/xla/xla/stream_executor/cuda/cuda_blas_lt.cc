@@ -15,20 +15,27 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_blas_lt.h"
 
+#include <Eigen/Core>
 #include <algorithm>
 #include <any>
 #include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "third_party/gpus/cuda/include/cublasLt.h"
 #include "third_party/gpus/cuda/include/cublas_v2.h"
+#include "third_party/gpus/cuda/include/cuda.h"
+#include "third_party/gpus/cuda/include/library_types.h"
 #include "xla/primitive_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/blas.h"
@@ -39,9 +46,13 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_helpers.h"
 #include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/gpu/gpu_timer.h"
-#include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/types.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/ml_dtypes.h"
+#include "tsl/platform/statusor.h"
 
 #define SET_ATTR(setter, handle, attr, value) \
   ToStatus(setter(handle, attr, &value, sizeof(decltype(value))), #setter)
@@ -162,8 +173,7 @@ absl::Status BlasLt::Init() {
 
   VLOG(2) << "MatrixLayout::Create: num_rows: " << m.num_rows
           << " num_cols:" << (int)m.num_cols << ", order: " << (int)m.order
-          << ","
-          << " batchsz " << m.batch_size
+          << "," << " batchsz " << m.batch_size
           << " leaddimstride: " << m.leading_dim_stride
           << " batch_stride: " << m.batch_stride;
 
@@ -265,6 +275,24 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
   return std::move(algorithms);
 }
 
+namespace {
+
+bool IsFastAccumEnabled(const xla::PrecisionConfig::Algorithm algorithm,
+                        xla::PrimitiveType lhs_type,
+                        xla::PrimitiveType rhs_type,
+                        int64_t compute_precision) {
+  if (algorithm == xla::PrecisionConfig::ALG_UNSET) {
+    return (xla::primitive_util::IsF8Type(lhs_type) ||
+            xla::primitive_util::IsF8Type(rhs_type)) &&
+           compute_precision == 0;
+  }
+
+  return algorithm ==
+         xla::PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM;
+}
+
+}  // namespace
+
 auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg,
                            gpu::BlasLt::Epilogue epilogue) const
     -> absl::StatusOr<MatmulPlanPtr> {
@@ -302,17 +330,18 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg,
 
   auto compute_type = cfg.compute_type;
   if (!compute_type) {  // obtain compute_type unless provided by the user
-    TF_ASSIGN_OR_RETURN(compute_type, gpu::GetBlasComputationType(
-                                          lhs_layout.dtype, output_layout.dtype,
-                                          cfg.compute_precision));
+    TF_ASSIGN_OR_RETURN(compute_type,
+                        gpu::GetBlasComputationType(
+                            cfg.precision_algorithm, lhs_layout.dtype,
+                            output_layout.dtype, cfg.compute_precision));
   }
 
   // FP8 matmuls have a fast accumulation mode that is less precise than the
   // default accumulation mode. Use the fast accumulation mode if the compute
   // precision is DEFAULT.
-  bool enable_fast_accum = (xla::primitive_util::IsF8Type(lhs_layout.dtype) ||
-                            xla::primitive_util::IsF8Type(rhs_layout.dtype)) &&
-                           cfg.compute_precision == 0;
+  bool enable_fast_accum =
+      IsFastAccumEnabled(cfg.precision_algorithm, lhs_layout.dtype,
+                         rhs_layout.dtype, cfg.compute_precision);
   TF_ASSIGN_OR_RETURN(
       auto op_desc,
       MatmulDesc::Create(*compute_type,
@@ -371,21 +400,31 @@ absl::Status BlasLt::MatmulPlan::ValidateInputs(
 absl::Status BlasLt::MatmulPlan::DoMatmul(
     Stream* stream, const void* alpha, DeviceMemoryBase a, DeviceMemoryBase b,
     const void* beta, DeviceMemoryBase c, DeviceMemoryBase d,
-    const MatmulAlgorithm& algorithm, ScratchAllocator& scratch_allocator,
-    DeviceMemoryBase bias, DeviceMemoryBase aux, DeviceMemoryBase a_scale,
-    DeviceMemoryBase b_scale, DeviceMemoryBase c_scale,
-    DeviceMemoryBase d_scale, DeviceMemoryBase d_amax,
-    blas::ProfileResult* profile_result) const {
+    const MatmulAlgorithm& algorithm, DeviceMemoryBase bias,
+    DeviceMemoryBase aux, DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
+    DeviceMemoryBase c_scale, DeviceMemoryBase d_scale, DeviceMemoryBase d_amax,
+    std::optional<DeviceMemoryBase> workspace,
+    std::optional<ScratchAllocator*> scratch_allocator,
+    blas::ProfileResult* profile_result = nullptr) const {
   TF_ASSIGN_OR_RETURN(
       std::optional<gpu::GpuTimer> timer,
-      gpu::GpuTimer::CreateIfNeeded(gpu::AsGpuStream(stream), profile_result));
+      gpu::GpuTimer::CreateIfNeeded(
+          stream, profile_result && profile_result->warmup_run_executed(),
+          profile_result != nullptr));
 
-  void* workspace = nullptr;
-  if (algorithm.workspace_size > 0) {
+  void* workspace_addr;
+  uint64_t workspace_size = 0;
+  if (workspace.has_value()) {
+    workspace_addr = workspace.value().opaque();
+    workspace_size = workspace.value().size();
+    TF_RET_CHECK(workspace_size >= algorithm.workspace_size);
+  } else if (algorithm.workspace_size > 0) {
+    TF_RET_CHECK(scratch_allocator.has_value());
     TF_ASSIGN_OR_RETURN(
         DeviceMemory<uint8_t> alloc,
-        scratch_allocator.AllocateBytes(algorithm.workspace_size));
-    workspace = gpu::GpuMemoryMutable(&alloc);
+        scratch_allocator.value()->AllocateBytes(algorithm.workspace_size));
+    workspace_addr = gpu::GpuMemoryMutable(&alloc);
+    workspace_size = algorithm.workspace_size;
   }
 
   auto palgo = std::any_cast<cublasLtMatmulAlgo_t>(&algorithm.opaque_algo);
@@ -468,8 +507,8 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
       SE_CUBLAS_RETURN_IF_ERROR(cublasLtMatmul(
           blas_lt_ref_.blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
           a_desc_.get(), b.opaque(), b_desc_.get(), beta, c.opaque(),
-          c_desc_.get(), d.opaque(), d_desc_.get(), palgo, workspace,
-          algorithm.workspace_size, gpu::AsGpuStreamValue(stream)));
+          c_desc_.get(), d.opaque(), d_desc_.get(), palgo, workspace_addr,
+          workspace_size, gpu::AsGpuStreamValue(stream)));
     } else {
       return absl::InternalError("cublaslt: Invalid algorithm type");
     }
@@ -533,7 +572,8 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
     DeviceMemoryBase d, DeviceMemoryBase bias, DeviceMemoryBase aux,
     DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
     DeviceMemoryBase c_scale, DeviceMemoryBase d_scale, DeviceMemoryBase d_amax,
-    const MatmulAlgorithm& algorithm, ScratchAllocator& scratch_allocator,
+    const MatmulAlgorithm& algorithm, std::optional<DeviceMemoryBase> workspace,
+    std::optional<ScratchAllocator*> scratch_allocator,
     blas::ProfileResult* profile_result) const {
   if (must_swap_operands_) {
     std::swap(a, b);
@@ -543,12 +583,12 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
                            d_desc_.type()};
 
 #define TYPED_MATMUL(SCALENTYPE, ATYPE, BTYPE, CTYPE, DTYPE)                \
-  if (operand_types == std::make_tuple(ATYPE, BTYPE, CTYPE, DTYPE)) {       \
+  if (operand_types == std::tuple{ATYPE, BTYPE, CTYPE, DTYPE}) {            \
     return gpu::BlasLt::MatmulPlan::DoMatmul<                               \
         SCALENTYPE, CudaToNativeT<ATYPE>::type, CudaToNativeT<BTYPE>::type, \
         CudaToNativeT<CTYPE>::type, CudaToNativeT<DTYPE>::type>(            \
         stream, alpha_, a, b, beta_, c, d, bias, aux, a_scale, b_scale,     \
-        c_scale, d_scale, d_amax, algorithm, scratch_allocator,             \
+        c_scale, d_scale, d_amax, algorithm, workspace, scratch_allocator,  \
         profile_result);                                                    \
   }
 

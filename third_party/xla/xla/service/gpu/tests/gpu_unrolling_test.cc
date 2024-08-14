@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <utility>
 
+#include "xla/debug_options_flags.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/hlo_test_base.h"
@@ -50,27 +51,14 @@ TEST_F(GpuUnrollingTest, UnrollDefaultTimes) {
 
   CompileAndVerifyIr(std::move(hlo_module),
                      R"(
-; CHECK-LABEL: @fusion
-; CHECK: load float
-; CHECK: load float
-; CHECK: fadd
-; CHECK: store float
-; CHECK: load float
-; CHECK: load float
-; CHECK: fadd
-; CHECK: store float
-; CHECK: load float
-; CHECK: load float
-; CHECK: fadd
-; CHECK: store float
-; CHECK: load float
-; CHECK: load float
-; CHECK: fadd
-; CHECK: store float
-; CHECK-NOT: fadd
-; CHECK: }
+; CHECK-LABEL: @{{[a-z_]*}}fusion
+; CHECK-NOT: load float
+; CHECK-NOT: store float
+; CHECK: load <4 x float>
+; CHECK: load <4 x float>
+; CHECK: store <4 x float>
       )",
-                     /*match_optimized_ir=*/false);
+                     /*match_optimized_ir=*/true);
 }
 
 TEST_F(GpuUnrollingTest, UnrollUnfusedAdd) {
@@ -91,26 +79,13 @@ TEST_F(GpuUnrollingTest, UnrollUnfusedAdd) {
   CompileAndVerifyIr(std::move(hlo_module),
                      R"(
 ; CHECK-LABEL: @wrapped_add
-; CHECK: load float
-; CHECK: load float
-; CHECK: fadd
-; CHECK: store float
-; CHECK: load float
-; CHECK: load float
-; CHECK: fadd
-; CHECK: store float
-; CHECK: load float
-; CHECK: load float
-; CHECK: fadd
-; CHECK: store float
-; CHECK: load float
-; CHECK: load float
-; CHECK: fadd
-; CHECK: store float
-; CHECK-NOT: fadd
-; CHECK: }
+; CHECK-NOT: load float
+; CHECK-NOT: store float
+; CHECK: load <4 x float>
+; CHECK: load <4 x float>
+; CHECK: store <4 x float>
       )",
-                     /*match_optimized_ir=*/false);
+                     /*match_optimized_ir=*/true);
 }
 
 TEST_F(GpuUnrollingTest, DisabledUnrollUnfusedSine) {
@@ -187,7 +162,6 @@ TEST_F(GpuUnrollingTest, DisabledUnrollUnfusedPower) {
                      /*match_optimized_ir=*/true);
 }
 
-
 TEST_F(GpuUnrollingTest, DisabledUnrollUnfusedAtan2) {
   HloModuleConfig config;
   auto debug_options = HloTestBase::GetDebugOptionsForTest();
@@ -203,20 +177,14 @@ TEST_F(GpuUnrollingTest, DisabledUnrollUnfusedAtan2) {
   auto hlo_module =
       ParseAndReturnVerifiedModule(kUnfusedAddModule, config).value();
 
-  // Note: On ROCm side, we do bare minimal to make the test pass.
-  // "atan2" function is in different code generation path from nvptx: on
-  // ROCm platform, it get pulled in from ROCm-Device-Libs, whereas in
-  // Cuda, generated llvm IR is compiled PTX.
-  auto expected_ir = is_built_with_rocm_ ? R"(
-; CHECK: tail call float @llvm.fmuladd.f32(float %{{.*}}, float 0x3F65A54B00000000, float 0xBF8F4B2180000000)
-)"
-                                         : R"(
+  // There is only 1 load, because we pass the `p0` parameter to the kernel only
+  // once.
+  CompileAndVerifyIr(std::move(hlo_module),
+                     R"(
 ; CHECK: load float
 ; CHECK-NOT: load float
-}
-)";
-
-  CompileAndVerifyIr(std::move(hlo_module), expected_ir,
+; CHECK: }
+      )",
                      /*match_optimized_ir=*/true);
 }
 
@@ -250,38 +218,15 @@ TEST_F(GpuUnrollingTest, UnrollMultiOutputFusion) {
 
   CompileAndVerifyIr(std::move(hlo_module),
                      R"(
-; CHECK-LABEL: @fusion
-; CHECK: load float
-; CHECK: load float
+; CHECK-LABEL: @{{[a-z_]*}}fusion
 ; CHECK-NOT: load float
-; CHECK-NOT: load float
-; CHECK: fadd
-; CHECK: load float
-; CHECK: load float
-; CHECK-NOT: load float
-; CHECK-NOT: load float
-; CHECK: fmul
-; CHECK: store float
-; CHECK: store float
 ; CHECK-NOT: store float
-; CHECK-NOT: store float
-; CHECK: load float
-; CHECK: load float
-; CHECK-NOT: load float
-; CHECK-NOT: load float
-; CHECK: fadd
-; CHECK: load float
-; CHECK: load float
-; CHECK-NOT: load float
-; CHECK-NOT: load float
-; CHECK: fmul
-; CHECK: store float
-; CHECK: store float
-; CHECK-NOT: store float
-; CHECK-NOT: store float
-; CHECK: }
+; CHECK: load <4 x float>
+; CHECK: load <4 x float>
+; CHECK: store <4 x float>
+; CHECK: store <4 x float>
       )",
-                     /*match_optimized_ir=*/false);
+                     /*match_optimized_ir=*/true);
 }
 
 }  // namespace

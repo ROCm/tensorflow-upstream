@@ -36,7 +36,10 @@ limitations under the License.
 #include "tensorflow/compiler/jit/xla_platform_info.h"
 #include "tensorflow/compiler/tf2xla/xla_compiler.h"
 #include "xla/pjrt/pjrt_client.h"
-#include "tensorflow/core/common_runtime/serving_device_selector.h"
+#include "xla/pjrt/pjrt_common.h"
+#include "xla/tsl/framework/device_id.h"
+#include "xla/tsl/framework/device_id_manager.h"
+#include "xla/tsl/framework/serving_device_selector.h"
 #include "tensorflow/core/framework/allocator.h"
 #include "tensorflow/core/framework/device.h"
 #include "tensorflow/core/framework/device_base.h"
@@ -51,10 +54,9 @@ limitations under the License.
 #include "tensorflow/core/tfrt/common/global_state.h"
 #include "tensorflow/core/tfrt/utils/fallback_tensor.h"
 #include "tensorflow/core/tfrt/utils/gpu_variables_table.h"
-#include "tsl/framework/device_id.h"
-#include "tsl/framework/device_id_manager.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
+#include "tsl/platform/protobuf.h"
 #include "tsl/platform/statusor.h"
 #include "tfrt/host_context/async_dispatch.h"  // from @tf_runtime
 #include "tfrt/host_context/async_value_ref.h"  // from @tf_runtime
@@ -156,7 +158,8 @@ tfrt::AsyncValueRef<tfrt_stub::FallbackTensor> TransferTensorFromDevice(
   return result;
 }
 
-StatusOr<llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>>>
+absl::StatusOr<
+    llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>>>
 PopulateResultsFromPjRtExecutableOutputs(
     const XlaCompiler::CompilationResult& compilation_result,
     std::vector<std::unique_ptr<xla::PjRtBuffer>>& executable_outputs,
@@ -200,7 +203,8 @@ PopulateResultsFromPjRtExecutableOutputs(
   return fallback_tensor_results;
 }
 
-StatusOr<llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>>>
+absl::StatusOr<
+    llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>>>
 TransferOutputsToHostIfNeeded(
     llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>> outputs,
     tfrt::ArrayRef<int64_t> used_output_indices, Device* cpu_device,
@@ -221,7 +225,8 @@ TransferOutputsToHostIfNeeded(
   return results;
 }
 
-StatusOr<llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>>>
+absl::StatusOr<
+    llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>>>
 TransferVariablesAndInputs(
     int device_idx, const llvm::SmallVector<tfrt_stub::FallbackTensor>& args,
     tfrt::ArrayRef<int64_t> resource_indices, Device* cpu_device,
@@ -276,7 +281,7 @@ TransferVariablesAndInputs(
   return results;
 }
 
-StatusOr<uint64_t> GenerateFingerprint(
+absl::StatusOr<uint64_t> GenerateFingerprint(
     const std::string& function_name,
     const tfd::KernelFallbackCompatRequestState* fallback_request_state) {
   const FunctionLibraryDefinition* flib_def =
@@ -290,7 +295,7 @@ StatusOr<uint64_t> GenerateFingerprint(
   return tsl::Fingerprint64(
       absl::StrCat(fallback_request_state->session_metadata().name(),
                    fallback_request_state->session_metadata().version(),
-                   fdef->signature().DebugString()));
+                   tsl::LegacyUnredactedDebugString(fdef->signature())));
 }
 
 std::vector<XlaCompiler::Argument> BuildXlaCompilerArguments(
@@ -341,13 +346,14 @@ Status CompileProgram(const GpuRunInputs& run_inputs, int device_idx,
 
 }  // namespace
 
-StatusOr<llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>>>
+absl::StatusOr<
+    llvm::SmallVector<tfrt::AsyncValueRef<tfrt_stub::FallbackTensor>>>
 GpuRunner::Run(const GpuRunInputs& run_inputs) {
   // Select a device to run this input.
   TF_ASSIGN_OR_RETURN(uint64_t fingerprint,
                       GenerateFingerprint(run_inputs.func_name,
                                           run_inputs.fallback_request_state));
-  DeviceReservation device_reservation =
+  tsl::DeviceReservation device_reservation =
       serving_device_selector_->ReserveDevice(absl::StrCat(fingerprint));
   const int device_idx = device_reservation.device_index();
 
@@ -392,8 +398,9 @@ GpuRunner::Run(const GpuRunInputs& run_inputs) {
         "Execution with collectives is not supported yet.");
   }
 
-  TF_ASSIGN_OR_RETURN(xla::PjRtDevice * pjrt_device,
-                      pjrt_client->LookupAddressableDevice(device_idx));
+  TF_ASSIGN_OR_RETURN(
+      xla::PjRtDevice * pjrt_device,
+      pjrt_client->LookupAddressableDevice(xla::PjRtLocalDeviceId(device_idx)));
   TF_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<xla::PjRtBuffer>> executable_outputs,
       RunPjRtExecutable(/*num_missing_prefix_ctx_inputs=*/0, inputs,

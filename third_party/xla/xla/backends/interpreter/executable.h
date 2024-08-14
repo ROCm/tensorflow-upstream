@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/backends/interpreter/executable_base.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
@@ -48,9 +48,10 @@ class InterpreterExecutable : public InterpreterExecutableBase {
   static int64_t ShapeSizeBytes(const Shape& shape);
 
  protected:
-  StatusOr<Literal> Evaluate(const ServiceExecutableRunOptions* run_options,
-                             const HloComputation& computation,
-                             absl::Span<const Literal> arg_literals) override
+  absl::StatusOr<Literal> Evaluate(
+      const ServiceExecutableRunOptions* run_options,
+      const HloComputation& computation,
+      absl::Span<const Literal> arg_literals) override
       ABSL_LOCKS_EXCLUDED(evaluator_lock_);
 
   // The interpreter interprets executables with an HloEvaluator.

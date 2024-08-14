@@ -15,10 +15,14 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_FUSIONS_IN_PLACE_DYNAMIC_UPDATE_SLICE_H_
 #define XLA_SERVICE_GPU_FUSIONS_IN_PLACE_DYNAMIC_UPDATE_SLICE_H_
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "llvm/IR/IRBuilder.h"
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
@@ -26,9 +30,8 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/llvm_ir/ir_array.h"
-#include "xla/status.h"
-#include "xla/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -58,20 +61,24 @@ namespace gpu {
 // modifies the output in place without touching the un-updated elements. The
 // update slice is assumed to be the exact same for all the
 // dynamic-update-slice ops.
-class InPlaceDynamicUpdateSliceEmitter : public KernelFusionEmitterBase {
+class InPlaceDynamicUpdateSliceFusion : public KernelFusionEmitterBase {
  public:
-  explicit InPlaceDynamicUpdateSliceEmitter(const HloFusionAnalysis& analysis)
+  explicit InPlaceDynamicUpdateSliceFusion(const HloFusionAnalysis& analysis)
       : analysis_(analysis),
         dus_ops_(
             GetOutputDefiningDynamicUpdateSlices(analysis.fusion_roots())) {}
   LaunchDimensions launch_dimensions() const override;
 
   std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
-      int64_t output_id, mlir::MLIRContext* ctx) const override {
+      int64_t root_index, mlir::MLIRContext* ctx) const override {
     // The mapping cannot be statically computed in general, since the offsets
     // are unknown.
     return std::nullopt;
   }
+
+  std::optional<IndexingMap> ComputeThreadIdToInputIndexing(
+      int64_t root_index, int64_t hero_operand_index,
+      mlir::MLIRContext* indexing_context) const override;
 
  protected:
   absl::Status EmitKernel(IrEmitterContext& ir_emitter_context,

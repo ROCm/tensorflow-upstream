@@ -12,7 +12,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+// Enable definition of Eigen::ThreadPoolDevice instead of just declaration.
 #define EIGEN_USE_THREADS
+
 #include "tensorflow/core/tfrt/ifrt/sharding_utils.h"
 
 #include <algorithm>
@@ -24,12 +26,15 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/btree_map.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
+#include "tensorflow/compiler/tf2xla/shape_util.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
@@ -42,18 +47,20 @@ limitations under the License.
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/platform/status.h"
-#include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_tensor_utils.h"
 #include "tensorflow/core/tpu/kernels/sharding_utils.h"
-#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/platform/threadpool.h"
 
 namespace tensorflow {
 namespace ifrt_serving {
@@ -75,7 +82,10 @@ SplitAndCreateArraysFromHostBuffer(
     xla::ifrt::Client& ifrt_client, const tensorflow::Tensor& input_tensor,
     const std::vector<int32_t>& num_partitions_per_axis, int num_replicas,
     const std::vector<xla::ifrt::Device*>& devices,
-    const Eigen::ThreadPoolDevice& thread_pool_device) {
+    const tsl::thread::ThreadPool& thread_pool) {
+  Eigen::ThreadPoolDevice thread_pool_device(thread_pool.AsEigenThreadPool(),
+                                             thread_pool.NumThreads());
+
   int64_t num_slices = 1;
   for (auto k : num_partitions_per_axis) {
     num_slices *= k;
@@ -126,11 +136,14 @@ SplitAndCreateArraysFromHostBuffer(
         splitter.Split(&input_tensor, "input tensor", assign_or_copy_value_fn, \
                        allocate_output_fn, thread_pool_device));               \
   } break;
-    TF_CALL_ALL_TYPES(CASE);
-    TF_CALL_quint8(CASE);
+      TF_CALL_ALL_TYPES(CASE);
+      TF_CALL_QUANTIZED_TYPES(CASE);
+      TF_CALL_int4(CASE);
+      TF_CALL_uint4(CASE);
 #undef CASE
-    default:
-      return absl::InvalidArgumentError("Unsupported data type");
+      default:
+        return absl::InvalidArgumentError(
+            absl::StrCat("Unsupported data type of ", input_tensor.dtype()));
     }
   }
 
@@ -157,19 +170,19 @@ SplitAndCreateArraysFromHostBuffer(
       auto single_device_sharding = xla::ifrt::SingleDeviceSharding::Create(
           *device_iter, xla::ifrt::MemoryKind());
 
-      TF_ASSIGN_OR_RETURN(
-          auto array,
-          ifrt_client.MakeArrayFromHostBuffer(
-              tensor.data(), dtype,
-              xla::ifrt::Shape(tensor.shape().dim_sizes()),
-              /*byte_strides=*/{}, std::move(single_device_sharding),
-              xla::ifrt::Client::HostBufferSemantics::
-                  kImmutableUntilTransferCompletes,
-              [tensor, slice_idx]() {
-                // Keep tensor alive
-                LOG(INFO) << "Done with host buffer for slice " << slice_idx
-                          << " at " << tensor.data();
-              }));
+      TF_ASSIGN_OR_RETURN(auto array,
+                          ifrt_client.MakeArrayFromHostBuffer(
+                              tensor.data(), dtype,
+                              xla::ifrt::Shape(tensor.shape().dim_sizes()),
+                              GetByteStrides(tensor_data_type, tensor.shape()),
+                              std::move(single_device_sharding),
+                              xla::ifrt::Client::HostBufferSemantics::
+                                  kImmutableUntilTransferCompletes,
+                              [tensor, slice_idx]() {
+                                // Keep tensor alive
+                                VLOG(2) << "Done with host buffer for slice "
+                                        << slice_idx << " at " << tensor.data();
+                              }));
       arrays.push_back(std::move(array));
       device_iter++;
     }
@@ -191,7 +204,10 @@ absl::StatusOr<tensorflow::Tensor> MakeTensorFromDisassembledTensors(
     const std::vector<int>& num_concats,
     tensorflow::DataType output_tensor_type,
     const tensorflow::TensorShape& output_tensor_shape,
-    const Eigen::ThreadPoolDevice& thread_pool_device) {
+    const tsl::thread::ThreadPool& thread_pool) {
+  Eigen::ThreadPoolDevice thread_pool_device(thread_pool.AsEigenThreadPool(),
+                                             thread_pool.NumThreads());
+
   int num_slices = 1;
   for (int i = 0; i < num_concats.size(); ++i) {
     num_slices *= num_concats[i];
@@ -226,10 +242,13 @@ absl::StatusOr<tensorflow::Tensor> MakeTensorFromDisassembledTensors(
         thread_pool_device));                                             \
   } break;
     TF_CALL_ALL_TYPES(CASE);
-    TF_CALL_quint8(CASE);
+    TF_CALL_QUANTIZED_TYPES(CASE);
+    TF_CALL_int4(CASE);
+    TF_CALL_uint4(CASE);
 #undef CASE
     default:
-      return absl::InvalidArgumentError("Unsupported data type");
+      return absl::InvalidArgumentError(
+          absl::StrCat("Unsupported data type of ", output_tensor.dtype()));
   }
 
   return output_tensor;
@@ -259,21 +278,23 @@ absl::StatusOr<int> VerifyIndexDomainsAndGetReplicas(
     if (first_index_domain->shape() != index_domain->shape()) {
       return absl::UnimplementedError(absl::StrCat(
           "Expect equal shape of ", first_index_domain->shape().DebugString(),
-          " but  got ", index_domain->shape().DebugString()));
+          " but got ", index_domain->shape().DebugString()));
     }
   }
 
   // Verify that each `IndexDomain` appear the same `num_replica` times. Since
   // shapes are the same for all `IndexDomain`, this also implies each `origin`
   // appear `num_replica` times.
-  auto index_domain_lexicographical_comparator =
-      [](const xla::ifrt::IndexDomain& a, const xla::ifrt::IndexDomain& b) {
-        return std::lexicographical_compare(
-            a.origin().elements().begin(), a.origin().elements().end(),
-            b.origin().elements().begin(), b.origin().elements().end());
-      };
+  struct IndexDomainLexicographicalComparator {
+    bool operator()(const xla::ifrt::IndexDomain& a,
+                    const xla::ifrt::IndexDomain& b) const {
+      return std::lexicographical_compare(
+          a.origin().elements().begin(), a.origin().elements().end(),
+          b.origin().elements().begin(), b.origin().elements().end());
+    }
+  };
   absl::btree_map<xla::ifrt::IndexDomain, int,
-                  decltype(index_domain_lexicographical_comparator)>
+                  IndexDomainLexicographicalComparator>
       index_domain_counts;
   for (const auto& index_domain : index_domains) {
     index_domain_counts[index_domain]++;
@@ -337,13 +358,35 @@ absl::StatusOr<int> VerifyIndexDomainsAndGetReplicas(
   return num_replicas;
 }
 
-}  // namespace
+// A simple wrapper function to create ifrt array for one single device.
+absl::StatusOr<tsl::RCReference<xla::ifrt::Array>>
+CreateArrayFromHostTensorForSingleDevice(xla::ifrt::Client& ifrt_client,
+                                         const tensorflow::Tensor& tensor,
+                                         xla::ifrt::Device* device) {
+  TF_ASSIGN_OR_RETURN(auto dtype, ToIfrtDType(tensor.dtype()));
 
-StatusOr<tsl::RCReference<xla::ifrt::Array>> MakeAssembledArrayFromHostBuffer(
-    xla::ifrt::Client& ifrt_client, const tensorflow::Tensor& input_tensor,
-    const xla::HloSharding& hlo_sharding,
-    const xla::ifrt::DeviceList& device_list,
-    const Eigen::ThreadPoolDevice& thread_pool_device) {
+  VLOG(2) << "Make single device array for buffer slice at " << tensor.data();
+  auto single_device_sharding =
+      xla::ifrt::SingleDeviceSharding::Create(device, xla::ifrt::MemoryKind());
+
+  return ifrt_client.MakeArrayFromHostBuffer(
+      tensor.data(), dtype, ToIfrtShape(tensor.shape()),
+      GetByteStrides(tensor.dtype(), tensor.shape()),
+      std::move(single_device_sharding),
+      xla::ifrt::Client::HostBufferSemantics::kImmutableUntilTransferCompletes,
+      [tensor]() {
+        // Keep tensor alive
+        VLOG(2) << "Done with single device host buffer for slice " << " at "
+                << tensor.data();
+      });
+}
+
+absl::StatusOr<tsl::RCReference<xla::ifrt::Array>>
+MakeAssembledArrayFromHostBuffer(xla::ifrt::Client& ifrt_client,
+                                 const tensorflow::Tensor& input_tensor,
+                                 const xla::HloSharding& hlo_sharding,
+                                 const xla::ifrt::DeviceList& device_list,
+                                 const tsl::thread::ThreadPool& thread_pool) {
   // TODO(b/316959894): use xla::HloSharding to identifying sharding axis.
   auto sharding = xla::ifrt::HloSharding::Create(
       device_list, xla::ifrt::MemoryKind(), hlo_sharding);
@@ -432,7 +475,7 @@ StatusOr<tsl::RCReference<xla::ifrt::Array>> MakeAssembledArrayFromHostBuffer(
   TF_ASSIGN_OR_RETURN(auto arrays,
                       SplitAndCreateArraysFromHostBuffer(
                           ifrt_client, input_tensor, num_partitions_per_axis,
-                          num_replicas, devices, thread_pool_device));
+                          num_replicas, devices, thread_pool));
 
   // Re-arranged arrays back to original device order
   std::vector<tsl::RCReference<xla::ifrt::Array>> rearranged_arrays;
@@ -447,20 +490,25 @@ StatusOr<tsl::RCReference<xla::ifrt::Array>> MakeAssembledArrayFromHostBuffer(
       xla::ifrt::ArrayCopySemantics::kDonateInput);
 }
 
+}  // namespace
+
 absl::StatusOr<tensorflow::Tensor> MakeTensorFromArray(
-    xla::ifrt::Client& ifrt_client,
-    tsl::RCReference<xla::ifrt::Array> input_array,
+    xla::ifrt::Client& ifrt_client, xla::ifrt::Array& input_array,
     const xla::HloSharding& hlo_sharding,
     const xla::ifrt::DeviceList& device_list,
-    const Eigen::ThreadPoolDevice& thread_pool_device) {
+    const tsl::thread::ThreadPool& thread_pool) {
   TF_ASSIGN_OR_RETURN(tensorflow::DataType data_type,
-                      ToTensorDataType(input_array->dtype()));
-  tensorflow::TensorShape tensor_shape = ToTensorShape(input_array->shape());
+                      ToTensorDataType(input_array.dtype()));
+  tensorflow::TensorShape tensor_shape = ToTensorShape(input_array.shape());
+
+  VLOG(2) << "Create tensor from array based on sharding: "
+          << hlo_sharding.ToString();
+
   if (hlo_sharding.IsReplicated()) {
     VLOG(1) << "Fast path for replication";
     // fast path for replication.
     TF_ASSIGN_OR_RETURN(auto fully_replicated_array,
-                        input_array->FullyReplicatedShard(
+                        input_array.FullyReplicatedShard(
                             xla::ifrt::ArrayCopySemantics::kDonateInput));
 
     if (fully_replicated_array->shape() != ToIfrtShape(tensor_shape)) {
@@ -468,16 +516,34 @@ absl::StatusOr<tensorflow::Tensor> MakeTensorFromArray(
           "Not fully replicated output. Expected ", tensor_shape.DebugString(),
           " but got ", fully_replicated_array->shape().DebugString()));
     }
-
     tensorflow::Tensor output_tensor(data_type, tensor_shape);
     TF_RETURN_IF_ERROR(
         fully_replicated_array
             ->CopyToHostBuffer(output_tensor.data(),
-                               /*byte_strides=*/std::nullopt,
+                               GetByteStrides(data_type, tensor_shape),
+                               xla::ifrt::ArrayCopySemantics::kAlwaysCopy)
+            .Await());
+    return output_tensor;
+  } else if (hlo_sharding.IsTileMaximal()) {
+    // Maximal implies single device
+    VLOG(1) << "Fast path for maximal";
+    TF_ASSIGN_OR_RETURN(
+        std::vector<tsl::RCReference<xla::ifrt::Array>> disassembled_array,
+        input_array.DisassembleIntoSingleDeviceArrays(
+            xla::ifrt::ArrayCopySemantics::kDonateInput));
+
+    int64_t device_id = hlo_sharding.GetUniqueDevice();
+
+    tensorflow::Tensor output_tensor(data_type, tensor_shape);
+    TF_RETURN_IF_ERROR(
+        disassembled_array[device_id]
+            ->CopyToHostBuffer(output_tensor.data(),
+                               GetByteStrides(data_type, tensor_shape),
                                xla::ifrt::ArrayCopySemantics::kAlwaysCopy)
             .Await());
     return output_tensor;
   }
+
   auto ifrt_sharding = xla::ifrt::HloSharding::Create(
       device_list, xla::ifrt::MemoryKind(), hlo_sharding);
 
@@ -498,7 +564,7 @@ absl::StatusOr<tensorflow::Tensor> MakeTensorFromArray(
 
   TF_ASSIGN_OR_RETURN(
       std::vector<tsl::RCReference<xla::ifrt::Array>> disassembled_array,
-      input_array->DisassembleIntoSingleDeviceArrays(
+      input_array.DisassembleIntoSingleDeviceArrays(
           xla::ifrt::ArrayCopySemantics::kDonateInput));
 
   if (index_domains.size() != disassembled_array.size()) {
@@ -560,7 +626,7 @@ absl::StatusOr<tensorflow::Tensor> MakeTensorFromArray(
             b.index_domain.origin().elements().end());
       });
 
-  std::vector<xla::ifrt::Future<absl::Status>> arrays_copy_status;
+  std::vector<xla::ifrt::Future<>> arrays_copy_status;
   std::vector<tensorflow::Tensor> input_tensors;
   input_tensors.reserve(index_domain_device_arrays.size());
   arrays_copy_status.reserve(index_domain_device_arrays.size());
@@ -570,9 +636,9 @@ absl::StatusOr<tensorflow::Tensor> MakeTensorFromArray(
                         ToTensorDataType(array->dtype()));
     tensorflow::Tensor tensor(dtype, tensor_shape);
     input_tensors.push_back(tensor);
-    xla::ifrt::Future<absl::Status> copy_status =
-        array->CopyToHostBuffer(tensor.data(), /*byte_strides=*/{},
-                                xla::ifrt::ArrayCopySemantics::kAlwaysCopy);
+    xla::ifrt::Future<> copy_status = array->CopyToHostBuffer(
+        tensor.data(), GetByteStrides(dtype, tensor_shape),
+        xla::ifrt::ArrayCopySemantics::kAlwaysCopy);
     copy_status.OnReady([tensor](absl::Status status) {
       VLOG(1) << "Copy of tensor " << tensor.data() << " done with status "
               << status;
@@ -585,7 +651,80 @@ absl::StatusOr<tensorflow::Tensor> MakeTensorFromArray(
 
   return MakeTensorFromDisassembledTensors(
       ifrt_client, absl::MakeSpan(input_tensors), num_concats, data_type,
-      tensor_shape, thread_pool_device);
+      tensor_shape, thread_pool);
+}
+
+absl::StatusOr<tsl::RCReference<xla::ifrt::Array>> MakeArrayFromTensor(
+    xla::ifrt::Client& ifrt_client, const tensorflow::Tensor& input_tensor,
+    const xla::ifrt::DeviceList& device_list,
+    const xla::HloSharding& hlo_sharding,
+    const tsl::thread::ThreadPool& thread_pool) {
+  VLOG(3) << "IsTiled: " << hlo_sharding.IsTiled();
+  VLOG(3) << "IsReplicated: " << hlo_sharding.IsReplicated();
+  VLOG(3) << "IsTileMaximal: " << hlo_sharding.IsTileMaximal();
+  if (!hlo_sharding.IsTiled() && !hlo_sharding.IsReplicated() &&
+      !hlo_sharding.IsTileMaximal()) {
+    return absl::UnimplementedError(absl::StrCat(
+        "Only support MAXIMAL, OTHER or REPLICATED, but got sharding : ",
+        hlo_sharding.ToString()));
+  }
+
+  VLOG(1) << "Hlo sharding: " << hlo_sharding.ToString();
+  VLOG(1) << "Device list size: " << device_list.size();
+
+  if (device_list.size() == 1) {
+    return CreateArrayFromHostTensorForSingleDevice(ifrt_client, input_tensor,
+                                                    device_list[0]);
+  }
+
+  // IsTileMaximal() also returns true for a replicate sharding created by
+  // xla::HloSharding::Replicate().
+  if (!hlo_sharding.IsReplicated() && hlo_sharding.IsTileMaximal()) {
+    VLOG(1) << "Single device fast path for Maximal tiled tensor";
+    xla::ifrt::Device* device;
+    int unique_device_id = hlo_sharding.GetUniqueDevice();
+    TF_ASSIGN_OR_RETURN(device, ifrt_client.LookupDevice(
+                                    xla::ifrt::DeviceId(unique_device_id)));
+    return CreateArrayFromHostTensorForSingleDevice(ifrt_client, input_tensor,
+                                                    device);
+  }
+
+  return MakeAssembledArrayFromHostBuffer(ifrt_client, input_tensor,
+                                          std::move(hlo_sharding), device_list,
+                                          thread_pool);
+}
+
+absl::StatusOr<tsl::RCReference<xla::ifrt::Array>> MakeArrayFromTensor(
+    xla::ifrt::Client& ifrt_client, const tensorflow::Tensor& input_tensor,
+    absl::Span<const int> device_ids, const xla::HloSharding& hlo_sharding,
+    const tsl::thread::ThreadPool& thread_pool) {
+  if (device_ids.empty()) {
+    return absl::InvalidArgumentError("device_ids cannot be empty");
+  }
+  std::vector<xla::ifrt::Device*> devices;
+  devices.reserve(device_ids.size());
+  for (auto device_id : device_ids) {
+    TF_ASSIGN_OR_RETURN(
+        xla::ifrt::Device * device,
+        ifrt_client.LookupDevice(xla::ifrt::DeviceId(device_id)));
+    devices.push_back(device);
+  }
+  xla::ifrt::DeviceList device_list(
+      xla::ifrt::DeviceList::Devices(devices.begin(), devices.end()));
+
+  return MakeArrayFromTensor(ifrt_client, input_tensor, device_list,
+                             hlo_sharding, thread_pool);
+}
+
+std::optional<absl::InlinedVector<int64_t, 4>> GetByteStrides(
+    tensorflow::DataType dtype, const tensorflow::TensorShape& shape) {
+  xla::Shape xla_shape;
+  if (auto status = tensorflow::TensorShapeToXLAShape(dtype, shape, &xla_shape);
+      !status.ok()) {
+    return std::nullopt;
+  }
+
+  return xla::ShapeUtil::ByteStrides(xla_shape);
 }
 
 }  // namespace ifrt_serving

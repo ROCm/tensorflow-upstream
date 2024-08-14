@@ -39,11 +39,12 @@ limitations under the License.
 
 namespace xla {
 
-StatusOr<Literal> TextLiteralReader::ReadPath(absl::string_view path) {
+absl::StatusOr<Literal> TextLiteralReader::ReadPath(absl::string_view path) {
   CHECK(!absl::EndsWith(path, ".gz"))
       << "TextLiteralReader no longer supports reading .gz files";
   std::unique_ptr<tsl::RandomAccessFile> file;
-  Status s = tsl::Env::Default()->NewRandomAccessFile(std::string(path), &file);
+  absl::Status s =
+      tsl::Env::Default()->NewRandomAccessFile(std::string(path), &file);
   if (!s.ok()) {
     return s;
   }
@@ -55,11 +56,11 @@ StatusOr<Literal> TextLiteralReader::ReadPath(absl::string_view path) {
 TextLiteralReader::TextLiteralReader(tsl::RandomAccessFile* file)
     : file_(file) {}
 
-StatusOr<Literal> TextLiteralReader::ReadAllLines() {
+absl::StatusOr<Literal> TextLiteralReader::ReadAllLines() {
   tsl::io::RandomAccessInputStream stream(file_.get());
   tsl::io::BufferedInputStream buf(&stream, 65536);
   std::string shape_string;
-  Status s = buf.ReadLine(&shape_string);
+  absl::Status s = buf.ReadLine(&shape_string);
   if (!s.ok()) {
     return s;
   }

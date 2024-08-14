@@ -15,16 +15,25 @@ limitations under the License.
 
 #include "xla/service/gpu/instruction_fusion.h"
 
+#include <cstdint>
 #include <memory>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/literal_util.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
+#include "xla/tests/verified_hlo_module.h"
 #include "xla/util.h"
+#include "tsl/platform/statusor.h"
 
 namespace m = ::xla::match;
 
@@ -969,6 +978,28 @@ ENTRY main {
   EXPECT_EQ(fused_convert_fusion->fusion_kind(),
             HloInstruction::FusionKind::kInput);
   EXPECT_EQ(Count(*module, HloOpcode::kFusion), 1);
+}
+
+TEST_F(InstructionFusionTest, DoNotFuseInsideReducer) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+  HloModule test_module
+
+scalar_add_computation {
+  scalar_rhs = f32[] parameter(1)
+  scalar_lhs = f32[] parameter(0)
+  add.1 = f32[] add(scalar_lhs, scalar_rhs)
+  ROOT add.2 = f32[] add(add.1, scalar_rhs)
+}
+
+ENTRY main {
+  param_0 = f16[64,96] parameter(0)
+  constant_2 = f32[] constant(0)
+  ROOT reduce = f32[64] reduce(param_0, constant_2), dimensions={1}, to_apply=scalar_add_computation
+})")
+                    .value();
+
+  EXPECT_FALSE(duplicating_instruction_fusion_.Run(module.get()).value());
+  SCOPED_TRACE(module->ToString());
 }
 
 }  // namespace gpu

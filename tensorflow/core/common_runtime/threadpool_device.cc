@@ -41,7 +41,6 @@ info. It does not have any negative impact on performance. */
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/graph/types.h"
 #include "tensorflow/core/lib/hash/hash.h"
-#include "tensorflow/core/platform/tracing.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/public/session_options.h"
 #include "tensorflow/core/util/port.h"
@@ -126,7 +125,7 @@ Status ThreadPoolDevice::MakeTensorFromProto(
     Tensor parsed(tensor_proto.dtype());
     if (parsed.FromProto(allocator_, tensor_proto)) {
       *tensor = std::move(parsed);
-      return OkStatus();
+      return absl::OkStatus();
     }
   }
   return errors::InvalidArgument("Cannot parse tensor from proto: ",
@@ -143,7 +142,7 @@ void ThreadPoolDevice::CopyTensorInSameDevice(
     return;
   }
   tensor::DeepCopy(*input_tensor, output_tensor);
-  done(OkStatus());
+  done(absl::OkStatus());
 }
 
 namespace {

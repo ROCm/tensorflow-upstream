@@ -31,8 +31,9 @@ limitations under the License.
 #include "xla/client/xla_builder.h"
 #include "xla/client/xla_computation.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
-#include "xla/service/gpu/nccl_clique_key.h"
+#include "xla/service/gpu/runtime/nccl_clique_key.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"
 #include "tensorflow/core/common_runtime/device_mgr.h"
 #include "tensorflow/core/framework/collective.h"
@@ -86,7 +87,7 @@ xla::XlaOp XlaHelpers::FloatLiteral(xla::XlaBuilder* b, DataType data_type,
 
   *output = input.Clone();
   output->mutable_shape_do_not_use()->Swap(&shape);
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 Status XlaHelpers::OneHot(xla::XlaBuilder* builder, int64_t depth, int axis,
@@ -110,7 +111,7 @@ Status XlaHelpers::OneHot(xla::XlaBuilder* builder, int64_t depth, int axis,
       xla::Eq(indices, xla::Iota(builder, iota_shape, axis), broadcast_dims),
       xla::Broadcast(on_value, output_shape.dim_sizes()),
       xla::Broadcast(off_value, output_shape.dim_sizes()));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 DataType XlaHelpers::SumAccumulationType(const DataType& dtype) {
@@ -137,12 +138,13 @@ xla::XlaOp XlaHelpers::ConvertElementType(const xla::XlaOp operand,
 }
 
 XlaHelpers::ShapeRepresentationFn IdentityShapeRepresentationFn() {
-  return [](const TensorShape& shape, DataType dtype, bool use_fast_memory,
-            XlaLayoutPreference layout_preference) -> StatusOr<xla::Shape> {
-    xla::Shape xla_shape;
-    TF_RETURN_IF_ERROR(TensorShapeToXLAShape(dtype, shape, &xla_shape));
-    return xla_shape;
-  };
+  return
+      [](const TensorShape& shape, DataType dtype, bool use_fast_memory,
+         XlaLayoutPreference layout_preference) -> absl::StatusOr<xla::Shape> {
+        xla::Shape xla_shape;
+        TF_RETURN_IF_ERROR(TensorShapeToXLAShape(dtype, shape, &xla_shape));
+        return xla_shape;
+      };
 }
 
 Status ResolveDeviceAssignment(
@@ -253,7 +255,7 @@ Status ResolveDeviceAssignment(
       });
   run_options.set_device_assignment(&device_assignment);
   run_options.set_gpu_executable_run_options(&gpu_options);
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 }  // end namespace tensorflow

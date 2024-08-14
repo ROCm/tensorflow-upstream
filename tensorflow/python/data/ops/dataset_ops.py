@@ -1156,6 +1156,24 @@ class DatasetV2(
     return counter_op._counter(start, step, dtype, name=name)
     # pylint: enable=g-import-not-at-top,protected-access
 
+  def fingerprint(self):
+    """Computes the fingerprint of this `Dataset`.
+
+    If two datasets have the same fingerprint, it is guaranteeed that they
+    would produce identical elements as long as the content of the upstream
+    input files does not change and they produce data deterministically.
+
+    However, two datasets producing identical values does not always mean they
+    would have the same fingerprint due to different graph constructs.
+
+    In other words, if two datasets have different fingerprints, they could
+    still produce identical values.
+
+    Returns:
+      A scalar `tf.Tensor` of type `tf.uint64`.
+    """
+    return gen_dataset_ops.dataset_fingerprint(self._variant_tensor)
+
   def rebatch(self, batch_size, drop_remainder=False, name=None) -> "DatasetV2":
     """Creates a `Dataset` that rebatches the elements from this dataset.
 
@@ -1390,7 +1408,7 @@ class DatasetV2(
     return Dataset.zip((range_dataset, self), name=name)
 
   def shuffle(
-      self, buffer_size, seed=None, reshuffle_each_iteration=None, name=None
+      self, buffer_size, seed=None, reshuffle_each_iteration=True, name=None
   ) -> "DatasetV2":
     """Randomly shuffles the elements of this dataset.
 
@@ -1406,8 +1424,12 @@ class DatasetV2(
     maintaining the 1,000 element buffer.
 
     `reshuffle_each_iteration` controls whether the shuffle order should be
-    different for each epoch. In TF 1.X, the idiomatic way to create epochs
-    was through the `repeat` transformation:
+    different for each epoch. However you should avoid using
+    `shuffle(reshuffle_each_iteration=True)`, then `take` and `skip` to split
+    a dataset into training and test sets, which would lead to data leakage (as
+    the entire dataset would be re-shuffled then re-split after each epoch).
+    Please use the `tf.keras.utils.split_dataset` method instead. In TF 1.X,
+    the idiomatic way to create epochs was through the `repeat` transformation:
 
     ```python
     dataset = tf.data.Dataset.range(3)
@@ -1461,12 +1483,12 @@ class DatasetV2(
     ```
 
     Args:
-      buffer_size: A `tf.int64` scalar `tf.Tensor`, representing the number of
-        elements from this dataset from which the new dataset will sample. To
-        uniformly shuffle the entire dataset, use
+      buffer_size: An int or `tf.int64` scalar `tf.Tensor`, representing the
+        number of elements from this dataset from which the new dataset will
+        sample. To uniformly shuffle the entire dataset, use
         `buffer_size=dataset.cardinality()`.
-      seed: (Optional.) A `tf.int64` scalar `tf.Tensor`, representing the random
-        seed that will be used to create the distribution. See
+      seed: (Optional.) An int or `tf.int64` scalar `tf.Tensor`, representing
+        the random seed that will be used to create the distribution. See
         `tf.random.set_seed` for behavior.
       reshuffle_each_iteration: (Optional.) A boolean, which if true indicates
         that the dataset should be pseudorandomly reshuffled each time it is
@@ -1745,7 +1767,7 @@ class DatasetV2(
 
   @staticmethod
   def load(
-      path, element_spec=None, compression=None, reader_func=None
+      path, element_spec=None, compression=None, reader_func=None, wait=False,
   ) -> "DatasetV2":
     """Loads a previously saved dataset.
 
@@ -1793,6 +1815,11 @@ class DatasetV2(
       reader_func: Optional. A function to control how to read data from shards.
         If present, the function will be traced and executed as graph
         computation.
+      wait: If `True`, for snapshots written with `distributed_save`, it reads
+        the snapshot while it is being written. For snapshots written with
+        regular `save`, it waits for the snapshot until it's finished. The
+        default is `False` for backward compatibility. Users of
+        `distributed_save` are recommended to set it to `True`.
 
     Returns:
       A `tf.data.Dataset` instance.
@@ -1811,7 +1838,8 @@ class DatasetV2(
         path=path,
         element_spec=element_spec,
         compression=compression,
-        reader_func=reader_func)
+        reader_func=reader_func,
+        wait=wait)
     # pylint: enable=g-import-not-at-top,protected-access
 
   def batch(
@@ -2124,7 +2152,12 @@ class DatasetV2(
     # pylint: disable=g-import-not-at-top,protected-access
 
   def map(
-      self, map_func, num_parallel_calls=None, deterministic=None, name=None
+      self,
+      map_func,
+      num_parallel_calls=None,
+      deterministic=None,
+      synchronous=None,
+      name=None,
   ) -> "DatasetV2":
     """Maps `map_func` across the elements of this dataset.
 
@@ -2259,9 +2292,11 @@ name=None))
       map_func: A function mapping a dataset element to another dataset element.
       num_parallel_calls: (Optional.) A `tf.int64` scalar `tf.Tensor`,
         representing the number elements to process asynchronously in parallel.
-        If not specified, elements will be processed sequentially. If the value
-        `tf.data.AUTOTUNE` is used, then the number of parallel
-        calls is set dynamically based on available CPU.
+        If the value `tf.data.AUTOTUNE` is used, then the number of parallel
+        calls is set dynamically based on available CPU. If not specified, the
+        `tf.data.Options.experimental_optimization.map_parallelization` option
+        (`True` by default) controls whether the map will run as with
+        `tf.data.AUTOTUNE` or run sequentially.
       deterministic: (Optional.) When `num_parallel_calls` is specified, if this
         boolean is specified (`True` or `False`), it controls the order in which
         the transformation produces elements. If set to `False`, the
@@ -2269,6 +2304,15 @@ name=None))
         determinism for performance. If not specified, the
         `tf.data.Options.deterministic` option (`True` by default) controls the
         behavior.
+      synchronous: (Optional.) Whether to force the map transformation to run
+        synchronously. This only matters when
+        `options.experimental_optimization.map_parallelization=True`. That
+        option would normally change the map to run with
+        `num_parallel_calls=tf.data.AUTOTUNE`, but if `synchronous=True` is
+        specified, the map will not be parallelized at all. This is useful for
+        saving memory, since even setting `num_parallel_calls=1` will cause one
+        batch to be buffered, while with `synchronous=True` the map
+        transformation doesn't buffer anything.
       name: (Optional.) A name for the tf.data operation.
 
     Returns:
@@ -2278,12 +2322,15 @@ name=None))
     # dataset_ops).
     # pylint: disable=g-import-not-at-top,protected-access
     from tensorflow.python.data.ops import map_op
+
     return map_op._map_v2(
         self,
         map_func,
         num_parallel_calls=num_parallel_calls,
         deterministic=deterministic,
-        name=name)
+        synchronous=synchronous,
+        name=name,
+    )
     # pylint: enable=g-import-not-at-top,protected-access
 
   def flat_map(self, map_func, name=None) -> "DatasetV2":
@@ -4039,20 +4086,26 @@ class DatasetV1(DatasetV2, data_types.DatasetV1):
             name=name))
 
   @functools.wraps(DatasetV2.map)
-  def map(self,
-          map_func,
-          num_parallel_calls=None,
-          deterministic=None,
-          name=None):
+  def map(
+      self,
+      map_func,
+      num_parallel_calls=None,
+      deterministic=None,
+      synchronous=None,
+      name=None,
+  ):
     # Loaded lazily due to a circular dependency (dataset_ops -> map_op ->
     # dataset_ops).
     # pylint: disable=g-import-not-at-top,protected-access
     from tensorflow.python.data.ops import map_op
+
     return map_op._map_v1(
         self,
         map_func,
         num_parallel_calls=num_parallel_calls,
-        deterministic=deterministic)
+        deterministic=deterministic,
+        synchronous=synchronous,
+    )
     # pylint: enable=g-import-not-at-top,protected-access
 
   @deprecation.deprecated(None, "Use `tf.data.Dataset.map()")

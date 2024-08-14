@@ -29,7 +29,7 @@ function build_python_from_src() {
         [python3.9]='3.9.12'
         [python3.10]='3.10.9'
         [python3.11]='3.11.2'
-        [python3.12]='3.12.0'
+        [python3.12]='3.12.4'
     )
     local _ver=${python_map[$VERSION]}
     wget https://www.python.org/ftp/python/${_ver}/Python-${_ver}.tgz
@@ -51,24 +51,28 @@ else
 source ~/.bashrc
 VERSION=$1
 REQUIREMENTS=$2
+PY_VERSION="python${VERSION}"
 
 # Add deadsnakes repo for Python installation
+DEBIAN_FRONTEND=noninteractive apt-get --allow-unauthenticated update
+DEBIAN_FRONTEND=noninteractive apt install -y wget software-properties-common
+DEBIAN_FRONTEND=noninteractive apt-get clean all
 add-apt-repository -y 'ppa:deadsnakes/ppa'
 
 # Install Python packages for this container's version
 cat >pythons.txt <<EOF
-$VERSION
-$VERSION-dev
-$VERSION-venv
-$VERSION-distutils
+$PY_VERSION
+$PY_VERSION-dev
+$PY_VERSION-venv
+$PY_VERSION-distutils
 EOF
 /setup.packages.sh pythons.txt
 
 # Setup links for TensorFlow to compile.
 # Referenced in devel.usertools/*.bazelrc
-ln -sf /usr/bin/$VERSION /usr/bin/python3
-ln -sf /usr/bin/$VERSION /usr/bin/python
-ln -sf /usr/lib/$VERSION /usr/lib/tf_python
+ln -sf /usr/bin/$PY_VERSION /usr/bin/python3
+ln -sf /usr/bin/$PY_VERSION /usr/bin/python
+ln -sf /usr/lib/$PY_VERSION /usr/lib/tf_python
 
 fi # end of conditional check of various distros
 
@@ -76,8 +80,8 @@ fi # end of conditional check of various distros
 # Python 3.10 include headers fix:
 # sysconfig.get_path('include') incorrectly points to /usr/local/include/python
 # map /usr/include/python3.10 to /usr/local/include/python3.10
-if [[ ! -f "/usr/local/include/$VERSION" ]]; then
-  ln -sf /usr/include/$VERSION /usr/local/include/$VERSION
+if [[ ! -f "/usr/local/include/$PY_VERSION" ]]; then
+  ln -sf /usr/include/$PY_VERSION /usr/local/include/$PY_VERSION
 fi
 
 # Install pip
@@ -88,8 +92,10 @@ python3 -m pip install -U setuptools
 
 if [[ $3 ]]; then
     echo "Runtime mode"
+    python3 -m pip install --no-cache-dir --no-deps tf-keras-nightly
 else
     echo "Install Requirements"
     # Disable the cache dir to save image space, and install packages
     python3 -m pip install --no-cache-dir -r $REQUIREMENTS -U
+    python3 -m pip install --no-cache-dir --no-deps tf-keras-nightly
 fi

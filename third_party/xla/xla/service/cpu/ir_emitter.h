@@ -27,8 +27,10 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
@@ -47,7 +49,6 @@ limitations under the License.
 #include "xla/service/llvm_ir/ir_builder_mixin.h"
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/service/name_uniquer.h"
-#include "xla/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -55,9 +56,12 @@ namespace cpu {
 // This class is the top-level API for the XLA HLO --> LLVM IR compiler.  It
 // implements the DfsHloVisitor interface and emits HLO computations as LLVM IR
 // functions.
+// NOTE: A lot of functionality in this class (e.g. ElementTypesSameAndSupported
+// helper function) is duplicated by ThunkEmitter and IrEmitter2. These two
+// classes are part of the new runtime and will eventually replace IrEmitter.
 class IrEmitter : public DfsHloVisitorWithDefault,
                   public IrBuilderMixin<IrEmitter> {
-  friend class CpuElementalIrEmitter;
+  class CpuElementalIrEmitter;
 
  public:
   using GeneratorForOperandIrArrays =
@@ -112,11 +116,12 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   //
   // If 'allow_reassociation' is true, the fast-math reassociation flag will
   // be enabled in the function's body. This is used when emitting reducers.
-  StatusOr<llvm::Function*> EmitComputation(
+  absl::StatusOr<llvm::Function*> EmitComputation(
       HloComputation* computation, absl::string_view function_name_prefix,
       bool is_top_level_computation,
       absl::Span<HloInstruction* const> instruction_order,
-      bool allow_reassociation);
+      bool allow_reassociation,
+      absl::Span<const llvm::Attribute::AttrKind> function_attributes = {});
 
   llvm::IRBuilder<>* b() { return &b_; }
 
@@ -124,7 +129,35 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   llvm::IRBuilder<>* builder() { return &b_; }
 
   // Emit an LLVM global variable for every constant buffer allocation.
-  Status EmitConstantGlobals();
+  absl::Status EmitConstantGlobals();
+
+  // Emits a call to a thread local function (e.g. to the computation nested
+  // within a reduce or a map).  Thread local callees (by definition) only write
+  // to and read from thread local allocations.
+  // Supports only functions returning scalars or tuples of scalars.
+  //
+  // `parameters` holds the *scalar values* that need to be passed to the
+  // callee.  The return value is the scalar returned by the callee.
+  //
+  // If `in_compute_function` is true, the call is emitted inside the compute
+  // function emitted by a legacy IrEmitter and has access to executable run
+  // options, status flag, etc. If `in_compute_function` is false, then the call
+  // is inside nested computation of a host kernel emitted for thunks and it
+  // can only emit simple scalar computations and has no way to call back into
+  // the runtime.
+  std::vector<llvm::Value*> EmitThreadLocalCall(
+      const HloComputation& callee, absl::Span<llvm::Value* const> parameters,
+      absl::string_view name, bool is_reducer, bool in_compute_function = true);
+
+  // Returns true if given computation has been emitted.
+  bool is_computation_emitted(const HloComputation& callee,
+                              bool allow_reassociation) {
+    return emitted_functions_.contains({&callee, allow_reassociation});
+  }
+
+  const TargetMachineFeatures& target_machine_features() const {
+    return target_machine_features_;
+  }
 
  protected:
   //
@@ -132,55 +165,57 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   //
   // Default action which emits code for most operations. Operations which are
   // special in some way are handled explicitly in HandleFoo methods.
-  Status DefaultAction(HloInstruction* hlo) override;
+  absl::Status DefaultAction(HloInstruction* hlo) override;
 
-  Status HandleAllGather(HloInstruction* instruction) override;
-  Status HandleAllToAll(HloInstruction* instruction) override;
-  Status HandleBitcast(HloInstruction* bitcast) override;
-  Status HandleConstant(HloInstruction* constant) override;
-  Status HandleCopy(HloInstruction* copy) override;
-  Status HandleGetTupleElement(HloInstruction* get_tuple_element) override;
-  Status HandleSelect(HloInstruction* select) override;
-  Status HandleDot(HloInstruction* dot) override;
-  Status HandleConvolution(HloInstruction* convolution) override;
-  Status HandleFft(HloInstruction* fft) override;
-  Status HandleAllReduce(HloInstruction* crs) override;
-  Status HandleReduceScatter(HloInstruction* crs) override;
-  Status HandleCollectivePermute(HloInstruction* crs) override;
-  Status HandleInfeed(HloInstruction* instruction) override;
-  Status HandleOutfeed(HloInstruction* outfeed) override;
-  Status HandleSort(HloInstruction* hlo) override;
-  Status HandleParameter(HloInstruction* parameter) override;
-  Status HandleReduce(HloInstruction* reduce) override;
-  Status HandleReduceWindow(HloInstruction* reduce_window) override;
-  Status HandleSelectAndScatter(HloInstruction* select_and_scatter) override;
-  Status HandleSend(HloInstruction* send) override;
-  Status HandleSendDone(HloInstruction* send_done) override;
-  Status HandleSlice(HloInstruction* slice) override;
-  Status HandleDynamicSlice(HloInstruction* dynamic_slice) override;
-  Status HandleDynamicUpdateSlice(
+  absl::Status HandleAllGather(HloInstruction* instruction) override;
+  absl::Status HandleAllToAll(HloInstruction* instruction) override;
+  absl::Status HandleBitcast(HloInstruction* bitcast) override;
+  absl::Status HandleConstant(HloInstruction* constant) override;
+  absl::Status HandleCopy(HloInstruction* copy) override;
+  absl::Status HandleGetTupleElement(
+      HloInstruction* get_tuple_element) override;
+  absl::Status HandleSelect(HloInstruction* select) override;
+  absl::Status HandleDot(HloInstruction* dot) override;
+  absl::Status HandleConvolution(HloInstruction* convolution) override;
+  absl::Status HandleFft(HloInstruction* fft) override;
+  absl::Status HandleAllReduce(HloInstruction* crs) override;
+  absl::Status HandleReduceScatter(HloInstruction* crs) override;
+  absl::Status HandleCollectivePermute(HloInstruction* crs) override;
+  absl::Status HandleInfeed(HloInstruction* instruction) override;
+  absl::Status HandleOutfeed(HloInstruction* outfeed) override;
+  absl::Status HandleSort(HloInstruction* hlo) override;
+  absl::Status HandleParameter(HloInstruction* parameter) override;
+  absl::Status HandleReduce(HloInstruction* reduce) override;
+  absl::Status HandleReduceWindow(HloInstruction* reduce_window) override;
+  absl::Status HandleSelectAndScatter(
+      HloInstruction* select_and_scatter) override;
+  absl::Status HandleSend(HloInstruction* send) override;
+  absl::Status HandleSendDone(HloInstruction* send_done) override;
+  absl::Status HandleSlice(HloInstruction* slice) override;
+  absl::Status HandleDynamicSlice(HloInstruction* dynamic_slice) override;
+  absl::Status HandleDynamicUpdateSlice(
       HloInstruction* dynamic_update_slice) override;
-  Status HandleRecv(HloInstruction* recv) override;
-  Status HandleRecvDone(HloInstruction* recv_done) override;
-  Status HandlePad(HloInstruction* pad) override;
-  Status HandleTuple(HloInstruction* tuple) override;
-  Status HandleFusion(HloInstruction* fusion) override;
-  Status HandleCall(HloInstruction* call) override;
-  Status HandleCustomCall(HloInstruction* custom_call) override;
-  Status HandleWhile(HloInstruction* xla_while) override;
-  Status HandleConcatenate(HloInstruction* concatenate) override;
-  Status HandleConditional(HloInstruction* conditional) override;
-  Status HandleScatter(HloInstruction* scatter) override;
-  Status HandleAfterAll(HloInstruction* after_all) override;
-  Status HandleAddDependency(HloInstruction* add_dependency) override;
-  Status HandlePartitionId(HloInstruction* hlo) override;
-  Status HandleReplicaId(HloInstruction* hlo) override;
-  Status HandleRng(HloInstruction* rng) override;
-  Status HandleRngGetAndUpdateState(HloInstruction* rng_state) override;
-  Status FinishVisit(HloInstruction* root) override;
+  absl::Status HandleRecv(HloInstruction* recv) override;
+  absl::Status HandleRecvDone(HloInstruction* recv_done) override;
+  absl::Status HandlePad(HloInstruction* pad) override;
+  absl::Status HandleTuple(HloInstruction* tuple) override;
+  absl::Status HandleFusion(HloInstruction* fusion) override;
+  absl::Status HandleCall(HloInstruction* call) override;
+  absl::Status HandleCustomCall(HloInstruction* custom_call) override;
+  absl::Status HandleWhile(HloInstruction* xla_while) override;
+  absl::Status HandleConcatenate(HloInstruction* concatenate) override;
+  absl::Status HandleConditional(HloInstruction* conditional) override;
+  absl::Status HandleScatter(HloInstruction* scatter) override;
+  absl::Status HandleAfterAll(HloInstruction* after_all) override;
+  absl::Status HandleAddDependency(HloInstruction* add_dependency) override;
+  absl::Status HandlePartitionId(HloInstruction* hlo) override;
+  absl::Status HandleReplicaId(HloInstruction* hlo) override;
+  absl::Status HandleRng(HloInstruction* rng) override;
+  absl::Status HandleRngGetAndUpdateState(HloInstruction* rng_state) override;
+  absl::Status FinishVisit(HloInstruction* root) override;
 
-  Status Preprocess(HloInstruction* hlo) override;
-  Status Postprocess(HloInstruction* hlo) override;
+  absl::Status Preprocess(HloInstruction* hlo) override;
+  absl::Status Postprocess(HloInstruction* hlo) override;
 
   // A convenient helper for calling BufferAssignment::GetUniqueSlice.
   BufferAllocation::Slice GetAllocationSlice(
@@ -189,15 +224,17 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   }
 
  private:
-  Status HandleSliceToDynamic(HloInstruction* hlo);
-  Status HandlePadToStatic(HloInstruction* hlo);
-  Status HandleTopK(HloInstruction* hlo);
-  Status HandleAllReduceSingleReplica(HloInstruction* crs);
-  Status HandleAllReduceMultipleReplica(HloInstruction* crs);
+  absl::Status HandleSliceToDynamic(HloInstruction* hlo);
+  absl::Status HandlePadToStatic(HloInstruction* hlo);
+  absl::Status HandleTopK(HloInstruction* hlo);
+  absl::Status HandleAllReduceSingleReplica(HloInstruction* crs);
+  absl::Status HandleAllReduceMultipleReplica(HloInstruction* crs);
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
-  Status HandleOneDnnMatMul(HloInstruction* hlo);
-  Status HandleOneDnnSoftmax(HloInstruction* hlo);
-  Status HandleOneDnnLayerNorm(HloInstruction* hlo);
+  absl::Status HandleOneDnnMatMulCalls(HloInstruction* hlo,
+                                       std::string runtime_symbol_name);
+  absl::Status HandleOneDnnSoftmax(HloInstruction* hlo);
+  absl::Status HandleOneDnnLayerNorm(HloInstruction* hlo);
+  absl::Status HandleOneDnnConvolution(HloInstruction* hlo);
 #endif  // INTEL_MKL && ENABLE_ONEDNN_V3
   // Private helper to initialize an IR function for the computation.
   void InitializeIrFunction(const std::string& function_name);
@@ -287,17 +324,6 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   llvm::Value* EmitBufferPointer(const BufferAllocation::Slice& slice,
                                  const Shape& target_shape);
 
-  // Emits a call to a thread local function (e.g. to the computation nested
-  // within a reduce or a map).  Thread local callees (by definition) only write
-  // to and read from thread local allocations.
-  // Supports only functions returning scalars or tuples of scalars.
-  //
-  // `parameters` holds the *scalar values* that need to be passed to the
-  // callee.  The return value is the scalar returned by the callee.
-  std::vector<llvm::Value*> EmitThreadLocalCall(
-      const HloComputation& callee, absl::Span<llvm::Value* const> parameters,
-      absl::string_view name, bool is_reducer);
-
   // Similar to EmitThreadLocal, yet assumes that the function returns a scalar.
   llvm::Value* EmitScalarReturningThreadLocalCall(
       const HloComputation& callee, absl::Span<llvm::Value* const> parameters,
@@ -315,7 +341,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
 
   // Verifies that the element types of all of the given operand instructions
   // match and are of one of the given supported types.
-  Status ElementTypesSameAndSupported(
+  absl::Status ElementTypesSameAndSupported(
       const HloInstruction& instruction,
       absl::Span<const HloInstruction* const> operands,
       absl::Span<const PrimitiveType> supported_types);
@@ -330,23 +356,23 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   // in the loop name.
   //
   // TODO(jingyue): target_op should be a `const HloInstruction*`.
-  Status EmitTargetElementLoop(
+  absl::Status EmitTargetElementLoop(
       HloInstruction* target_op,
       const llvm_ir::ElementGenerator& element_generator);
-  Status EmitTargetElementLoop(
+  absl::Status EmitTargetElementLoop(
       HloInstruction* target_op, absl::string_view desc,
       const llvm_ir::ElementGenerator& element_generator);
 
   // Emits a memcpy from the source instruction's result value to the
   // destination's.  Both source and destination must have an entry in the
   // emitted_value_ table.
-  Status EmitMemcpy(const HloInstruction& source,
-                    const HloInstruction& destination);
+  absl::Status EmitMemcpy(const HloInstruction& source,
+                          const HloInstruction& destination);
 
   // Emits IR to compute the target address of the buffer for the given op.
   // After calling this function, you can get a pointer to this buffer by
   // calling GetIrArrayForOp or GetEmittedValueFor.
-  Status EmitTargetAddressForOp(const HloInstruction* op);
+  absl::Status EmitTargetAddressForOp(const HloInstruction* op);
 
   // Structurizes "array_elements" into an MD array that represents "shape".
   // This is a recursive function, and "dimension_index" indicates the index of
@@ -365,12 +391,10 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   // concepts that generalize over other vectorizable operations.  We should
   // consider pulling out these abstractions into a VectorizingIrEmitter or
   // something similar.
-  StatusOr<bool> EmitVectorizedReduce(HloInstruction* reduce,
-                                      HloInstruction* arg,
-                                      HloInstruction* init_value,
-                                      absl::Span<const int64_t> dimensions,
-                                      HloComputation* function,
-                                      std::string* failure_reason);
+  absl::StatusOr<bool> EmitVectorizedReduce(
+      HloInstruction* reduce, HloInstruction* arg, HloInstruction* init_value,
+      absl::Span<const int64_t> dimensions, HloComputation* function,
+      std::string* failure_reason);
 
   // We'd like to keep one or two one cache-line's worth of data in registers
   // without generating IR with illegal (e.g. excessively large or
@@ -416,7 +440,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
 
   // Emits the inner loop nest that runs the reduction.  Helper function for
   // EmitVectorizedReduce.
-  StatusOr<ShardedVector> EmitInnerLoopForVectorizedReduction(
+  absl::StatusOr<ShardedVector> EmitInnerLoopForVectorizedReduction(
       const ReductionGenerator& reduction_generator,
       const llvm_ir::IrArray::Index& output_index,
       const ShardedVectorType& accumulator_type, HloInstruction* init_value,
@@ -426,9 +450,9 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   // Tries to emit a fast concatenate operation using memcpy.  Returns true if
   // successful, and false on failure.  On failure, sets "failure_reason" to a
   // string describing why it could not emit a fast concatenate.
-  StatusOr<bool> EmitFastConcatenate(HloInstruction* concatenate,
-                                     absl::Span<HloInstruction* const> operands,
-                                     std::string* failure_reason);
+  absl::StatusOr<bool> EmitFastConcatenate(
+      HloInstruction* concatenate, absl::Span<HloInstruction* const> operands,
+      std::string* failure_reason);
 
   // Emits LLVM IR to transfer "element_count" elements of type "primitive_type"
   // from the address "source" to the address "target".
@@ -450,6 +474,11 @@ class IrEmitter : public DfsHloVisitorWithDefault,
       llvm::Type* return_type, bool does_not_throw = true,
       bool only_accesses_arg_memory = false,
       bool only_accesses_inaccessible_mem_or_arg_mem = false);
+
+  // Emits a call to a proxy that builds an FFI call frame for `custom_call`
+  llvm::Value* EmitCallToFfi(HloCustomCallInstruction* custom_call,
+                             llvm::AllocaInst* results_alloca,
+                             llvm::AllocaInst* operands_alloca);
 
   // Assignment of the buffers needed by the computation and their shape
   // information.
@@ -643,8 +672,8 @@ class IrEmitter : public DfsHloVisitorWithDefault,
 
   // Emit IR to transfer between a {infeed,outfeed} buffer and an in-program
   // address.
-  Status EmitXfeedTransfer(XfeedKind kind, const Shape& shape,
-                           llvm::Value* program_buffer_address);
+  absl::Status EmitXfeedTransfer(XfeedKind kind, const Shape& shape,
+                                 llvm::Value* program_buffer_address);
 
   // Returns a ConstExpr bitcast.
   llvm::Constant* EmitGlobalForLiteral(const Literal& literal);
@@ -663,7 +692,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
 
   struct LiteralPtrEqualityFunctor {
     bool operator()(const Literal* lhs, const Literal* rhs) const {
-      return *lhs == *rhs;
+      return lhs->Equal(*rhs, true);
     }
   };
 

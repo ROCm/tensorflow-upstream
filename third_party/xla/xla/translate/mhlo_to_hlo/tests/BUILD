@@ -1,8 +1,7 @@
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
-load("@local_tsl//tsl:tsl.default.bzl", "filegroup")
+load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
-    default_visibility = ["//visibility:public"],
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     licenses = ["notice"],
 )
@@ -28,6 +27,7 @@ lit_test_suite(
             "location_to_op_metadata.mlir",
             "location_to_stacktrace.mlir",
             "missing_main.mlir",
+            "module_config.mlir",
             "module_attributes.mlir",
             "multiple_return_tuple.mlir",
             "opaque_elements_attr.mlir",
@@ -54,5 +54,4 @@ lit_test_suite(
 filegroup(
     name = "test_utilities",
     testonly = True,
-    visibility = ["//visibility:public"],
 )

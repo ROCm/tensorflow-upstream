@@ -162,7 +162,7 @@ tf_python_pybind_extension(
         "//third_party/python_runtime:headers",
         "@com_google_absl//absl/memory",
         "@eigen_archive//:eigen3",
-        "@local_tsl//tsl/util:stats_calculator_portable",
+        "@local_xla//xla/tsl/util:stats_calculator_portable",
         "@pybind11",
     ],
 )
@@ -492,6 +492,7 @@ cc_library(
         "//tensorflow/python/lib/core:safe_pyobject_ptr",
         "//third_party/python_runtime:headers",  # buildcleaner: keep
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
 )

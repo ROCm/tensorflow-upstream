@@ -1,14 +1,15 @@
 # Description:
 #   XLA Heap simulator.
 
+load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//xla:xla.bzl",
     "xla_cc_test",
 )
-load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    default_visibility = ["//visibility:public"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    default_visibility = [":friends"],
     licenses = ["notice"],
 )
 
@@ -23,7 +24,6 @@ cc_library(
     name = "allocation_block",
     srcs = ["allocation_block.cc"],
     hdrs = ["allocation_block.h"],
-    visibility = ["//visibility:public"],
     deps = [
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
@@ -35,12 +35,9 @@ cc_library(
     name = "heap_simulator",
     srcs = ["heap_simulator.cc"],
     hdrs = ["heap_simulator.h"],
-    visibility = ["//visibility:public"],
     deps = [
         ":allocation_block",
         "//xla:comparison_util",
-        "//xla:status",
-        "//xla:statusor",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_live_range",
@@ -61,6 +58,8 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],

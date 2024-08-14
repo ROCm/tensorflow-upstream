@@ -57,9 +57,6 @@ class StaticRangePtqComponent : public Component {
       absl::string_view src_saved_model_path,
       std::vector<std::string> signature_keys,
       std::unordered_set<std::string> tags,
-      absl::flat_hash_map<std::string,
-                          tensorflow::quantization::RepresentativeDatasetFile>
-          representative_dataset_file_map,
       absl::flat_hash_map<std::string, tensorflow::SignatureDef>
           signature_def_map,
       absl::flat_hash_map<FunctionName, FunctionAlias> function_aliases);
@@ -87,9 +84,7 @@ class StaticRangePtqComponent : public Component {
 //
 // `signature_keys` specify the signatures that correspond to functions to be
 // quantized. `signature_def_map` connects the signature keys to
-// `SignatureDef`s. `function_aliases` maps actual function names to the
-// function aliases, as defined by the
-// `MetaGraphDef::MetaInfoDef::function_aliases` from the input SavedModel.
+// `SignatureDef`s.
 //
 // Returns a non-OK status when the quantization is not successful.
 // LINT.IfChange
@@ -100,11 +95,7 @@ absl::Status QuantizeStaticRangePtq(
     const std::vector<std::string>& signature_keys,
     const absl::flat_hash_map<std::string, tensorflow::SignatureDef>&
         signature_def_map,
-    const absl::flat_hash_map<std::string, std::string>& function_aliases,
-    const tensorflow::quantization::PyFunctionLibrary& py_function_library,
-    const absl::flat_hash_map<
-        std::string, tensorflow::quantization::RepresentativeDatasetFile>&
-        representative_dataset_file_map);
+    const tensorflow::quantization::PyFunctionLibrary& py_function_library);
 // LINT.ThenChange(../python/pywrap_quantization.cc:static_range_ptq)
 
 }  // namespace mlir::quant::stablehlo

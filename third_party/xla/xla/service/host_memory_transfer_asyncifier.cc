@@ -19,14 +19,15 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape_util.h"
-#include "xla/status.h"
-#include "xla/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
@@ -41,13 +42,13 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
       : kHostMemorySpaceColor(host_memory_space_color) {}
   bool Changed() const { return changed_; }
 
-  Status DefaultAction(HloInstruction* hlo_instruction) override {
-    return OkStatus();
+  absl::Status DefaultAction(HloInstruction* hlo_instruction) override {
+    return absl::OkStatus();
   }
 
   // Replace all dynamic-slice ops which slice from host memory to device memory
   // with an asynchronous dynamic-slice.
-  Status HandleDynamicSlice(HloInstruction* dynamic_slice) override {
+  absl::Status HandleDynamicSlice(HloInstruction* dynamic_slice) override {
     // Check that the dynamic_slice and its first operand have layouts. This
     // pass must only be run after LayoutAssignment.
     HloInstruction* dynamic_slice_operand = dynamic_slice->mutable_operand(0);
@@ -60,17 +61,21 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
                             ", does not have a layout.");
     }
 
+    VLOG(3) << absl::StreamFormat(
+        "\"%s\" from S(%d) to S(%d)", dynamic_slice->name(),
+        dynamic_slice_operand->shape().layout().memory_space(),
+        dynamic_slice->shape().layout().memory_space());
     // Check that this is a dynamic-slice slicing from host memory to device
     // memory.
     if (dynamic_slice_operand->shape().layout().memory_space() !=
         kHostMemorySpaceColor) {
       // Only care about dynamic-slice from host memory.
-      return OkStatus();
+      return absl::OkStatus();
     }
     if (dynamic_slice->shape().layout().memory_space() !=
         xla::Layout::kDefaultMemorySpace) {
       // Only care about dynamic-slice to device memory.
-      return OkStatus();
+      return absl::OkStatus();
     }
 
     // Everything is as expected. Replace this dynamic-slice with the async
@@ -85,12 +90,12 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
             dynamic_slice, {context_shape, transfer_bytes_shape}));
     (void)async_done;
     MarkAsChanged();
-    return OkStatus();
+    return absl::OkStatus();
   }
 
   // Replace all dynamic-update-slice ops which update into host memory from
   // device memory with an asynchronous dynamic-update-slice.
-  Status HandleDynamicUpdateSlice(
+  absl::Status HandleDynamicUpdateSlice(
       HloInstruction* dynamic_update_slice) override {
     // Check that the dynamic-update-slice and its first two operands have
     // layouts. This pass must only be run after LayoutAssignment.
@@ -118,12 +123,12 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
     if (dynamic_update_slice_update->shape().layout().memory_space() !=
         xla::Layout::kDefaultMemorySpace) {
       // Only care about dynamic-update-slice from device memory.
-      return OkStatus();
+      return absl::OkStatus();
     }
     if (dynamic_update_slice->shape().layout().memory_space() !=
         kHostMemorySpaceColor) {
       // Only care about dynamic-update-slice to host memory.
-      return OkStatus();
+      return absl::OkStatus();
     }
     if (dynamic_update_slice_operand->shape().layout().memory_space() !=
         dynamic_update_slice->shape().layout().memory_space()) {
@@ -142,12 +147,12 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
                             dynamic_update_slice, {context_shape}));
     (void)async_done;
     MarkAsChanged();
-    return OkStatus();
+    return absl::OkStatus();
   }
 
   // Replace all copy ops which copy from host memory to device memory or from
   // device memory to host memory with an asynchronous copy.
-  Status HandleCopy(HloInstruction* copy) override {
+  absl::Status HandleCopy(HloInstruction* copy) override {
     HloInstruction* operand = copy->mutable_operand(0);
     if (!operand->shape().has_layout()) {
       return InternalStrCat(operand->name(), " does not have a layout.");
@@ -167,7 +172,7 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
              "host memory: "
           << copy->ToString();
       // Only care about copies between device memory and host memory.
-      return OkStatus();
+      return absl::OkStatus();
     }
 
     // Everything is as expected. Replace this copy with the async equivalent.
@@ -180,7 +185,7 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
         copy->parent()->CreateAsyncInstructions(copy, {context_shape}));
     (void)async_done;
     MarkAsChanged();
-    return OkStatus();
+    return absl::OkStatus();
   }
 
  private:
@@ -192,7 +197,7 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
 
 }  // namespace
 
-StatusOr<bool> HostMemoryTransferAsyncifier::Run(
+absl::StatusOr<bool> HostMemoryTransferAsyncifier::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   HostMemoryTransferAsyncifierVisitor visitor(kHostMemorySpaceColor);

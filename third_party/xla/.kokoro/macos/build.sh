@@ -75,7 +75,7 @@ install_build_env_tools
 python -m pip install numpy==1.21.4
 
 TARGET_FILTER="-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/... -//xla/service/gpu/..."
-TAGS_FILTER="-no_oss,-oss_excluded,-gpu,-no_mac,-nomac,-mac_excluded"
+TAGS_FILTER="-no_oss,-oss_excluded,-gpu,-no_mac,-nomac,-mac_excluded,-requires-gpu-nvidia,-requires-gpu-amd"
 
 bazel test \
     --output_filter="" \
@@ -86,10 +86,3 @@ bazel test \
     --build_tag_filters=$TAGS_FILTER  --test_tag_filters=$TAGS_FILTER \
     --test_size_filters=small,medium \
     -- //xla/... $TARGET_FILTER
-
-
-# We want to store the individual test logs in GCS after the build finishes.
-# Since the Bazel test output folder is in a different partition to the Kokoro
-# artifacts folder, we need to symlink the test output folder to be in the
-# artifacts folder.
-ln -s /Volumes/BuildData/bazel_output "$KOKORO_ARTIFACTS_DIR"

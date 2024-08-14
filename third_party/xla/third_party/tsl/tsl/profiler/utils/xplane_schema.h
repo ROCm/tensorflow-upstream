@@ -72,10 +72,14 @@ TF_CONST_INIT extern const absl::string_view kXlaAsyncOpLineName;
 TF_CONST_INIT extern const absl::string_view kKernelLaunchLineName;
 TF_CONST_INIT extern const absl::string_view kSourceLineName;
 TF_CONST_INIT extern const absl::string_view kCounterEventsLineName;
+TF_CONST_INIT extern const absl::string_view kHostOffloadOpLineName;
 
 // GPU device vendors.
 TF_CONST_INIT extern const absl::string_view kDeviceVendorNvidia;
 TF_CONST_INIT extern const absl::string_view kDeviceVendorAMD;
+
+// Name of Xplane that contains environment information
+TF_CONST_INIT extern const absl::string_view kTaskEnvPlaneName;
 
 // Max collectives to display per TPU.
 // Since in most cases there will be more than 9 collectives, the last line
@@ -131,6 +135,7 @@ enum HostEventType {
   // Batching related.
   kBatchingSessionRun,
   kProcessBatch,
+  kBrainSessionRun,
   kConcatInputTensors,
   kMergeInputTensors,
   kScheduleWithoutSplit,
@@ -252,6 +257,7 @@ enum StatType {
   kTfFunctionCall,
   kTfFunctionTracingCount,
   kFlops,
+  kModelFlops,
   kBytesAccessed,
   kMemoryAccessBreakdown,
   kSourceInfo,
@@ -313,7 +319,8 @@ enum StatType {
   kEdgeTpuModelInfo,
   kEdgeTpuModelProfileInfo,
   kEdgeTpuMlir,
-  kLastStatType = kEdgeTpuMlir,
+  kDroppedTraces,
+  kLastStatType = kDroppedTraces,
 };
 
 enum MegaScaleStatType : uint8_t {
@@ -337,7 +344,15 @@ enum MegaScaleStatType : uint8_t {
   kMegaScaleLaunchId,
   kMegaScaleLoopIteration,
   kMegaScaleGraphProtos,
-  kLastMegaScaleStatType = kMegaScaleGraphProtos,
+  kMegaScaleNetworkTransportLatency,
+  kLastMegaScaleStatType = kMegaScaleNetworkTransportLatency,
+};
+
+enum TaskEnvStatType {
+  kFirstTaskEnvStatType = 1,
+  kEnvProfileStartTime = kFirstTaskEnvStatType,
+  kEnvProfileStopTime,
+  kLastTaskEnvStatType = kEnvProfileStopTime,
 };
 
 static constexpr uint32_t kLineIdOffset = 10000;
@@ -399,6 +414,10 @@ bool IsInternalEvent(std::optional<int64_t> event_type);
 
 // Returns true if the given stat shouldn't be shown in the trace viewer.
 bool IsInternalStat(std::optional<int64_t> stat_type);
+
+absl::string_view GetTaskEnvStatTypeStr(TaskEnvStatType stat_type);
+
+std::optional<int64_t> FindTaskEnvStatType(absl::string_view stat_name);
 
 // Support for flow events:
 // This class enables encoding/decoding the flow id and direction, stored as
@@ -485,10 +504,20 @@ TF_CONST_INIT extern const absl::string_view kMegaScaleH2DTransferStart;
 TF_CONST_INIT extern const absl::string_view kMegaScaleH2DTransferFinished;
 TF_CONST_INIT extern const absl::string_view kMegaScaleReductionStart;
 TF_CONST_INIT extern const absl::string_view kMegaScaleReductionFinished;
+TF_CONST_INIT extern const absl::string_view kMegaScaleCompressionStart;
+TF_CONST_INIT extern const absl::string_view kMegaScaleCompressionFinished;
+TF_CONST_INIT extern const absl::string_view kMegaScaleDecompressionStart;
+TF_CONST_INIT extern const absl::string_view kMegaScaleDecompressionFinished;
 TF_CONST_INIT extern const char kXProfMetadataKey[];
 TF_CONST_INIT extern const char kXProfMetadataFlow[];
 TF_CONST_INIT extern const char kXProfMetadataTransfers[];
 TF_CONST_INIT extern const char kXProfMetadataBufferSize[];
+
+// String constants for threadpool_listener events
+TF_CONST_INIT extern const absl::string_view kThreadpoolListenerRecord;
+TF_CONST_INIT extern const absl::string_view kThreadpoolListenerStartRegion;
+TF_CONST_INIT extern const absl::string_view kThreadpoolListenerStopRegion;
+TF_CONST_INIT extern const absl::string_view kThreadpoolListenerRegion;
 
 }  // namespace profiler
 }  // namespace tsl

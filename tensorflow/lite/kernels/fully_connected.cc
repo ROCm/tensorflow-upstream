@@ -118,6 +118,19 @@ TfLiteStatus VerifyPerChannelQuantization(TfLiteContext* context,
   return affine_quantization->scale->size > 1 ? kTfLiteOk : kTfLiteError;
 }
 
+TfLiteStatus VerifyQuantizationZeroPoint(const TfLiteTensor* tensor,
+                                         int expected_value) {
+  const auto* params =
+      reinterpret_cast<TfLiteAffineQuantization*>(tensor->quantization.params);
+  if (params && params->zero_point &&
+      std::any_of(params->zero_point->data,
+                  params->zero_point->data + params->zero_point->size,
+                  [expected_value](int v) { return v != expected_value; })) {
+    return kTfLiteError;
+  }
+  return kTfLiteOk;
+}
+
 }  // namespace
 
 // This file has four implementations of FullyConnected
@@ -413,14 +426,6 @@ TfLiteStatus PrepareImpl(TfLiteContext* context, TfLiteNode* node,
   // parameters set. This is usually done during quantized training.
   if (input->type == kTfLiteUInt8 || input->type == kTfLiteInt8 ||
       input->type == kTfLiteInt16) {
-    // Populate scalar quantization parameters.
-    double real_multiplier = 0.0;
-    TF_LITE_ENSURE_STATUS(GetQuantizedConvolutionMultipler(
-        context, input, filter, bias, output, &real_multiplier));
-    int exponent;
-    QuantizeMultiplier(real_multiplier, &data->output_multiplier, &exponent);
-    data->output_shift = exponent;
-
     // Populate per-channel quantization parameters, if per-channel
     // quantization.
     TF_LITE_ENSURE_EQ(context, input->quantization.type,
@@ -466,6 +471,14 @@ TfLiteStatus PrepareImpl(TfLiteContext* context, TfLiteNode* node,
         per_channel_multiplier[i] = significand;
         per_channel_shift[i] = channel_shift;
       }
+    } else {
+      // Populate scalar quantization parameters otherwise.
+      double real_multiplier = 0.0;
+      TF_LITE_ENSURE_STATUS(GetQuantizedConvolutionMultipler(
+          context, input, filter, bias, output, &real_multiplier));
+      int exponent;
+      QuantizeMultiplier(real_multiplier, &data->output_multiplier, &exponent);
+      data->output_shift = exponent;
     }
 
     TF_LITE_ENSURE_STATUS(CalculateActivationRangeQuantized(
@@ -639,6 +652,12 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
                                 params->activation == kTfLiteActRelu ||
                                 params->activation == kTfLiteActReluN1To1 ||
                                 params->activation == kTfLiteActRelu6);
+  }
+  if (filter->type == kTfLiteInt4) {
+    TF_LITE_ENSURE_MSG(
+        context,
+        kTfLiteOk == VerifyQuantizationZeroPoint(filter, /*expected_value=*/0),
+        "Unsupported filter quantization zero-point value.");
   }
   return PrepareImpl(context, node, kernel_type);
 }
@@ -1354,7 +1373,9 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
             // Block sparse with block size of 1x16.
             optimized_ops::FullyConnectedSparseWeight1x16(
                 sparsity, op_params, input_shape, GetTensorData<int8_t>(input),
-                filter_shape, GetTensorData<int8_t>(filter), bias_shape,
+                filter_shape, GetTensorData<int8_t>(filter),
+                data->per_channel_output_multiplier.data(),
+                data->per_channel_output_shift.data(), bias_shape,
                 GetTensorData<int32_t>(bias), output_shape,
                 GetTensorData<int8_t>(output),
                 CpuBackendContext::GetFromContext(context));

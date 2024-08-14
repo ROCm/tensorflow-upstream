@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/string_view.h"
-#include "xla/statusor.h"
+#include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/logging.h"
@@ -93,8 +93,21 @@ bool HasInfinity(PrimitiveType type) {
   return false;
 }
 
+bool HasNegativeZero(PrimitiveType type) {
+  if (ABSL_PREDICT_TRUE(IsFloatingPointType(type))) {
+    return FloatingPointTypeSwitch<bool>(
+        [&](auto constant_type) -> bool {
+          return has_negative_zero_v<NativeTypeOf<constant_type>>;
+        },
+        type);
+  }
+  return false;
+}
+
 xla::PrimitiveType SignedIntegralTypeForBitWidth(int64_t src_bitwidth) {
   switch (src_bitwidth) {
+    case 2:
+      return xla::S2;
     case 4:
       return xla::S4;
     case 8:
@@ -166,7 +179,7 @@ GetPrimitiveTypeStringMap() {
 
 }  // namespace
 
-StatusOr<PrimitiveType> StringToPrimitiveType(absl::string_view name) {
+absl::StatusOr<PrimitiveType> StringToPrimitiveType(absl::string_view name) {
   const auto& map = GetPrimitiveTypeStringMap();
   auto found = map.find(name);
   if (found == map.end()) {

@@ -15,18 +15,12 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <utility>
 
-#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
-#include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/stream_executor_internal.h"
 #include "tsl/platform/demangle.h"
 
 namespace stream_executor {
@@ -50,41 +44,6 @@ void KernelMetadata::set_shared_memory_bytes(int shared_memory_bytes) {
 //===----------------------------------------------------------------------===//
 // Kernel
 //===----------------------------------------------------------------------===//
-
-Kernel::Kernel(Kernel &&from)
-    : parent_(from.parent_),
-      implementation_(std::move(from.implementation_)),
-      name_(std::move(from.name_)),
-      demangled_name_(std::move(from.demangled_name_)),
-      metadata_(from.metadata_) {
-  from.parent_ = nullptr;
-}
-
-Kernel::Kernel(StreamExecutor *parent)
-    : parent_(parent),
-      implementation_(parent->implementation()->CreateKernelImplementation()) {}
-
-Kernel::~Kernel() {
-  if (parent_) {
-    parent_->UnloadKernel(this);
-  }
-}
-
-unsigned Kernel::Arity() const { return implementation_->Arity(); }
-
-void Kernel::SetPreferredCacheConfig(KernelCacheConfig config) {
-  return implementation_->SetPreferredCacheConfig(config);
-}
-
-KernelCacheConfig Kernel::GetPreferredCacheConfig() const {
-  return implementation_->GetPreferredCacheConfig();
-}
-
-absl::StatusOr<int32_t> Kernel::GetMaxOccupiedBlocksPerCore(
-    ThreadDim threads, size_t dynamic_shared_memory_bytes) const {
-  return implementation_->GetMaxOccupiedBlocksPerCore(
-      threads, dynamic_shared_memory_bytes);
-}
 
 void Kernel::set_name(absl::string_view name) {
   name_ = std::string(name);

@@ -39,6 +39,7 @@ tf_py_strict_test(
         ":test_base",
         "//tensorflow/python/checkpoint",
         "//tensorflow/python/checkpoint:checkpoint_management",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
@@ -93,6 +94,7 @@ tf_py_strict_test(
         ":test_base",
         "//tensorflow/python/checkpoint",
         "//tensorflow/python/checkpoint:checkpoint_management",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
@@ -322,6 +324,7 @@ tf_py_strict_test(
     deps = [
         ":checkpoint_test_base",
         ":test_base",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
         "//tensorflow/python/framework:combinations",
@@ -331,6 +334,23 @@ tf_py_strict_test(
         "//tensorflow/python/ops:math_ops",
         "//tensorflow/python/platform:client_testlib",
         "//third_party/py/numpy",
+        "@absl_py//absl/testing:parameterized",
+    ],
+)
+
+tf_py_strict_test(
+    name = "fingerprint_test",
+    size = "small",
+    srcs = ["fingerprint_test.py"],
+    deps = [
+        "//tensorflow/python/data/kernel_tests:checkpoint_test_base",
+        "//tensorflow/python/data/kernel_tests:test_base",
+        "//tensorflow/python/data/ops:dataset_ops",
+        "//tensorflow/python/data/ops:options",
+        "//tensorflow/python/data/ops:readers",
+        "//tensorflow/python/framework:combinations",
+        "//tensorflow/python/framework:errors",
+        "//tensorflow/python/platform:client_testlib",
         "@absl_py//absl/testing:parameterized",
     ],
 )
@@ -354,7 +374,7 @@ tf_py_strict_test(
 
 tf_py_strict_test(
     name = "flat_map_test",
-    size = "small",
+    size = "medium",
     srcs = ["flat_map_test.py"],
     grpc_enabled = True,
     shard_count = 8,
@@ -364,7 +384,9 @@ tf_py_strict_test(
     deps = [
         ":checkpoint_test_base",
         ":test_base",
+        "//tensorflow/core:protos_all_py",
         "//tensorflow/python/client:session",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
         "//tensorflow/python/framework:combinations",
@@ -435,9 +457,11 @@ tf_py_strict_test(
     name = "from_tensor_slices_test",
     size = "medium",
     srcs = ["from_tensor_slices_test.py"],
+    shard_count = 4,
     deps = [
         ":checkpoint_test_base",
         ":test_base",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
@@ -455,13 +479,15 @@ tf_py_strict_test(
 
 tf_py_strict_test(
     name = "from_tensors_test",
-    size = "small",
+    size = "medium",
     srcs = ["from_tensors_test.py"],
+    shard_count = 4,
     deps = [
         ":checkpoint_test_base",
         ":test_base",
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/client:session",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
@@ -658,11 +684,16 @@ tf_py_strict_test(
 
 tf_py_strict_test(
     name = "list_files_test",
-    size = "small",
+    size = "medium",
     srcs = ["list_files_test.py"],
+    shard_count = 4,
     deps = [
+        ":checkpoint_test_base",
         ":test_base",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/ops:dataset_ops",
+        "//tensorflow/python/data/ops:options",
+        "//tensorflow/python/data/ops:test_mode",
         "//tensorflow/python/framework:combinations",
         "//tensorflow/python/framework:errors",
         "//tensorflow/python/platform:client_testlib",
@@ -684,6 +715,8 @@ tf_py_strict_test(
         "//tensorflow/python:tf2",
         "//tensorflow/python/checkpoint",
         "//tensorflow/python/checkpoint:checkpoint_management",
+        "//tensorflow/python/data/experimental/ops:cardinality",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
@@ -887,7 +920,9 @@ tf_py_strict_test(
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
         "//tensorflow/python/framework:combinations",
+        "//tensorflow/python/framework:dtypes",
         "//tensorflow/python/framework:errors",
+        "//tensorflow/python/ops:script_ops",
         "//tensorflow/python/platform:client_testlib",
         "@absl_py//absl/testing:parameterized",
     ],
@@ -1026,6 +1061,7 @@ tf_py_strict_test(
     deps = [
         ":checkpoint_test_base",
         ":test_base",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
@@ -1099,6 +1135,7 @@ tf_py_strict_test(
     deps = [
         ":checkpoint_test_base",
         ":test_base",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
@@ -1127,6 +1164,7 @@ tf_py_strict_test(
         "//tensorflow/python/data/ops:options",
         "//tensorflow/python/eager:def_function",
         "//tensorflow/python/framework:combinations",
+        "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:dtypes",
         "//tensorflow/python/framework:errors",
         "//tensorflow/python/framework:ops",
@@ -1145,12 +1183,13 @@ tf_py_strict_test(
 
 tf_py_strict_test(
     name = "skip_test",
-    size = "small",
+    size = "medium",
     srcs = ["skip_test.py"],
-    shard_count = 4,
+    shard_count = 8,
     deps = [
         ":checkpoint_test_base",
         ":test_base",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
@@ -1198,6 +1237,7 @@ tf_py_strict_test(
     deps = [
         ":checkpoint_test_base",
         ":test_base",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
@@ -1322,6 +1362,7 @@ tf_py_strict_test(
     deps = [
         ":checkpoint_test_base",
         ":test_base",
+        "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",
         "//tensorflow/python/framework:combinations",
@@ -1382,6 +1423,7 @@ py_strict_test(
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/util:nest",
         "//tensorflow/python/framework:combinations",
+        "//tensorflow/python/ops:array_ops",
         "//tensorflow/python/ops/ragged:ragged_tensor",
         "//tensorflow/python/platform:client_testlib",
         "@absl_py//absl/testing:parameterized",
@@ -1418,6 +1460,7 @@ tf_py_strict_test(
     deps = [
         ":checkpoint_test_base",
         ":test_base",
+        "//tensorflow/python/data/experimental/ops:global_shuffle_op",
         "//tensorflow/python/data/experimental/ops:random_access",
         "//tensorflow/python/data/ops:dataset_ops",
         "//tensorflow/python/data/ops:options",

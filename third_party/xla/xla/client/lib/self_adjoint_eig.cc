@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/status/statusor.h"
 #include "xla/client/lib/arithmetic.h"
 #include "xla/client/lib/comparators.h"
 #include "xla/client/lib/constants.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 
@@ -40,7 +40,7 @@ namespace xla {
 SelfAdjointEigResult SelfAdjointEig(XlaOp a, bool lower, int64_t max_iter,
                                     float tol, bool sort_eigenvalues) {
   XlaBuilder* builder = a.builder();
-  XlaOp result = builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
+  XlaOp result = builder->ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(Shape a_shape, builder->GetShape(a));
     const int64_t num_dims = a_shape.rank();
     if (num_dims < 2) {

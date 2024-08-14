@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 
 #include <gtest/gtest.h>
+#include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -26,7 +27,6 @@ limitations under the License.
 #include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/service/hlo_pass_pipeline.h"
-#include "xla/statusor.h"
 #include "xla/tests/hlo_test_base.h"
 
 namespace xla {
@@ -34,16 +34,14 @@ namespace {
 
 using CollectivePipelinerExecutionTest = HloTestBase;
 
-StatusOr<bool> RunOptimizer(
+absl::StatusOr<bool> RunOptimizer(
     HloModule* module, bool last_run, int64_t level_to_operate_on = 0,
     HloPredicate should_process = HloPredicateIsOp<HloOpcode::kNegate>,
     CollectivePipeliner::PipeliningDirection pipelining_direction =
         CollectivePipeliner::PipeliningDirection::kForward,
     bool pipeline_use_tree = false,
-    HloPredicate acceptable_formatting =
-        [](const HloInstruction*) { return true; },
-    HloPredicate reuse_pipelined_op_buffer =
-        [](const HloInstruction*) { return true; }) {
+    HloPredicate acceptable_formatting = HloPredicateTrue,
+    HloPredicate reuse_pipelined_op_buffer = HloPredicateTrue) {
   CollectivePipeliner::Config config = {
       /*level_to_operate_on=*/level_to_operate_on,
       /*max_pipelining_per_loop=*/INT64_MAX,

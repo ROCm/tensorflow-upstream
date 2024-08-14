@@ -1,4 +1,4 @@
-# Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2019 The OpenXLA Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import lit.formats
 
 
 config.name = "XLA"
-config.suffixes = [".cc", ".hlo", ".hlotxt", ".json", ".mlir", ".pbtxt", ".py"]
+config.suffixes = [".cc", ".hlo", ".json", ".mlir", ".pbtxt", ".py"]
 
 config.test_format = lit.formats.ShTest(execute_external=True)
 
