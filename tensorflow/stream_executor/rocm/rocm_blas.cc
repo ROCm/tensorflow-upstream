@@ -16,6 +16,8 @@ limitations under the License.
 #include "rocm/rocm_config.h"
 #include "rocm/include/rocblas/rocblas.h"
 
+#undef rocblas_gemm_ex
+
 #include "tensorflow/stream_executor/rocm/rocm_blas.h"
 
 #define EIGEN_USE_GPU
@@ -230,7 +232,7 @@ namespace wrap {
   __macro(rocblas_ztrmm)                    */ \
   __macro(rocblas_sgeam)                    \
   __macro(rocblas_dgeam)                    \
-  __marco(roclbas_gemm_ex)                  \
+  __macro(rocblas_gemm_ex)                  \
 /*  __macro(rocblas_cgeam)                    \
   __macro(rocblas_zgeam)                    \
   __macro(rocblas_sdgmm)                    \
@@ -1474,7 +1476,7 @@ bool ROCMBlas::DoBlasGemm(
     }
   }
   bool hasXDLOPS = false;
-  auto status = GpuDriver::GetMFMASupport(hasXDLOPS);
+  auto status = ROCMDriver::GetMFMASupport(hasXDLOPS);
   if(!hasXDLOPS) {
     VLOG(1) << "Using rocblas_hgemm";
     const Eigen::half alpha_half(alpha);
@@ -1494,12 +1496,12 @@ bool ROCMBlas::DoBlasGemm(
       ROCMBlasTranspose(transa), ROCMBlasTranspose(transb),
       (rocblas_int)m, (rocblas_int)n, (rocblas_int)k,
       reinterpret_cast<const void*>(&alpha),
-      reinterpret_cast<const void*>(GpuMemory(a)), rocblas_datatype_f16_r, lda,
-      reinterpret_cast<const void*>(GpuMemory(b)), rocblas_datatype_f16_r, ldb,
+      reinterpret_cast<const void*>(ROCMMemory(a)), rocblas_datatype_f16_r, lda,
+      reinterpret_cast<const void*>(ROCMMemory(b)), rocblas_datatype_f16_r, ldb,
       reinterpret_cast<const void*>(&beta),
-      reinterpret_cast<const void*>(GpuMemoryMutable(c)),
+      reinterpret_cast<const void*>(ROCMMemoryMutable(c)),
       rocblas_datatype_f16_r, ldc,
-      reinterpret_cast<void*>(GpuMemoryMutable(c)), rocblas_datatype_f16_r, ldc,
+      reinterpret_cast<void*>(ROCMMemoryMutable(c)), rocblas_datatype_f16_r, ldc,
           rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
   }
 }

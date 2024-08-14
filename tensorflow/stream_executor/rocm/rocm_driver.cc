@@ -1057,7 +1057,7 @@ ROCMDriver::DeviceGetSharedMemConfig(int device_ordinal) {
   hipDeviceProp_t props;
   int dev = 0;
   hipError_t result = hipGetDevice(&dev);
-  result = tensorflow::wrap::hipGetDeviceProperties(&props, dev);
+  result = hipGetDeviceProperties(&props, dev);
   if (result == hipSuccess) {
     std::string gcnArchName = props.gcnArchName;
     VLOG(1)<<"GCN arch name " << gcnArchName;
@@ -1073,7 +1073,7 @@ ROCMDriver::DeviceGetSharedMemConfig(int device_ordinal) {
   }
   return port::Status{
       port::error::INTERNAL,
-      absl::StrFormat("failed to determine AMDGpu GCN Arch Name for device %d",
+      port::Printf("failed to determine AMDGpu GCN Arch Name for device %d",
                       dev)};
 }
 
