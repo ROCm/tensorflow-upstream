@@ -28,7 +28,7 @@ if [ ! -d "$GIT_REPO_DIR" ]; then
     git clone -b "$GIT_REPO_BRANCH" "$GIT_REPO_URL" "$GIT_REPO_DIR"
 else
     echo "Repository already cloned. Pulling latest changes..."
-    git -C "$GIT_REPO_DIR" pull
+    #git -C "$GIT_REPO_DIR" pull
 fi
 
 # Remove the existing tf_http_archive rule from the WORKSPACE file.
