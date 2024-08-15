@@ -139,30 +139,34 @@ echo "BUILD_TAG: ${BUILD_TAG}"
 echo "  (docker container name will be ${DOCKER_IMG_NAME})"
 echo ""
 
+CONTAINER_NAME=${DOCKER_IMG_NAME}
+DOCKER_IMG_NAME="docker.io/rocm/tensorflow-build:latest-focal-python3.9-rocm6.0.2"
+${DOCKER_BINARY} pull ${DOCKER_IMG_NAME}
 
 # Build the docker container.
-echo "Building container (${DOCKER_IMG_NAME})..."
-docker build -t ${DOCKER_IMG_NAME} ${CI_DOCKER_BUILD_EXTRA_PARAMS[@]} \
-    -f "${DOCKERFILE_PATH}" "${DOCKER_CONTEXT_PATH}"
+# echo "Building container (${DOCKER_IMG_NAME})..."
+# docker build -t ${DOCKER_IMG_NAME} ${CI_DOCKER_BUILD_EXTRA_PARAMS[@]} \
+#     -f "${DOCKERFILE_PATH}" "${DOCKER_CONTEXT_PATH}"
 
-# Check docker build status
-if [[ $? != "0" ]]; then
-  die "ERROR: docker build failed. Dockerfile is at ${DOCKERFILE_PATH}"
-fi
+# # Check docker build status
+# if [[ $? != "0" ]]; then
+#   die "ERROR: docker build failed. Dockerfile is at ${DOCKERFILE_PATH}"
+# fi
 
-# If caller wants the with_the_same_user script to allow bad usernames, 
-# pass the var to the docker environment
-if [ -n "${CI_BUILD_USER_FORCE_BADNAME}" ]; then
-        CI_BUILD_USER_FORCE_BADNAME_ENV="-e CI_BUILD_USER_FORCE_BADNAME=yes"
-fi
+# # If caller wants the with_the_same_user script to allow bad usernames, 
+# # pass the var to the docker environment
+# if [ -n "${CI_BUILD_USER_FORCE_BADNAME}" ]; then
+#         CI_BUILD_USER_FORCE_BADNAME_ENV="-e CI_BUILD_USER_FORCE_BADNAME=yes"
+# fi
 
 # Run the command inside the container.
 echo "Running '${COMMAND[*]}' inside ${DOCKER_IMG_NAME}..."
 mkdir -p ${WORKSPACE}/bazel-ci_build-cache
+mkdir -p ${WORKSPACE}/tf
 # By default we cleanup - remove the container once it finish running (--rm)
 # and share the PID namespace (--pid=host) so the process inside does not have
 # pid 1 and SIGKILL is propagated to the process inside (jenkins can kill it).
-${DOCKER_BINARY} run --rm --name ${DOCKER_IMG_NAME} --pid=host \
+${DOCKER_BINARY} run --rm --name ${CONTAINER_NAME} --pid=host \
     -v ${WORKSPACE}/bazel-ci_build-cache:${WORKSPACE}/bazel-ci_build-cache \
     -e "CI_BUILD_HOME=${WORKSPACE}/bazel-ci_build-cache" \
     -e "CI_BUILD_USER=$(id -u -n)" \
@@ -171,6 +175,7 @@ ${DOCKER_BINARY} run --rm --name ${DOCKER_IMG_NAME} --pid=host \
     -e "CI_BUILD_GID=$(id -g)" \
     -e "CI_TENSORFLOW_SUBMODULE_PATH=${CI_TENSORFLOW_SUBMODULE_PATH}" \
     ${CI_BUILD_USER_FORCE_BADNAME_ENV} \
+    -v ${WORKSPACE}/tf:/tf \
     -v ${WORKSPACE}:/workspace \
     -w /workspace \
     ${GPU_EXTRA_PARAMS} \
