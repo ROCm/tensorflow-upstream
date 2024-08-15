@@ -22,7 +22,6 @@ limitations under the License.
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
-#include "xla/service/gpu/fusions/triton/sparse_extensions.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
@@ -106,6 +105,9 @@ absl::Status CreateTritonPipeline(
   // @triton//:third_party/amd/backend/compiler.py
   pm.addPass(mlir::triton::AMD::createDecomposeUnsupportedConversionsPass(
       ccRocm.gfx_version()));
+  const int custom_lds_size = 0;
+  pm.addPass(mlir::triton::AMD::createOptimizeLDSUsagePass(ccRocm.gfx_version(),
+                                                           custom_lds_size));
   pm.addPass(mlir::createConvertSCFToCFPass());
   pm.addPass(mlir::createConvertIndexToLLVMPass());
   pm.addPass(mt::gpu::createAllocateSharedMemoryPass());

@@ -351,6 +351,13 @@ build:windows --features=archive_param_file
 build:windows --copt=/d2ReducedOptimizeHugeFunctions
 build:windows --host_copt=/d2ReducedOptimizeHugeFunctions
 
+# Before VS 2017 15.8, the member "type" would non-conformingly have an
+# alignment of only alignof(max_align_t). VS 2017 15.8 was fixed to handle this
+# correctly, but the fix inherently changes layout and breaks binary
+# compatibility (*only* for uses of aligned_storage with extended alignments).
+build:windows --copt=-D_ENABLE_EXTENDED_ALIGNED_STORAGE
+build:windows --host_copt=-D_ENABLE_EXTENDED_ALIGNED_STORAGE
+
 # Enable the runfiles symlink tree on Windows. This makes it possible to build
 # the pip package on Windows without an intermediate data-file archive, as the
 # build_pip_package script in its current form (as of Aug 2023) uses the
@@ -566,6 +573,9 @@ build:rbe_win_clang --compiler=clang-cl
 build:rbe_win_clang --linkopt=/FORCE:MULTIPLE
 build:rbe_win_clang --host_linkopt=/FORCE:MULTIPLE
 
+# TODO(belitskiy): Rename `rbe_win_clang` to this, once done switching presubmits.
+build:rbe_windows_x86_cpu --config=rbe_win_clang
+
 # END TF REMOTE BUILD EXECUTION OPTIONS
 
 # TFLite build configs for generic embedded Linux
@@ -646,7 +656,6 @@ build:release_arm64_linux --config=linux_arm64
 build:release_arm64_linux --crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
 build:release_arm64_linux --config=mkl_aarch64_threadpool
 build:release_arm64_linux --copt=-flax-vector-conversions
-test:release_arm64_linux --flaky_test_attempts=3
 
 # The old gcc linux build options are preserved in the unsupported_*_linux
 # configs. If your project fails to build with Clang, you can use these
@@ -765,7 +774,7 @@ test:linux_cuda_wheel_test --config=linux_cuda_wheel_test_filters -- //tensorflo
 # ARM64 WHEEL
 test:linux_arm64_wheel_test_filters --test_tag_filters=-no_oss,-no_aarch64,-oss_excluded,-oss_serial,-gpu,-tpu,-benchmark-test,-v1only,-no_oss_py38,-no_oss_py39,-no_oss_py310
 test:linux_arm64_wheel_test_filters --build_tag_filters=-no_oss,-no_aarch64,-oss_excluded,-oss_serial,-gpu,-tpu,-benchmark-test,-v1only,-no_oss_py38,-no_oss_py39,-no_oss_py310
-test:linux_arm64_wheel_test_filters --test_lang_filters=py --test_size_filters=small,medium
+test:linux_arm64_wheel_test_filters --test_lang_filters=py --test_size_filters=small,medium --flaky_test_attempts=3
 test:linux_arm64_wheel_test --config=linux_arm64_wheel_test_filters -- //tensorflow/... -//tensorflow/compiler/tf2tensorrt/... -//tensorflow/core/tpu/... -//tensorflow/lite/... -//tensorflow/tools/toolchains/...  -//tensorflow/go/... -//tensorflow/java/... -//tensorflow/core/grappler/optimizers:auto_mixed_precision_test_cpu -//tensorflow/core/grappler/optimizers:remapper_test_cpu -//tensorflow/core/kernels/image:resize_bicubic_op_test -//tensorflow/compiler/mlir/tfr/examples/customization:test_ops_test -//tensorflow/compiler/mlir/tfr/examples/mnist:mnist_ops_test -//tensorflow/compiler/mlir/tfr/examples/pad:pad_ops_test
 # MACOS ARM64 WHEEL
 test:macos_arm64_wheel_test_filters --test_tag_filters=-no_oss,-oss_excluded,-oss_serial,-no_oss_py39,-no_oss_py310,-nomac,-no_mac,-mac_excluded,-v1only,-gpu,-tpu,-benchmark-test,-no_mac_arm64,-no_aarch64
@@ -780,17 +789,19 @@ test:macos_x86_wheel_test --config=macos_x86_wheel_test_filters -- //tensorflow/
 
 # PYCPP TESTS run a suite of Python and C++ tests to verify general correctness over
 # the whole TF code base. These are usually run continuously or upon presubmit.
-# CPU PYCPP:
+# LINUX CPU PYCPP:
 test:linux_cpu_pycpp_test_filters --test_tag_filters=-no_oss,-oss_excluded,-oss_serial,-gpu,-tpu,-benchmark-test,-v1only
 test:linux_cpu_pycpp_test_filters --build_tag_filters=-no_oss,-oss_excluded,-oss_serial,-gpu,-tpu,-benchmark-test,-v1only
 test:linux_cpu_pycpp_test_filters --test_lang_filters=cc,py --test_size_filters=small,medium
 test:linux_cpu_pycpp_test --config=linux_cpu_pycpp_test_filters -- //tensorflow/... -//tensorflow/compiler/tf2tensorrt/... -//tensorflow/core/tpu/... -//tensorflow/lite/... -//tensorflow/tools/toolchains/...
-# CUDA PYCPP:
+
+# LINUX CUDA PYCPP:
 test:linux_cuda_pycpp_test_filters --test_tag_filters=-no_oss,-oss_excluded,-oss_serial,-benchmark-test,-v1only,gpu,-no_gpu,-no_gpu_presubmit,-no_cuda11
 test:linux_cuda_pycpp_test_filters --build_tag_filters=-no_oss,-oss_excluded,-oss_serial,-benchmark-test,-v1only,gpu,-no_gpu,-no_gpu_presubmit,-no_cuda11
 test:linux_cuda_pycpp_test_filters --test_lang_filters=cc,py --test_size_filters=small,medium
 test:linux_cuda_pycpp_test --config=linux_cuda_pycpp_test_filters -- //tensorflow/... -//tensorflow/compiler/tf2tensorrt/... -//tensorflow/core/tpu/... -//tensorflow/lite/... -//tensorflow/tools/toolchains/...
-# ARM64 PYCPP
+
+# LINUX ARM64 PYCPP
 # In Linux Arm64 presubmit/continuous build, we cross-compile the binaries on
 # Linux x86 so that we can use RBE. Since tests still need to run on the single
 # host Arm64 machine, the build becomes too slow (~30 min) to be a presubmit.
@@ -801,7 +812,7 @@ test:linux_cuda_pycpp_test --config=linux_cuda_pycpp_test_filters -- //tensorflo
 # inherit from build.
 build:linux_arm64_pycpp_test_filters --test_tag_filters=-no_oss,-no_aarch64,-oss_excluded,-oss_serial,-gpu,-tpu,-benchmark-test,-v1only
 build:linux_arm64_pycpp_test_filters --build_tag_filters=-no_oss,-no_aarch64,-oss_excluded,-oss_serial,-gpu,-tpu,-benchmark-test,-v1only
-build:linux_arm64_pycpp_test_filters --test_lang_filters=cc,py --test_size_filters=small,medium --flaky_test_attempts=3
+build:linux_arm64_pycpp_test_filters --test_lang_filters=cc,py --test_size_filters=small,medium
 # TODO(michaelhudgins): Why do we need to specifically omit go and java here?
 build:linux_arm64_pycpp_test --config=linux_arm64_pycpp_test_filters -- //tensorflow/... -//tensorflow/compiler/tf2tensorrt/... -//tensorflow/core/tpu/... -//tensorflow/lite/... -//tensorflow/tools/toolchains/... -//tensorflow/go/... -//tensorflow/java/... -//tensorflow/core/grappler/optimizers:auto_mixed_precision_test_cpu -//tensorflow/core/grappler/optimizers:remapper_test_cpu -//tensorflow/core/kernels/image:resize_bicubic_op_test -//tensorflow/compiler/mlir/tfr/examples/customization:test_ops_test -//tensorflow/compiler/mlir/tfr/examples/mnist:mnist_ops_test -//tensorflow/compiler/mlir/tfr/examples/pad:pad_ops_test -//tensorflow/python/tools:aot_compiled_test
 # CROSS-COMPILE ARM64 PYCPP
@@ -823,6 +834,13 @@ build:macos_x86_pycpp_test --config=macos_x86_pycpp_test_filters -- //tensorflow
 # CROSS-COMPILE MACOS X86 PYCPP
 build:cross_compile_macos_x86_pycpp_test --config=macos_x86_pycpp_test
 build:cross_compile_macos_x86_pycpp_test -//tensorflow/core/kernels:quantized_conv_ops_test -//tensorflow/core/kernels:quantized_matmul_op_test -//tensorflow/python/ops:quantized_conv_ops_test -//tensorflow/tools/graph_transforms:transforms_test -//tensorflow/python/tools:aot_compiled_test
+# WINDOWS X86-64 CPU PYCPP
+test:windows_x86_cpu_pycpp_test_filters --test_tag_filters=-no_windows,-windows_excluded,-no_oss,-oss_excluded,-gpu,-tpu,-benchmark-test
+test:windows_x86_cpu_pycpp_test_filters --build_tag_filters=-no_windows,-windows_excluded,-no_oss,-oss_excluded,-benchmark-test
+test:windows_x86_cpu_pycpp_test_filters --test_lang_filters=cc,py --test_size_filters=small,medium --test_timeout="300,450,1200,3600"
+test:windows_x86_cpu_pycpp_test_opts --copt=/d2ReducedOptimizeHugeFunctions --host_copt=/d2ReducedOptimizeHugeFunctions --dynamic_mode=off --build_tests_only
+test:windows_x86_cpu_pycpp_test --config=windows_x86_cpu_pycpp_test_opts --config=windows_x86_cpu_pycpp_test_filters -- //tensorflow/... -//tensorflow/java/... -//tensorflow/lite/... -//tensorflow/compiler/...
+
 # END TF TEST SUITE OPTIONS
 
 # START CROSS-COMPILE CONFIGS

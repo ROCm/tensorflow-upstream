@@ -580,7 +580,9 @@ absl::Status IrEmitterUnnested::EmitCommandBufferThunk(
 
   AddThunkToThunkSequence(std::make_unique<CommandBufferThunk>(
       std::move(cmd_sequence), Thunk::ThunkInfo::WithProfileAnnotation(instr),
-      std::move(thunk_sequence)));
+      std::move(thunk_sequence),
+      ir_emitter_context_->debug_options()
+          .xla_enable_command_buffers_during_profiling()));
 
   return absl::OkStatus();
 }
@@ -1696,7 +1698,7 @@ absl::Status IrEmitterUnnested::EmitFusion(const HloFusionInstruction* instr) {
   const se::DeviceDescription& device_info =
       ir_emitter_context_->gpu_device_info();
   const HloFusionAnalysis fusion_analysis =
-      HloFusionAnalysis::Create(instr, &device_info);
+      HloFusionAnalysis::Create(*instr, device_info);
 
   std::unique_ptr<FusionInterface> emitter = GetFusionEmitter(HloFusionInfo(
       fusion_analysis, instr, &ir_emitter_context_->buffer_assignment()));

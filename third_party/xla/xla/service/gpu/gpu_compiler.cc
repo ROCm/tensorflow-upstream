@@ -110,27 +110,13 @@ limitations under the License.
 #include "xla/service/float_support.h"
 #include "xla/service/gather_expander.h"
 #include "xla/service/gather_simplifier.h"
-#include "xla/service/gpu/algorithm_checker.h"
-#include "xla/service/gpu/all_reduce_blueconnect.h"
-#include "xla/service/gpu/autotuner_util.h"
-#include "xla/service/gpu/collective_permute_cycle_decomposer.h"
-#include "xla/service/gpu/collective_permute_valid_iteration_annotator.h"
-#include "xla/service/gpu/command_buffer_scheduling.h"
+#include "xla/service/gpu/autotuning/autotuner_util.h"
+#include "xla/service/gpu/autotuning/custom_kernel_fusion_autotuner.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
-#include "xla/service/gpu/custom_kernel_fusion_autotuner.h"
-#include "xla/service/gpu/custom_kernel_fusion_rewriter.h"
-#include "xla/service/gpu/dot_dimension_sorter.h"
 #include "xla/service/gpu/dot_operand_converter.h"
-#include "xla/service/gpu/double_buffer_loop_unrolling.h"
-#include "xla/service/gpu/dynamic_slice_fusion_rewriter.h"
 #include "xla/service/gpu/execution_stream_assignment.h"
 #include "xla/service/gpu/fusion_pipeline.h"
-#include "xla/service/gpu/fusion_wrapper.h"
-#include "xla/service/gpu/gemm_broadcast_folding_rewriter.h"
-#include "xla/service/gpu/gemm_fusion.h"
-#include "xla/service/gpu/gemm_rewriter.h"
-#include "xla/service/gpu/gemv_rewriter.h"
 #include "xla/service/gpu/gpu_algebraic_simplifier.h"
 #include "xla/service/gpu/gpu_all_gather_optimizer.h"
 #include "xla/service/gpu/gpu_async_collective_annotator.h"
@@ -174,6 +160,21 @@ limitations under the License.
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/topk_specializer.h"
 #include "xla/service/gpu/topk_splitter.h"
+#include "xla/service/gpu/transforms/algorithm_checker.h"
+#include "xla/service/gpu/transforms/all_reduce_blueconnect.h"
+#include "xla/service/gpu/transforms/collective_permute_cycle_decomposer.h"
+#include "xla/service/gpu/transforms/collective_permute_valid_iteration_annotator.h"
+#include "xla/service/gpu/transforms/command_buffer_scheduling.h"
+#include "xla/service/gpu/transforms/cudnn_custom_call_converter.h"
+#include "xla/service/gpu/transforms/custom_kernel_fusion_rewriter.h"
+#include "xla/service/gpu/transforms/dot_dimension_sorter.h"
+#include "xla/service/gpu/transforms/double_buffer_loop_unrolling.h"
+#include "xla/service/gpu/transforms/dynamic_slice_fusion_rewriter.h"
+#include "xla/service/gpu/transforms/fusion_wrapper.h"
+#include "xla/service/gpu/transforms/gemm_broadcast_folding_rewriter.h"
+#include "xla/service/gpu/transforms/gemm_fusion.h"
+#include "xla/service/gpu/transforms/gemm_rewriter.h"
+#include "xla/service/gpu/transforms/gemv_rewriter.h"
 #include "xla/service/gpu/tree_reduction_rewriter.h"
 #include "xla/service/gpu/triton_fusion_numerics_verifier.h"
 #include "xla/service/hlo.pb.h"
@@ -526,6 +527,7 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
   HloPassPipeline pre_spmd_pipeline("pre-spmd-partitioner");
   // Run some IR cleanup passes before running the SPMD partitioning
   // passes.
+  pre_spmd_pipeline.AddPass<CuDnnCustomCallConverter>();
   pre_spmd_pipeline.AddPass<ConvertMemoryPlacementToInternalAnnotations>();
   pre_spmd_pipeline.AddPass<CallInliner>();
   pre_spmd_pipeline.AddPass<ZeroSizedHloElimination>();
@@ -934,6 +936,8 @@ absl::Status RunCollectiveOptimizationPasses(
   // Remove dead computations left over after ar/rs promotion.
   collectives_pipeline.AddPass<HloDCE>();
 
+  // Moves collectives' subsequent quantization before the collective to
+  // minimize data transfers.
   collectives_pipeline.AddPass<CollectiveQuantizer>();
   // Remove dead computations after collective quantization.
   collectives_pipeline.AddPass<HloDCE>();
@@ -1253,7 +1257,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
   // This is a "low effort, high impact" fusion that should be run first.
   if (hlo_module->config()
           .debug_options()
-          .xla_gpu_enable_address_computation_fusion()) {
+          .xla_gpu_enable_dynamic_slice_fusion()) {
     HloPassPipeline pipeline("dynamic-slice");
     TF_ASSIGN_OR_RETURN(se::Platform * platform,
                         se::PlatformManager::PlatformWithId(PlatformId()));
@@ -1374,6 +1378,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // heuristic, so we can mix and match various Gemm implementations based
     // on projected (measured) performance.
     if (debug_options.xla_gpu_enable_custom_fusions()) {
+      pipeline.AddPass<SimplifyFPConversions>();
       pipeline.AddPass<CustomKernelFusionRewriter>(
           &gpu_target_config.device_description);
       pipeline.AddPass<CustomKernelFusionAutotuner>(autotune_config);
@@ -1419,8 +1424,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // ReductionDimensionGrouper, as that makes matching the softmax pattern
     // harder.
     if (debug_options.xla_gpu_enable_triton_softmax_fusion() &&
-        cuda_cc != nullptr &&
-        cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) {
+        ((cuda_cc != nullptr &&
+          cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) ||
+         rocm_cc != nullptr)) {
       // Triton compilation needs normalized operations on bf16 (i.e. converted
       // to f32).
       add_float_normalization(pipeline);

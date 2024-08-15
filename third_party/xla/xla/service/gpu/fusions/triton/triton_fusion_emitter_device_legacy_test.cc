@@ -51,8 +51,8 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/filecheck.h"
 #include "xla/tests/verified_hlo_module.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/path.h"
@@ -1547,6 +1547,35 @@ ENTRY e {
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(
       kHloText, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
+}
+
+TEST_F(TritonGemmTest, MultiplePathsToSameOperandWorks) {
+  const std::string kHloText = R"(
+triton_computation {
+  p0 = bf16[8192,512]{1,0} parameter(0)
+  p1 = bf16[512,512]{1,0} parameter(1)
+  dot = bf16[8192,512]{1,0} dot(bf16[8192,512]{1,0} p0, bf16[512,512]{1,0} p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  p2 = bf16[8192,512]{1,0} parameter(2)
+  multiply.1 = bf16[8192,512]{1,0} multiply(bf16[8192,512]{1,0} dot, bf16[8192,512]{1,0} p2)
+  ROOT multiply.2 = bf16[8192,512]{1,0} multiply(bf16[8192,512]{1,0} multiply.1, bf16[8192,512]{1,0} p2)
+}
+
+ENTRY e {
+  p0 = bf16[8192,512]{1,0} parameter(0)
+  p1 = bf16[512,512]{1,0} parameter(1)
+  p2 = bf16[8192,512]{1,0} parameter(2)
+  ROOT fusion = bf16[8192,512]{1,0} fusion(p0,p1,p2), kind=kCustom, calls=triton_computation, 
+  backend_config={"fusion_backend_config":
+      {"kind":"__triton_gemm", "triton_gemm_config":{"block_m":"64","block_n":"256","block_k":"32","split_k":"1","num_stages":"4","num_warps":"4","num_ctas":"1"}}}
+})";
+
+  TF_ASSERT_OK(
+      CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_computation", R"(
+        CHECK:      tt.dot
+        CHECK-SAME: tensor<64x32xbf16> * tensor<32x256xbf16> -> tensor<64x256xf32>
+        CHECK:      arith.mulf
+        CHECK:      arith.mulf
+    )"));
 }
 
 class TritonGemmDynamicSliceClampingTest

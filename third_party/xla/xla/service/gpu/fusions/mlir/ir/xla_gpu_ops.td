@@ -22,7 +22,10 @@ include "mlir/IR/OpAsmInterface.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "xla/service/gpu/fusions/mlir/ir/xla_gpu_dialect.td"
+include "xla/service/gpu/fusions/mlir/ir/xla_gpu_attrs.td"
+include "xla/service/gpu/fusions/mlir/ir/xla_gpu_types.td"
 
 class XLAGPU_Op<string mnemonic, list<Trait> traits = []> :
       Op<XlaGpuDialect, mnemonic, traits> {
@@ -104,11 +107,13 @@ def XLAGPU_AtomicRMWOp : XLAGPU_Op<"atomic_rmw",
   }];
 }
 
-def XLAGPU_YieldOp : XLAGPU_Op<"yield",
-    [HasParent<"::xla::gpu::AtomicRMWOp">, Terminator]> {
+def XLAGPU_YieldOp : XLAGPU_Op<"yield", [
+    ParentOneOf<["::xla::gpu::AtomicRMWOp", "::xla::gpu::LoopOp"]>,
+    ReturnLike, Terminator]> {
   let summary = "Terminator for atomic_rmw ops.";
   let arguments = (ins AnyType:$result);
 
+  let builders = [OpBuilder<(ins), [{ /* nothing to do */ }]>];
   let assemblyFormat = "$result attr-dict `:` type($result)";
 }
 
@@ -232,7 +237,7 @@ def ApplyIndexingOp : XLAGPU_Op<"apply_indexing", [Pure]> {
     symbol arguments must be equal to the respective number of dimensional and
     symbolic inputs in the affine map. The affine mapping can be
     multi-dimensional, and so the `apply_indexing` operation always returns one
-    value. The  operands and results must all have ‘index’ type.
+    value. The operands and results must all have ‘index’ type.
 
     Example:
 
@@ -242,9 +247,7 @@ def ApplyIndexingOp : XLAGPU_Op<"apply_indexing", [Pure]> {
     ```
   }];
   let arguments = (ins Variadic<Index>:$operands,
-                       AffineMapAttr:$map,
-                       DenseI64ArrayAttr:$lower_bounds,
-                       DenseI64ArrayAttr:$upper_bounds);
+                   XLAGPU_IndexingMapAttr:$indexing_map_attr);
   let results = (outs Variadic<Index>);
 
   let builders = [
@@ -255,21 +258,110 @@ def ApplyIndexingOp : XLAGPU_Op<"apply_indexing", [Pure]> {
     OpBuilder<(ins "mlir::ValueRange":$operands, "mlir::AffineMap":$affine_map,
                "llvm::ArrayRef<DimVar>":$dim_vars,
                "llvm::ArrayRef<RangeVar>":$range_vars)>,
-    OpBuilder<(ins "mlir::ValueRange":$operands,
-                   "mlir::AffineMap":$affine_map,
-                   "llvm::ArrayRef<int64_t>":$lower_bounds,
-                   "llvm::ArrayRef<int64_t>":$upper_bounds)>,
   ];
   let extraClassDeclaration = [{
-    // Returns the indexing map constructed from affine_map and the bounds.
+    // Returns the indexing map constructed from IndexingMapAttr.
     xla::gpu::IndexingMap getIndexingMap();
     // Extracts the affine map from the attribute.
-    mlir::AffineMap getAffineMap() { return getMapAttr().getAffineMap(); }
+    mlir::AffineMap getAffineMap() { return getIndexingMapAttr().getMap(); }
   }];
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
   let hasFolder = 1;
+}
+
+def LoopOp : XLAGPU_Op<"loop", [
+    AttrSizedOperandSegments, Pure,
+    SingleBlockImplicitTerminator<"xla::gpu::YieldOp">
+  ]> {
+  let summary = "Loop nest that iterates over all feasible values of RangeVars.";
+  let description = [{
+
+    ```mlir
+      #map = #xla_gpu.indexing_map<(d0)[s0, s1] -> (d0 + s0, s1),
+        domain:
+        d0 in [0, 3],
+        s0 in [0, 1024],
+        s1 in [0, 32]
+      >
+      // Initial sum set to 0.
+      %sum_0 = arith.constant 0.0 : f32
+      %dim = arith.constant 1 : index
+      // iter_args binds initial values to the loop's region arguments.
+      %sum = xla_gpu.loop (%dim)[%i, %j] in #map iter_args(%sum_iter = %sum_0) -> (f32) {
+        %t = tensor.extract %buffer[%i, %j] : tensor<1024x32xf32>
+        %sum_next = arith.addf %sum_iter, %t : f32
+        // Yield current iteration sum to next iteration %sum_iter or to %sum
+        // if final iteration.
+        scf.yield %sum_next : f32
+      }
+    ```
+  }];
+  let arguments = (ins XLAGPU_IndexingMapAttr:$indexing_map_attr,
+                       Variadic<Index>:$dims,
+                       Variadic<AnyType>:$inits);
+  let results = (outs Variadic<AnyType>);
+  let regions = (region SizedRegion<1>:$region);
+
+  let builders = [
+    OpBuilder<(ins "IndexingMapAttr":$indexing_map_attr,
+      "mlir::ValueRange":$dims, "mlir::ValueRange":$inits,
+      CArg<"llvm::function_ref<void(mlir::OpBuilder &, mlir::Location, mlir::ValueRange, mlir::ValueRange)>",
+           "nullptr">)>,
+    OpBuilder<(ins "const IndexingMap&":$indexing_map,
+      "mlir::ValueRange":$dims, "mlir::ValueRange":$inits,
+      CArg<"llvm::function_ref<void(mlir::OpBuilder &, mlir::Location, mlir::ValueRange, mlir::ValueRange)>",
+           "nullptr">)>
+  ];
+
+  let extraClassDeclaration = [{
+    using BodyBuilderFn =
+        llvm::function_ref<void(mlir::OpBuilder&, mlir::Location,
+                                mlir::ValueRange, mlir::ValueRange)>;
+
+    // Returns the indexing map constructed from IndexingMapAttr.
+    xla::gpu::IndexingMap getIndexingMap();
+    int64_t getNumInductionVars() {
+      return getBody()->getNumArguments() - getNumResults();
+    }
+    mlir::BlockArgument getInductionVar(int64_t index) {
+      return getBody()->getArgument(index);
+    }
+    mlir::Block::BlockArgListType getInductionVars() {
+      return getBody()->getArguments().take_front(getNumInductionVars());
+    }
+    mlir::Block::BlockArgListType getRegionIterArgs() {
+      return getBody()->getArguments().drop_front(getNumInductionVars());
+    }
+  }];
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
+
+def XLAGPU_MaterializeOp : XLAGPU_Op<"materialize", [AttrSizedOperandSegments]> {
+  let summary = "Reads a tensor into registers";
+  let arguments = (ins Variadic<AnyType>:$input,
+                       Variadic<Index>:$indices,
+                       FlatSymbolRefAttr:$callee,
+                       XLAGPU_IndexingMapAttr:$map);
+  let results = (outs XLAGPU_IndexedVectorType:$result);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    $callee `(` $input `)` `at` $map `(` $indices `)` attr-dict `:` functional-type($input, results)
+  }];
+}
+
+def XLAGPU_InsertOp : XLAGPU_Op<"insert", []> {
+  let summary = "Inserts an indexed vector into a tensor";
+  let arguments = (ins XLAGPU_IndexedVectorType:$source,
+                       Variadic<Index>:$indices,
+                       AnyRankedTensor:$dest,
+                       XLAGPU_IndexingMapAttr:$map);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = [{
+    $source `into` $dest `at` $map `(` $indices `)` attr-dict `:` type($source) `->` type($dest) `into` type($result)
+  }];
 }
 
 #endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS

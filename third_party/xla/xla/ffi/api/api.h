@@ -33,7 +33,6 @@ limitations under the License.
 #include <tuple>
 #include <type_traits>
 #include <utility>
-#include <variant>
 #include <vector>
 
 // This is a header-only base C++ library that defines templates for decoding
@@ -427,7 +426,7 @@ class Binding {
     return {std::move(*this)};
   }
 
-  Binding<stage, Ts..., internal::RemainingRetsTag> RemainingResults() && {
+  Binding<stage, Ts..., internal::RemainingRetsTag> RemainingRets() && {
     static_assert(!internal::HasRemainingRetsTag<Ts...>::value,
                   "remaining results can be passed just once");
     return {std::move(*this)};
@@ -957,74 +956,14 @@ struct internal::Decode<internal::CtxTag<T>> {
 };
 
 //===----------------------------------------------------------------------===//
-// Expected
-//===----------------------------------------------------------------------===//
-
-// Forward declare.
-template <typename E>
-class Unexpected;
-
-// TODO(slebedev): Replace with `std::expected` when C++23 is available.
-template <typename T, typename E>
-class Expected {
- public:
-  constexpr Expected(T value) : data_(std::move(value)) {}  // NOLINT
-  constexpr Expected(Unexpected<E> u);                      // NOLINT
-
-  constexpr operator bool() const {  // NOLINT
-    return has_value();
-  }
-
-  constexpr T& operator*() & { return value(); }
-  constexpr const T& operator*() const& { return value(); }
-  constexpr T&& operator*() && { return std::move(value()); }
-  constexpr const T& operator*() const&& { return std::move(value()); }
-
-  constexpr T* operator->() { return &value(); }
-  constexpr const T* operator->() const { return &value(); }
-
-  constexpr bool has_value() const { return std::holds_alternative<T>(data_); }
-  constexpr bool has_error() const { return std::holds_alternative<E>(data_); }
-
-  constexpr T& value() & { return std::get<T>(data_); }
-  constexpr const T& value() const& { return std::get<T>(data_); }
-  constexpr T&& value() && { return std::get<T>(std::move(data_)); }
-  constexpr const T& value() const&& { return std::get<T>(std::move(data_)); }
-
-  constexpr E& error() & { return std::get<E>(data_); }
-  constexpr const E& error() const& { return std::get<E>(data_); }
-  constexpr E&& error() && { return std::get<E>(std::move(data_)); }
-  constexpr const E&& error() const&& { return std::get<E>(std::move(data_)); }
-
- private:
-  std::variant<T, E> data_;
-};
-
-template <typename E>
-class Unexpected {
- public:
-  constexpr Unexpected(E error) : error_(std::move(error)) {}  // NOLINT
-
- private:
-  template <typename, typename>
-  friend class Expected;
-
-  E error_;
-};
-
-Unexpected(const char*) -> Unexpected<std::string>;
-
-template <typename T, typename E>
-constexpr Expected<T, E>::Expected(Unexpected<E> u)
-    : data_(std::move(u.error_)) {}
-
-//===----------------------------------------------------------------------===//
 // Type-safe wrapper for accessing a variable number of arguments.
 //===----------------------------------------------------------------------===//
 
-class RemainingArgs {
+namespace internal {
+
+class RemainingArgsBase {
  public:
-  RemainingArgs(const XLA_FFI_Args* args, size_t offset)
+  RemainingArgsBase(const XLA_FFI_Args* args, size_t offset)
       : args_(args), offset_(offset) {
     assert(offset <= args_->size && "illegal remaining args offset");
   }
@@ -1032,43 +971,26 @@ class RemainingArgs {
   size_t size() const { return args_->size - offset_; }
   bool empty() const { return size() == 0; }
 
-  template <typename T>
-  Expected<T, std::string> get(size_t index) const {
-    size_t idx = offset_ + index;
-    if (idx >= args_->size) {
-      return Unexpected("Index out of range.");
-    }
-
-    DiagnosticEngine diagnostic;
-    auto value_opt =
-        ArgDecoding<T>::Decode(args_->types[idx], args_->args[idx], diagnostic);
-    if (!value_opt.has_value()) {
-      return Unexpected(diagnostic.Result());
-    }
-    return *value_opt;
-  }
+ protected:
+  const XLA_FFI_Args* args() const { return args_; }
+  size_t offset() const { return offset_; }
 
  private:
-  const XLA_FFI_Args* args_;  // not owned
+  const XLA_FFI_Args* args_;
   size_t offset_;
 };
 
-template <>
-struct internal::Decode<internal::RemainingArgsTag> {
-  static std::optional<RemainingArgs> call(DecodingOffsets& offsets,
-                                           DecodingContext& ctx,
-                                           DiagnosticEngine& diagnostic) {
-    return RemainingArgs(&ctx.call_frame->args, offsets.args);
-  }
-};
+}  // namespace internal
 
 //===----------------------------------------------------------------------===//
 // Type-safe wrapper for accessing a variable number of results.
 //===----------------------------------------------------------------------===//
 
-class RemainingResults {
+namespace internal {
+
+class RemainingRetsBase {
  public:
-  RemainingResults(const XLA_FFI_Rets* rets, size_t offset)
+  RemainingRetsBase(const XLA_FFI_Rets* rets, size_t offset)
       : rets_(rets), offset_(offset) {
     assert(offset <= rets_->size && "illegal remaining rets offset");
   }
@@ -1076,43 +998,30 @@ class RemainingResults {
   size_t size() const { return rets_->size - offset_; }
   bool empty() const { return size() == 0; }
 
-  template <typename T>
-  Expected<T, std::string> get(size_t index) const {
-    size_t idx = offset_ + index;
-    if (idx >= rets_->size) {
-      return Unexpected("Index out of range.");
-    }
-
-    DiagnosticEngine diagnostic;
-    auto value_opt =
-        RetDecoding<T>::Decode(rets_->types[idx], rets_->rets[idx], diagnostic);
-    if (!value_opt.has_value()) {
-      return Unexpected(diagnostic.Result());
-    }
-    return **value_opt;
-  }
+ protected:
+  const XLA_FFI_Rets* rets() const { return rets_; }
+  size_t offset() const { return offset_; }
 
  private:
   const XLA_FFI_Rets* rets_;  // not owned
   size_t offset_;
 };
 
-template <>
-struct internal::Decode<internal::RemainingRetsTag> {
-  static std::optional<RemainingResults> call(DecodingOffsets& offsets,
-                                              DecodingContext& ctx,
-                                              DiagnosticEngine& diagnostic) {
-    return RemainingResults(&ctx.call_frame->rets, offsets.rets);
-  }
-};
+}  // namespace internal
 
 //===----------------------------------------------------------------------===//
 // Type-safe wrapper for accessing dictionary attributes.
 //===----------------------------------------------------------------------===//
 
-class Dictionary {
+namespace internal {
+
+// Forward declare dictionary attribute decoding defined below.
+template <typename T, typename... Ts>
+struct DecodeDictionaryAttr;
+
+class DictionaryBase {
  public:
-  explicit Dictionary(const XLA_FFI_Attrs* attrs) : attrs_(attrs) {}
+  explicit DictionaryBase(const XLA_FFI_Attrs* attrs) : attrs_(attrs) {}
 
   size_t size() const { return attrs_->size; }
 
@@ -1120,21 +1029,15 @@ class Dictionary {
     return Find(name) < attrs_->size;
   }
 
-  template <typename T>
-  Expected<T, std::string> get(std::string_view name) const {
-    DiagnosticEngine diagnostic;
-    auto value_opt = get<T>(name, diagnostic);
-    if (!value_opt.has_value()) {
-      return Unexpected(diagnostic.Result());
-    }
-    return *value_opt;
-  }
+ protected:
+  template <typename T, typename... Ts>
+  friend struct DecodeDictionaryAttr;
 
   template <typename T>
   std::optional<T> get(std::string_view name,
                        DiagnosticEngine& diagnostic) const {
     size_t idx = Find(name);
-    if (idx >= attrs_->size) {
+    if (XLA_FFI_PREDICT_FALSE(idx >= attrs_->size)) {
       return diagnostic.Emit("Unexpected attribute: ") << name;
     }
 
@@ -1161,15 +1064,11 @@ class Dictionary {
   const XLA_FFI_Attrs* attrs_;
 };
 
-// Decode `AttrsTag` into a generic `Dictionary` attribute.
-template <>
-struct internal::Decode<internal::AttrsTag<Dictionary>> {
-  static std::optional<Dictionary> call(DecodingOffsets& offsets,
-                                        DecodingContext& ctx,
-                                        DiagnosticEngine& diagnostic) {
-    return Dictionary(&ctx.call_frame->attrs);
-  }
-};
+}  // namespace internal
+
+//===----------------------------------------------------------------------===//
+// Decoding for aggregate attributes (decoding dictionaries into structs).
+//===----------------------------------------------------------------------===//
 
 // Decode `AttrsTag` into a type `T` relying on struct decoding defined below.
 template <typename T>
@@ -1186,6 +1085,13 @@ struct internal::Decode<internal::AttrsTag<T>> {
 // Template metaprogramming for decoding handler signature
 //===----------------------------------------------------------------------===//
 
+// Forward declare classes for decoding variadic number of arguments and
+// results. They are defined in `ffi.h` headers (internal and external), to be
+// able to use slightly different implementations for internal and external
+// FFI (`absl::StatusOr` vs `ffi::ErrorOr`).
+class RemainingArgs;
+class RemainingRets;
+
 namespace internal {
 // A helper struct to extract the type of the handler argument.
 template <typename T>
@@ -1200,7 +1106,7 @@ struct FnArgType<internal::RemainingArgsTag> {
 
 template <>
 struct FnArgType<internal::RemainingRetsTag> {
-  using Type = RemainingResults;
+  using Type = RemainingRets;
 };
 
 // Extracts the underlying type from the returned result type tag.
@@ -1292,22 +1198,22 @@ class Handler : public Ffi {
  public:
   XLA_FFI_Error* Call(const XLA_FFI_CallFrame* call_frame) const override {
     // Sanity checking call frame struct size.
-    if (auto* err = CheckStructSize(call_frame->api, "XLA_FFI_CallFrame",
-                                    XLA_FFI_CallFrame_STRUCT_SIZE,
-                                    call_frame->struct_size))
+    if (XLA_FFI_Error* err = CheckStructSize(
+            call_frame->api, "XLA_FFI_CallFrame", XLA_FFI_CallFrame_STRUCT_SIZE,
+            call_frame->struct_size)) {
       return err;
+    }
 
     // Check the API versions.
-    auto api_version = call_frame->api->api_version;
+    const XLA_FFI_Api_Version& api_version = call_frame->api->api_version;
     if (api_version.major_version != XLA_FFI_API_MAJOR ||
         api_version.minor_version != XLA_FFI_API_MINOR) {
       return InvalidArgument(
           call_frame->api,
           StrCat("FFI handler's API version (", XLA_FFI_API_MAJOR, ".",
-                 XLA_FFI_API_MINOR,
-                 ") does not match the framework's API version (",
-                 api_version.major_version, ".", api_version.minor_version,
-                 ")"));
+                 XLA_FFI_API_MINOR, ") does not match the framework's API ",
+                 "version (", api_version.major_version, ".",
+                 api_version.minor_version, ")"));
     }
 
     // Check that handler is called during correct execution stage.
@@ -1321,7 +1227,7 @@ class Handler : public Ffi {
 
     // Check that the number of passed arguments matches the signature. Each
     // individual argument decoding will check the actual type.
-    if (internal::HasRemainingArgsTag<Ts...>::value) {
+    if constexpr (internal::HasRemainingArgsTag<Ts...>::value) {
       if (XLA_FFI_PREDICT_FALSE(call_frame->args.size < kNumArgs)) {
         return InvalidArgument(
             call_frame->api,
@@ -1339,7 +1245,7 @@ class Handler : public Ffi {
 
     // Check that the number of results matches the signature. Each individual
     // result decoding will check the actual type.
-    if (internal::HasRemainingRetsTag<Ts...>::value) {
+    if constexpr (internal::HasRemainingRetsTag<Ts...>::value) {
       if (XLA_FFI_PREDICT_FALSE(call_frame->rets.size < kNumRets)) {
         return InvalidArgument(
             call_frame->api,
@@ -1515,21 +1421,6 @@ struct AttrDecoding<std::string_view> {
   }
 };
 
-template <>
-struct AttrDecoding<Dictionary> {
-  using Type = Dictionary;
-  static std::optional<Dictionary> Decode(XLA_FFI_AttrType type, void* attr,
-                                          DiagnosticEngine& diagnostic) {
-    if (XLA_FFI_PREDICT_FALSE(type != XLA_FFI_AttrType_DICTIONARY)) {
-      return diagnostic.Emit("Wrong attribute type: expected ")
-             << XLA_FFI_AttrType_DICTIONARY << " but got " << type;
-    }
-
-    auto* attrs = reinterpret_cast<XLA_FFI_Attrs*>(attr);
-    return Dictionary(attrs);
-  }
-};
-
 //===----------------------------------------------------------------------===//
 // Automatic dictionary attributes to structs decoding.
 //===----------------------------------------------------------------------===//
@@ -1574,7 +1465,7 @@ struct DecodeDictionaryAttr {
     //
     // Consider using `static auto decoder = ...` below, and compute mapping in
     // constructor. Add benchmarks first to know what to improve!
-    Dictionary dict(attrs);
+    internal::DictionaryBase dict(attrs);
 
     std::tuple<std::optional<Ts>...> members = {
         dict.get<Ts>(names[Is], diagnostic)...};
@@ -1637,7 +1528,7 @@ auto DictionaryDecoder(Members... m) {
 // type to decode the attribute as a scalar value and cast it to the enum type.
 #define XLA_FFI_REGISTER_ENUM_ATTR_DECODING(T)                                \
   template <>                                                                 \
-  struct ::xla::ffi::AttrDecoding<T> {                                        \
+  struct xla::ffi::AttrDecoding<T> {                                          \
     using Type = T;                                                           \
     using U = std::underlying_type_t<Type>;                                   \
     static_assert(std::is_enum<Type>::value, "Expected enum class");          \

@@ -1113,6 +1113,42 @@ SmallVector<int64_t, 4> IndexingMap::Evaluate(
   return eval.getConstantResults();
 }
 
+bool IndexingMap::IsSymbolConstrained(int64_t symbol_id) const {
+  for (const auto& [expr, _] : constraints_) {
+    bool result = false;
+    expr.walk([&](mlir::AffineExpr leaf) {
+      auto sym = mlir::dyn_cast<mlir::AffineSymbolExpr>(leaf);
+      if (sym && sym.getPosition() == symbol_id) {
+        result = true;
+      }
+    });
+    if (result) return true;
+  }
+  return false;
+}
+
+llvm::DenseMap<mlir::AffineExpr, Interval> IndexingMap::GetConstraintsForSymbol(
+    int symbol_id) const {
+  llvm::DenseMap<mlir::AffineExpr, Interval> constraints;
+  for (auto const& [exp, interval] : GetConstraints()) {
+    if (exp.isFunctionOfSymbol(symbol_id)) {
+      constraints.insert({exp, interval});
+    }
+  }
+  return constraints;
+}
+
+llvm::DenseMap<mlir::AffineExpr, Interval> IndexingMap::GetConstraintsForDim(
+    int dim_id) const {
+  llvm::DenseMap<mlir::AffineExpr, Interval> constraints;
+  for (auto const& [exp, interval] : GetConstraints()) {
+    if (exp.isFunctionOfDim(dim_id)) {
+      constraints.insert({exp, interval});
+    }
+  }
+  return constraints;
+}
+
 RangeEvaluator::RangeEvaluator(const IndexingMap& indexing_map,
                                MLIRContext* mlir_context, bool use_constraints)
     : mlir_context_(mlir_context),

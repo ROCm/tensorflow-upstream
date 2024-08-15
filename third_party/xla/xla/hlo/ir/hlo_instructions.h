@@ -1343,6 +1343,15 @@ class HloCallableInstruction : public HloInstruction {
                          absl::Span<HloInstruction* const> operands,
                          absl::Span<HloComputation* const> called_computations);
 
+  HloCallableInstruction(HloOpcode opcode, const Shape& shape,
+                         const std::string& name, const std::string& attributes,
+                         int64_t version);
+
+  HloCallableInstruction(HloOpcode opcode, const Shape& shape,
+                         absl::Span<HloInstruction* const> operands,
+                         HloComputation* decomposition, const std::string& name,
+                         const std::string& attributes, int64_t version);
+
   ~HloCallableInstruction() override;
 
   // Adds a new operand to the callable instruction.
@@ -1400,6 +1409,21 @@ class HloCallableInstruction : public HloInstruction {
       std::vector<std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>>
           aliasing) {
     output_to_operand_aliasing_ = std::move(aliasing);
+  }
+
+  FrontendAttributes BuildFrontendAttributesForComposite(
+      const std::string& name,
+      std::optional<absl::string_view> attributes = std::nullopt,
+      std::optional<int64_t> version = std::nullopt) {
+    FrontendAttributes frontend_attributes;
+    frontend_attributes.mutable_map()->insert({"composite.name", name});
+    frontend_attributes.mutable_map()->insert(
+        {"composite.attributes",
+         attributes.has_value() ? std::string(*attributes) : "{}"});
+    frontend_attributes.mutable_map()->insert(
+        {"composite.version",
+         version.has_value() ? std::to_string(*version) : "0"});
+    return frontend_attributes;
   }
 
  protected:
@@ -1554,6 +1578,15 @@ class HloCallInstruction : public HloCallableInstruction {
   HloCallInstruction(const Shape& shape,
                      absl::Span<HloInstruction* const> operands,
                      HloComputation* called_computation);
+
+  HloCallInstruction(const Shape& shape, HloInstruction* decomposition_root,
+                     const std::string& name, const std::string& attributes,
+                     int64_t version);
+
+  HloCallInstruction(const Shape& shape,
+                     absl::Span<HloInstruction* const> operands,
+                     HloComputation* decomposition, const std::string& name,
+                     const std::string& attributes, int64_t version);
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kCall;
@@ -2313,7 +2346,9 @@ class HloGatherInstruction : public HloInstruction {
   static GatherDimensionNumbers MakeGatherDimNumbers(
       absl::Span<const int64_t> offset_dims,
       absl::Span<const int64_t> collapsed_slice_dims,
-      absl::Span<const int64_t> start_index_map, int64_t index_vector_dim);
+      absl::Span<const int64_t> start_index_map, int64_t index_vector_dim,
+      absl::Span<const int64_t> operand_batching_dims = {},
+      absl::Span<const int64_t> start_indices_batching_dims = {});
   // Returns the dump string of the given gather dimension numbers.
   static std::string GatherDimensionNumbersToString(
       const GatherDimensionNumbers& dim_numbers);
@@ -2378,7 +2413,9 @@ class HloScatterInstruction : public HloInstruction {
       absl::Span<const int64_t> update_window_dims,
       absl::Span<const int64_t> inserted_window_dims,
       absl::Span<const int64_t> scatter_dims_to_operand_dims,
-      int64_t index_vector_dim);
+      int64_t index_vector_dim,
+      absl::Span<const int64_t> input_batching_dims = {},
+      absl::Span<const int64_t> scatter_indices_batching_dims = {});
   // Returns the dump string of the given scatter dimension numbers.
   static std::string ScatterDimensionNumbersToString(
       const ScatterDimensionNumbers& dim_numbers);
