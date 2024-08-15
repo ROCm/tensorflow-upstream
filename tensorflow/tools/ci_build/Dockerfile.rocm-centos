@@ -1,0 +1,27 @@
+#| This Dockerfile provides a starting point for a ROCm installation of Tensorflow.
+FROM rocm/dev-centos-7:6.1.1-complete
+
+ENV ROCM_PATH=/opt/rocm-6.1.1
+
+ENV DEBIAN_FRONTEND noninteractive
+ENV HOME /root/
+RUN curl -o /etc/yum.repos.d/CentOS-Base.repo http://mirrors.aliyun.com/repo/Centos-7.repo
+# Install required python packages
+
+RUN yum update -y -e 0 && yum install -y openjdk-8-jdk openjdk-8-jre unzip wget git \
+    rh-python38-python-devel.x86_64 \
+    rh-python38-python.x86_64 \
+    rocprim \
+    hipcub \
+    rh-python38-python-pip.noarch \
+    rh-python38-python-wheel.noarch
+RUN ln -sf /opt/rh/rh-python38/root/usr/bin/python3.8 /usr/bin/python3
+RUN python3 -m pip install pip enum34 mock setuptools cython --upgrade
+RUN python3 -m pip install keras_applications jupyter numpy==1.18.5 keras_preprocessing --upgrade
+
+RUN rm -rf /opt/rocm/include/ck
+COPY ./install/install_bazel.sh ./
+RUN bash ./install_bazel.sh
+WORKDIR $HOME
+
+

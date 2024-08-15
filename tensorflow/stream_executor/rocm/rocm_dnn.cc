@@ -373,6 +373,7 @@ miopenConvFwdAlgorithm_t ToConvForwardAlgo(dnn::AlgorithmDesc algorithm) {
     case miopenConvolutionFwdAlgoDirect:
     case miopenConvolutionFwdAlgoFFT:
     case miopenConvolutionFwdAlgoWinograd:
+    case miopenConvolutionFwdAlgoImplicitGEMM:
       return algo;
     default:
       LOG(FATAL) << "Unsupported MIOpen convolution forward algorithm: "

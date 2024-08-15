@@ -120,6 +120,7 @@ toolchain {
   # Stamp the binary with a unique identifier.
   linker_flag: "-Wl,--build-id=md5"
   linker_flag: "-Wl,--hash-style=gnu"
+  linker_flag: "-Wl,--copy-dt-needed-entries"
   # Gold linker only? Can we enable this by default?
   # linker_flag: "-Wl,--warn-execstack"
   # linker_flag: "-Wl,--detect-odr-violations"
