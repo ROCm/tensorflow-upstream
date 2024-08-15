@@ -197,6 +197,9 @@ def _rocm_include_path(repository_ctx, rocm_config):
     # Add hipcub headers
     inc_dirs.append("/opt/rocm/include/hipcub")
 
+    # Add rocprim headers
+    inc_dirs.append("/opt/rocm/include/rocprim")
+
     # Add RCCL headers
     inc_dirs.append("/opt/rocm/rccl/include")
 
@@ -218,6 +221,10 @@ def _rocm_include_path(repository_ctx, rocm_config):
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/17/include")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/17/include")
 
+    # Support hcc based off clang 18.0.0.
+    inc_dirs.append("/opt/rocm/lib/llvm/lib/clang/18/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/18/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/18/include")
 
     inc_entries = []
     for inc_dir in inc_dirs:
@@ -748,6 +755,12 @@ def _create_local_rocm_repository(repository_ctx):
         "rocm/include/hipcub",
         "hipcub-include",
     ))
+    genrules.append(_symlink_genrule_for_dir(
+        repository_ctx,
+        rocm_include_path + "/rocprim",
+        "rocm/include/rocprim",
+        "rocprim-include",
+    ))
 
     rocm_libs = _find_libs(repository_ctx, rocm_config)
     rocm_lib_src = []
@@ -799,6 +812,7 @@ def _create_local_rocm_repository(repository_ctx):
                                 '":miopen-include",\n' +
                                 '":hip-include",\n' +
                                 '":hipcub-include",\n' +
+                                '":rocprim-include",\n' +
                                 '":rccl-include",'),
         },
     )

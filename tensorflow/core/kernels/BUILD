@@ -957,7 +957,7 @@ tf_kernel_library(
         ":cuda_solvers",
         "@cub_archive//:cub",
     ]) + if_rocm([
-        "@rocprim_archive//:rocprim",
+	"@local_config_rocm//rocm:rocprim",
     ]) + ARRAY_DEPS,
 )
 
@@ -1829,7 +1829,7 @@ tf_kernel_library(
         ":fill_functor",
         ":gather_functor",
     ] + if_cuda(["@cub_archive//:cub"])
-    + if_rocm(["@rocprim_archive//:rocprim"]),
+    + if_rocm(["@local_config_rocm//rocm:rocprim"]),
 )
 
 tf_kernel_library(
@@ -3013,7 +3013,9 @@ tf_kernel_library(
     name = "reduction_ops",
     gpu_srcs = ["reduction_gpu_kernels.cu.h"],
     prefix = "reduction_ops",
-    deps = MATH_DEPS + [":transpose_functor"] + if_cuda(["@cub_archive//:cub"]) + if_rocm(["@rocprim_archive//:rocprim"]),
+    deps = MATH_DEPS + [":transpose_functor"] 
+                     + if_cuda(["@cub_archive//:cub"]) 
+		     + if_rocm(["@local_config_rocm//rocm:rocprim"]),
 )
 
 tf_kernel_library(
@@ -3534,7 +3536,7 @@ tf_kernel_library(
         "@cub_archive//:cub",
     ]) + if_rocm_is_configured([
         ":reduction_ops",
-        "@rocprim_archive//:rocprim",
+	"@local_config_rocm//rocm:rocprim",
     ])
 )
 
@@ -3573,7 +3575,7 @@ tf_kernel_library(
     deps = NN_DEPS + [":reduction_ops",] + if_cuda([
         "@cub_archive//:cub",
 	]) + if_rocm([
-	"@rocprim_archive//:rocprim",
+	"@local_config_rocm//rocm:rocprim",
 	]),
 )
 
@@ -3592,7 +3594,8 @@ tf_kernel_library(
 tf_kernel_library(
     name = "topk_op",
     prefix = "topk_op",
-    deps = NN_DEPS + if_cuda(["@cub_archive//:cub"]) + if_rocm(["@rocprim_archive//:rocprim"]),
+    deps = NN_DEPS + if_cuda(["@cub_archive//:cub"]) 
+                   + if_rocm(["@local_config_rocm//rocm:rocprim"]),
 )
 
 tf_kernel_library(
@@ -3616,7 +3619,7 @@ tf_kernel_library(
         "//tensorflow/core:lib_internal",
         "//third_party/eigen3",
     ] + if_cuda(["@cub_archive//:cub"])
-    + if_rocm(["@rocprim_archive//:rocprim"]),
+    + if_rocm(["@local_config_rocm//rocm:rocprim"]),
 )
 
 tf_kernel_library(
@@ -3628,7 +3631,7 @@ tf_kernel_library(
         "//tensorflow/core:lib_internal",
         "//third_party/eigen3",
     ] + if_cuda(["@cub_archive//:cub"])
-    + if_rocm(["@rocprim_archive//:rocprim"]),
+    + if_rocm(["@local_config_rocm//rocm:rocprim"]),
 )
 
 tf_kernel_library(
@@ -3643,7 +3646,7 @@ tf_kernel_library(
         "//tensorflow/core:nn_grad",
         "//tensorflow/core:nn_ops_op_lib",
     ] + if_cuda(["@cub_archive//:cub"])
-    + if_rocm(["@rocprim_archive//:rocprim"]),
+    + if_rocm(["@local_config_rocm//rocm:rocprim"]),
 )
 
 tf_gpu_cc_test(
