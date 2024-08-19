@@ -12,19 +12,24 @@ set -e
 TF_PKG_LOC=/tmp/tensorflow_pkg
 rm -f $TF_PKG_LOC/tensorflow*.whl
 
-# First positional argument (if any) specifies the ROCM_INSTALL_DIR
-ROCM_INSTALL_DIR=/opt/rocm-6.1.0
-if [[ -n $1 ]]; then
-    ROCM_INSTALL_DIR=$1
-fi
-export ROCM_TOOLKIT_PATH=$ROCM_INSTALL_DIR
+export USE_BAZEL_VERSION=0.26.1
+export CUDA_TOOLKIT_PATH=/usr/local/cuda-11
+#export TF_CUDA_VERSION=12.3
 
-yes "" | TF_NEED_ROCM=1 ROCM_TOOLKIT_PATH=${ROCM_INSTALL_DIR} PYTHON_BIN_PATH=/usr/bin/python3 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
-pip3 uninstall -y tensorflow || true
-bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=rocm --copt=-Wno-invalid-constexpr //tensorflow:libtensorflow_cc.so
-bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=rocm  //tensorflow:libtensorflow_framework.so
-bazel build --config=opt --config=rocm //tensorflow/tools/pip_package:build_pip_package --verbose_failures  &&
-bazel-bin/tensorflow/tools/pip_package/build_pip_package $TF_PKG_LOC
+#--copt -g --strip=never
 
-echo y| pip uninstall tensorflow
-pip install $TF_PKG_LOC/tensorflow-1.15.5-cp37-cp37m-linux_x86_64.whl
+#yes "" | TF_NEED_ROCM=1 ROCM_TOOLKIT_PATH=${ROCM_INSTALL_DIR} PYTHON_BIN_PATH=/usr/bin/python3 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
+#yes "" | TF_NEED_CUDA=1 TF_CUDA_VERSION=11.7 CUDA_TOOLKIT_PATH=/usr/local/cuda-11.7 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
+#pip3 uninstall -y tensorflow || true
+
+bazel build -c opt --copt=-mavx --copt=-mavx2 --config=cuda \
+        --copt -Wno-sign-compare \
+        --action_env=TF_CUDA_COMPUTE_CAPABILITIES=7.0 \
+        --keep_going \
+        //tensorflow:libtensorflow_cc.so \
+        //tensorflow:libtensorflow_framework.so
+#bazel build --config=opt --config=rocm //tensorflow/tools/pip_package:build_pip_package --verbose_failures  &&
+#bazel-bin/tensorflow/tools/pip_package/build_pip_package $TF_PKG_LOC
+
+#echo y| pip uninstall tensorflow
+#pip install $TF_PKG_LOC/tensorflow-1.15.5-cp37-cp37m-linux_x86_64.whl

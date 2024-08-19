@@ -134,6 +134,7 @@ build:using_cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 # This config refers to building CUDA op kernels with nvcc.
 build:cuda --config=using_cuda
 build:cuda --define=using_cuda_nvcc=true
+build:cuda --cxxopt -DCUB_NS_QUALIFIER=::cub
 
 # This config refers to building CUDA op kernels with clang.
 build:cuda_clang --config=using_cuda

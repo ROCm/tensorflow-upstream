@@ -4780,10 +4780,18 @@ bool CudnnSupport::DoMatMul(Stream* stream,
     const int64 m = output_dimensions.NodesAcrossFeatureMaps();
     const int64 n = input_dimensions.count();
     const int64 k = input_dimensions.NodesAcrossFeatureMaps();
-    stream->ThenBlasGemm(blas::Transpose::kNoTranspose,
-                         blas::Transpose::kNoTranspose, m, n, k, alpha, weights,
-                         m, input_data, k, beta, output_data, m,
-                         blas::CallContext::kNone);
+    stream->ThenBlasGemm(blas::GemmCallContext<float>{
+      .transa = blas::Transpose::kNoTranspose,
+      .transb = blas::Transpose::kNoTranspose,
+      .m = m, .n = n, .k = k, 
+      .alpha = alpha, .beta = beta,
+      .pa = &weights,
+      .lda = m,
+      .pb = &input_data,
+      .ldb = k,
+      .c = output_data,
+      .ldc = m,
+      .context = blas::CallContext::kNone});
   } else {
     // This is a slower and more complex path that supports output
     // width() * height() > 1, though it only supports the
@@ -4860,10 +4868,20 @@ bool CudnnSupport::DoMatMul(Stream* stream,
       return ptrs;
     };
 
-    stream->ThenBlasGemmBatched(blas::Transpose::kNoTranspose,
-                                blas::Transpose::kNoTranspose, m, n, k, alpha,
-                                toPtrs(a), lda, toPtrs(b), ldb, beta, toPtrs(c),
-                                ldc, batch_count, blas::CallContext::kNone);
+    port::ArraySlice<DeviceMemory<float>*> aa = toPtrs(a), bb = toPtrs(b), cc = toPtrs(c);
+    stream->ThenBlasGemmBatched(blas::BatchedGemmCallContext<float>{
+      .transa = blas::Transpose::kNoTranspose,
+      .transb = blas::Transpose::kNoTranspose,
+      .m = m, .n = n, .k = k, 
+      .alpha = alpha, .beta = beta,
+      .pa = &aa,
+      .lda = lda,
+      .pb = &bb,
+      .ldb = ldb,
+      .c = &cc,
+      .ldc = ldc,
+      .batch_count = batch_count,
+      .context = blas::CallContext::kNone});
   }
 
   return stream->ok();

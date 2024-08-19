@@ -410,10 +410,11 @@ cudaDataType_t CUDAComputationType(blas::ComputationType ty) {
       return CUDA_C_32F;
     case blas::ComputationType::kComplexF64:
       return CUDA_C_64F;
-    case blas::ComputationType::kTF32AsF32:  // fall-through
-    case blas::ComputationType::kBF16AsF32:
-      // These cases are currently only supported in the blasLt routines, which
-      // use CUBLASComputationType() instead.
+    default:
+    // case blas::ComputationType::kTF32AsF32:  // fall-through
+    // case blas::ComputationType::kBF16AsF32:
+    //   // These cases are currently only supported in the blasLt routines, which
+    //   // use CUBLASComputationType() instead.
       LOG(FATAL) << "Invalid value of blas::ComputationType.";
   }
 }
@@ -431,10 +432,10 @@ cublasComputeType_t CUBLASComputationType(blas::ComputationType ty) {
       return CUBLAS_COMPUTE_64F;
     case blas::ComputationType::kI32:
       return CUBLAS_COMPUTE_32I;
-    case blas::ComputationType::kTF32AsF32:
-      return CUBLAS_COMPUTE_32F_FAST_TF32;
-    case blas::ComputationType::kBF16AsF32:
-      return CUBLAS_COMPUTE_32F_FAST_16BF;
+    // case blas::ComputationType::kTF32AsF32:
+    //   return CUBLAS_COMPUTE_32F_FAST_TF32;
+    // case blas::ComputationType::kBF16AsF32:
+    //   return CUBLAS_COMPUTE_32F_FAST_16BF;
   }
 }
 #endif  // CUDA_VERSION >= 11000
@@ -448,8 +449,8 @@ blas::DataType GetScaleType(blas::DataType data_type,
       return blas::DataType::kHalf;
     case blas::ComputationType::kF32:         // fall-through
     case blas::ComputationType::kComplexF32:  // fall-through
-    case blas::ComputationType::kTF32AsF32:   // fall-through
-    case blas::ComputationType::kBF16AsF32:
+    // case blas::ComputationType::kTF32AsF32:   // fall-through
+    // case blas::ComputationType::kBF16AsF32:
       return is_complex ? blas::DataType::kComplexFloat
                         : blas::DataType::kFloat;
     case blas::ComputationType::kF64:  // fall-through
@@ -1740,160 +1741,236 @@ bool CUDABlas::DoBlasTrsv(Stream *stream, blas::UpperLower uplo,
                         lda, GpuComplex(GpuMemoryMutable(x)), incx);
 }
 
-bool CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
-                          blas::Transpose transb, uint64 m, uint64 n, uint64 k,
-                          float alpha, const DeviceMemory<Eigen::half> &a,
-                          int lda, const DeviceMemory<Eigen::half> &b, int ldb,
-                          float beta, DeviceMemory<Eigen::half> *c, int ldc) {
-#if CUDA_VERSION >= 7050
-  VLOG(1) << absl::StrFormat(
-      "doing cuBLAS SGEMM: at=%d bt=%d m=%u n=%u "
-      "k=%u alpha=%f a=%p lda=%d b=%p ldb=%d beta=%f "
-      "c=%p ldc=%d",
-      static_cast<int>(transa), static_cast<int>(transb), m, n, k, alpha,
-      a.opaque(), lda, b.opaque(), ldb, beta, c->opaque(), ldc);
-  if (transa == blas::Transpose::kNoTranspose) {
-    if (lda < static_cast<int64>(m)) {
-      LOG(WARNING) << "GEMM lda was smaller than m (no transpose case); "
-                      "precondition violation";
-    }
-  } else {
-    if (lda < static_cast<int64>(k)) {
-      LOG(WARNING) << "GEMM lda (" << lda << ") was smaller than k (" << k
-                   << ") (transpose case); precondition violation";
-    }
+
+template <class T, class V, class W>
+bool CUDABlas::DoBlasGemmImpl(Stream *stream, blas::GemmCallContext<T> ctx, V strided_fun, W fun)
+{
+  if(ctx.output_profile_result)
+  {
+      LOG(ERROR) << "cuBLAS does not currently support profiling";
+      return false;
   }
-  if (transb == blas::Transpose::kNoTranspose) {
-    if (ldb < static_cast<int64>(k)) {
-      LOG(WARNING) << "GEMM ldb (" << ldb << ") was smaller than k (" << k
-                   << ") (no transpose case); precondition violation";
-    }
-  } else {
-    if (ldb < static_cast<int64>(n)) {
-      LOG(WARNING) << "GEMM ldb was smaller than n (transpose case); "
-                      "precondition violation";
-    }
+  
+  const T alpha(ctx.alpha);
+  const T beta(ctx.beta);
+  typedef typename std::conditional<std::is_same<T, Eigen::half>::value, __half, T>::type DT;
+  if(ctx.stride_a>=0)
+  {
+    return DoBlasInternal(
+        strided_fun, stream,
+        false, /* pointer_mode_host */
+        CUDABlasTranspose(ctx.transa), CUDABlasTranspose(ctx.transb), ctx.m, ctx.n, ctx.k,
+        reinterpret_cast<const DT *>(&alpha),
+        reinterpret_cast<const DT *>(GpuMemory(*ctx.pa)), ctx.lda, ctx.stride_a,
+        reinterpret_cast<const DT *>(GpuMemory(*ctx.pb)), ctx.ldb, ctx.stride_b,
+        reinterpret_cast<const DT *>(&beta),
+        reinterpret_cast<DT *>(GpuMemoryMutable(ctx.c)), ctx.ldc, ctx.stride_c,
+        ctx.batch_count);
   }
+  else
+  {
+      return DoBlasInternal(
+        fun, stream, /* pointer_mode_host = */ true,
+        CUDABlasTranspose(ctx.transa), CUDABlasTranspose(ctx.transb), ctx.m, ctx.n, ctx.k,
+        reinterpret_cast<const DT *>(&alpha),
+        reinterpret_cast<const DT *>(GpuMemory(*ctx.pa)), ctx.lda, 
+        reinterpret_cast<const DT *>(GpuMemory(*ctx.pb)), ctx.ldb, 
+        reinterpret_cast<const DT *>(&beta),
+        reinterpret_cast<DT *>(GpuMemoryMutable(ctx.c)), ctx.ldc);
+  }
+}
 
-#if CUDA_VERSION < 11000
-  cublasMath_t math_type = CUBLAS_TENSOR_OP_MATH;
-#else
-  cublasMath_t math_type = CUBLAS_DEFAULT_MATH;
-#endif
 
-  return DoBlasInternalImpl(
-      cublasSgemmEx, stream, true /* = pointer_mode_host */,
-      true /* = err_on_failure= */, math_type, CUDABlasTranspose(transa),
-      CUDABlasTranspose(transb), m, n, k, &alpha, GpuMemory(a),
-      SE_CUDA_DATA_HALF, lda, GpuMemory(b), SE_CUDA_DATA_HALF, ldb, &beta,
-      GpuMemoryMutable(c), SE_CUDA_DATA_HALF, ldc);
+bool CUDABlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<Eigen::half> ctx, blas::ProfileResult *output_profile_result)
+{
+  // cublasStatus_t (*bgemm)(
+  //       cublasHandle_t, cublasOperation_t, cublasOperation_t, int, int, int,
+  //       const void *, const void *, cudaDataType, int, long long int,
+  //       const void *, cudaDataType, int, long long int, const void *, void *,
+  //       cudaDataType, int, long long int, int, cudaDataType,
+  //       cublasGemmAlgo_t algo) = cublasGemmStridedBatchedEx;
+  // return DoBlasGemmImpl(stream, ctx, bgemm, cublasSgemmEx);
+}
 
-#else
-  LOG(ERROR) << "fp16 sgemm is not implemented in this cuBLAS version "
-             << "(need at least CUDA 7.5)";
+bool CUDABlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<float> ctx, blas::ProfileResult *output_profile_result) 
+{
+  return DoBlasGemmImpl(stream, ctx, cublasSgemmStridedBatched, cublasSgemm);
+}
+
+bool CUDABlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<double> ctx, blas::ProfileResult *output_profile_result)
+{
+  return DoBlasGemmImpl(stream, ctx, cublasDgemmStridedBatched, cublasDgemm);
+}
+
+bool CUDABlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<std::complex<float> > ctx, blas::ProfileResult *output_profile_result)
+{
+//  return DoBlasGemmImpl(stream, ctx, cublasCgemmStridedBatched, cublasCgemm);
+}
+
+bool CUDABlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<std::complex<double> > ctx, blas::ProfileResult *output_profile_result)
+{
+//  return DoBlasGemmImpl(stream, ctx, cublasZgemmStridedBatched, cublasZgemm);
+}
+
+bool CUDABlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<int8, int32> ctx, blas::ProfileResult *output_profile_result)
+{
   return false;
-#endif
 }
 
-bool CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
-                          blas::Transpose transb, uint64 m, uint64 n, uint64 k,
-                          float alpha, const DeviceMemory<float> &a, int lda,
-                          const DeviceMemory<float> &b, int ldb, float beta,
-                          DeviceMemory<float> *c, int ldc) {
-  VLOG(1) << absl::StrFormat(
-      "doing cuBLAS SGEMM: at=%d bt=%d m=%u n=%u "
-      "k=%u alpha=%f a=%p lda=%d b=%p ldb=%d beta=%f "
-      "c=%p ldc=%d",
-      static_cast<int>(transa), static_cast<int>(transb), m, n, k, alpha,
-      a.opaque(), lda, b.opaque(), ldb, beta, c->opaque(), ldc);
-  if (transa == blas::Transpose::kNoTranspose) {
-    if (lda < static_cast<int64>(m)) {
-      LOG(WARNING) << "GEMM lda was smaller than m (no transpose case); "
-                      "precondition violation";
-    }
-  } else {
-    if (lda < static_cast<int64>(k)) {
-      LOG(WARNING) << "GEMM lda (" << lda << ") was smaller than k (" << k
-                   << ") (transpose case); precondition violation";
-    }
-  }
-  if (transb == blas::Transpose::kNoTranspose) {
-    if (ldb < static_cast<int64>(k)) {
-      LOG(WARNING) << "GEMM ldb (" << ldb << ") was smaller than k (" << k
-                   << ") (no transpose case); precondition violation";
-    }
-  } else {
-    if (ldb < static_cast<int64>(n)) {
-      LOG(WARNING) << "GEMM ldb was smaller than n (transpose case); "
-                      "precondition violation";
-    }
-  }
+// bool CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
+//                           blas::Transpose transb, uint64 m, uint64 n, uint64 k,
+//                           float alpha, const DeviceMemory<Eigen::half> &a,
+//                           int lda, const DeviceMemory<Eigen::half> &b, int ldb,
+//                           float beta, DeviceMemory<Eigen::half> *c, int ldc) {
+// #if CUDA_VERSION >= 7050
+//   VLOG(1) << absl::StrFormat(
+//       "doing cuBLAS SGEMM: at=%d bt=%d m=%u n=%u "
+//       "k=%u alpha=%f a=%p lda=%d b=%p ldb=%d beta=%f "
+//       "c=%p ldc=%d",
+//       static_cast<int>(transa), static_cast<int>(transb), m, n, k, alpha,
+//       a.opaque(), lda, b.opaque(), ldb, beta, c->opaque(), ldc);
+//   if (transa == blas::Transpose::kNoTranspose) {
+//     if (lda < static_cast<int64>(m)) {
+//       LOG(WARNING) << "GEMM lda was smaller than m (no transpose case); "
+//                       "precondition violation";
+//     }
+//   } else {
+//     if (lda < static_cast<int64>(k)) {
+//       LOG(WARNING) << "GEMM lda (" << lda << ") was smaller than k (" << k
+//                    << ") (transpose case); precondition violation";
+//     }
+//   }
+//   if (transb == blas::Transpose::kNoTranspose) {
+//     if (ldb < static_cast<int64>(k)) {
+//       LOG(WARNING) << "GEMM ldb (" << ldb << ") was smaller than k (" << k
+//                    << ") (no transpose case); precondition violation";
+//     }
+//   } else {
+//     if (ldb < static_cast<int64>(n)) {
+//       LOG(WARNING) << "GEMM ldb was smaller than n (transpose case); "
+//                       "precondition violation";
+//     }
+//   }
 
-#if CUDA_VERSION < 11000
-  cublasMath_t math_type = CUBLAS_DEFAULT_MATH;
-#else
-  cublasMath_t math_type = CUBLAS_TF32_TENSOR_OP_MATH;
-  int cc_major, cc_minor;
-  if (stream->parent()->GetDeviceDescription().cuda_compute_capability(
-          &cc_major, &cc_minor) &&
-      cc_major >= 8) {
-    // TODO(reedwm): Remove or make this VLOG(1) once TensorFloat-32 is more
-    // well tested.
-    VLOG(2) << "TensorFloat-32 will be used for the matrix multiplication.";
-  }
-#endif
+// #if CUDA_VERSION < 11000
+//   cublasMath_t math_type = CUBLAS_TENSOR_OP_MATH;
+// #else
+//   cublasMath_t math_type = CUBLAS_DEFAULT_MATH;
+// #endif
 
-  return DoBlasInternalImpl(
-      cublasSgemm, stream, true /* = pointer_mode_host */,
-      true /* = err_on_failure */, math_type, CUDABlasTranspose(transa),
-      CUDABlasTranspose(transb), m, n, k, &alpha, GpuMemory(a), lda,
-      GpuMemory(b), ldb, &beta, GpuMemoryMutable(c), ldc);
-}
+//   return DoBlasInternalImpl(
+//       cublasSgemmEx, stream, true /* = pointer_mode_host */,
+//       true /* = err_on_failure= */, math_type, CUDABlasTranspose(transa),
+//       CUDABlasTranspose(transb), m, n, k, &alpha, GpuMemory(a),
+//       SE_CUDA_DATA_HALF, lda, GpuMemory(b), SE_CUDA_DATA_HALF, ldb, &beta,
+//       GpuMemoryMutable(c), SE_CUDA_DATA_HALF, ldc);
 
-bool CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
-                          blas::Transpose transb, uint64 m, uint64 n, uint64 k,
-                          double alpha, const DeviceMemory<double> &a, int lda,
-                          const DeviceMemory<double> &b, int ldb, double beta,
-                          DeviceMemory<double> *c, int ldc) {
-  return DoBlasInternal(cublasDgemm, stream, true /* = pointer_mode_host */,
-                        CUDABlasTranspose(transa), CUDABlasTranspose(transb), m,
-                        n, k, &alpha, GpuMemory(a), lda, GpuMemory(b), ldb,
-                        &beta, GpuMemoryMutable(c), ldc);
-}
+// #else
+//   LOG(ERROR) << "fp16 sgemm is not implemented in this cuBLAS version "
+//              << "(need at least CUDA 7.5)";
+//   return false;
+// #endif
+// }
 
-bool CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
-                          blas::Transpose transb, uint64 m, uint64 n, uint64 k,
-                          std::complex<float> alpha,
-                          const DeviceMemory<std::complex<float>> &a, int lda,
-                          const DeviceMemory<std::complex<float>> &b, int ldb,
-                          std::complex<float> beta,
-                          DeviceMemory<std::complex<float>> *c, int ldc) {
-  auto cb_alpha = GpuComplexValue(alpha);
-  auto cb_beta = GpuComplexValue(beta);
-  return DoBlasInternal(cublasCgemm, stream, true /* = pointer_mode_host */,
-                        CUDABlasTranspose(transa), CUDABlasTranspose(transb), m,
-                        n, k, GpuComplex(&cb_alpha), GpuComplex(GpuMemory(a)),
-                        lda, GpuComplex(GpuMemory(b)), ldb,
-                        GpuComplex(&cb_beta), GpuComplex(GpuMemoryMutable(c)),
-                        ldc);
-}
+// bool CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
+//                           blas::Transpose transb, uint64 m, uint64 n, uint64 k,
+//                           float alpha, const DeviceMemory<float> &a, int lda,
+//                           const DeviceMemory<float> &b, int ldb, float beta,
+//                           DeviceMemory<float> *c, int ldc) {
+//   VLOG(1) << absl::StrFormat(
+//       "doing cuBLAS SGEMM: at=%d bt=%d m=%u n=%u "
+//       "k=%u alpha=%f a=%p lda=%d b=%p ldb=%d beta=%f "
+//       "c=%p ldc=%d",
+//       static_cast<int>(transa), static_cast<int>(transb), m, n, k, alpha,
+//       a.opaque(), lda, b.opaque(), ldb, beta, c->opaque(), ldc);
+//   if (transa == blas::Transpose::kNoTranspose) {
+//     if (lda < static_cast<int64>(m)) {
+//       LOG(WARNING) << "GEMM lda was smaller than m (no transpose case); "
+//                       "precondition violation";
+//     }
+//   } else {
+//     if (lda < static_cast<int64>(k)) {
+//       LOG(WARNING) << "GEMM lda (" << lda << ") was smaller than k (" << k
+//                    << ") (transpose case); precondition violation";
+//     }
+//   }
+//   if (transb == blas::Transpose::kNoTranspose) {
+//     if (ldb < static_cast<int64>(k)) {
+//       LOG(WARNING) << "GEMM ldb (" << ldb << ") was smaller than k (" << k
+//                    << ") (no transpose case); precondition violation";
+//     }
+//   } else {
+//     if (ldb < static_cast<int64>(n)) {
+//       LOG(WARNING) << "GEMM ldb was smaller than n (transpose case); "
+//                       "precondition violation";
+//     }
+//   }
 
-bool CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
-                          blas::Transpose transb, uint64 m, uint64 n, uint64 k,
-                          std::complex<double> alpha,
-                          const DeviceMemory<std::complex<double>> &a, int lda,
-                          const DeviceMemory<std::complex<double>> &b, int ldb,
-                          std::complex<double> beta,
-                          DeviceMemory<std::complex<double>> *c, int ldc) {
-  auto cb_alpha = GpuComplexValue(alpha);
-  auto cb_beta = GpuComplexValue(beta);
-  return DoBlasInternal(cublasZgemm, stream, true /* = pointer_mode_host */,
-                        CUDABlasTranspose(transa), CUDABlasTranspose(transb), m,
-                        n, k, GpuComplex(&cb_alpha), GpuComplex(GpuMemory(a)),
-                        lda, GpuComplex(GpuMemory(b)), ldb,
-                        GpuComplex(&cb_beta), GpuComplex(GpuMemoryMutable(c)),
-                        ldc);
-}
+// #if CUDA_VERSION < 11000
+//   cublasMath_t math_type = CUBLAS_DEFAULT_MATH;
+// #else
+//   cublasMath_t math_type = CUBLAS_TF32_TENSOR_OP_MATH;
+//   int cc_major, cc_minor;
+//   if (stream->parent()->GetDeviceDescription().cuda_compute_capability(
+//           &cc_major, &cc_minor) &&
+//       cc_major >= 8) {
+//     // TODO(reedwm): Remove or make this VLOG(1) once TensorFloat-32 is more
+//     // well tested.
+//     VLOG(2) << "TensorFloat-32 will be used for the matrix multiplication.";
+//   }
+// #endif
+
+//   return DoBlasInternalImpl(
+//       cublasSgemm, stream, true /* = pointer_mode_host */,
+//       true /* = err_on_failure */, math_type, CUDABlasTranspose(transa),
+//       CUDABlasTranspose(transb), m, n, k, &alpha, GpuMemory(a), lda,
+//       GpuMemory(b), ldb, &beta, GpuMemoryMutable(c), ldc);
+// }
+
+// bool CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
+//                           blas::Transpose transb, uint64 m, uint64 n, uint64 k,
+//                           double alpha, const DeviceMemory<double> &a, int lda,
+//                           const DeviceMemory<double> &b, int ldb, double beta,
+//                           DeviceMemory<double> *c, int ldc) {
+//   return DoBlasInternal(cublasDgemm, stream, true /* = pointer_mode_host */,
+//                         CUDABlasTranspose(transa), CUDABlasTranspose(transb), m,
+//                         n, k, &alpha, GpuMemory(a), lda, GpuMemory(b), ldb,
+//                         &beta, GpuMemoryMutable(c), ldc);
+// }
+
+// bool CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
+//                           blas::Transpose transb, uint64 m, uint64 n, uint64 k,
+//                           std::complex<float> alpha,
+//                           const DeviceMemory<std::complex<float>> &a, int lda,
+//                           const DeviceMemory<std::complex<float>> &b, int ldb,
+//                           std::complex<float> beta,
+//                           DeviceMemory<std::complex<float>> *c, int ldc) {
+//   auto cb_alpha = GpuComplexValue(alpha);
+//   auto cb_beta = GpuComplexValue(beta);
+//   return DoBlasInternal(cublasCgemm, stream, true /* = pointer_mode_host */,
+//                         CUDABlasTranspose(transa), CUDABlasTranspose(transb), m,
+//                         n, k, GpuComplex(&cb_alpha), GpuComplex(GpuMemory(a)),
+//                         lda, GpuComplex(GpuMemory(b)), ldb,
+//                         GpuComplex(&cb_beta), GpuComplex(GpuMemoryMutable(c)),
+//                         ldc);
+// }
+
+// bool CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
+//                           blas::Transpose transb, uint64 m, uint64 n, uint64 k,
+//                           std::complex<double> alpha,
+//                           const DeviceMemory<std::complex<double>> &a, int lda,
+//                           const DeviceMemory<std::complex<double>> &b, int ldb,
+//                           std::complex<double> beta,
+//                           DeviceMemory<std::complex<double>> *c, int ldc) {
+//   auto cb_alpha = GpuComplexValue(alpha);
+//   auto cb_beta = GpuComplexValue(beta);
+//   return DoBlasInternal(cublasZgemm, stream, true /* = pointer_mode_host */,
+//                         CUDABlasTranspose(transa), CUDABlasTranspose(transb), m,
+//                         n, k, GpuComplex(&cb_alpha), GpuComplex(GpuMemory(a)),
+//                         lda, GpuComplex(GpuMemory(b)), ldb,
+//                         GpuComplex(&cb_beta), GpuComplex(GpuMemoryMutable(c)),
+//                         ldc);
+// }
 
 bool CUDABlas::DoBlasGemvWithProfiling(
     Stream *stream, blas::Transpose trans, uint64 m, uint64 n, float alpha,
@@ -1937,61 +2014,61 @@ bool CUDABlas::DoBlasGemvWithProfiling(
                                      output_profile_result);
 }
 
-bool CUDABlas::DoBlasGemmWithProfiling(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, float alpha, const DeviceMemory<Eigen::half> &a,
-    int lda, const DeviceMemory<Eigen::half> &b, int ldb, float beta,
-    DeviceMemory<Eigen::half> *c, int ldc,
-    blas::ProfileResult *output_profile_result) {
-  return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
-                                     lda, b, ldb, beta, c, ldc,
-                                     output_profile_result);
-}
+// bool CUDABlas::DoBlasGemmWithProfiling(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, float alpha, const DeviceMemory<Eigen::half> &a,
+//     int lda, const DeviceMemory<Eigen::half> &b, int ldb, float beta,
+//     DeviceMemory<Eigen::half> *c, int ldc,
+//     blas::ProfileResult *output_profile_result) {
+//   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
+//                                      lda, b, ldb, beta, c, ldc,
+//                                      output_profile_result);
+// }
 
-bool CUDABlas::DoBlasGemmWithProfiling(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, float alpha, const DeviceMemory<float> &a, int lda,
-    const DeviceMemory<float> &b, int ldb, float beta, DeviceMemory<float> *c,
-    int ldc, blas::ProfileResult *output_profile_result) {
-  return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
-                                     lda, b, ldb, beta, c, ldc,
-                                     output_profile_result);
-}
+// bool CUDABlas::DoBlasGemmWithProfiling(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, float alpha, const DeviceMemory<float> &a, int lda,
+//     const DeviceMemory<float> &b, int ldb, float beta, DeviceMemory<float> *c,
+//     int ldc, blas::ProfileResult *output_profile_result) {
+//   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
+//                                      lda, b, ldb, beta, c, ldc,
+//                                      output_profile_result);
+// }
 
-bool CUDABlas::DoBlasGemmWithProfiling(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, double alpha, const DeviceMemory<double> &a, int lda,
-    const DeviceMemory<double> &b, int ldb, double beta,
-    DeviceMemory<double> *c, int ldc,
-    blas::ProfileResult *output_profile_result) {
-  return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
-                                     lda, b, ldb, beta, c, ldc,
-                                     output_profile_result);
-}
+// bool CUDABlas::DoBlasGemmWithProfiling(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, double alpha, const DeviceMemory<double> &a, int lda,
+//     const DeviceMemory<double> &b, int ldb, double beta,
+//     DeviceMemory<double> *c, int ldc,
+//     blas::ProfileResult *output_profile_result) {
+//   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
+//                                      lda, b, ldb, beta, c, ldc,
+//                                      output_profile_result);
+// }
 
-bool CUDABlas::DoBlasGemmWithProfiling(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, std::complex<float> alpha,
-    const DeviceMemory<std::complex<float>> &a, int lda,
-    const DeviceMemory<std::complex<float>> &b, int ldb,
-    std::complex<float> beta, DeviceMemory<std::complex<float>> *c, int ldc,
-    blas::ProfileResult *output_profile_result) {
-  return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
-                                     lda, b, ldb, beta, c, ldc,
-                                     output_profile_result);
-}
+// bool CUDABlas::DoBlasGemmWithProfiling(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, std::complex<float> alpha,
+//     const DeviceMemory<std::complex<float>> &a, int lda,
+//     const DeviceMemory<std::complex<float>> &b, int ldb,
+//     std::complex<float> beta, DeviceMemory<std::complex<float>> *c, int ldc,
+//     blas::ProfileResult *output_profile_result) {
+//   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
+//                                      lda, b, ldb, beta, c, ldc,
+//                                      output_profile_result);
+// }
 
-bool CUDABlas::DoBlasGemmWithProfiling(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, std::complex<double> alpha,
-    const DeviceMemory<std::complex<double>> &a, int lda,
-    const DeviceMemory<std::complex<double>> &b, int ldb,
-    std::complex<double> beta, DeviceMemory<std::complex<double>> *c, int ldc,
-    blas::ProfileResult *output_profile_result) {
-  return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
-                                     lda, b, ldb, beta, c, ldc,
-                                     output_profile_result);
-}
+// bool CUDABlas::DoBlasGemmWithProfiling(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, std::complex<double> alpha,
+//     const DeviceMemory<std::complex<double>> &a, int lda,
+//     const DeviceMemory<std::complex<double>> &b, int ldb,
+//     std::complex<double> beta, DeviceMemory<std::complex<double>> *c, int ldc,
+//     blas::ProfileResult *output_profile_result) {
+//   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
+//                                      lda, b, ldb, beta, c, ldc,
+//                                      output_profile_result);
+// }
 
 template <typename T>
 bool CUDABlas::DoBlasGemvWithProfilingImpl(
@@ -2025,37 +2102,37 @@ bool CUDABlas::DoBlasGemvWithProfilingImpl(
   return result;
 }
 
-template <typename T, typename ParamType>
-bool CUDABlas::DoBlasGemmWithProfilingImpl(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, const ParamType &alpha, const DeviceMemory<T> &a,
-    int lda, const DeviceMemory<T> &b, int ldb, const ParamType &beta,
-    DeviceMemory<T> *c, int ldc, blas::ProfileResult *output_profile_result) {
-  std::unique_ptr<GpuTimer, GpuTimerDeleter> timer;
-  if (output_profile_result != nullptr) {
-    timer.reset(new GpuTimer(parent_));
-    if (!timer->Init() || !timer->Start(AsGpuStream(stream))) {
-      return false;
-    }
-  }
+// template <typename T, typename ParamType>
+// bool CUDABlas::DoBlasGemmWithProfilingImpl(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, const ParamType &alpha, const DeviceMemory<T> &a,
+//     int lda, const DeviceMemory<T> &b, int ldb, const ParamType &beta,
+//     DeviceMemory<T> *c, int ldc, blas::ProfileResult *output_profile_result) {
+//   std::unique_ptr<GpuTimer, GpuTimerDeleter> timer;
+//   if (output_profile_result != nullptr) {
+//     timer.reset(new GpuTimer(parent_));
+//     if (!timer->Init() || !timer->Start(AsGpuStream(stream))) {
+//       return false;
+//     }
+//   }
 
-  // Call blasGemm
-  bool result = DoBlasGemm(stream, transa, transb, m, n, k, alpha, a, lda, b,
-                           ldb, beta, c, ldc);
+//   // Call blasGemm
+//   bool result = DoBlasGemm(stream, transa, transb, m, n, k, alpha, a, lda, b,
+//                            ldb, beta, c, ldc);
 
-  if (timer != nullptr && result) {
-    // GpuTimer will CHECK-fail if we Stop() it while the stream is in an error
-    // state.
-    if (!timer->Stop(AsGpuStream(stream))) {
-      return false;
-    }
-    output_profile_result->set_is_valid(true);
-    output_profile_result->set_algorithm(blas::kDefaultBlasGemm);
-    output_profile_result->set_elapsed_time_in_ms(
-        timer->GetElapsedMilliseconds());
-  }
-  return result;
-}
+//   if (timer != nullptr && result) {
+//     // GpuTimer will CHECK-fail if we Stop() it while the stream is in an error
+//     // state.
+//     if (!timer->Stop(AsGpuStream(stream))) {
+//       return false;
+//     }
+//     output_profile_result->set_is_valid(true);
+//     output_profile_result->set_algorithm(blas::kDefaultBlasGemm);
+//     output_profile_result->set_elapsed_time_in_ms(
+//         timer->GetElapsedMilliseconds());
+//   }
+//   return result;
+// }
 
 static bool UsesTensorOps(blas::AlgorithmType algo) {
 #if CUDA_VERSION >= 9000
@@ -2066,289 +2143,289 @@ static bool UsesTensorOps(blas::AlgorithmType algo) {
 #endif
 }
 
-template <typename InT, typename OutT, typename CompT>
-bool CUDABlas::DoBlasGemmWithAlgorithmImpl(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, const HostOrDeviceScalar<CompT> &alpha,
-    const DeviceMemory<InT> &a, int lda, const DeviceMemory<InT> &b, int ldb,
-    const HostOrDeviceScalar<CompT> &beta, DeviceMemory<OutT> *c, int ldc,
-    blas::ComputationType computation_type, blas::AlgorithmType algorithm,
-    blas::ProfileResult *output_profile_result) {
-  // GPUs < sm_50 don't support cublasGemmEx.
-  int cc_major, cc_minor;
-  if (stream->parent()->GetDeviceDescription().cuda_compute_capability(
-          &cc_major, &cc_minor) &&
-      cc_major < 5) {
-    VLOG(2) << "DoBlasGemmWithAlgorithm returning false because sm" << cc_major
-            << cc_minor << " devices don't support explicit gemm algorithms.";
-    return false;
-  }
+// template <typename InT, typename OutT, typename CompT>
+// bool CUDABlas::DoBlasGemmWithAlgorithmImpl(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, const HostOrDeviceScalar<CompT> &alpha,
+//     const DeviceMemory<InT> &a, int lda, const DeviceMemory<InT> &b, int ldb,
+//     const HostOrDeviceScalar<CompT> &beta, DeviceMemory<OutT> *c, int ldc,
+//     blas::ComputationType computation_type, blas::AlgorithmType algorithm,
+//     blas::ProfileResult *output_profile_result) {
+//   // GPUs < sm_50 don't support cublasGemmEx.
+//   int cc_major, cc_minor;
+//   if (stream->parent()->GetDeviceDescription().cuda_compute_capability(
+//           &cc_major, &cc_minor) &&
+//       cc_major < 5) {
+//     VLOG(2) << "DoBlasGemmWithAlgorithm returning false because sm" << cc_major
+//             << cc_minor << " devices don't support explicit gemm algorithms.";
+//     return false;
+//   }
 
-  bool algo_uses_tensor_ops = UsesTensorOps(algorithm);
-  cublasMath_t math_type = CUBLAS_DEFAULT_MATH;
-  if (algo_uses_tensor_ops) {
-    if (cc_major < 7) {
-      VLOG(2) << "DoBlasGemmWithAlgorithm returning false because algorithm "
-              << algorithm
-              << " uses tensor ops, but tensor ops are not available in sm"
-              << cc_major << "X devices.";
-      return false;
-    } else if (std::is_same<InT, float>::value) {
-#if CUDA_VERSION < 11000
-      VLOG(2) << "DoBlasGemmWithAlgorithm returning false because algorithm "
-              << algorithm
-              << " uses tensor ops, but tensor ops are not available for fp32"
-              << " inputs.";
-      return false;
-#else
-      if (cc_major < 8) {
-        VLOG(2) << "DoBlasGemmWithAlgorithm returning false because algorithm "
-                << algorithm
-                << " uses tensor ops, but tensor ops are not available in sm"
-                << cc_major << "X devices for float input types.";
-        return false;
-      } else if (!tensorflow::tensor_float_32_execution_enabled()) {
-        VLOG(2) << "DoBlasGemmWithAlgorithm returning false because algorithm "
-                << algorithm
-                << " uses tensor ops, but tensor ops are disabled for fp32"
-                << " inputs.";
-        return false;
-      }
-      math_type = CUBLAS_TF32_TENSOR_OP_MATH;
-#endif
-    } else if (std::is_same<InT, Eigen::half>::value) {
-#if CUDA_VERSION < 11000
-      math_type = CUBLAS_TENSOR_OP_MATH;
-#endif
-    } else {
-      VLOG(2) << "DoBlasGemmWithAlgorithm returning false because algorithm "
-              << algorithm
-              << " uses tensor ops, which are not supported for InT.";
-      return false;
-    }
-  }
+//   bool algo_uses_tensor_ops = UsesTensorOps(algorithm);
+//   cublasMath_t math_type = CUBLAS_DEFAULT_MATH;
+//   if (algo_uses_tensor_ops) {
+//     if (cc_major < 7) {
+//       VLOG(2) << "DoBlasGemmWithAlgorithm returning false because algorithm "
+//               << algorithm
+//               << " uses tensor ops, but tensor ops are not available in sm"
+//               << cc_major << "X devices.";
+//       return false;
+//     } else if (std::is_same<InT, float>::value) {
+// #if CUDA_VERSION < 11000
+//       VLOG(2) << "DoBlasGemmWithAlgorithm returning false because algorithm "
+//               << algorithm
+//               << " uses tensor ops, but tensor ops are not available for fp32"
+//               << " inputs.";
+//       return false;
+// #else
+//       if (cc_major < 8) {
+//         VLOG(2) << "DoBlasGemmWithAlgorithm returning false because algorithm "
+//                 << algorithm
+//                 << " uses tensor ops, but tensor ops are not available in sm"
+//                 << cc_major << "X devices for float input types.";
+//         return false;
+//       } else if (!tensorflow::tensor_float_32_execution_enabled()) {
+//         VLOG(2) << "DoBlasGemmWithAlgorithm returning false because algorithm "
+//                 << algorithm
+//                 << " uses tensor ops, but tensor ops are disabled for fp32"
+//                 << " inputs.";
+//         return false;
+//       }
+//       math_type = CUBLAS_TF32_TENSOR_OP_MATH;
+// #endif
+//     } else if (std::is_same<InT, Eigen::half>::value) {
+// #if CUDA_VERSION < 11000
+//       math_type = CUBLAS_TENSOR_OP_MATH;
+// #endif
+//     } else {
+//       VLOG(2) << "DoBlasGemmWithAlgorithm returning false because algorithm "
+//               << algorithm
+//               << " uses tensor ops, which are not supported for InT.";
+//       return false;
+//     }
+//   }
 
-  // Either both 'alpha' and 'beta' need to be pointers to device memory, or
-  // they need to be both host scalars.
-  if (alpha.is_pointer() != beta.is_pointer()) {
-    VLOG(2) << "DoBlasGemmWithAlgorithm returning false because one of `alpha` "
-               "and `beta` is a pointer, but the other is not.";
-    return false;
-  }
+//   // Either both 'alpha' and 'beta' need to be pointers to device memory, or
+//   // they need to be both host scalars.
+//   if (alpha.is_pointer() != beta.is_pointer()) {
+//     VLOG(2) << "DoBlasGemmWithAlgorithm returning false because one of `alpha` "
+//                "and `beta` is a pointer, but the other is not.";
+//     return false;
+//   }
 
-  std::unique_ptr<GpuTimer, GpuTimerDeleter> timer;
-  if (output_profile_result != nullptr) {
-    timer.reset(new GpuTimer(parent_));
-    if (!timer->Init() || !timer->Start(AsGpuStream(stream))) {
-      VLOG(2) << "DoBlasGemmWithAlgorithm returning false because "
-                 "output_profile_result was given, but we were unable to "
-                 "create a GpuTimer.";
-      return false;
-    }
-  }
+//   std::unique_ptr<GpuTimer, GpuTimerDeleter> timer;
+//   if (output_profile_result != nullptr) {
+//     timer.reset(new GpuTimer(parent_));
+//     if (!timer->Init() || !timer->Start(AsGpuStream(stream))) {
+//       VLOG(2) << "DoBlasGemmWithAlgorithm returning false because "
+//                  "output_profile_result was given, but we were unable to "
+//                  "create a GpuTimer.";
+//       return false;
+//     }
+//   }
 
-  // Return false if we might be hitting a cuBLAS bug that produces the wrong
-  // result. See nvbugs/2156201, b/79126339.
-#if CUDA_VERSION >= 9000 && CUDA_VERSION < 9020
-  if ((algorithm == CUBLAS_GEMM_DEFAULT || algorithm >= CUBLAS_GEMM_ALGO13) &&
-      std::max({m, n, k}) >= 2097153 && cc_major < 7) {
-    VLOG(2) << "DoBlasGemmWithAlgorithm returning false to work around cudnn "
-               "<9.2 bug with m, n, or k >= 2097153.  See b/79126339.";
-    return false;
-  }
-#endif
+//   // Return false if we might be hitting a cuBLAS bug that produces the wrong
+//   // result. See nvbugs/2156201, b/79126339.
+// #if CUDA_VERSION >= 9000 && CUDA_VERSION < 9020
+//   if ((algorithm == CUBLAS_GEMM_DEFAULT || algorithm >= CUBLAS_GEMM_ALGO13) &&
+//       std::max({m, n, k}) >= 2097153 && cc_major < 7) {
+//     VLOG(2) << "DoBlasGemmWithAlgorithm returning false to work around cudnn "
+//                "<9.2 bug with m, n, or k >= 2097153.  See b/79126339.";
+//     return false;
+//   }
+// #endif
 
-  cudaDataType_t cuda_in_type = CUDADataType<InT>::type;
-  // Since we are converting 'algorithm' to cublasGemmAlgo_t by static_cast,
-  // we do the following compile-time check on the default value:
-  static_assert(blas::kDefaultGemmAlgo == CUBLAS_GEMM_DFALT, "");
-  // If 'alpha' and 'beta' are host scalars and CompT is Eigen::half, we
-  // essentially reinterpet_cast to __half, which is safe because Eigen::half
-  // inherits from __half.
+//   cudaDataType_t cuda_in_type = CUDADataType<InT>::type;
+//   // Since we are converting 'algorithm' to cublasGemmAlgo_t by static_cast,
+//   // we do the following compile-time check on the default value:
+//   static_assert(blas::kDefaultGemmAlgo == CUBLAS_GEMM_DFALT, "");
+//   // If 'alpha' and 'beta' are host scalars and CompT is Eigen::half, we
+//   // essentially reinterpet_cast to __half, which is safe because Eigen::half
+//   // inherits from __half.
 
-  cublasStatus_t (*gemm)(cublasHandle_t, cublasOperation_t, cublasOperation_t,
-                         int, int, int, const void *, const void *,
-                         cudaDataType, int, const void *, cudaDataType, int,
-                         const void *, void *, cudaDataType, int, cudaDataType,
-                         cublasGemmAlgo_t) = cublasGemmEx;
-  bool result = DoBlasInternalImpl(
-      gemm, stream,
-      /* pointer_mode_host = */ !alpha.is_pointer(), /*err_on_failure=*/false,
-      math_type, CUDABlasTranspose(transa), CUDABlasTranspose(transb), m, n, k,
-      alpha.is_pointer() ? GpuMemory(alpha.pointer()) : &alpha.value(),
-      GpuMemory(a), cuda_in_type, lda, GpuMemory(b), cuda_in_type, ldb,
-      beta.is_pointer() ? GpuMemory(beta.pointer()) : &beta.value(),
-      GpuMemoryMutable(c), CUDADataType<OutT>::type, ldc,
-      CUDAComputationType(computation_type),
-      static_cast<cublasGemmAlgo_t>(algorithm));
+//   cublasStatus_t (*gemm)(cublasHandle_t, cublasOperation_t, cublasOperation_t,
+//                          int, int, int, const void *, const void *,
+//                          cudaDataType, int, const void *, cudaDataType, int,
+//                          const void *, void *, cudaDataType, int, cudaDataType,
+//                          cublasGemmAlgo_t) = cublasGemmEx;
+//   bool result = DoBlasInternalImpl(
+//       gemm, stream,
+//       /* pointer_mode_host = */ !alpha.is_pointer(), /*err_on_failure=*/false,
+//       math_type, CUDABlasTranspose(transa), CUDABlasTranspose(transb), m, n, k,
+//       alpha.is_pointer() ? GpuMemory(alpha.pointer()) : &alpha.value(),
+//       GpuMemory(a), cuda_in_type, lda, GpuMemory(b), cuda_in_type, ldb,
+//       beta.is_pointer() ? GpuMemory(beta.pointer()) : &beta.value(),
+//       GpuMemoryMutable(c), CUDADataType<OutT>::type, ldc,
+//       CUDAComputationType(computation_type),
+//       static_cast<cublasGemmAlgo_t>(algorithm));
 
-  if (timer != nullptr && result) {
-    // GpuTimer will CHECK-fail if we Stop() it while the stream is in an error
-    // state.
-    if (!timer->Stop(AsGpuStream(stream))) {
-      VLOG(2) << "DoBlasGemmWithAlgorithm returning false; unable to stop "
-                 "GpuTimer.";
-      return false;
-    }
-    output_profile_result->set_is_valid(true);
-    output_profile_result->set_algorithm(algorithm);
-    output_profile_result->set_elapsed_time_in_ms(
-        timer->GetElapsedMilliseconds());
-  }
-  return result;
-}
+//   if (timer != nullptr && result) {
+//     // GpuTimer will CHECK-fail if we Stop() it while the stream is in an error
+//     // state.
+//     if (!timer->Stop(AsGpuStream(stream))) {
+//       VLOG(2) << "DoBlasGemmWithAlgorithm returning false; unable to stop "
+//                  "GpuTimer.";
+//       return false;
+//     }
+//     output_profile_result->set_is_valid(true);
+//     output_profile_result->set_algorithm(algorithm);
+//     output_profile_result->set_elapsed_time_in_ms(
+//         timer->GetElapsedMilliseconds());
+//   }
+//   return result;
+// }
 
-bool CUDABlas::GetBlasGemmAlgorithms(
-    std::vector<blas::AlgorithmType> *out_algorithms) {
-  // cublasGemmAlgo_t (and the function that accepts this type, cublasGemmEx)
-  // were first introduced in CUDA 8.
-  //
-  // Note that when CUDA version and compute capability is not sufficient, we
-  // still return the out_algorithms. Caller needs to make sure that in this
-  // case, the returned vector is empty.
-  *out_algorithms = {
-    CUBLAS_GEMM_DFALT,
-    CUBLAS_GEMM_ALGO0,
-    CUBLAS_GEMM_ALGO1,
-    CUBLAS_GEMM_ALGO2,
-    CUBLAS_GEMM_ALGO3,
-    CUBLAS_GEMM_ALGO4,
-    CUBLAS_GEMM_ALGO5,
-    CUBLAS_GEMM_ALGO6,
-    CUBLAS_GEMM_ALGO7,
-#if CUDA_VERSION >= 9000
-    CUBLAS_GEMM_ALGO8,
-    CUBLAS_GEMM_ALGO9,
-    CUBLAS_GEMM_ALGO10,
-    CUBLAS_GEMM_ALGO11,
-    CUBLAS_GEMM_ALGO12,
-    CUBLAS_GEMM_ALGO13,
-    CUBLAS_GEMM_ALGO14,
-    CUBLAS_GEMM_ALGO15,
-    CUBLAS_GEMM_ALGO16,
-    CUBLAS_GEMM_ALGO17,
-    CUBLAS_GEMM_DFALT_TENSOR_OP,
-    CUBLAS_GEMM_ALGO0_TENSOR_OP,
-    CUBLAS_GEMM_ALGO1_TENSOR_OP,
-    CUBLAS_GEMM_ALGO2_TENSOR_OP,
-    CUBLAS_GEMM_ALGO3_TENSOR_OP,
-    CUBLAS_GEMM_ALGO4_TENSOR_OP,
-#endif
-#if CUDA_VERSION >= 9020
-    CUBLAS_GEMM_ALGO18,
-    CUBLAS_GEMM_ALGO19,
-    CUBLAS_GEMM_ALGO20,
-    CUBLAS_GEMM_ALGO21,
-    CUBLAS_GEMM_ALGO22,
-    CUBLAS_GEMM_ALGO23,
-    CUBLAS_GEMM_ALGO5_TENSOR_OP,
-    CUBLAS_GEMM_ALGO6_TENSOR_OP,
-    CUBLAS_GEMM_ALGO7_TENSOR_OP,
-    CUBLAS_GEMM_ALGO8_TENSOR_OP,
-    CUBLAS_GEMM_ALGO9_TENSOR_OP,
-    CUBLAS_GEMM_ALGO10_TENSOR_OP,
-    CUBLAS_GEMM_ALGO11_TENSOR_OP,
-    CUBLAS_GEMM_ALGO12_TENSOR_OP,
-    CUBLAS_GEMM_ALGO13_TENSOR_OP,
-    CUBLAS_GEMM_ALGO14_TENSOR_OP,
-    CUBLAS_GEMM_ALGO15_TENSOR_OP,
-#endif
-  };
-  return true;
-}
+// bool CUDABlas::GetBlasGemmAlgorithms(
+//     std::vector<blas::AlgorithmType> *out_algorithms) {
+//   // cublasGemmAlgo_t (and the function that accepts this type, cublasGemmEx)
+//   // were first introduced in CUDA 8.
+//   //
+//   // Note that when CUDA version and compute capability is not sufficient, we
+//   // still return the out_algorithms. Caller needs to make sure that in this
+//   // case, the returned vector is empty.
+//   *out_algorithms = {
+//     CUBLAS_GEMM_DFALT,
+//     CUBLAS_GEMM_ALGO0,
+//     CUBLAS_GEMM_ALGO1,
+//     CUBLAS_GEMM_ALGO2,
+//     CUBLAS_GEMM_ALGO3,
+//     CUBLAS_GEMM_ALGO4,
+//     CUBLAS_GEMM_ALGO5,
+//     CUBLAS_GEMM_ALGO6,
+//     CUBLAS_GEMM_ALGO7,
+// #if CUDA_VERSION >= 9000
+//     CUBLAS_GEMM_ALGO8,
+//     CUBLAS_GEMM_ALGO9,
+//     CUBLAS_GEMM_ALGO10,
+//     CUBLAS_GEMM_ALGO11,
+//     CUBLAS_GEMM_ALGO12,
+//     CUBLAS_GEMM_ALGO13,
+//     CUBLAS_GEMM_ALGO14,
+//     CUBLAS_GEMM_ALGO15,
+//     CUBLAS_GEMM_ALGO16,
+//     CUBLAS_GEMM_ALGO17,
+//     CUBLAS_GEMM_DFALT_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO0_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO1_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO2_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO3_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO4_TENSOR_OP,
+// #endif
+// #if CUDA_VERSION >= 9020
+//     CUBLAS_GEMM_ALGO18,
+//     CUBLAS_GEMM_ALGO19,
+//     CUBLAS_GEMM_ALGO20,
+//     CUBLAS_GEMM_ALGO21,
+//     CUBLAS_GEMM_ALGO22,
+//     CUBLAS_GEMM_ALGO23,
+//     CUBLAS_GEMM_ALGO5_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO6_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO7_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO8_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO9_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO10_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO11_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO12_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO13_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO14_TENSOR_OP,
+//     CUBLAS_GEMM_ALGO15_TENSOR_OP,
+// #endif
+//   };
+//   return true;
+// }
 
-bool CUDABlas::DoBlasGemmWithAlgorithm(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, const HostOrDeviceScalar<int> &alpha,
-    const DeviceMemory<int8> &a, int lda, const DeviceMemory<int8> &b, int ldb,
-    const HostOrDeviceScalar<int> &beta, DeviceMemory<int> *c, int ldc,
-    blas::ComputationType computation_type, blas::AlgorithmType algorithm,
-    blas::ProfileResult *output_profile_result) {
-  return DoBlasGemmWithAlgorithmImpl(
-      stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
-      computation_type, algorithm, output_profile_result);
-}
+// bool CUDABlas::DoBlasGemmWithAlgorithm(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, const HostOrDeviceScalar<int> &alpha,
+//     const DeviceMemory<int8> &a, int lda, const DeviceMemory<int8> &b, int ldb,
+//     const HostOrDeviceScalar<int> &beta, DeviceMemory<int> *c, int ldc,
+//     blas::ComputationType computation_type, blas::AlgorithmType algorithm,
+//     blas::ProfileResult *output_profile_result) {
+//   return DoBlasGemmWithAlgorithmImpl(
+//       stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+//       computation_type, algorithm, output_profile_result);
+// }
 
-bool CUDABlas::DoBlasGemmWithAlgorithm(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, const HostOrDeviceScalar<Eigen::half> &alpha,
-    const DeviceMemory<Eigen::half> &a, int lda,
-    const DeviceMemory<Eigen::half> &b, int ldb,
-    const HostOrDeviceScalar<Eigen::half> &beta, DeviceMemory<Eigen::half> *c,
-    int ldc, blas::ComputationType computation_type,
-    blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result) {
-  if (computation_type == blas::ComputationType::kF32) {
-    if (alpha.is_pointer() || beta.is_pointer()) {
-      // We cannot easily convert a pointer to f16 memory to a pointer to f32
-      // memory from here, so we don't support this for now.
-      // TODO(akuegel): Investigate whether we can do the conversion before
-      // calling DoBlasGemmWithAlgorithm.
-      return false;
-    }
-    HostOrDeviceScalar<float> float_alpha(static_cast<float>(alpha.value()));
-    HostOrDeviceScalar<float> float_beta(static_cast<float>(beta.value()));
-    return DoBlasGemmWithAlgorithmImpl(
-        stream, transa, transb, m, n, k, float_alpha, a, lda, b, ldb,
-        float_beta, c, ldc, computation_type, algorithm, output_profile_result);
-  }
+// bool CUDABlas::DoBlasGemmWithAlgorithm(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, const HostOrDeviceScalar<Eigen::half> &alpha,
+//     const DeviceMemory<Eigen::half> &a, int lda,
+//     const DeviceMemory<Eigen::half> &b, int ldb,
+//     const HostOrDeviceScalar<Eigen::half> &beta, DeviceMemory<Eigen::half> *c,
+//     int ldc, blas::ComputationType computation_type,
+//     blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result) {
+//   if (computation_type == blas::ComputationType::kF32) {
+//     if (alpha.is_pointer() || beta.is_pointer()) {
+//       // We cannot easily convert a pointer to f16 memory to a pointer to f32
+//       // memory from here, so we don't support this for now.
+//       // TODO(akuegel): Investigate whether we can do the conversion before
+//       // calling DoBlasGemmWithAlgorithm.
+//       return false;
+//     }
+//     HostOrDeviceScalar<float> float_alpha(static_cast<float>(alpha.value()));
+//     HostOrDeviceScalar<float> float_beta(static_cast<float>(beta.value()));
+//     return DoBlasGemmWithAlgorithmImpl(
+//         stream, transa, transb, m, n, k, float_alpha, a, lda, b, ldb,
+//         float_beta, c, ldc, computation_type, algorithm, output_profile_result);
+//   }
 
-  CHECK_EQ(computation_type, blas::ComputationType::kF16);
-  return DoBlasGemmWithAlgorithmImpl(
-      stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
-      computation_type, algorithm, output_profile_result);
-}
+//   CHECK_EQ(computation_type, blas::ComputationType::kF16);
+//   return DoBlasGemmWithAlgorithmImpl(
+//       stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+//       computation_type, algorithm, output_profile_result);
+// }
 
-bool CUDABlas::DoBlasGemmWithAlgorithm(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, const HostOrDeviceScalar<float> &alpha,
-    const DeviceMemory<float> &a, int lda, const DeviceMemory<float> &b,
-    int ldb, const HostOrDeviceScalar<float> &beta, DeviceMemory<float> *c,
-    int ldc, blas::ComputationType computation_type,
-    blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result) {
-  return DoBlasGemmWithAlgorithmImpl(
-      stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
-      computation_type, algorithm, output_profile_result);
-}
+// bool CUDABlas::DoBlasGemmWithAlgorithm(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, const HostOrDeviceScalar<float> &alpha,
+//     const DeviceMemory<float> &a, int lda, const DeviceMemory<float> &b,
+//     int ldb, const HostOrDeviceScalar<float> &beta, DeviceMemory<float> *c,
+//     int ldc, blas::ComputationType computation_type,
+//     blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result) {
+//   return DoBlasGemmWithAlgorithmImpl(
+//       stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+//       computation_type, algorithm, output_profile_result);
+// }
 
-bool CUDABlas::DoBlasGemmWithAlgorithm(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, const HostOrDeviceScalar<double> &alpha,
-    const DeviceMemory<double> &a, int lda, const DeviceMemory<double> &b,
-    int ldb, const HostOrDeviceScalar<double> &beta, DeviceMemory<double> *c,
-    int ldc, blas::ComputationType computation_type,
-    blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result) {
-  return DoBlasGemmWithAlgorithmImpl(
-      stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
-      computation_type, algorithm, output_profile_result);
-}
+// bool CUDABlas::DoBlasGemmWithAlgorithm(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, const HostOrDeviceScalar<double> &alpha,
+//     const DeviceMemory<double> &a, int lda, const DeviceMemory<double> &b,
+//     int ldb, const HostOrDeviceScalar<double> &beta, DeviceMemory<double> *c,
+//     int ldc, blas::ComputationType computation_type,
+//     blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result) {
+//   return DoBlasGemmWithAlgorithmImpl(
+//       stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+//       computation_type, algorithm, output_profile_result);
+// }
 
-bool CUDABlas::DoBlasGemmWithAlgorithm(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, const HostOrDeviceScalar<std::complex<float>> &alpha,
-    const DeviceMemory<std::complex<float>> &a, int lda,
-    const DeviceMemory<std::complex<float>> &b, int ldb,
-    const HostOrDeviceScalar<std::complex<float>> &beta,
-    DeviceMemory<std::complex<float>> *c, int ldc,
-    blas::ComputationType computation_type, blas::AlgorithmType algorithm,
-    blas::ProfileResult *output_profile_result) {
-  return DoBlasGemmWithAlgorithmImpl(
-      stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
-      computation_type, algorithm, output_profile_result);
-}
+// bool CUDABlas::DoBlasGemmWithAlgorithm(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, const HostOrDeviceScalar<std::complex<float>> &alpha,
+//     const DeviceMemory<std::complex<float>> &a, int lda,
+//     const DeviceMemory<std::complex<float>> &b, int ldb,
+//     const HostOrDeviceScalar<std::complex<float>> &beta,
+//     DeviceMemory<std::complex<float>> *c, int ldc,
+//     blas::ComputationType computation_type, blas::AlgorithmType algorithm,
+//     blas::ProfileResult *output_profile_result) {
+//   return DoBlasGemmWithAlgorithmImpl(
+//       stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+//       computation_type, algorithm, output_profile_result);
+// }
 
-bool CUDABlas::DoBlasGemmWithAlgorithm(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, const HostOrDeviceScalar<std::complex<double>> &alpha,
-    const DeviceMemory<std::complex<double>> &a, int lda,
-    const DeviceMemory<std::complex<double>> &b, int ldb,
-    const HostOrDeviceScalar<std::complex<double>> &beta,
-    DeviceMemory<std::complex<double>> *c, int ldc,
-    blas::ComputationType computation_type, blas::AlgorithmType algorithm,
-    blas::ProfileResult *output_profile_result) {
-  return DoBlasGemmWithAlgorithmImpl(
-      stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
-      computation_type, algorithm, output_profile_result);
-}
+// bool CUDABlas::DoBlasGemmWithAlgorithm(
+//     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+//     uint64 n, uint64 k, const HostOrDeviceScalar<std::complex<double>> &alpha,
+//     const DeviceMemory<std::complex<double>> &a, int lda,
+//     const DeviceMemory<std::complex<double>> &b, int ldb,
+//     const HostOrDeviceScalar<std::complex<double>> &beta,
+//     DeviceMemory<std::complex<double>> *c, int ldc,
+//     blas::ComputationType computation_type, blas::AlgorithmType algorithm,
+//     blas::ProfileResult *output_profile_result) {
+//   return DoBlasGemmWithAlgorithmImpl(
+//       stream, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc,
+//       computation_type, algorithm, output_profile_result);
+// }
 
 template <typename T>
 struct HalfAsFloat {
@@ -2605,40 +2682,6 @@ port::Status CUDABlas::DoBlasGemmBatchedInternal(
   //  }
 }
 
-bool CUDABlas::DoBlasGemmBatched(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, float alpha,
-    const port::ArraySlice<DeviceMemory<Eigen::half> *> &a_array, int lda,
-    const port::ArraySlice<DeviceMemory<Eigen::half> *> &b_array, int ldb,
-    float beta, const port::ArraySlice<DeviceMemory<Eigen::half> *> &c_array,
-    int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
-  // Note: The func passed here (cublasSgemmBatched) is not actually called,
-  // due to special handling of fp16 inside DoBlasGemmBatchedInternal.
-  port::Status status = DoBlasGemmBatchedInternal(
-      cublasSgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
-      b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
-  if (!status.ok()) {
-    LOG(ERROR) << status;
-  }
-  return status.ok();
-}
-
-bool CUDABlas::DoBlasGemmBatched(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, float alpha,
-    const port::ArraySlice<DeviceMemory<float> *> &a_array, int lda,
-    const port::ArraySlice<DeviceMemory<float> *> &b_array, int ldb, float beta,
-    const port::ArraySlice<DeviceMemory<float> *> &c_array, int ldc,
-    int batch_count, ScratchAllocator *scratch_allocator) {
-  port::Status status = DoBlasGemmBatchedInternal(
-      cublasSgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
-      b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
-  if (!status.ok()) {
-    LOG(ERROR) << status;
-  }
-  return status.ok();
-}
-
 bool CUDABlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  blas::Transpose transb, uint64 m, uint64 n,
                                  uint64 k, float alpha,
@@ -2679,58 +2722,6 @@ bool CUDABlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
   port::Status status = DoBlasGemmBatchedInternal(
       cublasDgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count);
-  if (!status.ok()) {
-    LOG(ERROR) << status;
-  }
-  return status.ok();
-}
-
-bool CUDABlas::DoBlasGemmBatched(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, double alpha,
-    const port::ArraySlice<DeviceMemory<double> *> &a_array, int lda,
-    const port::ArraySlice<DeviceMemory<double> *> &b_array, int ldb,
-    double beta, const port::ArraySlice<DeviceMemory<double> *> &c_array,
-    int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
-  port::Status status = DoBlasGemmBatchedInternal(
-      cublasDgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
-      b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
-  if (!status.ok()) {
-    LOG(ERROR) << status;
-  }
-  return status.ok();
-}
-
-bool CUDABlas::DoBlasGemmBatched(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, std::complex<float> alpha,
-    const port::ArraySlice<DeviceMemory<std::complex<float>> *> &a_array,
-    int lda,
-    const port::ArraySlice<DeviceMemory<std::complex<float>> *> &b_array,
-    int ldb, std::complex<float> beta,
-    const port::ArraySlice<DeviceMemory<std::complex<float>> *> &c_array,
-    int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
-  port::Status status = DoBlasGemmBatchedInternal(
-      cublasCgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
-      b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
-  if (!status.ok()) {
-    LOG(ERROR) << status;
-  }
-  return status.ok();
-}
-
-bool CUDABlas::DoBlasGemmBatched(
-    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-    uint64 n, uint64 k, std::complex<double> alpha,
-    const port::ArraySlice<DeviceMemory<std::complex<double>> *> &a_array,
-    int lda,
-    const port::ArraySlice<DeviceMemory<std::complex<double>> *> &b_array,
-    int ldb, std::complex<double> beta,
-    const port::ArraySlice<DeviceMemory<std::complex<double>> *> &c_array,
-    int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
-  port::Status status = DoBlasGemmBatchedInternal(
-      cublasZgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
-      b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
   if (!status.ok()) {
     LOG(ERROR) << status;
   }

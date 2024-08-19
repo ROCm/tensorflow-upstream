@@ -343,7 +343,7 @@ void Fallback_FMA_execute(const GPUDevice& device, int64 dims[6],
     // We have 4 dimensions to loop over, but only 3 thread dimensions
     // Therefore, we squeeze dims[2] and dims[3] into threadIdx.z
     for (int i = 0; i < 4; i++) {
-      true_grid[0][i] = min(threads, dims[i]);
+      true_grid[0][i] = min(threads, (uint32)dims[i]);
       true_grid[1][i] = (dims[i] + true_grid[0][i] - 1) / true_grid[0][i];
       threads /= true_grid[0][i];
       blocks *= true_grid[1][i];

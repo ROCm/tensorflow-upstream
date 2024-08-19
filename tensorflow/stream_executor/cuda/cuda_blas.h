@@ -100,6 +100,10 @@ class CUDABlas : public blas::BlasSupport {
                               args...);
   }
 
+  template <class T, class V, class W>
+  bool DoBlasGemmImpl(Stream *stream, blas::GemmCallContext<T> ctx, 
+        V strided_fun, W fun);
+
   // A helper function to implement DoBlasGemmBatched interfaces for generic
   // types.
   template <typename T, typename Scalar, typename FuncT>
@@ -119,23 +123,23 @@ class CUDABlas : public blas::BlasSupport {
       T** c_array, int ldc, int batch_count);
 
   // Helper function for implementing DoBlasGemmWithAlgorithm.
-  template <typename InT, typename OutT, typename CompT>
-  bool DoBlasGemmWithAlgorithmImpl(
-      Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-      uint64 n, uint64 k, const HostOrDeviceScalar<CompT> &alpha,
-      const DeviceMemory<InT> &a, int lda, const DeviceMemory<InT> &b, int ldb,
-      const HostOrDeviceScalar<CompT> &beta, DeviceMemory<OutT> *c, int ldc,
-      blas::ComputationType computation_type, blas::AlgorithmType algorithm,
-      blas::ProfileResult *output_profile_result);
+  // template <typename InT, typename OutT, typename CompT>
+  // bool DoBlasGemmWithAlgorithmImpl(
+  //     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+  //     uint64 n, uint64 k, const HostOrDeviceScalar<CompT> &alpha,
+  //     const DeviceMemory<InT> &a, int lda, const DeviceMemory<InT> &b, int ldb,
+  //     const HostOrDeviceScalar<CompT> &beta, DeviceMemory<OutT> *c, int ldc,
+  //     blas::ComputationType computation_type, blas::AlgorithmType algorithm,
+  //     blas::ProfileResult *output_profile_result);
 
   // Helper function for implementing DoBlasGemmWithProfiling.
-  template <typename T, typename ParamType>
-  bool DoBlasGemmWithProfilingImpl(
-      Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
-      uint64 n, uint64 k, const ParamType &alpha, const DeviceMemory<T> &a,
-      int lda, const DeviceMemory<T> &b, int ldb, const ParamType &beta,
-      DeviceMemory<T> *c, int ldc, blas::ProfileResult *output_profile_result,
-      blas::CallContext context);
+  // template <typename T, typename ParamType>
+  // bool DoBlasGemmWithProfilingImpl(
+  //     Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64 m,
+  //     uint64 n, uint64 k, const ParamType &alpha, const DeviceMemory<T> &a,
+  //     int lda, const DeviceMemory<T> &b, int ldb, const ParamType &beta,
+  //     DeviceMemory<T> *c, int ldc, blas::ProfileResult *output_profile_result,
+  //     blas::CallContext context);
 
   // Helper function for implementing DoBlasGemvWithProfiling.
   template <typename T>

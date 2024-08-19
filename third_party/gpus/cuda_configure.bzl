@@ -586,6 +586,7 @@ def _find_cuda_lib(
         Returns the path to the library.
       """
     file_name = lib_name(lib, cpu_value, version, static)
+    print("--------------- libname: %s -- ver: %s" % (file_name, version))
     return find_lib(
         repository_ctx,
         ["%s/%s" % (basedir, file_name)],

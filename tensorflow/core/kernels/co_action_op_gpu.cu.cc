@@ -63,8 +63,13 @@ struct IMatmulParam {
 
 template <typename Scalar, int SUM_NUM>
 __forceinline__ __device__ Scalar warpReduceSum(Scalar val) {
-  for (int offset = SUM_NUM / 2; offset > 0; offset >>= 1)
+  for (int offset = SUM_NUM / 2; offset > 0; offset >>= 1) {
+#if GOOGLE_CUDA
+    val += __shfl_down_sync(0xffffffff, val, offset);
+#elif TENSORFLOW_USE_ROCM
     val += __shfl_down(val, offset);
+#endif
+  }
   return val;
 }
 
