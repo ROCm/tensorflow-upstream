@@ -84,6 +84,8 @@ toolchain {
   # (irrespective of whether the source file is being compiled via HIPCC)
   # so adding -DEIGEN_USE_HIP as a default CXX flag here
   unfiltered_cxx_flag: "-DEIGEN_USE_HIP"
+  unfiltered_cxx_flag: "-Wno-unused-but-set-variable"
+  unfiltered_cxx_flag: "-Wno-array-parameter"
 
     
   # Security hardening on by default.
@@ -103,9 +105,12 @@ toolchain {
   # compiler_flag: "-fcolor-diagnostics"
 
   # All warnings are enabled. Maybe enable -Werror as well?
-  compiler_flag: "-Wall"
+  #compiler_flag: "-Wall"
   # Enable a few more warnings that aren't part of -Wall.
-  compiler_flag: "-Wunused-but-set-parameter"
+  #compiler_flag: "-Wunused-but-set-parameter"
+  compiler_flag: "-Wno-unused-but-set-parameter"
+  compiler_flag: "-Wno-unused-but-set-variable"
+  compiler_flag: "-Wno-array-parameter"
   # But disable some that are problematic.
   compiler_flag: "-Wno-free-nonheap-object" # has false positives
 
@@ -114,9 +119,8 @@ toolchain {
 
   # Anticipated future default.
   linker_flag: "-no-canonical-prefixes"
-  unfiltered_cxx_flag: "-fno-canonical-system-headers"
   # Have gcc return the exit code from ld.
-  linker_flag: "-pass-exit-codes"
+  #linker_flag: "-pass-exit-codes"
   # Stamp the binary with a unique identifier.
   linker_flag: "-Wl,--build-id=md5"
   linker_flag: "-Wl,--hash-style=gnu"

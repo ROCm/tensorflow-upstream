@@ -76,6 +76,8 @@ def GetHostCompilerOptions(argv):
   parser.add_argument('-g', nargs='*', action='append')
   #parser.add_argument('-fno-canonical-system-headers', action='store_true')
   parser.add_argument('-no-canonical-prefixes', action='store_true')
+  parser.add_argument('-Wno-unused-variable', action='store_true')
+  parser.add_argument('-Wno-unused-but-set-variable', action='store_true')
 
   args, _ = parser.parse_known_args(argv)
 
@@ -209,7 +211,6 @@ def main():
   parser = ArgumentParser()
   parser.add_argument('-x', nargs=1)
   parser.add_argument('--rocm_log', action='store_true')
-  parser.add_argument('-pass-exit-codes', action='store_true')
   args, leftover = parser.parse_known_args(sys.argv[1:])
 
   if VERBOSE: print('PWD=' + os.getcwd())
@@ -217,18 +218,18 @@ def main():
   
   if args.x and args.x[0] == 'rocm':
     # XXX use hipcc to link
-    if args.pass_exit_codes:
-      gpu_compiler_flags = [flag for flag in sys.argv[1:]
-                                 if not flag.startswith(('-pass-exit-codes'))]
-
-      # special handling for $ORIGIN
-      # - guard every argument with ''
-      modified_gpu_compiler_flags = []
-      for flag in gpu_compiler_flags:
-        modified_gpu_compiler_flags.append("'" + flag + "'")
-
-      if args.rocm_log: Log('Link with hipcc: %s' % (' '.join([HIPCC_PATH] + modified_gpu_compiler_flags)))
-      return subprocess.call([HIPCC_PATH] + modified_gpu_compiler_flags)
+    #if args.pass_exit_codes:
+    #  gpu_compiler_flags = [flag for flag in sys.argv[1:]
+    #                             if not flag.startswith(('-pass-exit-codes'))]
+#
+#      # special handling for $ORIGIN
+#      # - guard every argument with ''
+#      modified_gpu_compiler_flags = []
+#      for flag in gpu_compiler_flags:
+#        modified_gpu_compiler_flags.append("'" + flag + "'")
+#
+#      if args.rocm_log: Log('Link with hipcc: %s' % (' '.join([HIPCC_PATH] + modified_gpu_compiler_flags)))
+#      return subprocess.call([HIPCC_PATH] + modified_gpu_compiler_flags)
 
     if args.rocm_log: Log('-x rocm')
     leftover = [pipes.quote(s) for s in leftover]
