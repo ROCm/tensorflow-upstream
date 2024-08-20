@@ -127,6 +127,8 @@ toolchain {
   # Gold linker only? Can we enable this by default?
   # linker_flag: "-Wl,--warn-execstack"
   # linker_flag: "-Wl,--detect-odr-violations"
+  linker_flag: "-fuse-ld=bfd"
+  linker_flag: "-Wl,--copy-dt-needed-entries"
 
   # Include directory for ROCm headers.
 %{rocm_include_path}
