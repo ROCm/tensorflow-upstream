@@ -4878,7 +4878,7 @@ bool CudnnSupport::DoMatMul(Stream* stream,
       .lda = lda,
       .pb = &bb,
       .ldb = ldb,
-      .c = &cc,
+      .pc = &cc,
       .ldc = ldc,
       .batch_count = batch_count,
       .context = blas::CallContext::kNone});

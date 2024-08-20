@@ -1804,12 +1804,16 @@ bool CUDABlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<double> ctx, bla
 
 bool CUDABlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<std::complex<float> > ctx, blas::ProfileResult *output_profile_result)
 {
-//  return DoBlasGemmImpl(stream, ctx, cublasCgemmStridedBatched, cublasCgemm);
+  //return DoBlasGemmImpl(stream, ctx, cublasCgemmStridedBatched, cublasCgemm);
+  LOG(ERROR) << "DoBlasGemm complex float: NYI";
+  return false;
 }
 
 bool CUDABlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<std::complex<double> > ctx, blas::ProfileResult *output_profile_result)
 {
-//  return DoBlasGemmImpl(stream, ctx, cublasZgemmStridedBatched, cublasZgemm);
+  //return DoBlasGemmImpl(stream, ctx, cublasZgemmStridedBatched, cublasZgemm);
+  LOG(ERROR) << "DoBlasGemm complex double: NYI";
+  return false;
 }
 
 bool CUDABlas::DoBlasGemm(Stream *stream, blas::GemmCallContext<int8, int32> ctx, blas::ProfileResult *output_profile_result)
@@ -2142,6 +2146,12 @@ static bool UsesTensorOps(blas::AlgorithmType algo) {
   return false;
 #endif
 }
+
+bool CUDABlas::GetBlasGemmAlgorithms(
+    std::vector<blas::AlgorithmType> *out_algorithms) {
+  return true;
+}
+
 
 // template <typename InT, typename OutT, typename CompT>
 // bool CUDABlas::DoBlasGemmWithAlgorithmImpl(
@@ -2586,18 +2596,20 @@ port::Status CUDABlas::DoBlasGemmBatchedInternal(
     return port::Status(port::error::INTERNAL,
                         "failed BLAS call, see log for details");
   } else {
+    return port::Status(port::error::INTERNAL,
+                        "DoBlasGemm loop is NYI");
     // Fall back to a loop for fp16
-    for (int b = 0; b < batch_count; ++b) {
-      const DeviceMemory<T> &a_matrix = *a_ptrs_to_wrappers[b];
-      const DeviceMemory<T> &b_matrix = *b_ptrs_to_wrappers[b];
-      DeviceMemory<T> *c_matrix = c_ptrs_to_wrappers[b];
-      bool ok = DoBlasGemm(stream, transa, transb, m, n, k, alpha, a_matrix,
-                           lda, b_matrix, ldb, beta, c_matrix, ldc);
-      if (!ok) {
-        return port::Status(port::error::INTERNAL,
-                            "failed BLAS call, see log for details");
-      }
-    }
+    // for (int b = 0; b < batch_count; ++b) {
+    //   const DeviceMemory<T> &a_matrix = *a_ptrs_to_wrappers[b];
+    //   const DeviceMemory<T> &b_matrix = *b_ptrs_to_wrappers[b];
+    //   DeviceMemory<T> *c_matrix = c_ptrs_to_wrappers[b];
+    //   bool ok = DoBlasGemm(stream, transa, transb, m, n, k, alpha, a_matrix,
+    //                        lda, b_matrix, ldb, beta, c_matrix, ldc);
+    //   if (!ok) {
+    //     return port::Status(port::error::INTERNAL,
+    //                         "failed BLAS call, see log for details");
+    //   }
+    // }
     return port::Status::OK();
   }
 }
@@ -2682,13 +2694,85 @@ port::Status CUDABlas::DoBlasGemmBatchedInternal(
   //  }
 }
 
+#if 0
+template <class T, class U=T>
+struct BatchedGemmCallContext
+{
+  blas::Transpose transa;
+  blas::Transpose transb;
+  uint64 m, n, k;
+  typename GemmCallContextAlpha<T>::type alpha, beta;
+  const port::ArraySlice<DeviceMemory<T> *> *pa;
+  int lda;
+  const port::ArraySlice<DeviceMemory<T> *> *pb;
+  int ldb;
+  const port::ArraySlice<DeviceMemory<U> *> *pc;
+  int ldc;
+  int batch_count;
+  CallContext context = CallContext::kNone;
+  ScratchAllocator *scratch_allocator = nullptr;
+  ComputationType type = ComputationType::kUndefined;
+  ProfileResult *output_profile_result = 0;
+  AlgorithmType algorithm = kDefaultGemmAlgo;
+};
+#endif
+
+bool CUDABlas::DoBlasGemmBatched(Stream *stream, 
+                    blas::BatchedGemmCallContext<Eigen::half> ctx) {
+   
+   port::Status status = DoBlasGemmBatchedInternal(
+      cublasSgemmBatched, stream, ctx.transa, ctx.transb, ctx.m, ctx.n, ctx.k, 
+      ctx.alpha, *ctx.pa, ctx.lda, *ctx.pb, ctx.ldb, ctx.beta, 
+      *ctx.pc, ctx.ldc, ctx.batch_count, ctx.scratch_allocator);
+  if (!status.ok()) {
+    LOG(ERROR) << status;
+  }
+  return status.ok();
+}
+
+bool CUDABlas::DoBlasGemmBatched(Stream *stream, 
+                    blas::BatchedGemmCallContext<float> ctx) {
+  port::Status status = DoBlasGemmBatchedInternal(
+      cublasSgemmBatched, stream, ctx.transa, ctx.transb, ctx.m, ctx.n, ctx.k, 
+      ctx.alpha, *ctx.pa, ctx.lda, *ctx.pb, ctx.ldb, ctx.beta, 
+      *ctx.pc, ctx.ldc, ctx.batch_count, ctx.scratch_allocator);
+  if (!status.ok()) {
+    LOG(ERROR) << status;
+  }
+  return status.ok();
+}
+
+bool CUDABlas::DoBlasGemmBatched(Stream *stream, 
+                    blas::BatchedGemmCallContext<double> ctx) {
+  port::Status status = DoBlasGemmBatchedInternal(
+      cublasDgemmBatched, stream, ctx.transa, ctx.transb, ctx.m, ctx.n, ctx.k, 
+      ctx.alpha, *ctx.pa, ctx.lda, *ctx.pb, ctx.ldb, ctx.beta, 
+      *ctx.pc, ctx.ldc, ctx.batch_count, ctx.scratch_allocator);
+  if (!status.ok()) {
+    LOG(ERROR) << status;
+  }
+  return status.ok();
+}
+
+bool CUDABlas::DoBlasGemmBatched(Stream *stream, 
+                    blas::BatchedGemmCallContext<std::complex<float>> ctx) {
+  LOG(ERROR) << "DoBlasGemmBatched complex<float> NYI!";
+  return false;
+}
+
+bool CUDABlas::DoBlasGemmBatched(Stream *stream, 
+                    blas::BatchedGemmCallContext<std::complex<double>> ctx) {
+  LOG(ERROR) << "DoBlasGemmBatched complex<double> NYI!";
+  return false;
+}
+
 bool CUDABlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  blas::Transpose transb, uint64 m, uint64 n,
                                  uint64 k, float alpha,
                                  const Eigen::half **a_array, int lda,
                                  const Eigen::half **b_array, int ldb,
                                  float beta, Eigen::half **c_array, int ldc,
-                                 int batch_count) {
+                                 int batch_count, ScratchAllocator* allocator) {
   port::Status status = DoBlasGemmBatchedInternal(
       cublasSgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count);
@@ -2703,7 +2787,7 @@ bool CUDABlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  uint64 k, float alpha, const float **a_array,
                                  int lda, const float **b_array, int ldb,
                                  float beta, float **c_array, int ldc,
-                                 int batch_count) {
+                                 int batch_count, ScratchAllocator* allocator) {
   port::Status status = DoBlasGemmBatchedInternal(
       cublasSgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count);
@@ -2718,7 +2802,7 @@ bool CUDABlas::DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                                  uint64 k, double alpha, const double **a_array,
                                  int lda, const double **b_array, int ldb,
                                  double beta, double **c_array, int ldc,
-                                 int batch_count) {
+                                 int batch_count, ScratchAllocator* allocator) {
   port::Status status = DoBlasGemmBatchedInternal(
       cublasDgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count);

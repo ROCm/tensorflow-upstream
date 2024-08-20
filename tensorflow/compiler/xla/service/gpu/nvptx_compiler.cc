@@ -27,7 +27,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/cudnn_conv_rewriter.h"
 #include "tensorflow/compiler/xla/service/gpu/cudnn_fused_conv_rewriter.h"
 #include "tensorflow/compiler/xla/service/gpu/cusolver_rewriter.h"
-#include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
+// #include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
 #include "tensorflow/compiler/xla/service/gpu/gemm_rewriter.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_conv_algorithm_picker.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_layout_assignment.h"
@@ -491,7 +491,7 @@ std::vector<uint8> NVPTXCompiler::CompilePtx(
   if (ptx.empty()) return cubin_data;
   StatusOr<std::vector<uint8>> maybe_cubin = se::cuda::CompilePtx(
       stream_exec->device_ordinal(), ptx.c_str(),
-      PtxOptsFromConfig(hlo_module_config));
+      GpuAsmOptsFromConfig(hlo_module_config));
 
   if (maybe_cubin.ok()) {
     cubin_data = std::move(maybe_cubin).ValueOrDie();
