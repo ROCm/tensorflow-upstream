@@ -50,7 +50,31 @@ def _get_win_rocm_defines(repository_ctx):
         "%{msvc_lib_path}": "msvc_not_used",
     }
 
+def get_host_environ(repository_ctx, name, default_value = None):
+    """Returns the value of an environment variable on the host platform.
+
+    The host platform is the machine that Bazel runs on.
+
+    Args:
+      repository_ctx: the repository_ctx
+      name: the name of environment variable
+
+    Returns:
+      The value of the environment variable 'name' on the host platform.
+    """
+    if name in repository_ctx.os.environ:
+        return repository_ctx.os.environ.get(name).strip()
+
+    if hasattr(repository_ctx.attr, "environ") and name in repository_ctx.attr.environ:
+        return repository_ctx.attr.environ.get(name).strip()
+
+    return default_value
+
 def find_cc(repository_ctx):
+    rocm_path = get_host_environ(repository_ctx, "ROCM_TOOLKIT_PATH")
+    return rocm_path+"/llvm/bin/amdclang"
+    #return rocm_path+"/llvm/bin/clang"
+
     """Find the C++ compiler."""
 
     # Return a dummy value for GCC detection here to avoid error
@@ -835,7 +859,7 @@ def _create_local_rocm_repository(repository_ctx):
     # # But disable some that are problematic.
     # compiler_flag: "-Wno-free-nonheap-object" # has false positives
 
-    rocm_defines["%{host_compiler_warnings}"] = to_list_of_strings(["-Wunused-but-set-parameter", "-Wno-free-nonheap-object"])
+    rocm_defines["%{host_compiler_warnings}"] = to_list_of_strings(["-Wno-unused-but-set-parameter", "-Wno-unused-but-set-variable", "-Wno-array-parameter", "-Wno-free-nonheap-object"])
 
     rocm_defines["%{cxx_builtin_include_directories}"] = to_list_of_strings(host_compiler_includes +
                                                                             _rocm_include_path(repository_ctx, rocm_config))

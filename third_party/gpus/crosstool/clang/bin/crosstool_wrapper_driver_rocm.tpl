@@ -79,7 +79,10 @@ def GetHostCompilerOptions(argv):
   parser.add_argument('-iquote', nargs='*', action='append')
   parser.add_argument('--sysroot', nargs=1)
   parser.add_argument('-g', nargs='*', action='append')
-  parser.add_argument('-fno-canonical-system-headers', action='store_true')
+  #parser.add_argument('-fno-canonical-system-headers', action='store_true')
+  parser.add_argument('-no-canonical-prefixes', action='store_true')
+  parser.add_argument('-Wno-unused-variable', action='store_true')
+  parser.add_argument('-Wno-unused-but-set-variable', action='store_true')
 
   args, _ = parser.parse_known_args(argv)
 
@@ -226,7 +229,6 @@ def main():
   parser = ArgumentParser()
   parser.add_argument('-x', nargs=1)
   parser.add_argument('--rocm_log', action='store_true')
-  parser.add_argument('-pass-exit-codes', action='store_true')
   args, leftover = parser.parse_known_args(sys.argv[1:])
 
   if VERBOSE: print('PWD=' + os.getcwd())
@@ -239,26 +241,26 @@ def main():
     if args.rocm_log: Log('using hipcc')
     return InvokeHipcc(leftover, log=args.rocm_log)
 
-  elif args.pass_exit_codes:
+#  elif args.pass_exit_codes:
     # link
     # with hipcc compiler invoked with -fno-gpu-rdc by default now, it's ok to 
     # use host compiler as linker, but we have to link with HCC/HIP runtime.
     # Such restriction would be revised further as the bazel script get
     # improved to fine tune dependencies to ROCm libraries.
-    gpu_linker_flags = [flag for flag in sys.argv[1:]
-                               if not flag.startswith(('--rocm_log'))]
-
-    gpu_linker_flags.append('-L' + ROCR_RUNTIME_PATH)
-    gpu_linker_flags.append('-Wl,-rpath=' + ROCR_RUNTIME_PATH)
-    gpu_linker_flags.append('-l' + ROCR_RUNTIME_LIBRARY)
-    gpu_linker_flags.append('-L' + HIP_RUNTIME_PATH)
-    gpu_linker_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
-    gpu_linker_flags.append('-l' + HIP_RUNTIME_LIBRARY)
-    if HIPCC_IS_HIPCLANG:
-      gpu_linker_flags.append("-lrt")
-
-    if VERBOSE: print(' '.join([CPU_COMPILER] + gpu_linker_flags))
-    return subprocess.call([CPU_COMPILER] + gpu_linker_flags)
+    #gpu_linker_flags = [flag for flag in sys.argv[1:]
+    #                           if not flag.startswith(('--rocm_log'))]
+#
+#    gpu_linker_flags.append('-L' + ROCR_RUNTIME_PATH)
+#    gpu_linker_flags.append('-Wl,-rpath=' + ROCR_RUNTIME_PATH)
+#    gpu_linker_flags.append('-l' + ROCR_RUNTIME_LIBRARY)
+#    gpu_linker_flags.append('-L' + HIP_RUNTIME_PATH)
+#    gpu_linker_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
+#    gpu_linker_flags.append('-l' + HIP_RUNTIME_LIBRARY)
+#    if HIPCC_IS_HIPCLANG:
+#      gpu_linker_flags.append("-lrt")
+#
+#    if VERBOSE: print(' '.join([CPU_COMPILER] + gpu_linker_flags))
+#    return subprocess.call([CPU_COMPILER] + gpu_linker_flags)
 
   else:
     # compilation for host objects
