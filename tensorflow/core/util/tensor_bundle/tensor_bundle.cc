@@ -952,6 +952,10 @@ Status BundleReader::LookupSlice(StringPiece full_tensor_key,
   return GetSliceValue(full_tensor_key, entry, slice_spec, val);
 }
 
+const checkpoint::TensorSliceSet *BundleReader::GetTensorSliceSet(const string &tensor_name) const {
+  return gtl::FindPtrOrNull(tensor_slices_, tensor_name);
+}
+
 Status BundleReader::GetSliceValue(StringPiece full_tensor_key,
                                    const BundleEntryProto& full_tensor_entry,
                                    const TensorSlice& slice_spec, Tensor* val) {

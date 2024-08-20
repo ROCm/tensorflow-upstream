@@ -243,6 +243,7 @@ class BundleReader {
   Status LookupSlice(StringPiece full_tensor_key, const TensorSlice& slice_spec,
                      Tensor* val) TF_MUST_USE_RESULT;
 
+  const checkpoint::TensorSliceSet *GetTensorSliceSet(const string &tensor_name) const;
   // Seeks to the first position in the bundle whose key is no less than "key".
   // REQUIRES: status().ok()
   void Seek(StringPiece key) { return iter_->Seek(key); }

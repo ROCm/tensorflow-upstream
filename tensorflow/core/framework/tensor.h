@@ -633,6 +633,9 @@ class Tensor {
 
   bool SameAs(const Tensor& other) const;
 
+  template <typename T>
+  T* base() const; // needed by blaze_benchmark
+
  private:
   // Returns true if the refcount on buf_ and any possible underlying root
   // buffer is one.
@@ -690,9 +693,6 @@ class Tensor {
   }
 
   void CopyFromInternal(const Tensor& other, const TensorShape& shape);
-
-  template <typename T>
-  T* base() const;
 
   template <size_t NDIMS>
   void FillDimsAndValidateCompatibleShape(

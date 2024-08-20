@@ -19,6 +19,8 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/executor.h"
 
 namespace tensorflow {
+
+Status CheckSingleThreadExecutorAvailable(Graph* graph);
 namespace data {
 
 // Creates a new `Executor` for executing `graph` synchronously on the caller

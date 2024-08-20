@@ -21,10 +21,12 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "tensorflow/core/framework/function.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/graph/costmodel.h"
 #include "tensorflow/core/graph/graph.h"
+#include "tensorflow/core/graph/control_flow.h"
 
 namespace tensorflow {
 
@@ -78,6 +80,31 @@ struct PartitionOptions {
   std::vector<Microseconds> start_times;
 };
 
+// A map used to store memory types for the inputs/outputs of every node.
+// The key is a pair of ints consisting of a node id and input/output index.
+// TODO(power): migrate back to std::pair when absl::Hash is fixed for MSVC.
+struct NodePort {
+  int node_id;
+  int index;
+
+  friend bool operator==(const NodePort& x, const NodePort& y) {
+    return x.node_id == y.node_id && x.index == y.index;
+  }
+
+  template <typename H>
+  friend H AbslHashValue(H h, const NodePort& c) {
+    return H::combine(std::move(h), c.node_id, c.index);
+  }
+};
+typedef absl::flat_hash_map<NodePort, MemoryType> MemoryTypeMap;
+// We collect the following information about the graph before performing
+// graph partitioning.
+struct GraphInfo {
+  std::vector<DeviceType> device_types;
+  MemoryTypeMap input_types;
+  MemoryTypeMap output_types;
+  std::vector<ControlFlowInfo> cf_info;
+};
 // Partition "input" graph into a set of graphs, one per location.
 // The location for node n is derived by calling opts.node_to_loc(n).
 // New nodes added by Partition use "opts.new_name(old_name)" to
@@ -93,6 +120,10 @@ Status Partition(const PartitionOptions& opts, Graph* input,
 Status AddControlEdges(const PartitionOptions& opts,
                        std::unordered_map<string, GraphDef>* partitions);
 
+Status BuildMemoryDeviceInfo(const Graph& g, GraphInfo* info);
+
+Status AddControlFlow(const PartitionOptions& opts, Graph* g,
+		                      GraphInfo* g_info);
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_CORE_GRAPH_GRAPH_PARTITION_H_

@@ -17,6 +17,7 @@ limitations under the License.
 #define TENSORFLOW_CORE_PLATFORM_TYPES_H_
 
 #include <string>
+#include <atomic>
 
 #include "tensorflow/core/platform/platform.h"
 #include "tensorflow/core/platform/tstring.h"
@@ -34,6 +35,56 @@ limitations under the License.
 #endif
 
 namespace tensorflow {
+
+    
+//[PROF-STATS]
+struct ProfStats {
+  std::atomic<uint64> flops;
+  std::atomic<float> blaze_latency_ms;
+  uint64 tao_op_calls = 0;
+  bool dump_shapes = false;
+  std::atomic<float> blaze_wait_ms;
+  std::atomic<int> batch_size;
+  std::atomic<int> blaze_running_counter;
+  std::atomic<int> blaze_waiting_counter;
+  std::atomic<int> blaze_nan;
+  std::atomic<int> blaze_nan_counter;
+  std::atomic<uint64> tensorflow_ops;
+  std::atomic<uint64> cpu_flops;
+  std::atomic<uint64> cpu_tensor_size;
+  std::atomic<uint64> gpu_flops;
+  std::atomic<uint64> gpu_tensor_size;
+  std::atomic<uint64> gpu_kernels;
+  std::atomic<uint64> pcie_h2d_times;
+  std::atomic<uint64> pcie_h2d_size;
+  std::atomic<uint64> pcie_d2h_times;
+  std::atomic<uint64> pcie_d2h_size;
+  std::atomic<bool> nan_qps;
+
+  ProfStats() {
+    flops = 0;
+    blaze_latency_ms = 0;
+    tao_op_calls = 0;
+    blaze_wait_ms = 0;
+    batch_size = 0;
+    blaze_running_counter = 0;
+    blaze_waiting_counter = 0;
+    blaze_nan = 0;
+    blaze_nan_counter = 0;
+    dump_shapes = false;
+    tensorflow_ops = 0;
+    cpu_flops = 0;
+    cpu_tensor_size = 0;
+    gpu_flops = 0;
+    gpu_tensor_size = 0;
+    gpu_kernels = 0;
+    pcie_h2d_times = 0;
+    pcie_h2d_size = 0;
+    pcie_d2h_times = 0;
+    pcie_d2h_size = 0;
+    nan_qps = false;
+  }
+};
 
 // Alias tensorflow::string to std::string.
 using std::string;

@@ -26,6 +26,7 @@ namespace test {
 class Benchmark;
 }
 struct SessionOptions;
+class SessionResource;
 
 // This class is shared by ThreadPoolDevice and GPUDevice and
 // initializes a shared Eigen compute device used by both.  This
@@ -37,6 +38,9 @@ class LocalDevice : public Device {
               const DeviceAttributes& attributes);
   ~LocalDevice() override;
 
+  std::shared_ptr<SessionResource> GetSessionResource() const {
+  	return session_resource_;
+  }
  private:
   static bool use_global_threadpool_;
 
@@ -47,6 +51,7 @@ class LocalDevice : public Device {
   struct EigenThreadPoolInfo;
   std::unique_ptr<EigenThreadPoolInfo> owned_tp_info_;
 
+  std::shared_ptr<SessionResource> session_resource_;
   // All ThreadPoolDevices in the process associated with the same
   // NUMA node will share a single fixed sized threadpool for numerical
   // computations.

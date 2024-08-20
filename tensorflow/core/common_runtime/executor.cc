@@ -860,6 +860,8 @@ Status InferAllocAttr(const Node* n, const Node* dst,
 // track of how many predecessors of a node have not done (pending_).
 class ExecutorState {
  public:
+  typedef std::shared_ptr<UserTracedInfos> TracedInfosPtr;
+
   ExecutorState(const Executor::Args& args, ExecutorImpl* impl);
   ~ExecutorState();
 
@@ -1262,6 +1264,8 @@ class ExecutorState {
   const bool log_memory_;
 
   int64 step_id_;
+  int64 query_priority_;
+  int64 round_step_id_;
   // Not owned.
   Rendezvous* rendezvous_;
   Executor::RendezvousFactory* create_rendezvous_ = nullptr;

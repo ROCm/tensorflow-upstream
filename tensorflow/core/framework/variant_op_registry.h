@@ -58,6 +58,7 @@ enum VariantDeviceCopyDirection {
 
 class UnaryVariantOpRegistry {
  public:
+  typedef std::function<Status(const Variant& v, TensorShape*)> VariantShapeFn;
   typedef std::function<bool(Variant*)> VariantDecodeFn;
   typedef std::function<Status(OpKernelContext*, const Variant&, Variant*)>
       VariantUnaryOpFn;
@@ -91,6 +92,11 @@ class UnaryVariantOpRegistry {
   typedef std::function<Status(const Variant& from, Variant* to,
                                AsyncTensorDeviceCopyFn copy_fn)>
       AsyncVariantDeviceCopyFn;
+
+  // Add a shape lookup function to the registry.
+  void RegisterShapeFn(const string& type_name, const VariantShapeFn& shape_fn);
+
+  VariantShapeFn* GetShapeFn(StringPiece type_name);
 
   // Add a decode function to the registry.
   void RegisterDecodeFn(const string& type_name,
@@ -146,6 +152,7 @@ class UnaryVariantOpRegistry {
     std::size_t operator()(const TypeIndex& x) const { return x.hash_code(); }
   };
 
+  gtl::FlatMap<StringPiece, VariantShapeFn, StringPieceHasher> shape_fns;
   gtl::FlatMap<StringPiece, VariantDecodeFn, StringPieceHasher> decode_fns;
 
   // Map std::pair<Direction, type_name> to function.
@@ -236,6 +243,7 @@ inline bool operator==(const UnaryVariantOpRegistry::FuncTuple<Op>& lhs,
 //
 bool DecodeUnaryVariant(Variant* variant);
 
+Status GetUnaryVariantShape(const Tensor& variant_tensor, TensorShape* shape);
 // Copies a variant between CPU<->GPU, or between GPU<->GPU.
 // The variant 'from' must have a registered DeviceCopyFn for the
 // given direction.  The returned variant 'to' will have
@@ -307,6 +315,27 @@ Status BinaryOpVariants(OpKernelContext* ctx, VariantBinaryOp op,
 }
 
 namespace variant_op_registry_fn_registration {
+
+template <typename T>
+class UnaryVariantShapeRegistration {
+ public:
+  typedef std::function<Status(const T& t, TensorShape*)> LocalVariantShapeFn;
+
+  UnaryVariantShapeRegistration(const string& type_name,
+                                const LocalVariantShapeFn& shape_fn) {
+    UnaryVariantOpRegistry::Global()->RegisterShapeFn(
+        type_name,
+        [type_name, shape_fn](const Variant& v, TensorShape* s) -> Status {
+          const T* t = v.get<T>();
+          if (t == nullptr) {
+            return errors::Internal(
+                "VariantShapeFn: Could not access object, type_name: ",
+                type_name);
+          }
+          return shape_fn(*t, s);
+        });
+  }
+};
 
 template <typename T>
 class UnaryVariantDecodeRegistration {
@@ -534,6 +563,22 @@ class UnaryVariantBinaryOpRegistration {
           register_unary_variant_op_decoder_fn_##ctr(op, device, type_index, \
                                                      binary_op_function)
 
+// Register a unary shape variant function with the signature:
+//    Status ShapeFn(const T& t, TensorShape* s);
+// to Variants having TypeName type_name.
+#define REGISTER_UNARY_VARIANT_SHAPE_FUNCTION(T, type_name, shape_function)    \
+  REGISTER_UNARY_VARIANT_SHAPE_FUNCTION_UNIQ_HELPER(__COUNTER__, T, type_name, \
+                                                    shape_function)
+
+#define REGISTER_UNARY_VARIANT_SHAPE_FUNCTION_UNIQ_HELPER(ctr, T, type_name, \
+                                                          shape_function)    \
+  REGISTER_UNARY_VARIANT_SHAPE_FUNCTION_UNIQ(ctr, T, type_name, shape_function)
+
+#define REGISTER_UNARY_VARIANT_SHAPE_FUNCTION_UNIQ(ctr, T, type_name,          \
+                                                   shape_function)             \
+  static variant_op_registry_fn_registration::UnaryVariantShapeRegistration<T> \
+      register_unary_variant_op_shape_registration_fn_##ctr(type_name,         \
+                                                            shape_function)
 }  // end namespace tensorflow
 
 #endif  // TENSORFLOW_CORE_FRAMEWORK_VARIANT_OP_REGISTRY_H_

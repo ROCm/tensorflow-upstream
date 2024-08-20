@@ -46,7 +46,7 @@ static bool ConsumeJobName(StringPiece* in, string* job) {
   for (; i < in->size(); ++i) {
     const char c = (*in)[i];
     if (c == '/') break;
-    if (!(IsAlphaNum(c) || c == '_')) {
+    if (!(IsAlphaNum(c) || c == '_') || c == '.') {
       return false;
     }
   }

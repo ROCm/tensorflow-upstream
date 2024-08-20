@@ -19,10 +19,18 @@ limitations under the License.
 #include <string>
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/protobuf/config.pb.h"
+#include "tensorflow/core/lib/core/status.h"
 
 namespace tensorflow {
 
 class Env;
+class SessionResource;
+class FunctionLibraryRuntime;
+class NodeDef;
+class OpKernel;
+typedef std::function<Status(FunctionLibraryRuntime*, const NodeDef&,
+		                             std::unique_ptr<OpKernel>*)>
+CustomKernelCreatorFunc;
 
 /// Configuration information for a Session.
 struct SessionOptions {
@@ -57,6 +65,8 @@ struct SessionOptions {
   /// Configuration options.
   ConfigProto config;
 
+  std::shared_ptr<SessionResource> sessionResource;
+  CustomKernelCreatorFunc customKernelCreator;
   SessionOptions();
 };
 

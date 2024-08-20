@@ -174,6 +174,7 @@ class BaseGPUDevice : public LocalDevice {
 
  private:
   friend class GPUDeviceTestHelper;
+  SessionOptions session_options_;
   gtl::InlinedVector<StreamGroup*, 4> streams_;
   mutex scratch_init_mutex_;
   gtl::InlinedVector<char*, 4> scratch_;

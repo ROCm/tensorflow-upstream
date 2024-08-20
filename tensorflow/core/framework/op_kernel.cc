@@ -711,6 +711,7 @@ Status OpKernelContext::allocate_output(StringPiece name,
 Status OpKernelContext::allocate_tensor(
     DataType type, const TensorShape& shape, Tensor* out_tensor,
     AllocatorAttributes attr, const AllocationAttributes& allocation_attr) {
+
   Allocator* a = get_allocator(attr);
   Tensor new_tensor(a, type, shape,
                     AllocationAttributes(allocation_attr.no_retry_on_failure,
@@ -1548,6 +1549,92 @@ Status CreateOpKernel(DeviceType device_type, DeviceBase* device,
   }
   return s;
 }
+
+Status CreateOpKernel(DeviceType device_type, DeviceBase* device,
+                      Allocator* allocator, FunctionLibraryRuntime* flib,
+                      const NodeDef& node_def, int graph_def_version,
+                      OpKernel** kernel, const std::function<Status(OpKernelConstruction*, OpKernel**)> &factory) {
+  VLOG(1) << "Instantiating kernel for node: " << SummarizeNodeDef(node_def);
+
+  // Look up the Op registered for this op name.
+  const OpDef* op_def = nullptr;
+  Status s = OpRegistry::Global()->LookUpOpDef(node_def.op(), &op_def);
+  if (!s.ok()) return s;
+
+  // Validate node_def against OpDef.
+  s = ValidateNodeDef(node_def, *op_def);
+  if (!s.ok()) return s;
+
+  // Look up kernel registration.
+  const KernelRegistration* registration;
+  bool was_attr_mismatch;
+  s = FindKernelRegistration(device_type, node_def, &registration,
+                             &was_attr_mismatch);
+  if (!s.ok()) {
+    errors::AppendToMessage(&s, " when instantiating ", node_def.op());
+    return s;
+  }
+  if (registration == nullptr) {
+    s.Update(errors::NotFound("No registered '", node_def.op(),
+                              "' OpKernel for '", DeviceTypeString(device_type),
+                              "' devices compatible with node ",
+                              FormatNodeDefForError(node_def)));
+    if (was_attr_mismatch) {
+      errors::AppendToMessage(
+          &s, " (OpKernel was found, but attributes didn't match) ",
+          "Requested Attributes: ", SummarizeAttrs(node_def));
+    }
+    errors::AppendToMessage(
+        &s, ".  Registered:", KernelsRegisteredForOp(node_def.op()));
+    return s;
+  }
+
+  // Get signature from the OpDef & NodeDef
+  DataTypeVector inputs;
+  DataTypeVector outputs;
+  s.Update(InOutTypesForNode(node_def, *op_def, &inputs, &outputs));
+  if (!s.ok()) {
+    errors::AppendToMessage(&s, " for node: ", FormatNodeDefForError(node_def));
+    return s;
+  }
+
+  // We are creating a kernel for an op registered in
+  // OpRegistry::Global(), we consult the kernel registry to decide
+  // the kernel's input and output memory types.
+  MemoryTypeVector input_memory_types;
+  MemoryTypeVector output_memory_types;
+  TF_RETURN_IF_ERROR(MemoryTypesForNode(OpRegistry::Global(), device_type,
+                                        node_def, &input_memory_types,
+                                        &output_memory_types));
+
+  // Everything needed for OpKernel construction.
+  OpKernelConstruction context(
+      device_type, device, allocator, &node_def, op_def, flib, inputs,
+      input_memory_types, outputs, output_memory_types, graph_def_version, &s);
+  Status s2 = factory(&context, kernel);
+  if (!s.ok() || !s2.ok()) {
+    delete *kernel;
+    *kernel = nullptr;
+  }
+
+  std::string runType = "sync";
+  if ((*kernel)->AsAsync() != nullptr) {
+    runType = "async";
+  }
+#ifdef TF_ENABLE_METRIC
+  std::string tags = "op=" + context.def().op() + " "
+                   + "device=" + context.device_type().type() + " "
+                   /*"node=" + context.def().name() + " " */
+                   + "runtype=" + runType;
+
+  Metric* qps = getInstance()->registerMetric("OpKernel.QPS", MetricType::QPS, tags);
+  Metric* latency = getInstance()->registerMetric("OpKernel.Latency", MetricType::AVG, tags);
+  (*kernel)->setMetricQps(qps);
+  (*kernel)->setMetricLatency(latency);
+#endif
+  return Status::OK();
+}
+
 
 namespace {
 

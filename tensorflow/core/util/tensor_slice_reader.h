@@ -96,10 +96,16 @@ class TensorSliceReader {
     return tensors_;
   }
 
+  const TensorSliceSet *GetTensorSliceSet(const string &tensor_name) const;
+
   // Returns value for one tensor. Only single slice checkpoints are supported
   // at the moment.
   Status GetTensor(const string& name,
                    std::unique_ptr<tensorflow::Tensor>* out_tensor) const;
+
+  Status GetTensorSlice(const string &name,
+                        const TensorSlice &slice_spec,
+                        std::unique_ptr<tensorflow::Tensor> *out_tensor) const;
 
   typedef std::unordered_map<string, TensorShape> VarToShapeMap;
   typedef std::unordered_map<string, DataType> VarToDataTypeMap;

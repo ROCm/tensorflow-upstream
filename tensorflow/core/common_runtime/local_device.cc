@@ -113,7 +113,7 @@ struct LocalDevice::EigenThreadPoolInfo {
 
 LocalDevice::LocalDevice(const SessionOptions& options,
                          const DeviceAttributes& attributes)
-    : Device(options.env, attributes), owned_tp_info_(nullptr) {
+    : Device(options.env, attributes), owned_tp_info_(nullptr), session_resource_(options.sessionResource) {
   // Log info messages if TensorFlow is not compiled with instructions that
   // could speed up performance and are available on the current CPU.
   port::InfoAboutUnusedCPUFeatures();

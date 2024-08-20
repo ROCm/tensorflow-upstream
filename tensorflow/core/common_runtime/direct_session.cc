@@ -28,6 +28,7 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/device_resolver_local.h"
 #include "tensorflow/core/common_runtime/executor.h"
 #include "tensorflow/core/common_runtime/executor_factory.h"
+#include "tensorflow/core/kernels/data/single_threaded_executor.h"
 #include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/common_runtime/graph_optimizer.h"
 #include "tensorflow/core/common_runtime/memory_types.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/graph_def_util.h"
 #include "tensorflow/core/framework/log_memory.h"
-#include "tensorflow/core/framework/logging.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/framework/run_handler.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -134,10 +134,16 @@ Status NewThreadPoolFromThreadPoolOptions(
   return Status::OK();
 }
 
-thread::ThreadPool* GlobalThreadPool(const SessionOptions& options) {
-  static thread::ThreadPool* const thread_pool =
-      NewThreadPoolFromSessionOptions(options);
-  return thread_pool;
+thread::ThreadPool* GlobalThreadPool(const SessionOptions& options, bool is_blaze = false) {
+  if (!is_blaze) {
+    static thread::ThreadPool* const thread_pool =
+        NewThreadPoolFromSessionOptions(options);
+    return thread_pool;
+  } else {
+    static thread::ThreadPool* const thread_pool =
+        NewThreadPoolFromSessionOptions(options);
+    return thread_pool;
+  }
 }
 
 // TODO(vrv): Figure out how to unify the many different functions
@@ -311,7 +317,12 @@ DirectSession::DirectSession(const SessionOptions& options,
       device_mgr_(device_mgr),
       factory_(factory),
       cancellation_manager_(new CancellationManager()),
-      operation_timeout_in_ms_(options_.config.operation_timeout_in_ms()) {
+      operation_timeout_in_ms_(options_.config.operation_timeout_in_ms()),
+      is_blaze_(options.config.is_blaze()) {
+
+  const bool force_run_in_caller_thread = 
+    options_.config.force_run_in_caller_thread();
+
   const int thread_pool_size =
       options_.config.session_inter_op_thread_pool_size();
   if (thread_pool_size > 0) {
@@ -327,19 +338,24 @@ DirectSession::DirectSession(const SessionOptions& options,
     thread_pools_.emplace_back(NewThreadPoolFromSessionOptions(options_),
                                true /* owned */);
   } else {
-    thread_pools_.emplace_back(GlobalThreadPool(options), false /* owned */);
-    // Run locally if environment value of TF_NUM_INTEROP_THREADS is negative
-    // and config.inter_op_parallelism_threads is unspecified or negative.
-    static const int env_num_threads = NumInterOpThreadsFromEnvironment();
-    if (options_.config.inter_op_parallelism_threads() < 0 ||
-        (options_.config.inter_op_parallelism_threads() == 0 &&
-         env_num_threads < 0)) {
-      run_in_caller_thread_ = true;
+    thread_pools_.emplace_back(GlobalThreadPool(options, is_blaze_), false /* owned */);
+    if (force_run_in_caller_thread) {
+      VLOG(0) << "force running in caller thread";
+      force_run_in_caller_thread_ = force_run_in_caller_thread;
+    } else {
+      // Run locally if environment value of TF_NUM_INTEROP_THREADS is negative
+      // and config.inter_op_parallelism_threads is unspecified or negative.
+      static const int env_num_threads = NumInterOpThreadsFromEnvironment();
+      if (options_.config.inter_op_parallelism_threads() < 0 ||
+          (options_.config.inter_op_parallelism_threads() == 0 &&
+           env_num_threads < 0)) {
+        run_in_caller_thread_ = true;
+      }
     }
   }
   // The default value of sync_on_finish will be flipped soon and this
   // environment variable will be removed as well.
-  const Status status =
+  Status status =
       ReadBoolFromEnvVar("TF_SYNC_ON_FINISH", true, &sync_on_finish_);
   if (!status.ok()) {
     LOG(ERROR) << status.error_message();
@@ -378,10 +394,7 @@ DirectSession::DirectSession(const SessionOptions& options,
     } else {
       printf("Device mapping:\n%s", mapping_str.c_str());
     }
-    string msg = strings::StrCat("Device mapping:\n", mapping_str);
-    if (!logging::LogToListeners(msg)) {
-      LOG(INFO) << msg;
-    }
+    LOG(INFO) << "Device mapping:\n" << mapping_str;
   }
   for (auto d : device_mgr_->ListDevices()) {
     devices_.push_back(d);
@@ -408,6 +421,9 @@ DirectSession::~DirectSession() {
   callables_.clear();
   for (auto d : device_mgr_->ListDevices()) {
     d->op_segment()->RemoveHold(session_handle_);
+  }
+  for (auto d : device_mgr_->ListDevices()) {
+    d->ClearResourceMgr();
   }
   functions_.clear();
   delete cancellation_manager_;
@@ -472,6 +488,18 @@ Status DirectSession::ExtendLocked(GraphDef graph) {
   return Status::OK();
 }
 
+struct CallbackFrame {
+  CallbackFrame() {
+    executors_and_keys = nullptr;
+  }
+  std::unique_ptr<FunctionCallFrame> call_frame;
+  std::shared_ptr<DirectSession::RunState> run_state;
+  DirectSession::ExecutorsAndKeys* executors_and_keys;
+  CancellationManager step_cancellation_manager;
+  CancellationToken cancellation_token;
+  bool update_cost_model;
+};
+
 Status DirectSession::Run(const NamedTensorList& inputs,
                           const std::vector<string>& output_names,
                           const std::vector<string>& target_nodes,
@@ -515,24 +543,14 @@ Status DirectSession::RunInternal(
     int64 step_id, const RunOptions& run_options,
     CallFrameInterface* call_frame, ExecutorsAndKeys* executors_and_keys,
     RunMetadata* run_metadata,
-    const thread::ThreadPoolOptions& threadpool_options, int blaze_stream_id,
-    CudaGraphMeta* cuda_graph_meta) {
+    const thread::ThreadPoolOptions& threadpool_options, int blaze_stream_id
+    /*, CudaGraphMeta* cuda_graph_meta*/) {
   const uint64 start_time_usecs = options_.env->NowMicros();
   const int64 executor_step_count = executors_and_keys->step_count.fetch_add(1);
   RunState run_state(step_id, &devices_);
 
   profiler::TraceMe activity(
-      [&] {
-        if (options_.config.experimental().has_session_metadata()) {
-          const auto& model_metadata =
-              options_.config.experimental().session_metadata();
-          return strings::StrCat("SessionRun #id=", step_id,
-                                 ",model_id=", model_metadata.name(), ":",
-                                 model_metadata.version(), "#");
-        } else {
-          return strings::StrCat("SessionRun #id=", step_id, "#");
-        }
-      },
+      [&] { return strings::StrCat("SessionRun #id=", step_id, "#"); },
       profiler::TraceMeLevel::kInfo);
 
   std::unique_ptr<DebuggerStateInterface> debugger_state;
@@ -728,7 +746,9 @@ Status DirectSession::RunInternal(
         item.device->tensorflow_device_thread_pool();
     // TODO(crk): Investigate usage of RunHandlerPool when using device specific
     // thread pool(s).
-    if (!device_thread_pool) {
+    if (is_blaze_) {
+      args.runner = default_runner;
+    } else if (!device_thread_pool) {
       args.runner = default_runner;
     } else {
       args.runner = [this, device_thread_pool](Executor::Args::Closure c) {
@@ -1496,7 +1516,9 @@ Status DirectSession::Run(const RunOptions& run_options,
     return s;
   }
 
-  const int64 step_id = step_id_counter_.fetch_add(1);
+  const int64 step_id = run_options.has_run_id() ? 
+                        run_options.run_id().value() : step_id_counter_.fetch_add(1);
+  //const int64 step_id = step_id_counter_.fetch_add(1);
 
   if (LogMemory::IsEnabled()) {
     LogMemory::RecordStep(step_id, run_state_args.handle);
@@ -2276,7 +2298,6 @@ Status DirectSession::CreateExecutors(
   TF_RETURN_IF_ERROR(CreateGraphs(
       options, &graphs, &func_info->flib_def, run_state_args, &ek->input_types,
       &ek->output_types, &ek->collective_graph_key));
-
   if (run_state_args->is_partial_run) {
     ek->graph = std::move(run_state_args->graph);
     std::unordered_set<StringPiece, StringPieceHasher> names;
@@ -2301,14 +2322,9 @@ Status DirectSession::CreateExecutors(
 
   int graph_def_version = graphs.begin()->second->versions().producer();
 
-  const auto* session_metadata =
-      options_.config.experimental().has_session_metadata()
-          ? &options_.config.experimental().session_metadata()
-          : nullptr;
   func_info->proc_flr.reset(new ProcessFunctionLibraryRuntime(
       device_mgr_.get(), options_.env, graph_def_version,
-      func_info->flib_def.get(), optimizer_opts, thread_pools_[0].first,
-      nullptr, nullptr, session_metadata));
+      func_info->flib_def.get(), optimizer_opts, thread_pools_[0].first));
 
   GraphOptimizer optimizer(optimizer_opts);
   for (auto iter = graphs.begin(); iter != graphs.end(); ++iter) {
@@ -2557,7 +2573,6 @@ Status DirectSession::CreateExecutors(
                            FrameAndIter(0, 0));
     }
   }
-
   *out_executors_and_keys = std::move(ek);
   *out_func_info = std::move(func_info);
   return Status::OK();
@@ -2659,15 +2674,12 @@ Status DirectSession::GetOrCreateExecutors(
 
   // Reacquire the lock, try to insert into the map.
   mutex_lock l(executor_lock_);
+  functions_.push_back(std::move(func_info));
 
   // Another thread may have created the entry before us, in which case we will
   // reuse the already created one.
   auto insert_result = executors_.emplace(
       sorted_key, std::shared_ptr<ExecutorsAndKeys>(std::move(ek)));
-  if (insert_result.second) {
-    functions_.push_back(std::move(func_info));
-  }
-
   // Insert the value under the original key, so the fast path lookup will work
   // if the user uses the same order of inputs, outputs, and targets again.
   executors_.emplace(key, insert_result.first->second);
@@ -2789,15 +2801,15 @@ Status DirectSession::CreateGraphs(
     }
   }
 
-  for (auto& partition : partitions) {
+  for (const auto& partition : partitions) {
     std::unique_ptr<Graph> device_graph(
         new Graph(client_graph->flib_def.get()));
     GraphConstructorOptions device_opts;
     // There are internal operations (e.g., send/recv) that we now allow.
     device_opts.allow_internal_ops = true;
     device_opts.expect_device_spec = true;
-    TF_RETURN_IF_ERROR(ConvertGraphDefToGraph(
-        device_opts, std::move(partition.second), device_graph.get()));
+    TF_RETURN_IF_ERROR(ConvertGraphDefToGraph(device_opts, partition.second,
+                                              device_graph.get()));
     outputs->emplace(partition.first, std::move(device_graph));
   }
 
@@ -2812,7 +2824,6 @@ Status DirectSession::CreateGraphs(
   for (auto& partition : *outputs) {
     const string& partition_name = partition.first;
     std::unique_ptr<Graph>* graph = &partition.second;
-
     VLOG(2) << "Created " << DebugString(graph->get()) << " for "
             << partition_name;
 

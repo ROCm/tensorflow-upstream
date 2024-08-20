@@ -171,10 +171,10 @@ class DirectSession : public Session {
 
   const SessionOptions& options() const { return options_; }
   
-  ::tensorflow::Status PreCreateExecutors(const std::vector<std::string>& inputs,
-                                          const std::vector<std::string>& outputs,
-                                          const std::vector<std::string>& target_nodes,
-                                          const ::tensorflow::RunOptions& run_options);
+  // ::tensorflow::Status PreCreateExecutors(const std::vector<std::string>& inputs,
+  //                                         const std::vector<std::string>& outputs,
+  //                                         const std::vector<std::string>& target_nodes,
+  //                                         const ::tensorflow::RunOptions& run_options);
 
   int RequireStreamGroup() override;
 
@@ -226,7 +226,7 @@ class DirectSession : public Session {
   }
 
   // TODO: const cast check for aios auto scale
-  SessionOptions* get_options() const override {return const_cast<SessionOptions*>(&options_);}
+  //SessionOptions* get_options() const override {return const_cast<SessionOptions*>(&options_);}
  private:
   // For access to collective_graph_key_.
   friend class DirectSessionCollectiveTest;
@@ -352,8 +352,7 @@ class DirectSession : public Session {
       int64 step_id, const RunOptions& run_options,
       CallFrameInterface* call_frame, ExecutorsAndKeys* executors_and_keys,
       RunMetadata* run_metadata,
-      const thread::ThreadPoolOptions& threadpool_options, int blaze_stream_id = -1,
-      CudaGraphMeta* cuda_graph_meta = nullptr);
+      const thread::ThreadPoolOptions& threadpool_options, int blaze_stream_id = -1);
 
   void RunInternalAsync(
       int64 step_id, const RunOptions& run_options,
@@ -530,9 +529,12 @@ class DirectSession : public Session {
 
   // Global timeout for all blocking operations in this session.
   const int64 operation_timeout_in_ms_ = 0;
+  bool is_blaze_ = false;
 
   // Manages all the cost models for the graphs executed in this session.
   CostModelManager cost_model_manager_;
+
+  Executor::Args::NodeOutputsCallback node_outputs_callback_ = nullptr;
 
   // For testing collective graph key generation.
   mutex collective_graph_key_lock_;
@@ -558,6 +560,7 @@ class DirectSession : public Session {
 
   // EXPERIMENTAL: debugger (tfdbg) related
   friend class DebugGateway;
+  friend class CallbackFrame;
 };
 
 class BlazeConfSingleton {

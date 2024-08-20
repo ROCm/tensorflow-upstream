@@ -30,6 +30,7 @@ namespace tensorflow {
 namespace checkpoint {
 
 class TensorSliceReader;
+class TensorSliceSet;
 
 // A wrapper around BundleReader (for V2 checkpoints) and
 // checkpoint::TensorSliceReader (for V1), that is more easily SWIG wrapped for
@@ -58,6 +59,12 @@ class CheckpointReader {
                  std::unique_ptr<tensorflow::Tensor>* out_tensor,
                  TF_Status* out_status) const;
 
+  const TensorSliceSet *GetTensorSliceSet(const string &name) const;
+
+  void GetTensorSlice(const string &name,
+                      const TensorSlice& slice_spec,
+                      std::unique_ptr<tensorflow::Tensor> *out_tensor,
+                      TF_Status *out_status) const;
  private:
   // Uses "v2_reader_" to build "var name -> shape" and "var name -> data type"
   // maps; both owned by caller.

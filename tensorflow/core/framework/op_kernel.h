@@ -605,12 +605,15 @@ struct GraphCollector {
   }
 };
 
+struct UserTracedInfos;
 class OpKernelContext {
  public:
   // The first element of a WrappedAllocator is a "base" Allocator and
   // the second element is that Allocator wrapped by a
   // TrackingAllocator
   typedef std::pair<Allocator*, TrackingAllocator*> WrappedAllocator;
+  typedef std::shared_ptr<ProfStats> ProfStatsPtr;
+  typedef std::shared_ptr<UserTracedInfos> TracedInfosPtr;
 
   // TODO(zhifengc): Do some cleanup of Params.
   // The Params struct is passed in to initialize an OpKernelContext,
@@ -628,6 +631,8 @@ class OpKernelContext {
 
     // The step being executed.
     int64 step_id = 0;
+    int64 round_step_id = 0;
+    int64 query_priority = -1;
 
     // True if the op is created by eager runtime.
     bool is_eager = false;
@@ -683,6 +688,8 @@ class OpKernelContext {
     Rendezvous* rendezvous = nullptr;
     const std::function<Status(const int64, const DeviceMgr*, Rendezvous** r)>*
         create_rendezvous;
+
+    Rendezvous* global_rendezvous = nullptr;
 
     // Mechanism for executing a collective op that needs to coordinate
     // with parallel instances running on other devices.
@@ -1134,6 +1141,7 @@ class OpKernelContext {
   // An op kernel communicates with outside environment through
   // Rendezvous Send() and Recv().
   Rendezvous* rendezvous() const { return params_->rendezvous; }
+  Rendezvous* global_rendezvous() const { return params_->global_rendezvous; }
   Status create_rendezvous(const int64 step_id, const DeviceMgr* device_mgr,
                            Rendezvous** r) const {
     return (*params_->create_rendezvous)(step_id, device_mgr, r);
@@ -1228,6 +1236,7 @@ class OpKernelContext {
   // For control flow.
   FrameAndIter frame_iter() const { return params_->frame_iter; }
   bool is_input_dead() const { return params_->is_input_dead; }
+  bool* is_output_dead() { return &is_output_dead_; }
 
   // May be used, e.g., to get GPU handles, etc.
   // TODO(tucker): Add example usage.
@@ -1355,6 +1364,7 @@ class OpKernelContext {
 
   // Constructed only if <params->record_tensor_accesses>.
   ManualConstructor<UniqueTensorReferences> referenced_tensors_ GUARDED_BY(mu_);
+  bool is_output_dead_ = false;
 
   // The following data members are only used when allocation tracking is
   // enabled.
@@ -1422,6 +1432,12 @@ Status CreateOpKernel(DeviceType device_type, DeviceBase* device,
                       Allocator* allocator, FunctionLibraryRuntime* flib,
                       const NodeDef& def, int graph_def_version,
                       OpKernel** kernel);
+
+Status CreateOpKernel(DeviceType device_type, DeviceBase* device,
+                      Allocator* allocator, FunctionLibraryRuntime* flib,
+                      const NodeDef& node_def, int graph_def_version,
+                      OpKernel** kernel,
+                      const std::function<Status(OpKernelConstruction*, OpKernel**)> &factory);
 
 // Returns into 'device_types' the subset of prioritized_types that this
 // binary has registered for the given NodeDef.
@@ -1822,6 +1838,8 @@ inline void CheckNotInComputeAsync(OpKernelConstruction*, const char*) {}
 void CheckNotInComputeAsync(OpKernelContext* ctx,
                             const char* correct_macro_name);
 
+
+
 #define OP_REQUIRES(CTX, EXP, STATUS)                     \
   do {                                                    \
     if (!TF_PREDICT_TRUE(EXP)) {                          \
@@ -1856,6 +1874,264 @@ void CheckNotInComputeAsync(OpKernelContext* ctx,
     if (!TF_PREDICT_TRUE(_s.ok())) {                        \
       (CTX)->CtxFailureWithWarning(__FILE__, __LINE__, _s); \
       (CALLBACK)();                                         \
+      return;                                               \
+    }                                                       \
+  } while (0)
+
+static const std::unordered_set<std::string> not_require_recording_kernel {
+  "NoOp", "Const", "Identity", "Reshape", "Shape",
+  "_Arg", "_Retval", "_Send", "_HostSend", "Switch",
+  "Merge", "_XlaCompile", "_XlaRun", "XlaLaunch"
+};
+struct UserTracedInfos {
+  UserTracedInfos(bool enable_stats = false, bool enable_tensors = false, 
+                  bool enable_trace_infos = false) :
+      enable_prof_stats(enable_stats), enable_trace_tensors(enable_tensors),
+      enable_trace_tensor_infos(enable_trace_infos) {
+        if (enable_prof_stats) {
+          prof_stats = std::make_shared<ProfStats>();
+        }
+        if (enable_trace_tensors) {
+          traced_tensors = absl::make_unique<TracedTensors>();
+        }
+        if (enable_trace_infos) {
+          traced_tensor_infos = absl::make_unique<TracedTensors>();
+        }
+  }
+
+  void MergeFrom(RunMetadata* run_metadata) {
+    if (run_metadata) {
+      if (prof_stats) {
+        //ToDo done prof_stas
+        prof_stats->flops = run_metadata->prof_stats().flops();
+        prof_stats->blaze_latency_ms = run_metadata->prof_stats().blaze_latency_ms();
+        prof_stats->tensorflow_ops = run_metadata->prof_stats().tensorflow_ops();
+        prof_stats->cpu_flops = run_metadata->prof_stats().cpu_flops();
+        prof_stats->cpu_tensor_size = run_metadata->prof_stats().cpu_tensor_size();
+        prof_stats->gpu_flops = run_metadata->prof_stats().gpu_flops();
+        prof_stats->gpu_tensor_size = run_metadata->prof_stats().gpu_tensor_size();
+        prof_stats->gpu_kernels= run_metadata->prof_stats().gpu_kernels();
+        prof_stats->pcie_h2d_times = run_metadata->prof_stats().pcie_h2d_times();
+        prof_stats->pcie_h2d_size = run_metadata->prof_stats().pcie_h2d_size();
+        prof_stats->pcie_d2h_times= run_metadata->prof_stats().pcie_d2h_times();
+        prof_stats->pcie_d2h_size = run_metadata->prof_stats().pcie_d2h_size();
+        prof_stats->nan_qps = run_metadata->prof_stats().nan_qps();
+      }
+      if (traced_tensors) {
+        const auto& tcs = run_metadata->traced_tensors();
+        for (int i = 0; i < tcs.name_tensors_size(); ++i) {
+          auto ts = traced_tensors->mutable_name_tensors()->Add();
+          *ts = tcs.name_tensors(i);
+        }
+      }
+      if (enable_trace_tensor_infos) {
+        const auto& tcs = run_metadata->tensor_infos();
+        for (int i = 0; i < tcs.name_tensors_size(); ++i) {
+          auto ts = traced_tensor_infos->mutable_name_tensors()->Add();
+          *ts = tcs.name_tensors(i);
+        }
+      }
+    }
+  }
+
+  void MergeTo(RunMetadata* run_metadata) {
+    if (TF_PREDICT_TRUE(run_metadata)) {
+      if (TF_PREDICT_TRUE(prof_stats)) {
+        // always report
+        run_metadata->mutable_prof_stats()->set_batch_size(prof_stats->batch_size);
+        run_metadata->mutable_prof_stats()->set_pcie_h2d_times(prof_stats->pcie_h2d_times);
+        run_metadata->mutable_prof_stats()->set_pcie_h2d_size(prof_stats->pcie_h2d_size);
+        run_metadata->mutable_prof_stats()->set_pcie_d2h_times(prof_stats->pcie_d2h_times);
+        run_metadata->mutable_prof_stats()->set_pcie_d2h_size(prof_stats->pcie_d2h_size);
+        run_metadata->mutable_prof_stats()->set_sampling_prof_stats(enable_sampling_prof_stats);
+        // sampling report
+        if (TF_PREDICT_FALSE(enable_sampling_prof_stats)) {
+          run_metadata->mutable_prof_stats()->set_flops(prof_stats->flops);
+          run_metadata->mutable_prof_stats()->set_tensorflow_ops(prof_stats->tensorflow_ops);
+          run_metadata->mutable_prof_stats()->set_cpu_flops(prof_stats->cpu_flops);
+          run_metadata->mutable_prof_stats()->set_cpu_tensor_size(prof_stats->cpu_tensor_size);
+          run_metadata->mutable_prof_stats()->set_gpu_flops(prof_stats->gpu_flops);
+          run_metadata->mutable_prof_stats()->set_gpu_tensor_size(prof_stats->gpu_tensor_size);
+          run_metadata->mutable_prof_stats()->set_gpu_kernels(prof_stats->gpu_kernels);
+          run_metadata->mutable_prof_stats()->set_tao_op_calls(prof_stats->tao_op_calls);
+          run_metadata->mutable_prof_stats()->set_dump_shapes(prof_stats->dump_shapes);
+          run_metadata->mutable_prof_stats()->set_nan_qps(prof_stats->nan_qps);
+        }
+      }
+      if (traced_tensors) {
+        for (int i = 0; i < traced_tensors->name_tensors_size(); ++i) {
+          auto ts = run_metadata->mutable_traced_tensors()->
+              mutable_name_tensors()->Add();
+          *ts = traced_tensors->name_tensors(i);
+        }
+      }
+      if (enable_trace_tensor_infos) {
+        for (int i = 0; i < traced_tensor_infos->name_tensors_size(); ++i) {
+          auto ts = run_metadata->mutable_tensor_infos()->
+              mutable_name_tensors()->Add();
+          *ts = traced_tensor_infos->name_tensors(i);
+        }
+      }
+    }
+  }
+
+  NamedTensorProto* SafeAddTensorInfo() {
+    mutex_lock l(tensor_info_mu_);
+    if (traced_tensor_infos) {
+      return traced_tensor_infos->mutable_name_tensors()->Add();
+    }
+    return nullptr;
+  }
+
+  void UpdateProfStats(RunMetadata* run_metadata) {
+    if (run_metadata == nullptr || prof_stats == nullptr) {
+      return;
+    }
+    prof_stats->flops += run_metadata->prof_stats().flops();
+    prof_stats->tensorflow_ops += run_metadata->prof_stats().tensorflow_ops();
+    prof_stats->cpu_flops += run_metadata->prof_stats().cpu_flops();
+    prof_stats->cpu_tensor_size += run_metadata->prof_stats().cpu_tensor_size();
+    prof_stats->gpu_flops += run_metadata->prof_stats().gpu_flops();
+    prof_stats->gpu_tensor_size += run_metadata->prof_stats().gpu_tensor_size();
+    prof_stats->gpu_kernels += run_metadata->prof_stats().gpu_kernels();
+    prof_stats->pcie_h2d_times += run_metadata->prof_stats().pcie_h2d_times();
+    prof_stats->pcie_h2d_size += run_metadata->prof_stats().pcie_h2d_size();
+    prof_stats->pcie_d2h_times += run_metadata->prof_stats().pcie_d2h_times();
+    prof_stats->pcie_d2h_size += run_metadata->prof_stats().pcie_d2h_size();
+    prof_stats->nan_qps = run_metadata->prof_stats().nan_qps();
+  }
+
+  void RecordFlops(uint64 flops, const string& device) {
+    if (!enable_sampling_prof_stats || flops <= 0) {
+      return;
+    }
+    prof_stats->flops += flops;
+    if (device.find("CPU") != std::string::npos ||
+        device.find("cpu") != std::string::npos) {
+      prof_stats->cpu_flops += flops;
+    } else if(device.find("GPU") != std::string::npos ||
+              device.find("gpu") != std::string::npos) {
+      prof_stats->gpu_flops += flops;
+    }
+ }
+
+  void RecordGpuKernels(const string& kernel_type) {
+    if (!enable_sampling_prof_stats) {
+      return;
+    }
+    if (not_require_recording_kernel.count(kernel_type) == 0) {
+      if (kernel_type == "Softmax") {
+        // Softmax lanuch 3 kernels:
+        // two DoRowReduction<>, GenerateNormalizedProb<>.
+        prof_stats->gpu_kernels += 3;
+      } else if(kernel_type == "Sum" || kernel_type == "BlazeGRU" ||
+                kernel_type == "ParallelIndicatorMatMul") {
+        // BlazeGRU lanuch 2 kernels: GRUPadZeros<>, GRUKernel<>.
+        prof_stats->gpu_kernels += 2;
+      } else {
+        prof_stats->gpu_kernels += 1;
+      }
+    }
+  }
+
+  void RecordSendPcie(OpKernelContext* ctx, Rendezvous::ParsedKey& parsed) {
+    const size_t& input_bytes = ctx->input(0).TotalBytes();
+    if (!enable_sampling_prof_stats || input_bytes <= 0) {
+      return;
+    }
+    const bool src_host =
+      ctx->input_alloc_attr(0).on_host() || parsed.src.type == "CPU";
+    if (src_host) { // HToD
+      ++prof_stats->pcie_h2d_times;
+      prof_stats->pcie_h2d_size += input_bytes;
+    } else {        // DToH
+      ++prof_stats->pcie_d2h_times;
+      prof_stats->pcie_d2h_size += input_bytes;
+    }
+  }
+
+  typedef gtl::InlinedVector<TensorValue, 4> TensorValueVec;
+  void RecordTensorSize(TensorValueVec* inputs, OpKernelContext* ctx,
+                        const string& device_type) {
+    if (!enable_sampling_prof_stats) {
+      return;
+    }
+    // Record number of input bytes;
+    uint64 input_bytes = 0;
+    for (int i = 0; i < ctx->num_inputs(); ++i) {
+      if ((*inputs)[i].tensor != nullptr) {
+        input_bytes += (*inputs)[i].tensor->TotalBytes();
+      }
+    }
+    // Record number of output bytes;
+    uint64 output_bytes = 0;
+    for (int i = 0; i < ctx->num_outputs(); ++i) {
+      if (ctx->mutable_output(i) != nullptr) {
+        output_bytes += ctx->mutable_output(i)->TotalBytes();
+      }
+    }
+    // Update prof_stats
+    if (device_type == DEVICE_GPU) {
+      prof_stats->gpu_tensor_size += input_bytes + output_bytes;
+    } else if(device_type == DEVICE_CPU) {
+      prof_stats->cpu_tensor_size += input_bytes + output_bytes;
+    }
+  }
+
+  void RecordNanValue(std::vector<Tensor> *outputs) {
+    if (!enable_sampling_prof_stats || outputs == nullptr) {
+      return;
+    }
+    for (size_t i = 0; i < outputs->size(); ++i) {
+      const Tensor& output = (*outputs)[i];
+      // check type only support fp32
+      if (output.dtype() != DT_FLOAT) {
+        continue;
+      }
+      const int data_len = output.shape().num_elements();
+      int counts = 0;
+      auto output_data = output.flat<float>().data();
+      for (int j = 0; j < data_len; ++j) {
+        if (!std::isfinite(output_data[j])) {
+          prof_stats->nan_qps = true;
+          ++counts;
+        }
+      }
+      if (counts) {
+        LOG(INFO) << "Found " << counts << " nan or inf values in output tensor: "
+                  << output.DebugString();
+      }
+    }
+  }
+
+  std::shared_ptr<ProfStats> prof_stats;
+  //blaze input & output tensors
+  std::unique_ptr<TracedTensors> traced_tensors;
+  //all tensor shapes
+  std::unique_ptr<TracedTensors> traced_tensor_infos;
+  bool enable_prof_stats;
+  // determine whether to sample record metrics in blaze session.run
+  bool enable_sampling_prof_stats;
+  bool enable_trace_tensors;
+  bool enable_trace_tensor_infos;
+  mutex tensor_info_mu_;
+};
+
+#define OP_REQUIRES_ASYNC_WITH_ARGS(CTX, EXP, STATUS, CALLBACK, ARGS)  \
+  do {                                                 \
+    if (!TF_PREDICT_TRUE(EXP)) {                       \
+      (CTX)->CtxFailure(__FILE__, __LINE__, (STATUS)); \
+      (CALLBACK)(ARGS);                                \
+      return;                                          \
+    }                                                  \
+  } while (0)
+
+#define OP_REQUIRES_OK_ASYNC_WITH_ARGS(CTX, STATUS, CALLBACK, ARGS)         \
+  do {                                                      \
+    ::tensorflow::Status _s(STATUS);                        \
+    if (!TF_PREDICT_TRUE(_s.ok())) {                        \
+      (CTX)->CtxFailureWithWarning(__FILE__, __LINE__, _s); \
+      (CALLBACK)(ARGS);                                     \
       return;                                               \
     }                                                       \
   } while (0)

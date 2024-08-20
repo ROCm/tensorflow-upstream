@@ -3119,11 +3119,12 @@ tf_cuda_library(
         "common_runtime/shape_refiner.cc",
         "common_runtime/graph_optimizer.h",
         "graph/graph_constructor.cc",  # Depends on common_runtime.
+        "graph/dist_graph_partition.cc",
         "graph/graph_def_builder_util.cc",  # Depends on common_runtime.
         "public/session_options.h",
         "public/version.h",
     ] + CORE_CPU_BASE_HDRS,
-    hdrs = CORE_CPU_BASE_HDRS + ["public/session.h"],
+    hdrs = CORE_CPU_BASE_HDRS + ["public/session.h", "graph/dist_graph_partition.h"],
     copts = tf_copts(),
     deps = [
         ":graph",
@@ -3411,12 +3412,28 @@ tf_cuda_library(
         ":protos_all_cc",
         "//tensorflow/core/debug:debug_graph_utils",
         "//tensorflow/core/kernels:function_ops",
+        "//tensorflow/core/kernels/data:single_threaded_executor",
         "//tensorflow/core/profiler/lib:profiler_lib",
         "//tensorflow/core/profiler/lib:profiler_session",
         "//tensorflow/core/profiler/lib:traceme",
         "@com_google_absl//absl/container:flat_hash_set",
     ],
     alwayslink = 1,
+)
+
+tf_cuda_library(
+    name = "gpu_tracer",
+    srcs = [],
+    hdrs = [
+        "//tensorflow/core/platform:gpu_tracer.h",
+    ],
+    copts = tf_copts(),
+    cuda_deps = tf_additional_cupti_wrapper_deps(),
+    deps = [
+        ":core_cpu_internal",
+        ":lib",
+        ":protos_all_cc",
+    ],
 )
 
 cc_library(

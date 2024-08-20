@@ -155,6 +155,7 @@ class Node {
   bool IsControlTrigger() const { return class_ == NC_CONTROL_TRIGGER; }
   bool IsSend() const { return class_ == NC_SEND || class_ == NC_HOST_SEND; }
   bool IsRecv() const { return class_ == NC_RECV || class_ == NC_HOST_RECV; }
+  bool IsFuseRecv() const { return class_ == NC_FUSE_RECV || class_ == NC_HOST_FUSE_RECV; }
   bool IsConstant() const { return class_ == NC_CONSTANT; }
   bool IsVariable() const { return class_ == NC_VARIABLE; }
   bool IsIdentity() const { return class_ == NC_IDENTITY; }
@@ -260,6 +261,8 @@ class Node {
     NC_HOST_SEND,
     NC_RECV,
     NC_HOST_RECV,
+    NC_FUSE_RECV,
+    NC_HOST_FUSE_RECV,
     NC_CONSTANT,
     NC_VARIABLE,
     NC_IDENTITY,

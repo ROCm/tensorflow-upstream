@@ -186,4 +186,9 @@ message RewriterConfig {
   // VerifierConfig specifying the verifiers to be run at the end, after all
   // optimizers have run.
   VerifierConfig post_optimization_verifier_config = 301;
+  // nn_batchnorm (default is ON)
+  Toggle unfuse_batchnorm = 400;
+
+  // fuse tile concat and matmul (default is OFF)
+  Toggle fuse_tile_concat_matmul = 401;
 }

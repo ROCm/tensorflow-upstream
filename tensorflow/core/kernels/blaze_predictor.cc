@@ -11,6 +11,9 @@ using tensorflow::se::Event;
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 namespace tensorflow {
 const int kBlazeStartStepId = 1024;
+const std::string kCpuDeviceName = "/job:localhost/replica:0/task:0/device:CPU:0";
+
+mutex BlazePredictor::log_mu_;
 
 BlazePredictor::BlazePredictor(OpKernelConstruction* ctx) : device_type_(ctx->device_type().type()) {
   OP_REQUIRES_OK(ctx, ctx->GetAttr("input_names", &input_names_));
@@ -20,6 +23,38 @@ BlazePredictor::BlazePredictor(OpKernelConstruction* ctx) : device_type_(ctx->de
   OP_REQUIRES_OK(ctx, ctx->GetAttr("InT", &input_types_));
   OP_REQUIRES_OK(ctx, ParseAttr(ctx->def().device()));
   ctx_ = ctx;
+}
+
+BlazePredictor::BlazePredictor(const std::vector<std::string>& input_names,
+                          const std::vector<std::string>& output_names,
+                          const GraphDef& graph_def, const std::string& device,
+                          const BlazeKernelOptions& options, const string& device_string,
+                          const std::vector<DataType>& input_types,
+                          OpKernelConstruction* ctx) :
+    input_names_(input_names), output_names_(output_names),
+    graph_def_(graph_def), request_device_(device),
+    blaze_run_options_(options), device_type_(device_string),
+    input_types_(input_types), ctx_(ctx) {
+  // rewrite HugeConst
+  std::string root_path;
+  auto status = ctx_->GetAttr("_extra_conf_root_path", &root_path);
+ 	if (status.ok()) {
+    LOG(INFO) << "get _extra_conf_root_path" << root_path;
+ 	  for (int i = 0; i < graph_def_.node_size() ;i++) {
+      auto node = graph_def_.mutable_node(i);
+      if (node->op() == "HugeConst") {
+        auto* attr_map = node->mutable_attr();
+        if (attr_map != nullptr) {
+          auto it = attr_map->find("path");
+          if (it != attr_map->end()) {
+            std::string ad_vec_path = root_path + '/' + it->second.s();
+            it->second.set_s(ad_vec_path);
+            LOG(INFO) << "Update path attr of HugeConst op " << node->name() << " to " << ad_vec_path;
+          }
+        }
+      }
+    }
+  } { LOG(INFO) << "not get _extra_conf_root_path" << root_path; }
 }
 
 Status BlazePredictor::ParseAttr(const std::string& device) {
@@ -73,15 +108,41 @@ Status BlazePredictor::PrepareGraph(GraphDef& graph_def) {
   LOG(INFO) << "BlazePredictor will use device " << device_;
   graph_def = graph_def_;
   SetDeviceInGraphDef(device_, &graph_def);
+  SetCPUDeviceInGraphDef(kCpuDeviceName, &graph_def);
 
   return Status::OK();
 }
 
 Status BlazePredictor::MakeCallable() {
   CallableOptions callable_options;
+  TF_RETURN_IF_ERROR(PrepareCallableOptions(callable_options));
+  LOG(INFO) << "create session with callable options " <<
+        callable_options.DebugString();
+  return session_->MakeCallable(callable_options, &handle_);
+}
+
+Status BlazePredictor::PrepareCallableOptions(CallableOptions &callable_options) {
+  std::set<std::string> cpu_inputs;
+  for (const auto& node : graph_def_.node()) {
+    if (node.op() == "Placeholder") {
+      auto it = node.attr().find("dtype");
+      if (it != node.attr().end()) {
+        if (it->second.type() == DT_INT32 || it->second.type() == DT_UINT32) {
+          cpu_inputs.insert(node.name());
+        }
+      }
+    }
+  }
   for (const auto& input : input_names_) {
-    callable_options.add_feed(input);
-    callable_options.mutable_feed_devices()->insert({input, device_});
+    if (cpu_inputs.find(input) == cpu_inputs.end()) {
+      callable_options.add_feed(input);
+      callable_options.mutable_feed_devices()->insert({input, device_});
+      copyable_.push_back(true);
+    } else {
+      callable_options.add_feed(input);
+      callable_options.mutable_feed_devices()->insert({input, kCpuDeviceName});
+      copyable_.push_back(false);
+    }
   }
 
   for (const auto& output : output_names_) {
@@ -89,9 +150,7 @@ Status BlazePredictor::MakeCallable() {
     callable_options.mutable_fetch_devices()->insert({output, device_});
   }
   callable_options.set_fetch_skip_sync(true);
-  LOG(INFO) << "create session with callable options " <<
-      callable_options.DebugString();
-  return session_->MakeCallable(callable_options, &handle_);
+  return Status::OK();
 }
 
 Status BlazePredictor::Warmup() {
@@ -115,7 +174,7 @@ Status BlazePredictor::InitSession() {
   }
 
   auto dir_session = reinterpret_cast<DirectSession*>(session_.get());
-  // dir_session->SetStepInitId(kBlazeStartStepId);
+  dir_session->SetStepInitId(kBlazeStartStepId);
   LOG(INFO) << "Blaze start with step id " << kBlazeStartStepId;
   LOG(INFO) << "Creat session succ " << this;
 
@@ -165,7 +224,7 @@ Status BlazePredictor::Compute(OpKernelContext* ctx) {
       ctx->traced_infos()->UpdateProfStats(&metadata);
     }
     if (need_trace_) {
-      DumpFile(metadata);
+      // DumpFile(metadata);
     }
   } else {
     TF_RETURN_IF_ERROR(session_->RunCallable(handle_, real_inputs, &outputs, nullptr, ctx->stream_id()));
@@ -179,99 +238,31 @@ Status BlazePredictor::Compute(OpKernelContext* ctx) {
   return Status::OK();
 }
 
-Status BlazePredictor::ComputeSplited(OpKernelContext* ctx) {
-  if (log_level_ > 0) RawInputsDebugLogging(ctx);
-
-  int num_inputs = ctx->num_inputs();
-  if (num_inputs != input_names_.size()) {
-    return errors::Internal("ctx input size ", num_inputs,
-        " != ", input_names_.size());
-  }
-  if (ctx->num_outputs() != output_names_.size()) {
-    return errors::Internal("ctx output size ", ctx->num_outputs(),
-        " != ", output_names_.size());
-  }
-
-  std::vector<Tensor> inputs;
-  inputs.reserve(num_inputs);
-  for (int i = 0; i < num_inputs; ++i) {
-    inputs.push_back(ctx->input(i));
-  }
-
-  std::vector<std::vector<Tensor>> splited_inputs;
-  TF_RETURN_IF_ERROR(SplitInputs(inputs, splited_inputs));
-  std::vector<std::vector<Tensor>> sp_outputs;
-  sp_outputs.resize(splited_inputs.size());
-
-  std::mutex m;
-  std::condition_variable cv;
-  std::shared_ptr<std::atomic<int>> barrier_shared = std::make_shared<std::atomic<int>>(0);
-  bool run_ok = true;
-  int total = splited_inputs.size();
-  for (int i = 0; i < splited_inputs.size(); ++i) {
-    auto& inputs = splited_inputs[i];
-
-    auto func = [this, ctx, &inputs, &cv, barrier_shared, &run_ok, i, &sp_outputs, total, &m]() {
-      std::vector<Tensor> outputs;
-      std::vector<Tensor> real_inputs(inputs.size());
-      Status st;
-      st = PrepareInputs(inputs, &real_inputs, ctx);
-#define RETURN_AND_SUB() \
-      if (!st.ok()) { \
-        std::unique_lock<std::mutex> lock(m); \
-        VLOG(0) << st.ToString(); \
-        run_ok = false; \
-        if(barrier_shared->fetch_add(1) == total -1) { \
-          cv.notify_all(); \
-          return; \
-        } \
-      }
-      RETURN_AND_SUB();
-      if (need_trace_ || (ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats)) {
-        RunMetadata metadata;
-        st = session_->RunCallable(this->handle_, real_inputs, &outputs, &metadata, ctx->stream_id());
-        if (ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats) {
-          ctx->traced_infos()->UpdateProfStats(&metadata);
-        }
-        if (need_trace_) {
-          DumpFile(metadata, i);
-        }
-      } else {
-        st = session_->RunCallable(this->handle_, real_inputs, &outputs, nullptr, ctx->stream_id());
-      }
-      RETURN_AND_SUB();
-      std::vector<Tensor> real_outputs(outputs.size());
-      st = this->PrepareOutputs(outputs, &real_outputs, ctx);
-      RETURN_AND_SUB();
-      sp_outputs[i] = std::move(outputs);
-      std::unique_lock<std::mutex> lock(m);
-      if(barrier_shared->fetch_add(1) == total -1) {
-        cv.notify_all();
-        return;
-      }
-    };
-    split_thread_pool_->Schedule(std::move(func));
-  }
-  auto lock = std::unique_lock<std::mutex>(m);
-  cv.wait(lock, [&]() { return barrier_shared->load() == total; });
-  if (!run_ok) {
-    return errors::Internal("split run fail");
-  }
-  std::vector<Tensor> mg_tensors;
-  TF_RETURN_IF_ERROR(MergeOutputs(ctx, sp_outputs, mg_tensors));
-  for (int i = 0; i < mg_tensors.size(); ++i) {
-    ctx->set_output(i, mg_tensors[i]);
-  }
-  return Status::OK();
-}
-
 void BlazePredictor::SetDeviceInGraphDef(const std::string device_name,
                                          GraphDef* graph_def) {
   VLOG(2) << "Before setting device: \n" << graph_def->DebugString();
   int node_size = graph_def->node_size();
   for (int i = 0; i < node_size; i++) {
     NodeDef* node = graph_def->mutable_node(i);
+    if (node->device() == "/device:CPU:0") {
+      VLOG(1) << "node " << node->name() << " device /device:CPU:0, do not overwrite to GPU";
+      continue;
+    }
     node->set_device(device_name);
+  }
+  VLOG(2) << "After setting device: \n" << graph_def->DebugString();
+}
+
+void BlazePredictor::SetCPUDeviceInGraphDef(const std::string device_name,
+                                            GraphDef* graph_def) {
+  VLOG(2) << "Before setting device: \n" << graph_def->DebugString();
+  int node_size = graph_def->node_size();
+  for (int i = 0; i < node_size; i++) {
+    NodeDef* node = graph_def->mutable_node(i);
+    if (node->device() == "/device:CPU:0") {
+      VLOG(1) << "node " << node->name() << " device /device:CPU:0, overwrite to " << device_name;
+      node->set_device(device_name);
+    }
   }
   VLOG(2) << "After setting device: \n" << graph_def->DebugString();
 }
@@ -380,7 +371,7 @@ void BlazePredictor::RawInputsDebugLogging(OpKernelContext* ctx) const {
 
     string dtype_string = DataTypeString(input.dtype());
 
-    string data_string = hydra::base64_encode((const char*)input.data(), input.TotalBytes());
+    string data_string = "hydra::base64_encode((const char*)input.data(), input.TotalBytes());";
 
     LOG(INFO) << "blaze input blob [" << i << "]:"
               << " name:" << name_string

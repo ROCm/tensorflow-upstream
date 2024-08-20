@@ -11,6 +11,7 @@ option go_package = "github.com/tensorflow/tensorflow/tensorflow/go/core/protobu
 import "tensorflow/core/framework/cost_graph.proto";
 import "tensorflow/core/framework/graph.proto";
 import "tensorflow/core/framework/step_stats.proto";
+import "tensorflow/core/framework/types.proto";
 import "tensorflow/core/protobuf/cluster.proto";
 import "tensorflow/core/protobuf/debug.proto";
 import "tensorflow/core/protobuf/named_tensor.proto";
@@ -194,6 +195,40 @@ message GPUOptions {
   Experimental experimental = 9;
 }
 
+// A detail description for a input tensor of a subgraph
+message SubgraphInputTensor {
+  // node which output this tensor in origin graph and output slot idx
+  string tensor_provider_name = 1;
+
+  int32 tensor_provider_slot = 2;
+
+  // ph info which replace input tensor
+  string ph_name = 3;
+
+  DataType type = 4;
+  
+  repeated int64 shape = 5;
+}
+
+// A detail description for a subgraph
+message SubgraphDescription {
+  // subgraph name, to differentitate multiple subgraph in a graph
+  string subgraph_name = 1;
+
+  // input tensor and replaced ph info
+  repeated SubgraphInputTensor input_tensors = 2;
+
+  // output node name, which are subgraph's top node
+  repeated string output_node_names = 3;
+  
+  // if capture cuda graph, capture fixed batch size graph instance
+  repeated int32 cuda_graph_batch_sizes = 4;
+
+  // if true, capture a graph whose all non -1 input tensor first dim 
+  // rewritted to 1
+  bool capture_single_batch = 5;
+}
+
 // Options passed to the graph optimizer
 message OptimizerOptions {
   // If true, optimize the graph using common subexpression elimination.
@@ -240,6 +275,21 @@ message OptimizerOptions {
     ON_2 = 2;
   }
   GlobalJitLevel global_jit_level = 5;
+
+  // If true, will enable cudagraph, cut subgraph for capturing when create session
+  // and replace subgraph with cudagraphOp when serving.
+  bool cuda_graph_enable = 7;
+
+  repeated SubgraphDescription subgraph_descriptions = 8;
+
+  // model name
+  string subgraph_group_name = 9;
+
+  // output node names of final serving graph with cuda graph
+  repeated string output_names_with_cg = 10;
+  
+  bool cuda_graph_capture = 11;
+  bool do_mixed_precision = 12;
 }
 
 message GraphOptions {
@@ -457,7 +507,6 @@ message ConfigProto {
   // enabled, this field is ignored and sessions are always isolated.
   bool isolate_session_state = 15;
 
-  string auto_padding_shape = 160;
   // Everything inside Experimental is subject to change and is not subject
   // to API stability guarantees in
   // https://www.tensorflow.org/guide/version_compat.
@@ -546,16 +595,29 @@ message ConfigProto {
 
   Experimental experimental = 16;
   bool run_graph_mode = 100;
+  CudaGraphOptions cuda_graph_options = 101;
   bool force_run_in_caller_thread = 110;
   bool enable_graph_opt_place = 111;
   BlazeKernelOptions blaze_options = 112;
   bool is_blaze = 113;
-  // Next: 17
-
+  
   // if enable_xla_auto_padding, we will add pad and slice for every cluster
   // so that xla behaives like dynamic padding
-  bool enable_xla_auto_padding = 120;
-  int32 xla_padding_type = 121;
+  bool enable_xla_auto_padding = 114;
+  int32 xla_padding_type = 115;
+  string auto_padding_shape = 116;
+  bool enable_xla_fusion_shape = 117;
+  // Next: 17
+  int32 global_io_parallelism_threads = 202;
+}
+
+// config for cuda graph session
+message CudaGraphOptions {
+    repeated int32 batchs = 1;
+    repeated int32 copies = 2;
+    repeated string outputs = 3;
+    bool can_use_fallback = 4;
+    bool output_on_cpu = 5;
 }
 
 // Options for a single Run() call.
@@ -630,10 +692,14 @@ message RunOptions {
   // session.run() call will be accumulated. The value can be access through
   // RunMetadata.flop_count_sp
   bool record_flop_count = 109;
+  bool emb_merge_dumplicate = 110;
+  float emb_merge_dumplicate_threshold = 111;
 
   bool trace_tensors = 127;
   map<string, string> debug_spec = 128;
   bool trace_tensor_infos = 129;
+
+  bool disallow_create_executor = 130;
 
   reserved 4;
 }
@@ -678,6 +744,20 @@ message RunMetadata {
     uint64 flops = 1;
     float blaze_latency_ms = 2;
     uint64 tao_op_calls = 3;
+    bool dump_shapes = 4;
+    uint64 batch_size = 5;
+    uint64 tensorflow_ops = 6;
+    uint64 cpu_flops = 7;
+    uint64 cpu_tensor_size = 8;
+    uint64 gpu_flops = 9;
+    uint64 gpu_tensor_size = 10;
+    uint64 gpu_kernels = 11;
+    uint64 pcie_h2d_times = 12;
+    uint64 pcie_h2d_size = 13;
+    uint64 pcie_d2h_times = 14;
+    uint64 pcie_d2h_size = 15;
+    bool sampling_prof_stats = 16;
+    bool nan_qps = 17;
   }
 
   message BlazeMetrics {
@@ -693,7 +773,7 @@ message RunMetadata {
 // ToDO remove this, using key value pair
   ProfStats prof_stats = 500;
   TracedTensors traced_tensors = 501;
-  repeated BlazeMetrics blaze_metrics = 502;
+//  repeated BlazeMetrics blaze_metrics = 502;
   TracedTensors tensor_infos = 503;
 }
 
@@ -835,8 +915,12 @@ message BlazeKernelOptions {
     DEFAULT = 0;
     BENCHMARK = 1;
     SKIP = 2; // skip for dense test, but i do not know shape
+    TRACE = 3;
+    TIMELINE = 4;
   }
 
   RunMode run_mode = 104;
   int32 wait_ms = 105;
+  bool need_split = 106;
+  int32 split_size = 107;
 }

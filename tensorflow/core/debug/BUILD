@@ -76,6 +76,25 @@ cc_library(
 )
 
 tf_cuda_library(
+    name = "debug_gateway_internal",
+    srcs = ["debug_gateway.cc"],
+    hdrs = ["debug_gateway.h"],
+    copts = tf_copts(),
+    linkstatic = 1,
+    deps = [
+        "//tensorflow/core:core_cpu_internal",
+        "//tensorflow/core:direct_session_internal",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:gpu_tracer",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+        "//tensorflow/core:proto_text",
+        "//tensorflow/core:protos_all_cc",
+    ],
+    alwayslink = 1,
+)
+
+tf_cuda_library(
     name = "debugger_state_impl",
     srcs = ["debugger_state_impl.cc"],
     hdrs = ["debugger_state_impl.h"],

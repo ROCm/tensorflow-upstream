@@ -22,7 +22,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "tensorflow/core/framework/function.h"
 #include "tensorflow/core/framework/memory_types.h"
 #include "tensorflow/core/framework/node_def_builder.h"
@@ -85,33 +84,6 @@ struct RecvInfo {
 
 typedef absl::flat_hash_map<DupRecvKey, RecvInfo> DupRecvTable;
 
-// A map used to store memory types for the inputs/outputs of every node.
-// The key is a pair of ints consisting of a node id and input/output index.
-// TODO(power): migrate back to std::pair when absl::Hash is fixed for MSVC.
-struct NodePort {
-  int node_id;
-  int index;
-
-  friend bool operator==(const NodePort& x, const NodePort& y) {
-    return x.node_id == y.node_id && x.index == y.index;
-  }
-
-  template <typename H>
-  friend H AbslHashValue(H h, const NodePort& c) {
-    return H::combine(std::move(h), c.node_id, c.index);
-  }
-};
-
-typedef absl::flat_hash_map<NodePort, MemoryType> MemoryTypeMap;
-
-// We collect the following information about the graph before performing
-// graph partitioning.
-struct GraphInfo {
-  std::vector<DeviceType> device_types;
-  MemoryTypeMap input_types;
-  MemoryTypeMap output_types;
-  std::vector<ControlFlowInfo> cf_info;
-};
 
 DataType EdgeType(const Edge* e) {
   if (e->IsControlEdge()) {
@@ -227,7 +199,7 @@ NodeDef* AddSend(const PartitionOptions& opts, const GraphInfo& g_info,
     }
 
     NodeDef* cast = gdef->add_node();
-    *status = cast_builder.Finalize(cast, /*consume=*/true);
+    *status = cast_builder.Finalize(cast);
     if (!status->ok()) return nullptr;
 
     // Connect the Send op to the cast.
@@ -244,7 +216,7 @@ NodeDef* AddSend(const PartitionOptions& opts, const GraphInfo& g_info,
     send_builder.Attr("_start_time", start_time);
   }
   NodeDef* send = gdef->add_node();
-  *status = send_builder.Finalize(send, /*consume=*/true);
+  *status = send_builder.Finalize(send);
   return send;
 }
 
@@ -301,7 +273,7 @@ NodeDef* AddRecv(const PartitionOptions& opts, const GraphInfo& g_info,
   recv_builder.Device(dst->assigned_device_name())
       .Attr("tensor_type", cast_dtype);
   NodeDef* recv = gdef->add_node();
-  *status = recv_builder.Finalize(recv, /*consume=*/true);
+  *status = recv_builder.Finalize(recv);
   if (!status->ok()) return nullptr;
   *real_recv = recv;
 
@@ -314,7 +286,7 @@ NodeDef* AddRecv(const PartitionOptions& opts, const GraphInfo& g_info,
     cast_builder.Device(dst->assigned_device_name())
         .Input(recv->name(), 0, cast_dtype);
     NodeDef* cast = gdef->add_node();
-    *status = cast_builder.Finalize(cast, /*consume=*/true);
+    *status = cast_builder.Finalize(cast);
     if (!status->ok()) return nullptr;
     return cast;
   } else if (edge->IsControlEdge()) {
@@ -324,7 +296,7 @@ NodeDef* AddRecv(const PartitionOptions& opts, const GraphInfo& g_info,
     id_builder.Device(dst->assigned_device_name())
         .Input(recv->name(), 0, cast_dtype);
     NodeDef* id = gdef->add_node();
-    *status = id_builder.Finalize(id, /*consume=*/true);
+    *status = id_builder.Finalize(id);
     if (!status->ok()) return nullptr;
     return id;
   } else {
@@ -341,7 +313,7 @@ NodeDef* AddDummyConst(const PartitionOptions& opts, GraphDef* gdef,
                 .Device(src->assigned_device_name())
                 .Attr("dtype", DT_FLOAT)
                 .Attr("value", tensor)
-                .Finalize(result, /*consume=*/true);
+                .Finalize(result);
   return result;
 }
 
@@ -354,7 +326,7 @@ NodeDef* AddControlTrigger(const PartitionOptions& opts, GraphDef* gdef,
                            "ControlTrigger")
                 .Device(assigned_device_name)
                 .Attr("_start_time", starttime)
-                .Finalize(result, /*consume=*/true);
+                .Finalize(result);
   return result;
 }
 
@@ -424,7 +396,7 @@ Node* AddControlEnter(Graph* g, const string& node_name,
   node_builder.Attr("frame_name", frame_name);
   node_builder.Attr("parallel_iterations", parallel_iterations);
   Node* res_node;
-  *status = node_builder.Finalize(g, &res_node, /*consume=*/true);
+  *status = node_builder.Finalize(g, &res_node);
   if (!status->ok()) return nullptr;
   res_node->set_assigned_device_name(device_name);
   return res_node;
@@ -437,7 +409,7 @@ Node* AddControlMerge(const string& in_name1, const string& in_name2, Graph* g,
   NodeBuilder node_builder(node_name, "Merge", g->op_registry());
   node_builder.Input({{in_name1, 0, DT_FLOAT}, {in_name2, 0, DT_FLOAT}});
   Node* res_node;
-  *status = node_builder.Finalize(g, &res_node, /*consume=*/true);
+  *status = node_builder.Finalize(g, &res_node);
   if (!status->ok()) return nullptr;
   res_node->set_assigned_device_name(device_name);
   return res_node;
@@ -567,37 +539,6 @@ Status AddControlLoop(const PartitionOptions& opts, Graph* g, const Node* src,
   return Status::OK();
 }
 
-// Build memory and device type info for every node in the graph.
-// TODO(yuanbyu): It might be simpler if we convert MemoryType to
-// DeviceType for the inputs/outputs of each node.
-Status BuildMemoryDeviceInfo(const Graph& g, GraphInfo* info) {
-  MemoryTypeVector input_memory_types;
-  MemoryTypeVector output_memory_types;
-
-  info->device_types.resize(g.num_node_ids(), DEVICE_CPU);
-  for (const Node* node : g.op_nodes()) {
-    DeviceNameUtils::ParsedName parsed;
-    if (!DeviceNameUtils::ParseFullName(node->assigned_device_name(),
-                                        &parsed)) {
-      return errors::Internal("Malformed assigned device '",
-                              node->assigned_device_name(), "'");
-    }
-
-    TF_RETURN_IF_ERROR(MemoryTypesForNode(
-        g.op_registry(), DeviceType(parsed.type), node->def(),
-        &input_memory_types, &output_memory_types));
-
-    int node_id = node->id();
-    info->device_types[node_id] = DeviceType(parsed.type);
-    for (int i = 0; i < input_memory_types.size(); ++i) {
-      info->input_types[{node_id, i}] = input_memory_types[i];
-    }
-    for (int i = 0; i < output_memory_types.size(); ++i) {
-      info->output_types[{node_id, i}] = output_memory_types[i];
-    }
-  }
-  return Status::OK();
-}
 
 const Node* InputFrame(const Node* node,
                        const std::vector<ControlFlowInfo>& cf_info) {
@@ -618,6 +559,23 @@ const Node* OutputFrame(const Node* node,
   }
   return cf_info[node->id()].parent_frame;
 }
+
+
+struct PriorityTopoSortNode {
+  PriorityTopoSortNode(const NodeDef* n, int64 st) : node(n), start_time(st) {}
+
+  const NodeDef* node;
+  int64 start_time;
+};
+
+struct PriorityTopoSortNodeGreater {
+  bool operator()(const PriorityTopoSortNode& left,
+                  const PriorityTopoSortNode& right) {
+    return left.start_time > right.start_time;
+  }
+};
+
+}  // namespace
 
 // Each participating device needs to decide a) if there is a next iteration,
 // and b) if the loop terminates. We take the approach to encode this control
@@ -778,21 +736,37 @@ Status AddControlFlow(const PartitionOptions& opts, Graph* g,
   return Status::OK();
 }
 
-struct PriorityTopoSortNode {
-  PriorityTopoSortNode(const NodeDef* n, int64 st) : node(n), start_time(st) {}
+// Build memory and device type info for every node in the graph.
+// TODO(yuanbyu): It might be simpler if we convert MemoryType to
+// DeviceType for the inputs/outputs of each node.
+Status BuildMemoryDeviceInfo(const Graph& g, GraphInfo* info) {
+  MemoryTypeVector input_memory_types;
+  MemoryTypeVector output_memory_types;
 
-  const NodeDef* node;
-  int64 start_time;
-};
+  info->device_types.resize(g.num_node_ids(), DEVICE_CPU);
+  for (const Node* node : g.op_nodes()) {
+    DeviceNameUtils::ParsedName parsed;
+    if (!DeviceNameUtils::ParseFullName(node->assigned_device_name(),
+                                        &parsed)) {
+      return errors::Internal("Malformed assigned device '",
+                              node->assigned_device_name(), "'");
+    }
 
-struct PriorityTopoSortNodeGreater {
-  bool operator()(const PriorityTopoSortNode& left,
-                  const PriorityTopoSortNode& right) {
-    return left.start_time > right.start_time;
+    TF_RETURN_IF_ERROR(MemoryTypesForNode(
+        g.op_registry(), DeviceType(parsed.type), node->def(),
+        &input_memory_types, &output_memory_types));
+
+    int node_id = node->id();
+    info->device_types[node_id] = DeviceType(parsed.type);
+    for (int i = 0; i < input_memory_types.size(); ++i) {
+      info->input_types[{node_id, i}] = input_memory_types[i];
+    }
+    for (int i = 0; i < output_memory_types.size(); ++i) {
+      info->output_types[{node_id, i}] = output_memory_types[i];
+    }
   }
-};
-
-}  // namespace
+  return Status::OK();
+}
 
 // Returns in <nodes> the nodes that should participate in epoch-based recv
 // scheduling, along with their times; <nodes> is ordered by increasing
@@ -947,13 +921,13 @@ void SetIncarnation(const PartitionOptions& opts, NodeDef* ndef) {
     // Not related to send/recv.
     return;
   }
-  const string& send_device = GetNodeAttrString(*ndef, "send_device");
-  if (send_device.empty()) {
+  string send_device;
+  if (!GetNodeAttr(*ndef, "send_device", &send_device).ok()) {
     // No known send_device. The runtime will detect it later.
     return;
   }
   int64 incarnation = PartitionOptions::kIllegalIncarnation;
-  if (!TryGetNodeAttr(*ndef, "send_device_incarnation", &incarnation) ||
+  if (!GetNodeAttr(*ndef, "send_device_incarnation", &incarnation).ok() ||
       (incarnation == PartitionOptions::kIllegalIncarnation)) {
     incarnation = opts.get_incarnation(send_device);
     SetAttrValue(incarnation,

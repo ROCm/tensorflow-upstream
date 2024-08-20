@@ -22,6 +22,46 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status.h"
 
 namespace tensorflow {
+
+Status NodeRulesSatisfiability(const Node* n) {
+  for (DataType dt : n->output_types()) {
+    if (IsRefType(dt)) {
+      return errors::Unimplemented(
+          "Single-threaded executor does not support reference-typed "
+          "edges.  But saw type ",
+          DataTypeString(dt), " in outputs of node ", n->name());
+    }
+  }
+
+  if (n->IsControlFlow()) {
+    return errors::Unimplemented(
+        "Single-threaded executor does not support control flow.  But saw "
+        "control flow node ",
+        n->name());
+  }
+  if (n->IsSend() || n->IsHostSend() || n->IsRecv() || n->IsHostRecv()) {
+    return errors::Unimplemented(
+        "Single-threaded executor does not support partitioned graphs.  "
+        "But saw send/recv node ",
+        n->name());
+  }
+  if (n->IsCollective()) {
+    return errors::Unimplemented(
+        "Single-threaded executor does not support collective ops.  But "
+        "saw collective node ",
+        n->name());
+  }
+  return Status::OK();
+}
+
+Status CheckSingleThreadExecutorAvailable(Graph* graph) {
+  for (const Node* n : graph->nodes()) {
+    auto status = NodeRulesSatisfiability(n);
+    if (!status.ok()) return status;
+  }
+  return Status::OK();
+}
+
 namespace data {
 namespace {
 
@@ -61,33 +101,8 @@ class SingleThreadedExecutorImpl : public Executor {
       Node* n = ordered_nodes[i];
       node_to_index_map[n] = i;
 
-      for (DataType dt : n->output_types()) {
-        if (IsRefType(dt)) {
-          return errors::Unimplemented(
-              "Single-threaded executor does not support reference-typed "
-              "edges.  But saw type ",
-              DataTypeString(dt), " in outputs of node ", n->name());
-        }
-      }
-
-      if (n->IsControlFlow()) {
-        return errors::Unimplemented(
-            "Single-threaded executor does not support control flow.  But saw "
-            "control flow node ",
-            n->name());
-      }
-      if (n->IsSend() || n->IsHostSend() || n->IsRecv() || n->IsHostRecv()) {
-        return errors::Unimplemented(
-            "Single-threaded executor does not support partitioned graphs.  "
-            "But saw send/recv node ",
-            n->name());
-      }
-      if (n->IsCollective()) {
-        return errors::Unimplemented(
-            "Single-threaded executor does not support collective ops.  But "
-            "saw collective node ",
-            n->name());
-      }
+      auto status = NodeRulesSatisfiability(n);
+      if (!status.ok()) return status;
 
       KernelState& kernel_state = kernels_[i];
       TF_RETURN_IF_ERROR(params_.create_kernel(n->def(), &kernel_state.kernel));

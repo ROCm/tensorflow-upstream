@@ -140,6 +140,7 @@ class ClientSession {
   std::unique_ptr<Impl> impl_;
   Impl* impl() { return impl_.get(); }
   const Impl* impl() const { return impl_.get(); }
+
 };
 
 /// @}

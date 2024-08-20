@@ -217,6 +217,10 @@ class OpsTestBase : public ::testing::Test {
   // REQUIRES: 0 <= output_index < context_->num_outputs()
   Tensor* GetOutput(int output_index);
 
+  Status GetOutputList(StringPiece name, OpOutputList *output) {
+    return context_->output_list(name, output);
+  }
+
   Allocator* allocator() { return allocator_; }
 
   const DataTypeVector& output_types() const { return kernel_->output_types(); }

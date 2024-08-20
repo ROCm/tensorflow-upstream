@@ -106,6 +106,42 @@ void CheckpointReader::GetTensor(
   }
 }
 
+const TensorSliceSet *CheckpointReader::GetTensorSliceSet(const string &name) const {
+    assert(HasTensor(name));
+    if (reader_ != nullptr) {
+        return reader_->GetTensorSliceSet(name);
+    } else {
+        return v2_reader_->GetTensorSliceSet(name);
+    }
+}
+
+void CheckpointReader::GetTensorSlice(const string &name,
+                                      const TensorSlice& slice_spec,
+                                      std::unique_ptr<tensorflow::Tensor> *out_tensor,
+                                      TF_Status *out_status) const
+{
+    Status status;
+    if (reader_ != nullptr) {
+        status = reader_->GetTensorSlice(name, slice_spec, out_tensor);
+    } else {
+        tensorflow::DataType dtype;
+        tensorflow::TensorShape full_shape;
+        status = v2_reader_->LookupDtypeAndShape(name, &dtype, &full_shape);
+        if (status.ok()) {
+            tensorflow::TensorShape shape;
+            status = slice_spec.SliceTensorShape(full_shape, &shape);
+            if (status.ok()) {
+                out_tensor->reset(new tensorflow::Tensor(dtype, shape));
+                status = v2_reader_->LookupSlice(name, slice_spec, out_tensor->get());
+            }
+        }
+    }
+    if (!status.ok()) {
+        out_tensor->reset();
+        Set_TF_Status_from_Status(out_status, status);
+    }
+}
+
 std::pair<std::unique_ptr<TensorSliceReader::VarToShapeMap>,
           std::unique_ptr<TensorSliceReader::VarToDataTypeMap>>
 CheckpointReader::BuildV2VarMaps() {

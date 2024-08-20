@@ -31,7 +31,16 @@ namespace tensorflow {
 namespace shape_op_helpers {
 inline Status GetShape(OpKernelContext* ctx, int input_index,
                        TensorShape* shape) {
-  *shape = ctx->input(input_index).shape();
+  const Tensor& inp = ctx->input(input_index);
+  if (ctx->input_dtype(0) == DT_VARIANT) {
+    if (inp.dims() != 0) {
+      return errors::InvalidArgument(
+          "Shape of non-unary Variant not supported.");
+    }
+    TF_RETURN_IF_ERROR(GetUnaryVariantShape(inp, shape));
+  } else {
+    *shape = inp.shape();
+  }
   return Status::OK();
 }
 }  // namespace shape_op_helpers
@@ -126,6 +135,7 @@ class SizeOp : public OpKernel {
           errors::InvalidArgument("Number of elements was larger than "
                                   "representable by 32-bit output type"));
     }
+    std::cerr << "SizeOp called " << size << std::endl;
     out->scalar<OutType>()() = static_cast<OutType>(size);
   }
 

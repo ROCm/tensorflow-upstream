@@ -88,6 +88,8 @@ class Executor {
 
   struct Args {
     int64 step_id = 0;
+    int64 query_priority = 0;
+    int64 round_step_id = 0;
     Rendezvous* rendezvous = nullptr;
     StepStatsCollectorInterface* stats_collector = nullptr;
     CallFrameInterface* call_frame = nullptr;
@@ -121,9 +123,6 @@ class Executor {
     // for benchmarking in blaze, trace tensor shaope, if interger, tensor
     // values together
     bool trace_tensor_infos;
-    // in normal TF session run,
-    // it will be nullptr.
-    TensorHolder * tensor_holder = nullptr;
 
     typedef std::function<Status(const string& node_name, const int output_slot,
                                  const Tensor* tensor, const bool is_ref,
@@ -174,6 +173,7 @@ struct LocalExecutorParams {
   std::function<void(OpKernel*)> delete_kernel;
 
   Executor::RendezvousFactory rendezvous_factory;
+  Executor::Args::NodeOutputsCallback node_outputs_cb;
 };
 ::tensorflow::Status NewLocalExecutor(const LocalExecutorParams& params,
                                       std::unique_ptr<const Graph> graph,

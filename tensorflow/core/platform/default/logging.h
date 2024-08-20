@@ -19,6 +19,7 @@ limitations under the License.
 // IWYU pragma: private, include "third_party/tensorflow/core/platform/logging.h"
 // IWYU pragma: friend third_party/tensorflow/core/platform/logging.h
 
+#include <functional>
 #include <limits>
 #include <sstream>
 
@@ -60,6 +61,17 @@ class LogMessage : public std::basic_ostringstream<char> {
   // access against the VLOG-ing specification provided by the env var.
   static bool VmoduleActivated(const char* fname, int level);
 
+  static void Printf(const char* fname, int line, int severity,
+                     const char* format, ...);
+
+  typedef std::function<void(int, const char*, int, const char*)> LogHandler;
+  static void SetLogHandler(const LogHandler &handler) {
+    handler_ = handler;
+  }
+  static void SetAbortOnFatal(bool abort) {
+    abort_ = abort;
+  }
+
  protected:
   void GenerateLogMessage();
 
@@ -67,6 +79,9 @@ class LogMessage : public std::basic_ostringstream<char> {
   const char* fname_;
   int line_;
   int severity_;
+ protected:
+  static LogHandler handler_;
+  static bool abort_;
 };
 
 // Uses the lower operator & precedence to voidify a LogMessage reference, so

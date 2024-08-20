@@ -327,7 +327,8 @@ class DeviceKernelOpTest : public OpsTestBase {
     EXPECT_EQ(TF_OK, TF_GetCode(status));
     TF_DeleteStatus(status);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#error ops
     std::unique_ptr<Device> device(
         DeviceFactory::NewDevice(device_name_, {}, "/job:a/replica:0/task:0"));
     OpsTestBase::SetDevice(DEVICE_GPU, std::move(device));
@@ -336,7 +337,7 @@ class DeviceKernelOpTest : public OpsTestBase {
     TF_ASSERT_OK(InitOp());
   }
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   const char* device_name_ = tensorflow::DEVICE_GPU;
 #else
   const char* device_name_ = tensorflow::DEVICE_CPU;
@@ -360,7 +361,7 @@ TEST_F(DeviceKernelOpTest, TestAllocateOutputSizeOne) {
     // Set output to 3
     float* data = reinterpret_cast<float*>(TF_TensorData(output));
     float value = 3.0f;
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
     OpKernelContext* cc_ctx = reinterpret_cast<OpKernelContext*>(ctx);
     cc_ctx->eigen_gpu_device().memcpyHostToDevice(data, &value,
                                                   tensor_size_bytes);
@@ -432,7 +433,7 @@ TEST_F(DeviceKernelOpTest, TestAllocateOutputSize2x3) {
     // Set output to [1 2 3 4 5 6]
     void* data = TF_TensorData(output);
     float value[6] = {1, 2, 3, 4, 5, 6};
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
     OpKernelContext* cc_ctx = reinterpret_cast<OpKernelContext*>(ctx);
     cc_ctx->eigen_gpu_device().memcpyHostToDevice(data, value,
                                                   tensor_size_bytes);

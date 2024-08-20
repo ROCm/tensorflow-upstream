@@ -49,6 +49,8 @@ void TFRemoveLogSink(TFLogSink* sink) {
 }
 
 namespace internal {
+LogMessage::LogHandler LogMessage::handler_;
+bool LogMessage::abort_ = true;
 
 #if defined(PLATFORM_POSIX_ANDROID)
 void LogMessage::GenerateLogMessage() {
@@ -93,6 +95,32 @@ void LogMessage::GenerateLogMessage() {
 
 #else
 
+#include <unistd.h>
+#include <stdarg.h>
+#include <sys/syscall.h>
+#include <sys/time.h>
+
+void LogMessage::Printf(const char* fname, int line, int severity,
+                        const char* format, ...) {
+  static const char* severities[] = {"INFO", "WARNING", "ERROR", "FATAL"};
+  struct timeval tv;
+  struct timezone tz;
+  gettimeofday(&tv, &tz);
+  struct tm rslt;
+  struct tm* p = gmtime_r(&tv.tv_sec, &rslt);
+
+  fprintf(stderr,
+          "[%04d-%02d-%02d %02d:%02d:%02d.%ld] [%s] [%ld] [%s:%d] ",
+          1900 + p->tm_year, 1 + p->tm_mon, p->tm_mday,
+          8 + p->tm_hour, p->tm_min, p->tm_sec, tv.tv_usec,
+          severities[severity],
+          syscall(SYS_gettid),
+          fname, line);
+  va_list args;
+  va_start(args, format);
+  vfprintf(stderr, format, args);
+  va_end(args);
+}
 void LogMessage::GenerateLogMessage() {
   static EnvTime* env_time = tensorflow::EnvTime::Default();
   uint64 now_micros = env_time->NowMicros();

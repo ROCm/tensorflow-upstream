@@ -26,6 +26,7 @@ limitations under the License.
 namespace tensorflow {
 
 class VariantTensorDataProto;
+class Tensor;
 
 // The serialization format for Variant objects. Objects with references to
 // other Tensors can simply store those tensors in the `tensors` field, and

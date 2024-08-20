@@ -198,15 +198,12 @@ class WhereCPUOp : public OpKernel {
  private:
   TF_DISALLOW_COPY_AND_ASSIGN(WhereCPUOp);
 };
+REGISTER_KERNEL_BUILDER(Name("Where")
+                            .Device(DEVICE_CPU)
+                            .HostMemory("input")
+                            .HostMemory("index"),
+                        WhereCPUOp<bool>);
 
-#define REGISTER_WHERE_OP(T) \
-  REGISTER_KERNEL_BUILDER(   \
-      Name("Where").Device(DEVICE_CPU).TypeConstraint<T>("T"), WhereCPUOp<T>);
-
-TF_CALL_NUMBER_TYPES(REGISTER_WHERE_OP);
-TF_CALL_bool(REGISTER_WHERE_OP);
-
-#undef REGISTER_WHERE_OP
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
@@ -378,19 +375,11 @@ class WhereGPUOp : public AsyncOpKernel {
   TF_DISALLOW_COPY_AND_ASSIGN(WhereGPUOp);
 };
 
-#define REGISTER_GPU_WHERE_OP(T) \
-  REGISTER_KERNEL_BUILDER(       \
-      Name("Where").Device(DEVICE_GPU).TypeConstraint<T>("T"), WhereGPUOp<T>);
-
-TF_CALL_WHERE_GPU_TYPES(REGISTER_GPU_WHERE_OP);
 REGISTER_KERNEL_BUILDER(Name("Where")
                             .Device(DEVICE_GPU)
-                            .TypeConstraint<int32>("T")
                             .HostMemory("input")
                             .HostMemory("index"),
-                        WhereCPUOp<int32>);
-
-#undef REGISTER_GPU_WHERE_OP
+                        WhereCPUOp<bool>);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
