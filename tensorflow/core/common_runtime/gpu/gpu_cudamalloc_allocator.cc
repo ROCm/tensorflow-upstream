@@ -28,10 +28,11 @@ limitations under the License.
 namespace tensorflow {
 
 GPUcudaMallocAllocator::GPUcudaMallocAllocator(Allocator* allocator,
-                                               PlatformGpuId platform_gpu_id)
+                                               PlatformGpuId platform_gpu_id,
+                                               int stream_id)
     : base_allocator_(allocator) {
-  stream_exec_ =
-      GpuIdUtil::ExecutorForPlatformGpuId(platform_gpu_id).ValueOrDie();
+  stream_exec_ = GpuIdUtil::ExecutorForPlatformGpuId(platform_gpu_id, stream_id)
+                     .ValueOrDie();
 }
 
 GPUcudaMallocAllocator::~GPUcudaMallocAllocator() { delete base_allocator_; }

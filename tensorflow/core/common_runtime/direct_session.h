@@ -51,6 +51,44 @@ class CostModel;
 class DebugGateway;
 class Device;
 class DirectSessionFactory;
+class CallbackFrame;
+
+// StreamGroupMgr manages the allocation and recycling of stream groups. It
+// maintains a min-heap, so it can give the stream group with the lowest load at
+// each request.
+class StreamGroupMgr {
+ public:
+  StreamGroupMgr(const size_t total_num);
+  virtual ~StreamGroupMgr(){};
+
+  // Apply for a stream group.
+  int Require();
+
+  // Release the stream group when finish using it.
+  void Release(const int stream_id);
+
+ private:
+  // One stream group is represented by a node in the min-heap. The node
+  // contains a workload counter to record how many workloads are running in the
+  // stream group, and an accumulator to record how many times has the node been
+  // used for. New task should be allocated to the node of the lowest load.
+  struct StreamGroupNode {
+    int id_;
+    int workload_;
+    StreamGroupNode(const int id, const int workload = 0)
+        : id_(id), workload_(workload) {}
+  };
+
+  // Swap two stream group nodes.
+  void swap(const size_t, const size_t);
+
+  size_t total_num_;
+  mutable mutex mu_;
+  int swap_left_ GUARDED_BY(mu_);
+  std::vector<std::unique_ptr<StreamGroupNode>> stream_group_heap_
+      GUARDED_BY(mu_);
+  std::unordered_map<int, size_t> id2heap_map_ GUARDED_BY(mu_);
+};
 
 class DirectSession : public Session {
  public:
@@ -116,17 +154,79 @@ class DirectSession : public Session {
   ::tensorflow::Status RunCallable(CallableHandle handle,
                                    const std::vector<Tensor>& feed_tensors,
                                    std::vector<Tensor>* fetch_tensors,
-                                   RunMetadata* run_metadata) override;
+                                   RunMetadata* run_metadata,
+                                   int blaze_stream_id = -1,
+                                   uint64_t before_padding = 0,
+                                   uint64_t after_padding = 0) override;
 
   ::tensorflow::Status RunCallable(
       CallableHandle handle, const std::vector<Tensor>& feed_tensors,
       std::vector<Tensor>* fetch_tensors, RunMetadata* run_metadata,
-      const thread::ThreadPoolOptions& threadpool_options) override;
+      const thread::ThreadPoolOptions& threadpool_options,
+      int blaze_stream_id = -1,
+      uint64_t before_padding = 0,
+      uint64_t after_padding = 0) override;
 
   ::tensorflow::Status ReleaseCallable(CallableHandle handle) override;
 
   const SessionOptions& options() const { return options_; }
+  
+  ::tensorflow::Status PreCreateExecutors(const std::vector<std::string>& inputs,
+                                          const std::vector<std::string>& outputs,
+                                          const std::vector<std::string>& target_nodes,
+                                          const ::tensorflow::RunOptions& run_options);
 
+  int RequireStreamGroup() override;
+
+  void ReleaseStreamGroup(const int stream_id) override;
+
+#ifdef GOOGLE_CUDA
+  ::tensorflow::Status CreateForCapture(const GraphDef& graph) override;
+  ::tensorflow::Status CreateForCapture(GraphDef&& graph) override;
+  ::tensorflow::Status RunForCapture(const std::vector<std::pair<string, Tensor> >& inputs,
+                     const std::vector<string>& output_tensor_names,
+                     const std::vector<string>& target_node_names,
+                     CudaGraphMeta* cuda_graph_meta) override;
+  ::tensorflow::Status RunForCapture(const RunOptions& run_options,
+                     const std::vector<std::pair<string, Tensor> >& inputs,
+                     const std::vector<string>& output_tensor_names,
+                     const std::vector<string>& target_node_names,
+                     RunMetadata* run_metadata,
+                     CudaGraphMeta* cuda_graph_meta) override;
+  bool SupportsCudaGraph() override { return true; };
+  cudaStream_t EnableGraphCapture() override;
+  void DisableGraphCapture() override;
+  std::unordered_map<std::string, GraphDef>* GetCudaGraphRewriteDefs() override {
+    return &cudagraph_defs_;
+  };
+#endif
+
+  void RunAsync(const RunOptions& run_options,
+      const NamedTensorList& inputs,
+      const std::vector<string>& output_names,
+      const std::vector<string>& target_nodes,
+      std::vector<Tensor>* outputs,
+      RunMetadata* run_metadata,
+      StatusCallback done,
+      std::atomic<int64_t>* flops = nullptr) override;
+
+  void RunAsync(const RunOptions& run_options,
+      const NamedTensorList& inputs,
+      const std::vector<string>& output_names,
+      const std::vector<string>& target_nodes,
+      std::vector<Tensor>* outputs,
+      RunMetadata* run_metadata,
+      CallbackFrame* frame,
+      StatusCallback done,
+      std::atomic<int64_t>* flops = nullptr);
+
+
+  void SetStepInitId(int step_id) {
+    step_id_counter_ = step_id;
+  }
+
+  // TODO: const cast check for aios auto scale
+  SessionOptions* get_options() const override {return const_cast<SessionOptions*>(&options_);}
  private:
   // For access to collective_graph_key_.
   friend class DirectSessionCollectiveTest;
@@ -155,6 +255,7 @@ class DirectSession : public Session {
     std::unique_ptr<Graph> graph;
     NameNodeMap name_to_node;
     std::vector<PerPartitionExecutorsAndLib> items;
+    std::vector<std::vector<PerPartitionExecutorsAndLib>> stream_items;
     std::unordered_map<string, size_t> input_name_to_index;
     std::unordered_map<string, string> input_name_to_rendezvous_key;
     std::unordered_map<string, size_t> output_name_to_index;
@@ -251,8 +352,29 @@ class DirectSession : public Session {
       int64 step_id, const RunOptions& run_options,
       CallFrameInterface* call_frame, ExecutorsAndKeys* executors_and_keys,
       RunMetadata* run_metadata,
-      const thread::ThreadPoolOptions& threadpool_options);
+      const thread::ThreadPoolOptions& threadpool_options, int blaze_stream_id = -1,
+      CudaGraphMeta* cuda_graph_meta = nullptr);
 
+  void RunInternalAsync(
+      int64 step_id, const RunOptions& run_options,
+      CallFrameInterface* call_frame, ExecutorsAndKeys* executors_and_keys,
+      RunMetadata* run_metadata,
+      const thread::ThreadPoolOptions& threadpool_options,
+      const NamedTensorList& inputs,
+      const std::vector<string>& output_names,
+      const std::vector<string>& target_nodes,
+      std::vector<Tensor>* outputs,
+      CallbackFrame* frame,
+      StatusCallback done,
+      std::atomic<int64_t>* flops = nullptr);
+
+  ::tensorflow::Status AfterRunAsync(const ::tensorflow::RunOptions& run_options,
+       const std::vector<string>& output_names,
+       const std::vector<string>& target_nodes,
+       std::vector<Tensor> *outputs,
+       CallbackFrame* frame,
+       RunMetadata* run_metadata,
+	   uint64 start_time_usecs);
   // Returns whether inter-op execution uses a global pool or the input
   // `run_options` requests being run on inter_op_thread_pool = 0 in case
   // multiple pools are configured.
@@ -333,6 +455,15 @@ class DirectSession : public Session {
   std::vector<std::pair<thread::ThreadPool*, bool>> thread_pools_;
 
   Status init_error_;  // Set to an error if construction failed.
+
+  //[DYNAMIC-SHAPE]
+  bool gemm_dynamic_batchsize_ = false;
+  //[PROF-STATS]
+  const int kProfStatsSampleRatio = 97;
+  bool enable_prof_stats_ = true;
+  int64 sampling_prof_stats_steps_ = kProfStatsSampleRatio;
+
+  int64 gpu_stream_group_count_ = 0;
 
   // If true, blocks until device has finished all queued operations in a step.
   bool sync_on_finish_ = true;
@@ -418,6 +549,10 @@ class DirectSession : public Session {
   // Otherwise run in global thread pool, session owned thread pool or handler
   // pool according to other specifications of RunOptions and ConfigProto.
   bool run_in_caller_thread_ = false;
+  bool force_run_in_caller_thread_ = false;
+  bool pai_enable_online_tuning_;
+
+  std::unique_ptr<StreamGroupMgr> stream_group_mgr_;
 
   TF_DISALLOW_COPY_AND_ASSIGN(DirectSession);
 

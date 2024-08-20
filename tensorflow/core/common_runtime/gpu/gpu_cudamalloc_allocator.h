@@ -32,7 +32,8 @@ namespace tensorflow {
 class GPUcudaMallocAllocator : public Allocator {
  public:
   explicit GPUcudaMallocAllocator(Allocator* allocator,
-                                  PlatformGpuId platform_gpu_id);
+                                  PlatformGpuId platform_gpu_id,
+                                  int stream_id = 0);
   ~GPUcudaMallocAllocator() override;
   string Name() override { return "gpu_debug"; }
   void* AllocateRaw(size_t alignment, size_t num_bytes) override;

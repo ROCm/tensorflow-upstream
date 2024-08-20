@@ -45,6 +45,9 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/public/session_options.h"
+#include "tensorflow/core/util/env_var.h"
+#include "tensorflow/stream_executor/gpu/gpu_driver.h"
+
 
 namespace tensorflow {
 class GPUKernelTracker;
@@ -55,12 +58,12 @@ class BaseGPUDevice : public LocalDevice {
                 Bytes memory_limit, const DeviceLocality& locality,
                 TfGpuId tf_gpu_id, const string& physical_device_desc,
                 Allocator* gpu_allocator, Allocator* cpu_allocator,
-                bool sync_every_op, int32 max_streams);
+                bool sync_every_op, int stream_id);
 
   ~BaseGPUDevice() override;
 
   // Initialize the device and return the status of initialization.
-  Status Init(const SessionOptions& options);
+  Status Init(const SessionOptions& options) override;
 
   // GPU devices require the Op Compute method to save a reference to
   // any temporary tensors that are allocated until the Op execution
@@ -126,6 +129,31 @@ class BaseGPUDevice : public LocalDevice {
   // the compute stream and are not yet known to have completed.
   int PendingKernels();
 
+  bool ReserveGPUMemChunks(size_t chunk_size, int chunk_num);
+
+  Allocator* GetAllocator(AllocatorAttributes attr) override;
+
+#ifdef GOOGLE_CUDA
+  // For enabling cuda-graph 
+  void SetSingleStream();
+
+  void ResetStreams();
+  
+  // get the underlying cuda stream
+  cudaStream_t GetSingleStream(){
+      if( ! stream_catpure_mode_) return nullptr;
+      // todo: make clear what if there are more than 1 streams? 
+      auto gpu_stream = streams_[0]->compute->implementation();
+      return static_cast<cudaStream_t>(gpu_stream->GpuStreamHack());
+  }
+  
+  void SetStreamCaptureMode(bool mode){
+      // now, no actual synchronization will be called, only faked.
+      se::gpu::GpuDriver::SetCudaStreamCaptureMode(mode);
+      stream_catpure_mode_ = mode;
+  }
+#endif
+  
  protected:
   Allocator* gpu_allocator_;  // not owned
   Allocator* cpu_allocator_;  // not owned
@@ -154,12 +182,13 @@ class BaseGPUDevice : public LocalDevice {
   mutex trace_mu_;
   TfGpuId tf_gpu_id_;
   const bool sync_every_op_ = false;
-  const int32 max_streams_;
+  const int stream_id_;
   EventMgr* em_ = nullptr;
   std::unique_ptr<thread::ThreadPool> thread_pool_;
   std::unique_ptr<GPUKernelTracker> kernel_tracker_;
   int32 pending_cap_ = 0;
   bool timestamped_allocator_ = false;
+  bool force_gpu_compatible_ = false;
 
   // Initialize scractch buffers used by Eigen.
   Status InitScratchBuffers();
@@ -315,6 +344,7 @@ class GPUKernelTracker {
 
 class BaseGPUDeviceFactory : public DeviceFactory {
  public:
+  BaseGPUDeviceFactory();
   Status ListPhysicalDevices(std::vector<string>* devices) override;
   Status CreateDevices(const SessionOptions& options, const string& name_prefix,
                        std::vector<std::unique_ptr<Device>>* devices) override;
@@ -363,7 +393,7 @@ class BaseGPUDeviceFactory : public DeviceFactory {
   virtual std::unique_ptr<BaseGPUDevice> CreateGPUDevice(
       const SessionOptions& options, const string& name, Bytes memory_limit,
       const DeviceLocality& dev_locality, TfGpuId tf_gpu_id,
-      const string& physical_device_desc, Allocator* gpu_allocator,
+      const string& physical_device_desc, std::vector<Allocator*>& gpu_allocators,
       Allocator* cpu_allocator) = 0;
 
   Status EnablePeerAccess(const std::vector<PlatformGpuId>& visible_gpu_order);
@@ -379,6 +409,9 @@ class BaseGPUDeviceFactory : public DeviceFactory {
   // visible_gpu_initialized_[platform_gpu_id] is true if visible GPU
   // platform_gpu_id has been initialized by the process.
   std::unordered_map<int, bool> visible_gpu_initialized_;
+
+   // The number of stream groups for one gpu used
+  int64 gpu_stream_group_count_;
 };
 
 // This factory helps to ensure that different GPU device objects that refer to

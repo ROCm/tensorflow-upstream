@@ -26,37 +26,76 @@ limitations under the License.
 
 namespace tensorflow {
 
+//------------------------------------------------------------------------------
+// A StreamGPUDevice is a virtual device that manages one stream group for the
+// given GPU Device.
+// -----------------------------------------------------------------------------
+class StreamGPUDevice : public BaseGPUDevice {
+ public:
+  StreamGPUDevice(const SessionOptions& options, const string& name,
+            Bytes memory_limit, const DeviceLocality& locality,
+            TfGpuId tf_gpu_id, const string& physical_device_desc,
+            Allocator* gpu_allocator, Allocator* cpu_allocator,
+            const int stream_id)
+      : BaseGPUDevice(options, name,
+                      memory_limit, locality, tf_gpu_id,
+                      physical_device_desc, gpu_allocator, cpu_allocator,
+                      false /* sync every op */, stream_id),
+        stream_id_(stream_id) {}
+//        device_(real_device) {}
+
+ // const Device* GetRealDevice() const override { return device_; }
+
+  const int stream_id() const override { return stream_id_; }
+
+ private:
+  int stream_id_ = 0;
+//  Device* device_ = nullptr;  // not owned, its real device
+};
+
 class GPUDevice : public BaseGPUDevice {
  public:
   GPUDevice(const SessionOptions& options, const string& name,
             Bytes memory_limit, const DeviceLocality& locality,
             TfGpuId tf_gpu_id, const string& physical_device_desc,
-            Allocator* gpu_allocator, Allocator* cpu_allocator)
-      : BaseGPUDevice(options, name, memory_limit, locality, tf_gpu_id,
-                      physical_device_desc, gpu_allocator, cpu_allocator,
-                      false /* sync every op */, 1 /* max_streams */) {
-    if (options.config.has_gpu_options()) {
-      force_gpu_compatible_ =
-          options.config.gpu_options().force_gpu_compatible();
+            std::vector<Allocator*>& gpu_allocators, Allocator* cpu_allocator)
+      : BaseGPUDevice(options, name, memory_limit / gpu_allocators.size(), locality, tf_gpu_id,
+                      physical_device_desc, gpu_allocators[0], cpu_allocator,
+                      false /* sync every op */, 0 /* stream id */) {
+    TF_CHECK_OK(tensorflow::ReadInt64FromEnvVar("TF_GPU_STREAM_GROUP_COUNT", 0, &stream_num_)); 
+    for (int i = 0 ; i < stream_num_; ++i) {
+      string stream_gpu_name = strings::StrCat("/job:localhost/replica:0/task:0/device:STREAM_GPU_",
+                                               i, ":", tf_gpu_id.value());
+      stream_devices_.push_back(absl::make_unique<StreamGPUDevice>(
+        options, stream_gpu_name, memory_limit / gpu_allocators.size(), locality, tf_gpu_id,
+        physical_device_desc, gpu_allocators[i], cpu_allocator, i /* stream id */));
     }
   }
 
-  Allocator* GetAllocator(AllocatorAttributes attr) override {
-    CHECK(cpu_allocator_) << "bad place 1";
-    if (attr.on_host()) {
-      if (attr.gpu_compatible() || force_gpu_compatible_) {
-        GPUProcessState* ps = GPUProcessState::singleton();
-        return ps->GetGpuHostAllocator(0);
-      } else {
-        return cpu_allocator_;
-      }
-    } else {
-      return gpu_allocator_;
+  int GetStreamNum() const override { return stream_num_; }
+
+  Device* GetStreamDevice(const int stream_id) override {
+    if (stream_num_ == 0) {
+      return this;
     }
+    if (stream_id < 0 || stream_id >= stream_num_) {
+      LOG(ERROR) << "Invalid value for stream_id: " << stream_id << ", max stream id: "
+                 << stream_num_ << " when GetStreamDevice()";
+      return nullptr;
+    }
+    return stream_devices_[stream_id].get();
+  }
+
+  Status InitStreamDevice(const SessionOptions& options) override {
+    for (auto i = 0; i < stream_num_; ++i) {
+      TF_RETURN_IF_ERROR(stream_devices_[i]->Init(options));
+    }
+    return Status::OK();
   }
 
  private:
-  bool force_gpu_compatible_ = false;
+  std::vector<std::unique_ptr<Device>> stream_devices_;
+  int64 stream_num_ = 0;
 };
 
 class GPUDeviceFactory : public BaseGPUDeviceFactory {
@@ -64,11 +103,11 @@ class GPUDeviceFactory : public BaseGPUDeviceFactory {
   std::unique_ptr<BaseGPUDevice> CreateGPUDevice(
       const SessionOptions& options, const string& name, Bytes memory_limit,
       const DeviceLocality& locality, TfGpuId tf_gpu_id,
-      const string& physical_device_desc, Allocator* gpu_allocator,
+      const string& physical_device_desc, std::vector<Allocator*>& gpu_allocators,
       Allocator* cpu_allocator) override {
     return absl::make_unique<GPUDevice>(options, name, memory_limit, locality,
                                         tf_gpu_id, physical_device_desc,
-                                        gpu_allocator, cpu_allocator);
+                                        gpu_allocators, cpu_allocator);
   }
 };
 

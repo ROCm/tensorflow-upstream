@@ -158,12 +158,109 @@ Status BlazePredictor::Compute(OpKernelContext* ctx) {
   std::vector<Tensor> real_inputs(inputs.size());
   TF_RETURN_IF_ERROR(PrepareInputs(inputs, &real_inputs, ctx));
 
-  TF_RETURN_IF_ERROR(session_->RunCallable(handle_, real_inputs, &outputs, nullptr));
+  if (need_trace_ || (ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats)) {
+    RunMetadata metadata;
+    TF_RETURN_IF_ERROR(session_->RunCallable(handle_, real_inputs, &outputs, &metadata, ctx->stream_id()));
+    if (ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats) {
+      ctx->traced_infos()->UpdateProfStats(&metadata);
+    }
+    if (need_trace_) {
+      DumpFile(metadata);
+    }
+  } else {
+    TF_RETURN_IF_ERROR(session_->RunCallable(handle_, real_inputs, &outputs, nullptr, ctx->stream_id()));
+  }
 
   std::vector<Tensor> real_outputs(outputs.size());
   TF_RETURN_IF_ERROR(PrepareOutputs(outputs, &real_outputs, ctx));
   for (int i = 0; i < real_outputs.size(); ++i) {
     ctx->set_output(i, real_outputs[i]);
+  }
+  return Status::OK();
+}
+
+Status BlazePredictor::ComputeSplited(OpKernelContext* ctx) {
+  if (log_level_ > 0) RawInputsDebugLogging(ctx);
+
+  int num_inputs = ctx->num_inputs();
+  if (num_inputs != input_names_.size()) {
+    return errors::Internal("ctx input size ", num_inputs,
+        " != ", input_names_.size());
+  }
+  if (ctx->num_outputs() != output_names_.size()) {
+    return errors::Internal("ctx output size ", ctx->num_outputs(),
+        " != ", output_names_.size());
+  }
+
+  std::vector<Tensor> inputs;
+  inputs.reserve(num_inputs);
+  for (int i = 0; i < num_inputs; ++i) {
+    inputs.push_back(ctx->input(i));
+  }
+
+  std::vector<std::vector<Tensor>> splited_inputs;
+  TF_RETURN_IF_ERROR(SplitInputs(inputs, splited_inputs));
+  std::vector<std::vector<Tensor>> sp_outputs;
+  sp_outputs.resize(splited_inputs.size());
+
+  std::mutex m;
+  std::condition_variable cv;
+  std::shared_ptr<std::atomic<int>> barrier_shared = std::make_shared<std::atomic<int>>(0);
+  bool run_ok = true;
+  int total = splited_inputs.size();
+  for (int i = 0; i < splited_inputs.size(); ++i) {
+    auto& inputs = splited_inputs[i];
+
+    auto func = [this, ctx, &inputs, &cv, barrier_shared, &run_ok, i, &sp_outputs, total, &m]() {
+      std::vector<Tensor> outputs;
+      std::vector<Tensor> real_inputs(inputs.size());
+      Status st;
+      st = PrepareInputs(inputs, &real_inputs, ctx);
+#define RETURN_AND_SUB() \
+      if (!st.ok()) { \
+        std::unique_lock<std::mutex> lock(m); \
+        VLOG(0) << st.ToString(); \
+        run_ok = false; \
+        if(barrier_shared->fetch_add(1) == total -1) { \
+          cv.notify_all(); \
+          return; \
+        } \
+      }
+      RETURN_AND_SUB();
+      if (need_trace_ || (ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats)) {
+        RunMetadata metadata;
+        st = session_->RunCallable(this->handle_, real_inputs, &outputs, &metadata, ctx->stream_id());
+        if (ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats) {
+          ctx->traced_infos()->UpdateProfStats(&metadata);
+        }
+        if (need_trace_) {
+          DumpFile(metadata, i);
+        }
+      } else {
+        st = session_->RunCallable(this->handle_, real_inputs, &outputs, nullptr, ctx->stream_id());
+      }
+      RETURN_AND_SUB();
+      std::vector<Tensor> real_outputs(outputs.size());
+      st = this->PrepareOutputs(outputs, &real_outputs, ctx);
+      RETURN_AND_SUB();
+      sp_outputs[i] = std::move(outputs);
+      std::unique_lock<std::mutex> lock(m);
+      if(barrier_shared->fetch_add(1) == total -1) {
+        cv.notify_all();
+        return;
+      }
+    };
+    split_thread_pool_->Schedule(std::move(func));
+  }
+  auto lock = std::unique_lock<std::mutex>(m);
+  cv.wait(lock, [&]() { return barrier_shared->load() == total; });
+  if (!run_ok) {
+    return errors::Internal("split run fail");
+  }
+  std::vector<Tensor> mg_tensors;
+  TF_RETURN_IF_ERROR(MergeOutputs(ctx, sp_outputs, mg_tensors));
+  for (int i = 0; i < mg_tensors.size(); ++i) {
+    ctx->set_output(i, mg_tensors[i]);
   }
   return Status::OK();
 }
@@ -218,13 +315,11 @@ Status BlazePredictor::SetDeviceInfo(OpKernelConstruction* ctx) {
       if (!dev_info) {
         return errors::Internal("get gpu device info failed");
       }
-      AllocatorAttributes alloc_attrs;
-      alloc_attrs.set_on_host(false);
-      blaze_allocator_ = blaze_device_->GetAllocator(alloc_attrs);
+      blaze_allocator_ = GetAllocator();
       if (!blaze_allocator_) {
         return errors::Internal("get gpu allocator failed");
       }
-      stream_ = GetStream();
+      auto stream_ = GetStream();
       if (!stream_) {
         return errors::Internal("get stream_ for ", blaze_device_, " failed" );
       }
@@ -233,15 +328,17 @@ Status BlazePredictor::SetDeviceInfo(OpKernelConstruction* ctx) {
   }
 }
 
-stream_executor::Stream* BlazePredictor::GetStream() const {
-  #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+stream_executor::Stream* BlazePredictor::GetStream(int stream_id) const {
+  #if GOOGLE_CUDA
   TfGpuId tf_gpu_id(vgpu_id_);
-  auto* se = GpuIdUtil::ExecutorForTfGpuId(tf_gpu_id).ValueOrDie();
+  // turn off multi-stream, the original stream id is 0.
+  if (stream_id == -1) stream_id = 0;
+  auto* se = GpuIdUtil::ExecutorForTfGpuId(tf_gpu_id, stream_id).ValueOrDie();
 
   if (!se) { return nullptr; }
   static tensorflow::GPUOptions gpu_options;
   auto sg = tensorflow::StreamGroupFactory::Global().GetOrCreate(
-      tf_gpu_id, 0, se, gpu_options);
+      tf_gpu_id, stream_id, se, gpu_options);
   if (!sg) {
     VLOG(0) << "get stream group failed";
     return nullptr;
@@ -250,7 +347,48 @@ stream_executor::Stream* BlazePredictor::GetStream() const {
 
   #else
     return nullptr;
-  #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+  #endif
+}
+
+Allocator* BlazePredictor::GetAllocator(int stream_id) const {
+  AllocatorAttributes alloc_attrs;
+  alloc_attrs.set_on_host(false);
+  if (stream_id == -1) {
+    return blaze_device_->GetAllocator(alloc_attrs);
+  }
+  return blaze_device_->GetStreamDevice(stream_id)->GetAllocator(alloc_attrs);
+}
+
+void BlazePredictor::RawInputsDebugLogging(OpKernelContext* ctx) const {
+  mutex_lock l(log_mu_);
+
+  for (int i = 0; i < ctx->num_inputs(); ++i) {
+
+    const Tensor& input = ctx->input(i);
+    VLOG(1) << "input ["<<i<<"]:\n"
+            << input.DebugString();
+
+    const string& name_string = input_names_[i];
+
+    string shape_string;
+    std::stringstream stream;
+    for (int d = 0; d < input.dims(); d++) {
+      stream << input.dim_size(d) << " ";
+    }
+    stream << "(" << input.NumElements() << ")";
+    shape_string = stream.str();
+
+    string dtype_string = DataTypeString(input.dtype());
+
+    string data_string = hydra::base64_encode((const char*)input.data(), input.TotalBytes());
+
+    LOG(INFO) << "blaze input blob [" << i << "]:"
+              << " name:" << name_string
+              << " shape: " << shape_string
+              << " type: " << dtype_string
+              << " data: " << data_string;
+
+  }
 }
 
 Status BlazePredictor::PrepareInputs(const std::vector<Tensor>& inputs,
@@ -267,7 +405,11 @@ Status BlazePredictor::CopyTensorCPUToGPU(const std::vector<Tensor>& inputs,
     OpKernelContext* ctx) {
 
   for (int i = 0; i < inputs.size(); ++i) {
-    Tensor copyed_tensor(blaze_allocator_, inputs[i].dtype(), inputs[i].shape());
+    if (!copyable_[i]) {
+      (*real_inputs)[i] = inputs[i];
+      continue;
+    }
+    Tensor copyed_tensor(GetAllocator(ctx->stream_id()), inputs[i].dtype(), inputs[i].shape());
     (*real_inputs)[i] = copyed_tensor;
 
     const uint8* input_ptr = (uint8*)GetTensorAddress(&inputs[i]);
@@ -281,7 +423,7 @@ Status BlazePredictor::CopyTensorCPUToGPU(const std::vector<Tensor>& inputs,
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
       auto real_dev_ptr = AsDeviceMemory(real_ptr, real_size);
       bool copy_status =
-          GetStream()->ThenMemcpy(&real_dev_ptr, input_ptr, input_size).ok();
+          GetStream(ctx->stream_id())->ThenMemcpy(&real_dev_ptr, input_ptr, input_size).ok();
       if (!copy_status) {
         return errors::Internal("MemcpyH2D for padding inputs failed.");
       }
@@ -317,7 +459,7 @@ Status BlazePredictor::CopyTensorGPUToCPU(const std::vector<Tensor>& gpu_tensors
     TF_RETURN_IF_ERROR(ctx->allocate_temp(tmp_tensor.dtype(),
           tmp_tensor.shape(), &((*cpu_tensors)[i]), alloc_attrs));
     uint8* host_add = (uint8*)GetTensorAddress(&((*cpu_tensors)[i]));
-    auto stream = GetStream();
+    auto stream = GetStream(ctx->stream_id());
     stream->ThenMemcpy(host_add, tmp_dev_ptr, tmp_size);
     auto event = std::make_shared<Event>(stream->parent());
     if (!event->Init()) {

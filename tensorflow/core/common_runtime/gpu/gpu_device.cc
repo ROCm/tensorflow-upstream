@@ -319,7 +319,7 @@ BaseGPUDevice::BaseGPUDevice(const SessionOptions& options, const string& name,
                              TfGpuId tf_gpu_id,
                              const string& physical_device_desc,
                              Allocator* gpu_allocator, Allocator* cpu_allocator,
-                             bool sync_every_op, int32 max_streams)
+                             bool sync_every_op, int stream_id)
     : LocalDevice(options, Device::BuildDeviceAttributes(name, DEVICE_GPU,
                                                          memory_limit, locality,
                                                          physical_device_desc)),
@@ -328,8 +328,11 @@ BaseGPUDevice::BaseGPUDevice(const SessionOptions& options, const string& name,
       scoped_allocator_mgr_(new ScopedAllocatorMgr(name)),
       tf_gpu_id_(tf_gpu_id),
       sync_every_op_(sync_every_op),
-      max_streams_(max_streams) {
+      stream_id_(stream_id) {
   GPUProcessState::singleton()->EnableGPUDevice();
+  if (options.config.has_gpu_options()) {
+    force_gpu_compatible_ = options.config.gpu_options().force_gpu_compatible();
+  }
 }
 
 BaseGPUDevice::~BaseGPUDevice() {
@@ -341,8 +344,9 @@ BaseGPUDevice::~BaseGPUDevice() {
 // This should be idempotent if already initialized.
 Status BaseGPUDevice::InitScratchBuffers() {
   mutex_lock l(scratch_init_mutex_);
-  if (scratch_.size() < max_streams_) {
-    for (int i = 0; i < max_streams_; i++) {
+  int max_stream = 1;
+  if (scratch_.size() < max_stream) {
+    for (int i = 0; i < max_stream; i++) {
       DCHECK(streams_[i]);
       if (scratch_.size() > i && scratch_[i]) continue;
       size_t scratch_buffer_size =
@@ -371,30 +375,30 @@ Status BaseGPUDevice::InitScratchBuffers() {
 }
 
 Status BaseGPUDevice::Init(const SessionOptions& options) {
-  auto executor_status = GpuIdUtil::ExecutorForTfGpuId(tf_gpu_id_);
+  session_options_ = options;
+    
+  auto executor_status = GpuIdUtil::ExecutorForTfGpuId(tf_gpu_id_, stream_id_);
   if (!executor_status.status().ok()) {
     return errors::Internal("Failed to get StreamExecutor for device ",
-                            tf_gpu_id_.value());
+                            tf_gpu_id_.value(), " stream ", stream_id_);
   }
 
   executor_ = executor_status.ValueOrDie();
 
-  if (max_streams_ < 1) {
-    return errors::InvalidArgument("Invalid value for max_streams.");
+  if (stream_id_ < 0) {
+    return errors::InvalidArgument("Invalid value for stream_id.");
   }
 
   // Create the specified number of GPU streams
-  for (int i = 0; i < max_streams_; i++) {
-    streams_.push_back(StreamGroupFactory::Global().GetOrCreate(
-        tf_gpu_id_, i, executor_, options.config.gpu_options()));
-    device_contexts_.push_back(new GPUDeviceContext(
-        i, streams_.back()->compute,
+  streams_.push_back(tensorflow::StreamGroupFactory::Global().GetOrCreate(
+      tf_gpu_id_, stream_id_, executor_, options.config.gpu_options()));
+  device_contexts_.push_back(new GPUDeviceContext(
+      stream_id_, streams_.back()->compute, 
 #if TENSORFLOW_USE_ROCM
         streams_.back()->nccl,
 #endif
-        streams_.back()->host_to_device, streams_.back()->device_to_host,
-        streams_.back()->device_to_device));
-  }
+      streams_.back()->host_to_device,
+      streams_.back()->device_to_host, streams_.back()->device_to_device));
 
   em_ = EventMgrFactory::Singleton()->GetEventMgr(executor_,
                                                   options.config.gpu_options());
@@ -409,11 +413,6 @@ Status BaseGPUDevice::Init(const SessionOptions& options) {
   if (timestamped_allocator_ ||
       (tracker_params.max_interval > 0 || tracker_params.max_bytes > 0 ||
        tracker_params.max_pending > 0)) {
-    if (max_streams_ > 1) {
-      LOG(FATAL) << "max_streams > 1 was specified together with "
-                    "timestamped_allocator and/or kernel tracking.  This is an "
-                    "unsupported combination.";
-    }
     SharedCounter* timing_counter = nullptr;
     if (timestamped_allocator_) {
       // In this case the SharedCounter was already created and set in the
@@ -794,6 +793,20 @@ void BaseGPUDevice::CopyTensorInSameDevice(const Tensor* input_tensor,
                                   input_tensor, output_tensor, std::move(done));
 }
 
+Allocator* BaseGPUDevice::GetAllocator(AllocatorAttributes attr) {
+  CHECK(cpu_allocator_) << "bad place 1";
+  if (attr.on_host()) {
+    if (attr.gpu_compatible() || force_gpu_compatible_) {
+      GPUProcessState* ps = GPUProcessState::singleton();
+      return ps->GetGpuHostAllocator(0);
+    } else {
+      return cpu_allocator_;
+    }
+  } else {
+    return gpu_allocator_;
+  }
+}
+
 namespace {
 class ConcretePerOpGpuDevice : public PerOpGpuDevice {
  public:
@@ -1023,6 +1036,11 @@ Allocator* BaseGPUDevice::GetScopedAllocator(AllocatorAttributes attr,
 
 const int BaseGPUDeviceFactory::InterconnectMap::kSameDeviceStrength = 1000;
 const int BaseGPUDeviceFactory::InterconnectMap::kStreamExecutorStrength = 1;
+
+BaseGPUDeviceFactory::BaseGPUDeviceFactory() { 
+  TF_CHECK_OK(tensorflow::ReadInt64FromEnvVar("TF_GPU_STREAM_GROUP_COUNT", 0,
+                                               &gpu_stream_group_count_));
+}
 
 Status BaseGPUDeviceFactory::ListPhysicalDevices(std::vector<string>* devices) {
   TF_RETURN_IF_ERROR(ValidateGPUMachineManager());
@@ -1301,34 +1319,41 @@ Status BaseGPUDeviceFactory::CreateGPUDevice(
   }
   auto desc = desc_status.ConsumeValueOrDie();
   GPUProcessState* process_state = GPUProcessState::singleton();
-  Allocator* gpu_allocator = process_state->GetGPUAllocator(
-      options.config.gpu_options(), tf_gpu_id, memory_limit);
-  if (gpu_allocator == nullptr) {
+  std::vector<Allocator*> gpu_allocators;
+  int gpu_allocators_count = gpu_stream_group_count_ > 0 ? gpu_stream_group_count_ : 1;
+  process_state->GetGPUAllocators(options.config.gpu_options(), tf_gpu_id,
+                                  memory_limit, gpu_allocators_count,
+                                  gpu_allocators);
+  if (!gpu_allocators.size()) {
     return errors::Internal("Failed to get memory allocator for TF GPU ",
                             tf_gpu_id.value(), " with ", memory_limit,
                             " bytes of memory.");
   }
-  absl::optional<AllocatorStats> stats = gpu_allocator->GetStats();
-  if (!stats) {
-    return errors::Internal("No allocator statistics");
+  int64 bytes_limit(0);
+  for (auto i = 0; i < gpu_allocators.size(); ++i) {
+    absl::optional<AllocatorStats> stats = gpu_allocators[i]->GetStats();
+    if (!stats) {
+      return errors::Internal("No allocator statistics");
+    }
+    // 'memory_limit' is the required memory size, but if the allocator with
+    // given tf_gpu_id was created before, we'll use it instead of creating a
+    // new one (as TF gpu device is a shared resource), in which case the actual
+    // memory limit represented by 'stats.bytes_limit' used by that allocator
+    // may be different (which should be an error).
+    //
+    // TODO(laigd): report error if memory_limit doesn't match
+    // stats->bytes_limit.
+    bytes_limit += stats->bytes_limit ? *stats->bytes_limit : 0;
   }
-  // 'memory_limit' is the required memory size, but if the allocator with
-  // given tf_gpu_id was created before, we'll use it instead of creating a
-  // new one (as TF gpu device is a shared resource), in which case the actual
-  // memory limit represented by 'stats.bytes_limit' used by that allocator
-  // may be different (which should be an error).
-  //
-  // TODO(laigd): report error if memory_limit doesn't match
-  // stats->bytes_limit.
-  int64 bytes_limit = stats->bytes_limit ? *stats->bytes_limit : 0;
   std::unique_ptr<BaseGPUDevice> gpu_device = CreateGPUDevice(
       options, device_name, static_cast<Bytes>(bytes_limit), dev_locality,
-      tf_gpu_id, GetShortDeviceDescription(platform_gpu_id, *desc),
-      gpu_allocator, ProcessState::singleton()->GetCPUAllocator(numa_node));
+      tf_gpu_id, GetShortDeviceDescription(platform_gpu_id, *desc), gpu_allocators,
+      ProcessState::singleton()->GetCPUAllocator(numa_node));
   LOG(INFO) << "Created TensorFlow device (" << device_name << " with "
             << (bytes_limit >> 20) << " MB memory) -> physical GPU ("
             << GetShortDeviceDescription(platform_gpu_id, *desc) << ")";
   TF_RETURN_IF_ERROR(gpu_device->Init(options));
+  TF_RETURN_IF_ERROR(gpu_device->InitStreamDevice(options));
   devices->push_back(std::move(gpu_device));
 
   return Status::OK();

@@ -87,6 +87,13 @@ ProcessFunctionLibraryRuntime::ProcessFunctionLibraryRuntime(
     (*flr_map_)[d] = NewFunctionLibraryRuntime(
         device_mgr, env, d, graph_def_version, lib_def_, default_thread_pool,
         optimizer_options, custom_kernel_creator, session_metadata_, this);
+    int stream_num = d->GetStreamNum();
+    for (int stream_id(0); stream_id < stream_num; ++stream_id) {
+      auto stream_device = d->GetStreamDevice(stream_id);
+      (*flr_map_)[stream_device] = NewFunctionLibraryRuntime(
+        device_mgr, env, stream_device, graph_def_version, lib_def_, default_thread_pool,
+        optimizer_options, custom_kernel_creator, session_metadata_, this);
+    }
   }
 
   DeviceMgr const* all_devices = device_mgr_;
@@ -96,6 +103,10 @@ ProcessFunctionLibraryRuntime::ProcessFunctionLibraryRuntime(
 
   for (auto d : all_devices->ListDevices()) {
     device_set_.AddDevice(d);
+    int32 stream_num = d->GetStreamNum();
+    for (int32 stream_id(0); stream_id < stream_num; ++stream_id) {
+      device_set_.AddDevice(d->GetStreamDevice(stream_id));
+    }
   }
 }
 
@@ -180,7 +191,8 @@ Status ProcessFunctionLibraryRuntime::GetDeviceContext(
     // "TPU_SYSTEM" indicates that `device` is a CPU.
     return Status::OK();
   }
-  if (device_type == "GPU" || device_type == "TPU") {
+  if (device_type == "GPU" || device_type == "TPU" ||
+      device_type.find("STREAM_GPU") != string::npos) {
     auto* dev_info = flr->device()->tensorflow_gpu_device_info();
     if (dev_info) {
       *device_context = dev_info->default_context;

@@ -61,8 +61,9 @@ port::StatusOr<StreamExecutor*> ExecutorCache::GetOrCreate(
 
   LOG(INFO) << "TF_NUM_CONTEXTS_PER_GPU = " << num_cuda_contexts;
   std::string key = std::to_string(config.ordinal) + "," +
-                    std::to_string(config.virtual_ordinal % num_cuda_contexts);
-  Entry *entry = nullptr;
+                    std::to_string(config.virtual_ordinal % num_cuda_contexts) + "," +
+                    std::to_string(config.stream_id % num_cuda_contexts);
+  Entry* entry = nullptr;
   {
     absl::MutexLock lock{&mutex_};
     entry = &cache_[key];
@@ -97,8 +98,9 @@ port::StatusOr<StreamExecutor*> ExecutorCache::GetOrCreate(
 port::StatusOr<StreamExecutor*> ExecutorCache::Get(
     const StreamExecutorConfig& config, int num_cuda_contexts) {
   std::string key = std::to_string(config.ordinal) + "," +
-                    std::to_string(config.virtual_ordinal % num_cuda_contexts);
-  Entry *entry = nullptr;
+                    std::to_string(config.virtual_ordinal % num_cuda_contexts) + "," +
+                    std::to_string(config.stream_id % num_cuda_contexts);
+  Entry* entry = nullptr;
   {
     absl::ReaderMutexLock lock{&mutex_};
     auto it = cache_.find(key);
@@ -107,16 +109,16 @@ port::StatusOr<StreamExecutor*> ExecutorCache::Get(
     } else {
       return port::Status(
           port::error::NOT_FOUND,
-          absl::StrFormat("No executors registered for ordinal %d",
-                          config.ordinal));
+          absl::StrFormat("No executors registered for ordinal %d, stream %d",
+                          config.ordinal, config.stream_id));
     }
   }
   absl::ReaderMutexLock lock{&entry->configurations_mutex};
   if (entry->configurations.empty()) {
     return port::Status(
         port::error::NOT_FOUND,
-        absl::StrFormat("No executors registered for ordinal %d",
-                        config.ordinal));
+        absl::StrFormat("No executors registered for ordinal %d, stream %d",
+                        config.ordinal, config.stream_id));
   }
   for (const auto& iter : entry->configurations) {
     if (iter.first.plugin_config == config.plugin_config &&

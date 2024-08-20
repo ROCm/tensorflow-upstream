@@ -128,8 +128,18 @@ Status BlazeXlaPredictor::Warmup(OpKernelContext* ctx) {
     }
     // Call SessionRun
     std::vector<Tensor> padded_outputs;
-    status = session_->RunCallable(
-         handle_, sliced_inputs, &padded_outputs, nullptr);
+
+    VLOG(0) << "RunCallable handle_ " << handle_ << " session_ " << session_.get();
+    if (need_trace_) {
+      RunMetadata metadata;
+      status = session_->RunCallable(
+          handle_, sliced_inputs, &padded_outputs, &metadata, ctx->stream_id());
+    } else {
+      status = session_->RunCallable(
+          handle_, sliced_inputs, &padded_outputs, nullptr, ctx->stream_id());
+    }
+    
+    VLOG(0) << "RunCallable handle_ " << handle_ << " session_ " << session_.get() << " finish";
     if (!status.ok()) {
       return status;
     }
@@ -191,8 +201,20 @@ Status BlazeXlaPredictor::PadToStaticCPUToGPU(const std::vector<Tensor>& inputs,
       first_dim = (first_dim == 1) ? 1 : pad_to_batchsize;
     }
     pad_to_shape.set_dim(0, first_dim);
-    Tensor padded_tensor(blaze_allocator_, inputs[i].dtype(), pad_to_shape);
-    (*padded_inputs)[i] = padded_tensor;
+    if (!copyable_[i]) {
+      AllocatorAttributes alloc_attrs;
+      alloc_attrs.set_on_host(ctx->input_memory_type(i) == HOST_MEMORY);
+      Status allocate_status =
+          ctx->allocate_temp(inputs[i].dtype(),
+                             pad_to_shape,
+                             &(*padded_inputs)[i], alloc_attrs);
+      if (!allocate_status.ok()) {
+        return allocate_status;
+      }
+    } else {
+      Tensor padded_tensor(GetAllocator(ctx->stream_id()), inputs[i].dtype(), pad_to_shape);
+      (*padded_inputs)[i] = padded_tensor;
+    }
     const uint8* input_ptr = (uint8*)GetTensorAddress(&inputs[i]);
     uint8* padded_ptr = (uint8*)GetTensorAddress(&(*padded_inputs)[i]);
     uint64 input_size = GetTensorSize(&inputs[i]);
@@ -206,13 +228,13 @@ Status BlazeXlaPredictor::PadToStaticCPUToGPU(const std::vector<Tensor>& inputs,
       auto padded_dev_ptr = AsDeviceMemory(padded_ptr, padded_size);
       if (DataTypeIsInteger(inputs[i].dtype())) {
         bool copy_status =
-            GetStream()->ThenMemZero(&padded_dev_ptr, padded_size).ok();
+            GetStream(ctx->stream_id())->ThenMemZero(&padded_dev_ptr, padded_size).ok();
         if (!copy_status) {
           return errors::Internal("MemZero failed.");
         }
       }
       bool copy_status =
-          GetStream()->ThenMemcpy(&padded_dev_ptr, input_ptr, input_size).ok();
+          GetStream(ctx->stream_id())->ThenMemcpy(&padded_dev_ptr, input_ptr, input_size).ok();
       if (!copy_status) {
         return errors::Internal("MemcpyH2D for padding inputs failed.");
       }
@@ -341,7 +363,7 @@ Status BlazeXlaPredictor::SliceToDynamicCPU(const std::vector<Tensor>& padded_ou
     TF_RETURN_IF_ERROR(ctx->allocate_temp(tmp_tensor.dtype(),
           tmp_tensor.shape(), &tensor, alloc_attrs));
     uint8* host_add = (uint8*)GetTensorAddress(&tensor);
-    auto stream = GetStream();
+    auto stream = GetStream(ctx->stream_id());
     stream->ThenMemcpy(host_add, tmp_dev_ptr, tmp_size);
     auto event = std::make_shared<Event>(stream->parent());
     if (!event->Init()) {
@@ -353,7 +375,38 @@ Status BlazeXlaPredictor::SliceToDynamicCPU(const std::vector<Tensor>& padded_ou
 
     outputs.push_back(tensor);
   }
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
+
+  return Status::OK();
+}
+
+Status BlazeXlaPredictor::ComputeNoPadding(OpKernelContext* ctx,
+		const std::vector<Tensor>& inputs) {
+  std::vector<Tensor> outputs;
+  std::vector<Tensor> real_inputs(inputs.size());
+
+  TF_RETURN_IF_ERROR(PrepareInputs(inputs, &real_inputs, ctx));
+  if ((ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats)
+      || need_trace_) {
+    RunMetadata metadata;
+    TF_RETURN_IF_ERROR(session_->RunCallable(
+            handle_, real_inputs, &outputs, &metadata, ctx->stream_id()));
+    if (ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats) {
+      ctx->traced_infos()->UpdateProfStats(&metadata);
+    }
+    if (need_trace_) {
+      DumpFile(metadata);
+    }
+  } else {
+    TF_RETURN_IF_ERROR(session_->RunCallable(
+            handle_, real_inputs, &outputs, nullptr, ctx->stream_id()));
+  }
+
+  std::vector<Tensor> real_outputs(outputs.size());
+  TF_RETURN_IF_ERROR(PrepareOutputs(outputs, &real_outputs, ctx));
+  for (int i = 0; i < real_outputs.size(); ++i) {
+    ctx->set_output(i, real_outputs[i]);
+  }
   return Status::OK();
 }
 
@@ -422,8 +475,20 @@ Status BlazeXlaPredictor::Compute(OpKernelContext* ctx) {
 
     // Call SessionRun
     std::vector<Tensor> padded_outputs;
-    TF_RETURN_IF_ERROR(session_->RunCallable(
-            handle_, padded_inputs, &padded_outputs, nullptr));
+    if ((ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats) || need_trace_) {
+      RunMetadata metadata;
+      TF_RETURN_IF_ERROR(session_->RunCallable(
+              handle_, padded_inputs, &padded_outputs, &metadata, ctx->stream_id()));
+      if (ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats) {
+        ctx->traced_infos()->UpdateProfStats(&metadata);
+      }
+      if (need_trace_) {
+        DumpFile(metadata);
+      }
+    } else {
+      TF_RETURN_IF_ERROR(session_->RunCallable(
+              handle_, padded_inputs, &padded_outputs, nullptr, ctx->stream_id()));
+    }
 
     // Unpad outputs
     std::vector<Tensor> outputs;
@@ -446,8 +511,20 @@ Status BlazeXlaPredictor::Compute(OpKernelContext* ctx) {
     std::vector<Tensor> real_inputs(inputs.size());
 
     TF_RETURN_IF_ERROR(PrepareInputs(inputs, &real_inputs, ctx));
-    TF_RETURN_IF_ERROR(session_->RunCallable(
-            handle_, real_inputs, &outputs, nullptr));
+    if ((ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats) || need_trace_) {
+      RunMetadata metadata;
+      TF_RETURN_IF_ERROR(session_->RunCallable(
+              handle_, real_inputs, &outputs, &metadata, ctx->stream_id()));
+      if (ctx->traced_infos() && ctx->traced_infos()->enable_sampling_prof_stats) {
+        ctx->traced_infos()->UpdateProfStats(&metadata);
+      }
+      if (need_trace_) {
+        DumpFile(metadata);
+      }
+    } else {
+      TF_RETURN_IF_ERROR(session_->RunCallable(
+              handle_, real_inputs, &outputs, nullptr, ctx->stream_id()));
+    }
 
     std::vector<Tensor> real_outputs(outputs.size());
     TF_RETURN_IF_ERROR(PrepareOutputs(outputs, &real_outputs, ctx));

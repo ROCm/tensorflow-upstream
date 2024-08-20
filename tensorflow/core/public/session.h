@@ -238,7 +238,10 @@ class Session {
   virtual Status RunCallable(CallableHandle handle,
                              const std::vector<Tensor>& feed_tensors,
                              std::vector<Tensor>* fetch_tensors,
-                             RunMetadata* run_metadata) {
+                             RunMetadata* run_metadata,
+                             int blaze_stream_id = -1,
+                             uint64_t before_padding = 0,
+                             uint64_t after_padding = 0) {
     return errors::Unimplemented(
         "RunCallable is not supported for this session.");
   }
@@ -253,7 +256,10 @@ class Session {
   virtual Status RunCallable(
       CallableHandle handle, const std::vector<Tensor>& feed_tensors,
       std::vector<Tensor>* fetch_tensors, RunMetadata* run_metadata,
-      const thread::ThreadPoolOptions& threadpool_options) {
+      const thread::ThreadPoolOptions& threadpool_options,
+      int blaze_stream_id = -1,
+      uint64_t before_padding = 0,
+      uint64_t after_padding = 0) {
     return errors::Unimplemented(
         "RunCallable with threadpool is not supported for this session.");
   }
@@ -264,6 +270,24 @@ class Session {
   virtual Status ReleaseCallable(CallableHandle handle) {
     return errors::Unimplemented(
         "ReleaseCallable is not supported for this session.");
+  }
+
+  ///\brief for empty inputs warmup 
+  virtual Status PreCreateExecutors(const std::vector<std::string>& inputs,
+                                    const std::vector<std::string>& outputs,
+                                    const std::vector<std::string>& target_nodes,
+                                    const ::tensorflow::RunOptions& run_options) {
+    return errors::Unimplemented(
+        "PreCreateExecutors is not supported for this session.");
+  }
+
+  virtual int RequireStreamGroup() {
+    LOG(FATAL) << "RequireStreamGroup() is not implemented.";
+    return -1;
+  }
+
+  virtual void ReleaseStreamGroup(const int) {
+    LOG(FATAL) << "ReleaseStreamGroup() is not implemented.";
   }
 };
 

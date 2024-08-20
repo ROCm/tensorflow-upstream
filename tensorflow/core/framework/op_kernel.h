@@ -618,6 +618,14 @@ class OpKernelContext {
   struct Params {
     ~Params() { delete eigen_gpu_device; }
 
+    //[DYNAMIC-SHAPE]
+    uint64 before_padding = 0;
+    uint64 after_padding = 0;
+    //[PROF-STATS] unused, replaced by traced_infos
+    ProfStats* prof_stats = nullptr;
+    TracedInfosPtr traced_infos = nullptr;
+    int stream_id = -1;
+
     // The step being executed.
     int64 step_id = 0;
 
@@ -739,6 +747,17 @@ class OpKernelContext {
 
   Env* env() const { return params_->device->env(); }
 
+  //[DYNAMIC-SHAPE]
+  uint64 before_padding() const { return params_->before_padding; }
+  uint64 after_padding() const { return params_->after_padding; }
+  //[PROF-STATS] unused, replaced by traced_infos
+  ProfStats* prof_stats() const { return params_->prof_stats; };
+  TracedInfosPtr traced_infos() const { return params_->traced_infos; }
+  ProfStatsPtr prof_stats_ptr() const;
+
+  int stream_id() const {return params_->stream_id; }
+  
+  int64 round_step_id() const { return params_->round_step_id; }
   int64 step_id() const { return params_->step_id; }
 
   bool is_eager() const { return params_->is_eager; }

@@ -88,6 +88,9 @@ struct StreamExecutorConfig {
 
   // The DeviceOptions for the returned StreamExecutor.
   DeviceOptions device_options;
+
+  // The stream group id of the given stream executor for the given device.
+  int stream_id = 0;
 };
 
 // Abstract base class for a platform registered with the MultiPlatformManager.
@@ -158,7 +161,9 @@ class Platform {
   // the Platform owns the executors in a singleton-like fashion.
   virtual port::StatusOr<StreamExecutor*> ExecutorForDevice(int ordinal) = 0;
   virtual port::StatusOr<StreamExecutor*> ExecutorForDevice(
-      int ordinal, int virtual_ordinal) {
+      int ordinal, int virtual_ordinal) { return ExecutorForDevice(ordinal); }
+  virtual port::StatusOr<StreamExecutor*> ExecutorForDevice(
+      int ordinal, int virtual_ordinal, int stream_id) {
     return ExecutorForDevice(ordinal);
   }
 
@@ -169,6 +174,10 @@ class Platform {
       int ordinal, const PluginConfig& plugin_config) = 0;
   virtual port::StatusOr<StreamExecutor*> ExecutorForDeviceWithPluginConfig(
       int ordinal, int virtual_ordinal, const PluginConfig& plugin_config) {
+    return ExecutorForDeviceWithPluginConfig(ordinal, plugin_config);
+  };
+  virtual port::StatusOr<StreamExecutor*> ExecutorForDeviceWithPluginConfig(
+      int ordinal, int virtual_ordinal, const PluginConfig& plugin_config, int stream_id) {
     return ExecutorForDeviceWithPluginConfig(ordinal, plugin_config);
   };
 

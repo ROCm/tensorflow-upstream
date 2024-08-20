@@ -556,7 +556,11 @@ Status IsKernelRegisteredForNode(
     return errors::InvalidArgument("Could not parse device name: ",
                                    node_device);
   }
-  return FindKernelDef(DeviceType(parsed_name.type), node_name,
+  auto device_type = parsed_name.type;
+  if (device_type.find("STREAM_GPU") != string::npos) {
+    device_type = "GPU";
+  }
+  return FindKernelDef(DeviceType(device_type), node_name,
                        has_experimental_debug_info, experimental_debug_info,
                        node_op, node_device, node_attrs, nullptr, nullptr);
 }

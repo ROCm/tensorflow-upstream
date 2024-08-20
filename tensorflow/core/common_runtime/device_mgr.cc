@@ -39,6 +39,9 @@ DeviceMgr::DeviceMgr(std::vector<std::unique_ptr<Device>> devices)
       device_map_[CopyToBackingStore(name)] = d.get();
     }
     device_type_counts_[d->device_type()]++;
+    if (d->parsed_name().type == "GPU") {
+      RegisterStreamDevices(d.get());
+    }
   }
 }
 
@@ -62,6 +65,24 @@ StringPiece DeviceMgr::CopyToBackingStore(StringPiece s) {
   char* space = name_backing_store_.Alloc(n);
   memcpy(space, s.data(), n);
   return StringPiece(space, n);
+}
+
+void DeviceMgr::RegisterStreamDevices(Device* device) {
+  auto stream_num = device->GetStreamNum();
+  for (auto stream_id(0); stream_id < stream_num; ++stream_id) {
+    Device* d = device->GetStreamDevice(stream_id);
+    // Register under the (1) full name and (2) canonical name.
+    for (const string& name :
+         DeviceNameUtils::GetNamesForDeviceMappings(d->parsed_name())) {
+      device_map_[CopyToBackingStore(name)] = d;
+    }
+    // Register under the (3) local name and (4) legacy local name.
+    for (const string& name :
+         DeviceNameUtils::GetLocalNamesForDeviceMappings(d->parsed_name())) {
+      device_map_[CopyToBackingStore(name)] = d;
+    }
+    device_type_counts_[d->device_type()]++;
+  }
 }
 
 void DeviceMgr::ListDeviceAttributes(

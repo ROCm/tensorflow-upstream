@@ -107,6 +107,8 @@ class DeviceContext : public core::RefCounted {
                              std::function<void()> func) {
     return errors::Internal("ThenExecute not supported by device");
   }
+
+  virtual int stream_id() const { return 0; }
 };
 
 // map[i] is the DeviceContext* for the node with id i, if i < map.size().

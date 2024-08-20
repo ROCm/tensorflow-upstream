@@ -92,13 +92,18 @@ void IntraProcessRendezvous::SameWorkerRecvDone(
     done(s);
     return;
   }
+  if (src_device->parsed_name().type == "GPU") {
+    src_device = src_device->GetStreamDevice(send_args.device_context->stream_id());
+  }
   Device* dst_device;
   s = device_mgr_->LookupDevice(parsed.dst_device, &dst_device);
   if (!s.ok()) {
     done(s);
     return;
   }
-
+  if (dst_device->parsed_name().type == "GPU") {
+    dst_device = dst_device->GetStreamDevice(recv_args.device_context->stream_id());
+  }
   AllocatorAttributes attr = recv_args.alloc_attrs;
   attr.set_gpu_compatible(send_args.alloc_attrs.gpu_compatible() ||
                           recv_args.alloc_attrs.gpu_compatible());

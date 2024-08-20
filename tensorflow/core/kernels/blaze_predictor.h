@@ -110,7 +110,9 @@ class BlazePredictor {
                             OpKernelContext* ctx);
 
  protected:
-  stream_executor::Stream* GetStream() const;
+  void RawInputsDebugLogging(OpKernelContext* ctx) const;
+  stream_executor::Stream* GetStream(int stream_id = -1) const;
+  Allocator* GetAllocator(int stream_id = -1) const;
   Status PrepareInputs(const std::vector<Tensor>& inputs,
       std::vector<Tensor>* real_inputs, OpKernelContext* ctx);
 

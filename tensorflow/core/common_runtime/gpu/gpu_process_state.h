@@ -82,7 +82,12 @@ class GPUProcessState {
   // REQUIRES: tf_gpu_id must be a valid id for a BaseGPUDevice available in the
   // current system environment.  Otherwise returns nullptr.
   virtual Allocator* GetGPUAllocator(const GPUOptions& options,
-                                     TfGpuId tf_gpu_id, size_t total_bytes);
+                                     TfGpuId tf_gpu_id, size_t total_bytes,
+                                     int stream_id = 0);
+
+  virtual void GetGPUAllocators(const GPUOptions& options, TfGpuId tf_gpu_id,
+                                size_t total_bytes, int num_allocators,
+                                std::vector<Allocator*>& allocators);
 
   virtual Allocator* GetGpuHostAllocator(int numa_node);
 
@@ -96,7 +101,8 @@ class GPUProcessState {
   // be the index of one of the PCIe buses (maybe the NUMA node at which the
   // PCIe is rooted).  If the bus_id is invalid, results are undefined.
   virtual void AddGPUAllocVisitor(int bus_id,
-                                  const SubAllocator::Visitor& visitor);
+                                  const SubAllocator::Visitor& visitor,
+                                  int stream_id = 0);
 
   // Registers a Visitor to be invoked on new chunks of memory allocated by
   // the SubAllocator of the GpuHostAllocator for the given numa_node.
@@ -111,7 +117,7 @@ class GPUProcessState {
   // Returns bus_id for the given GPU id.
   virtual int BusIdForGPU(TfGpuId tf_gpu_id);
 
-  SharedCounter* GPUAllocatorCounter(TfGpuId tf_gpu_id);
+  SharedCounter* GPUAllocatorCounter(TfGpuId tf_gpu_id, int stream_id = 0);
 
  protected:
   // GPUProcessState is a singleton that should not normally be deleted except
@@ -142,8 +148,9 @@ class GPUProcessState {
     SubAllocator* sub_allocator;  // owned by allocator
     std::unique_ptr<Allocator> recording_allocator;
   };
-  std::vector<AllocatorParts> gpu_allocators_ GUARDED_BY(mu_);
-  std::vector<std::vector<SubAllocator::Visitor>> gpu_visitors_ GUARDED_BY(mu_);
+  std::vector<std::vector<AllocatorParts>> gpu_allocators_ GUARDED_BY(mu_);
+  std::vector<std::vector<std::vector<SubAllocator::Visitor>>> gpu_visitors_
+      GUARDED_BY(mu_);
 
   std::vector<AllocatorParts> gpu_host_allocators_ GUARDED_BY(mu_);
   std::vector<std::vector<SubAllocator::Visitor>> gpu_host_alloc_visitors_

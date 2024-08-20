@@ -48,6 +48,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/public/session_options.h"
 #include "tensorflow/core/util/device_name_utils.h"
 
 namespace tensorflow {
@@ -78,6 +79,20 @@ class Device : public DeviceBase {
   const DeviceAttributes& attributes() const override {
     return device_attributes_;
   }
+
+  virtual Status Init(const SessionOptions& options) {
+    return errors::Unimplemented(
+      "Init is not supported on this device.");
+  }
+
+  virtual Status InitStreamDevice(const SessionOptions& options) {
+    return errors::Unimplemented(
+      "InitStreamDevice is not supported on this device.");
+  }
+
+  virtual Device* GetStreamDevice(const int32) { return this; }
+
+  virtual int GetStreamNum() const { return 0; }
 
   // Performs the actual compute function.
   //
@@ -185,6 +200,10 @@ class Device : public DeviceBase {
   void ClearResourceMgr() { rmgr_->Clear(); }
 
   virtual bool IsLocal() const { return true; }
+
+  virtual const Device* GetRealDevice() const { return this; }
+
+  virtual const int stream_id() const { return 0; }
 
  protected:
   void DeleteResourceMgr() {

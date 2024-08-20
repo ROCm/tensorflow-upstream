@@ -106,7 +106,36 @@ class Executor {
     typedef std::function<void()> Closure;
     typedef std::function<void(Closure)> Runner;
     Runner runner = nullptr;
+
+    //[DYNAMIC-SHAPE]
+    uint64 before_padding = 0;
+    uint64 after_padding = 0;
+    //[PROF-STATS] unused, replaced by traced_infos
+    ProfStats* prof_stats = nullptr;
+    ProfStats real_prof_stats;
+    bool enable_prof_stats;
+
+    int stream_id = -1;
+
+    std::shared_ptr<UserTracedInfos> traced_infos;
+    // for benchmarking in blaze, trace tensor shaope, if interger, tensor
+    // values together
+    bool trace_tensor_infos;
+    // in normal TF session run,
+    // it will be nullptr.
+    TensorHolder * tensor_holder = nullptr;
+
+    typedef std::function<Status(const string& node_name, const int output_slot,
+                                 const Tensor* tensor, const bool is_ref,
+                                 OpKernelContext* ctx)>
+        NodeOutputsCallback;
+
+    void AddSettings(const RunOptions& run_options) {
+      trace_tensor_infos = run_options.trace_tensor_infos();
+    }
+    std::atomic<int64_t>* flops = nullptr;
   };
+
   typedef std::function<void(const Status&)> DoneCallback;
   virtual void RunAsync(const Args& args, DoneCallback done) = 0;
 

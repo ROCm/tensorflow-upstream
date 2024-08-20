@@ -1246,6 +1246,16 @@ class ExecutorState {
 
   struct AsyncState;
 
+  //[DYNAMIC-SHAPE]
+  uint64 before_padding_ = 0;
+  uint64 after_padding_ = 0;
+  //[PROF-STATS]
+  ProfStats* prof_stats_ = nullptr;
+  TracedInfosPtr traced_infos_ = nullptr;
+  bool trace_tensor_infos_;
+
+  int stream_id_ = -1;
+
   const bool vlog_;  // true if VLOG_IS_ON(1). Used to check vlog cheaply.
 
   // true if LogMemory::IsEnabled(). Used to check memory enabled cheaply.
@@ -1388,6 +1398,15 @@ class ExecutorState {
 
 ExecutorState::ExecutorState(const Executor::Args& args, ExecutorImpl* impl)
     : vlog_(VLOG_IS_ON(1)),
+
+      //[DYNAMIC-SHAPE]
+      before_padding_(args.before_padding),
+      after_padding_(args.after_padding),
+      //[PROF-STATS]
+      prof_stats_(args.prof_stats),
+      traced_infos_(args.traced_infos),
+      trace_tensor_infos_(args.trace_tensor_infos),
+      stream_id_(args.stream_id),
       log_memory_(LogMemory::IsEnabled()),
       step_id_(args.step_id),
       rendezvous_(args.rendezvous),
@@ -1632,6 +1651,16 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_nsec) {
   AllocatorAttributeVec input_alloc_attrs;
 
   OpKernelContext::Params params;
+
+  //[DYNAMIC-SHAPE]
+  params.before_padding = before_padding_;
+  params.after_padding = after_padding_;
+  //[PROF-STATS]
+  params.prof_stats = prof_stats_;
+  params.traced_infos = traced_infos_;
+
+  params.stream_id = stream_id_;
+
   params.step_id = step_id_;
   // Override device's threadpool if user provides an intra_op_threadpool
   Device* device = impl_->params_.device;
