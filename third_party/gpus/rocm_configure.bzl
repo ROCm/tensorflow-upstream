@@ -40,7 +40,31 @@ def to_list_of_strings(elements):
     quoted_strings = ["\"" + element + "\"" for element in elements]
     return ", ".join(quoted_strings)
 
+def get_host_environ(repository_ctx, name, default_value = None):
+    """Returns the value of an environment variable on the host platform.
+
+    The host platform is the machine that Bazel runs on.
+
+    Args:
+      repository_ctx: the repository_ctx
+      name: the name of environment variable
+
+    Returns:
+      The value of the environment variable 'name' on the host platform.
+    """
+    if name in repository_ctx.os.environ:
+        return repository_ctx.os.environ.get(name).strip()
+
+    if hasattr(repository_ctx.attr, "environ") and name in repository_ctx.attr.environ:
+        return repository_ctx.attr.environ.get(name).strip()
+
+    return default_value
+
 def find_cc(repository_ctx):
+    rocm_path = get_host_environ(repository_ctx, "ROCM_TOOLKIT_PATH")
+    return rocm_path+"/llvm/bin/amdclang"
+    #return rocm_path+"/llvm/bin/clang"
+
     """Find the C++ compiler."""
 
     # Return a dummy value for GCC detection here to avoid error
