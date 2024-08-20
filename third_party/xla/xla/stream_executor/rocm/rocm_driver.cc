@@ -2002,7 +2002,7 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
     *reserve = RESERVED_GFX908;
   } else if (compute_capability.gfx9_mi200_or_later()) {
     *reserve = RESERVED_GFX9_X;
-  } else if (compute_capability.navi21() || compute_capability.navi31()) {
+  } else if (compute_capability.navi21() || compute_capability.navi31() || compute_capability.navi4x()) {
     *reserve = RESERVED_GFX10_X;
   }
 
