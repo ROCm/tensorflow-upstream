@@ -431,12 +431,12 @@ def _find_libs(repository_ctx, rocm_config):
         #    cpu_value,
         #    rocm_config.rocm_toolkit_path,
         #),
-        # "asan": _find_rocm_lib(
-        #     "asan",
-        #     repository_ctx,
-        #     cpu_value,
-        #     rocm_config.rocm_toolkit_path,
-        # ),
+        "rocblas": _find_rocm_lib(
+            "rocblas",
+            repository_ctx,
+            cpu_value,
+            rocm_config.rocm_toolkit_path,
+        ),
         #"rocfft": _find_rocm_lib(
         #    "rocfft",
         #    repository_ctx,
