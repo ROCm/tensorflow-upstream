@@ -24,7 +24,7 @@ _TF_ROCM_CONFIG_REPO = "TF_ROCM_CONFIG_REPO"
 _DEFAULT_ROCM_VERSION = ""
 _DEFAULT_MIOPEN_VERSION = ""
 _DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm"
-_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx942"]
+_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx942:xnack+"]
 
 def to_list_of_strings(elements):
     """Convert the list of ["a", "b", "c"] into '"a", "b", "c"'.
@@ -249,6 +249,7 @@ def _rocm_include_path(repository_ctx, rocm_config):
     inc_dirs.append("/opt/rocm/lib/llvm/lib/clang/18/include")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/18/include")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/18/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/18/share")
 
     inc_entries = []
     for inc_dir in inc_dirs:
@@ -430,12 +431,12 @@ def _find_libs(repository_ctx, rocm_config):
         #    cpu_value,
         #    rocm_config.rocm_toolkit_path,
         #),
-        "rocblas": _find_rocm_lib(
-            "rocblas",
-            repository_ctx,
-            cpu_value,
-            rocm_config.rocm_toolkit_path,
-        ),
+        # "asan": _find_rocm_lib(
+        #     "asan",
+        #     repository_ctx,
+        #     cpu_value,
+        #     rocm_config.rocm_toolkit_path,
+        # ),
         #"rocfft": _find_rocm_lib(
         #    "rocfft",
         #    repository_ctx,
