@@ -13,13 +13,13 @@ TF_PKG_LOC=/tmp/tensorflow_pkg
 rm -f $TF_PKG_LOC/tensorflow*.whl
 
 export USE_BAZEL_VERSION=0.26.1
+#        --action_env=TF_CUDA_COMPUTE_CAPABILITIES=7.0 \
 
 yes "" | TF_NEED_CUDA=1 TF_CUDA_VERSION=11.7 CUDA_TOOLKIT_PATH=/usr/local/cuda-11.7 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
 pip3 uninstall -y tensorflow || true
 bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=cuda \
         --copt -Wno-sign-compare \
         --copt -DCUB_NS_QUALIFIER=::cub \
-        --action_env=TF_CUDA_COMPUTE_CAPABILITIES=7.0 \
         //tensorflow:libtensorflow_cc.so \
         //tensorflow:libtensorflow_framework.so
 #bazel build --config=opt --config=rocm //tensorflow/tools/pip_package:build_pip_package --verbose_failures  &&
