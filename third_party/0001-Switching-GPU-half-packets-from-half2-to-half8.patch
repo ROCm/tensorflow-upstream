@@ -1,0 +1,1105 @@
+From 1e052a0c5c0d9f11897f2fcc83409c796dcae7b7 Mon Sep 17 00:00:00 2001
+From: Eugene Kuznetsov <eugene.kuznetsov@amd.com>
+Date: Tue, 20 Aug 2024 00:14:49 +0000
+Subject: [PATCH] Switching GPU half packets from half2 to half8 Marking
+ TensorConversionOp as aligned (allowing to packetize it) Disabling forced
+ unaligned loads in PacketConverter<1,2> on the GPU Correctly computing the
+ grid size for vectorized expressioni Broadcast tweaks
+
+---
+ Eigen/Core                                    |   2 +-
+ Eigen/src/Core/arch/GPU/PacketMathHalf.h      | 488 +++++-------------
+ Eigen/src/Core/arch/GPU/TypeCasting.h         |  29 +-
+ .../CXX11/src/Tensor/TensorBroadcasting.h     |  21 +-
+ .../Eigen/CXX11/src/Tensor/TensorConversion.h |   6 +-
+ .../Eigen/CXX11/src/Tensor/TensorExecutor.h   |   5 +-
+ .../Eigen/CXX11/src/Tensor/TensorMeta.h       |   6 +-
+ .../Eigen/CXX11/src/Tensor/TensorReduction.h  |   9 +-
+ .../CXX11/src/Tensor/TensorReductionGpu.h     | 166 +++---
+ 9 files changed, 280 insertions(+), 452 deletions(-)
+
+diff --git a/Eigen/Core b/Eigen/Core
+index 647a10831..0bc768e90 100644
+--- a/Eigen/Core
++++ b/Eigen/Core
+@@ -369,7 +369,7 @@
+   #include <cuda_fp16.h>
+ #endif
+ 
+-#if defined(EIGEN_HIPCC) && defined(EIGEN_HIP_DEVICE_COMPILE)
++#if defined(EIGEN_HIPCC)
+ 
+   #define EIGEN_VECTORIZE_GPU
+   #include <hip/hip_vector_types.h>
+diff --git a/Eigen/src/Core/arch/GPU/PacketMathHalf.h b/Eigen/src/Core/arch/GPU/PacketMathHalf.h
+index c4feda87d..42435c677 100644
+--- a/Eigen/src/Core/arch/GPU/PacketMathHalf.h
++++ b/Eigen/src/Core/arch/GPU/PacketMathHalf.h
+@@ -16,18 +16,20 @@ namespace internal {
+ 
+ // Most of the following operations require arch >= 3.0
+ #if (defined(EIGEN_HAS_CUDA_FP16) && defined(EIGEN_CUDACC) && defined(EIGEN_CUDA_ARCH) && EIGEN_CUDA_ARCH >= 300) || \
+-  (defined(EIGEN_HAS_HIP_FP16) && defined(EIGEN_HIPCC) && defined(EIGEN_HIP_DEVICE_COMPILE))
++  (defined(EIGEN_HAS_HIP_FP16) && defined(EIGEN_HIPCC))
+ 
+-template<> struct is_arithmetic<half2> { enum { value = true }; };
++typedef _Float16 half8 __attribute__((ext_vector_type(8)));
++
++template<> struct is_arithmetic<half8> { enum { value = true }; };
+ 
+ template<> struct packet_traits<Eigen::half> : default_packet_traits
+ {
+-  typedef half2 type;
+-  typedef half2 half;
++  typedef half8 type;
++  typedef half8 half;
+   enum {
+     Vectorizable = 1,
+     AlignedOnScalar = 1,
+-    size=2,
++    size=8,
+     HasHalfPacket = 0,
+     HasAdd    = 1,
+     HasMul    = 1,
+@@ -41,109 +43,91 @@ template<> struct packet_traits<Eigen::half> : default_packet_traits
+   };
+ };
+ 
+-template<> struct unpacket_traits<half2> { typedef Eigen::half type; enum {size=2, alignment=Aligned16}; typedef half2 half; };
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pset1<half2>(const Eigen::half& from) {
+-
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-#if defined(EIGEN_HAS_OLD_HIP_FP16)
+-  return half2half2(from);
+-#else  
+-  return __half2half2(from);
+-#endif
++template<> struct unpacket_traits<half8> { typedef Eigen::half type; enum {size=8, alignment=Aligned16}; typedef half8 half; };
+ 
+-#else // EIGEN_CUDA_ARCH
+-  return __half2half2(from);
+-#endif
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pset1<half8>(const Eigen::half& from_) {
++  const _Float16& from = reinterpret_cast<const _Float16&>(from_);
++  return half8{from, from, from, from, from, from, from, from};
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pload<half2>(const Eigen::half* from) {
+-  return *reinterpret_cast<const half2*>(from);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pload<half8>(const Eigen::half* from_) {
++  const half8* from = reinterpret_cast<const half8*>(from_);
++  return *from;
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 ploadu<half2>(const Eigen::half* from) {
+-  return __halves2half2(from[0], from[1]);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 ploadu<half8>(const Eigen::half* from_) {
++  const _Float16* from = reinterpret_cast<const _Float16*>(from_);
++  return half8{from[0], from[1], from[2], from[3], from[4], from[5], from[6], from[7]};
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 ploaddup<half2>(const Eigen::half*  from) {
+-  return __halves2half2(from[0], from[0]);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 ploaddup<half8>(const Eigen::half* from_) {
++  const _Float16* from = reinterpret_cast<const _Float16*>(from_);
++  return half8{from[0], from[0], from[1], from[1], from[2], from[2], from[3], from[3]};
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void pstore<Eigen::half>(Eigen::half* to, const half2& from) {
+-  *reinterpret_cast<half2*>(to) = from;
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void pstore<Eigen::half>(Eigen::half* to, const half8& from) {
++  *reinterpret_cast<half8*>(to) = from;
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void pstoreu<Eigen::half>(Eigen::half* to, const half2& from) {
+-  to[0] = __low2half(from);
+-  to[1] = __high2half(from);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void pstoreu<Eigen::half>(Eigen::half* to_, const half8& from) {
++  _Float16* to = reinterpret_cast<_Float16*>(to_);
++  to[0] = from[0];
++  to[1] = from[1];
++  to[2] = from[2];
++  to[3] = from[3];
++  to[4] = from[4];
++  to[5] = from[5];
++  to[6] = from[6];
++  to[7] = from[7];
+ }
+ 
+ template<>
+- EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE half2 ploadt_ro<half2, Aligned>(const Eigen::half* from) {
+-
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-#if defined(EIGEN_HAS_OLD_HIP_FP16)
+-  return __halves2half2((*(from+0)), (*(from+1)));
+-#else
+-  return __ldg((const half2*)from);
+-#endif
+-
+-#else  // EIGEN_CUDA_ARCH
+-
+-#if EIGEN_CUDA_ARCH >= 350
+-   return __ldg((const half2*)from);
+-#else
+-  return __halves2half2(*(from+0), *(from+1));
+-#endif
+-
+-#endif
++ EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE half8 ploadt_ro<half8, Aligned>(const Eigen::half* from) {
++  return pload<half8>(from);
+ }
+ 
+ template<>
+-EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE half2 ploadt_ro<half2, Unaligned>(const Eigen::half* from) {
+-
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-#if defined(EIGEN_HAS_OLD_HIP_FP16)
+-  return __halves2half2((*(from+0)), (*(from+1)));
+-#else
+-  return __halves2half2(__ldg(from+0), __ldg(from+1));
+-#endif
+-
+-#else  // EIGEN_CUDA_ARCH
+-
+-#if EIGEN_CUDA_ARCH >= 350
+-   return __halves2half2(__ldg(from+0), __ldg(from+1));
+-#else
+-  return __halves2half2(*(from+0), *(from+1));
+-#endif
+-
+-#endif
++EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE half8 ploadt_ro<half8, Unaligned>(const Eigen::half* from) {
++  if (reinterpret_cast<uintptr_t>(from) & 15)
++    return ploadu<half8>(from);
++  return pload<half8>(from);
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pgather<Eigen::half, half2>(const Eigen::half* from, Index stride) {
+-  return __halves2half2(from[0*stride], from[1*stride]);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pgather<Eigen::half, half8>(const Eigen::half* from_, Index stride) {
++  const _Float16* from = reinterpret_cast<const _Float16*>(from_);
++  return half8{from[0*stride], from[1*stride], from[2*stride], from[3*stride],
++               from[4*stride], from[5*stride], from[6*stride], from[7*stride]
++      };
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void pscatter<Eigen::half, half2>(Eigen::half* to, const half2& from, Index stride) {
+-  to[stride*0] = __low2half(from);
+-  to[stride*1] = __high2half(from);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void pscatter<Eigen::half, half8>(Eigen::half* to_, const half8& from, Index stride) {
++  _Float16* to = reinterpret_cast<_Float16*>(to_);
++  to[stride*0] = from[0];
++  to[stride*1] = from[1];
++  to[stride*2] = from[2];
++  to[stride*3] = from[3];
++  to[stride*4] = from[4];
++  to[stride*5] = from[5];
++  to[stride*6] = from[6];
++  to[stride*7] = from[7];
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half pfirst<half2>(const half2& a) {
+-  return __low2half(a);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half pfirst<half8>(const half8& from_) {
++  const _Float16 from0 = from_[0];
++  const Eigen::half& from = reinterpret_cast<const Eigen::half&>(from0);
++  return from;
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pabs<half2>(const half2& a) {
+-  half2 result;
+-  unsigned temp = *(reinterpret_cast<const unsigned*>(&(a)));
+-  *(reinterpret_cast<unsigned*>(&(result))) = temp & 0x7FFF7FFF;
+-  return result;
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pabs<half8>(const half8& a) {
++  _Float16 result[8];
++  const uint64_t* ai = reinterpret_cast<const uint64_t*>(&(a));
++  uint64_t* ri = reinterpret_cast<uint64_t*>(result);
++  ri[0] = ai[0] & 0x7FFF7FFF7FFF7FFFull;
++  ri[1] = ai[1] & 0x7FFF7FFF7FFF7FFFull;
++  return half8(*result);
+ }
+ 
+-
++/*
+ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void
+ ptranspose(PacketBlock<half2,2>& kernel) {
+   __half a1 = __low2half(kernel.packet[0]);
+@@ -170,313 +154,99 @@ template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 plset<half2>(const Eigen:
+ 
+ #endif
+ }
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 padd<half2>(const half2& a, const half2& b) {
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-  return __hadd2(a, b);
+-
+-#else  // EIGEN_CUDA_ARCH
+-
+-#if EIGEN_CUDA_ARCH >= 530
+-  return __hadd2(a, b);
+-#else
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float b1 = __low2float(b);
+-  float b2 = __high2float(b);
+-  float r1 = a1 + b1;
+-  float r2 = a2 + b2;
+-  return __floats2half2_rn(r1, r2);
+-#endif
+-
+-#endif
+-}
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 psub<half2>(const half2& a, const half2& b) {
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-  return __hsub2(a, b);
+-  
+-#else  // EIGEN_CUDA_ARCH
+-
+-#if EIGEN_CUDA_ARCH >= 530
+-  return __hsub2(a, b);
+-#else
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float b1 = __low2float(b);
+-  float b2 = __high2float(b);
+-  float r1 = a1 - b1;
+-  float r2 = a2 - b2;
+-  return __floats2half2_rn(r1, r2);
+-#endif
+-
+-#endif
+-}
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pnegate(const half2& a) {
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-  return __hneg2(a);
+-
+-#else  // EIGEN_CUDA_ARCH
+-
+-#if EIGEN_CUDA_ARCH >= 530
+-  return __hneg2(a);
+-#else
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  return __floats2half2_rn(-a1, -a2);
+-#endif
+-
+-#endif
+-}
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pconj(const half2& a) { return a; }
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pmul<half2>(const half2& a, const half2& b) {
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-  return __hmul2(a, b);
+-
+-#else  // EIGEN_CUDA_ARCH
+-
+-#if EIGEN_CUDA_ARCH >= 530
+-  return __hmul2(a, b);
+-#else
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float b1 = __low2float(b);
+-  float b2 = __high2float(b);
+-  float r1 = a1 * b1;
+-  float r2 = a2 * b2;
+-  return __floats2half2_rn(r1, r2);
+-#endif
+-
+-#endif
+-}
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pmadd<half2>(const half2& a, const half2& b, const half2& c) {
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-   return __hfma2(a, b, c);
+-
+-#else  // EIGEN_CUDA_ARCH
+-
+-#if EIGEN_CUDA_ARCH >= 530
+-   return __hfma2(a, b, c);
+-#else
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float b1 = __low2float(b);
+-  float b2 = __high2float(b);
+-  float c1 = __low2float(c);
+-  float c2 = __high2float(c);
+-  float r1 = a1 * b1 + c1;
+-  float r2 = a2 * b2 + c2;
+-  return __floats2half2_rn(r1, r2);
+-#endif
+-
+-#endif
++*/
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 padd<half8>(const half8& a, const half8& b) {
++  return a+b;
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pdiv<half2>(const half2& a, const half2& b) {
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-  
+-#if defined(EIGEN_HAS_OLD_HIP_FP16)
+-  return h2div(a, b);
+-#else
+-  return __h2div(a, b);
+-#endif
+-  
+-#else // EIGEN_CUDA_ARCH
+-  
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float b1 = __low2float(b);
+-  float b2 = __high2float(b);
+-  float r1 = a1 / b1;
+-  float r2 = a2 / b2;
+-  return __floats2half2_rn(r1, r2);
+-
+-#endif
+-}
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pmin<half2>(const half2& a, const half2& b) {
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float b1 = __low2float(b);
+-  float b2 = __high2float(b);
+-  __half r1 = a1 < b1 ? __low2half(a) : __low2half(b);
+-  __half r2 = a2 < b2 ? __high2half(a) : __high2half(b);
+-  return __halves2half2(r1, r2);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 psub<half8>(const half8& a, const half8& b) {
++  return a-b;
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pmax<half2>(const half2& a, const half2& b) {
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float b1 = __low2float(b);
+-  float b2 = __high2float(b);
+-  __half r1 = a1 > b1 ? __low2half(a) : __low2half(b);
+-  __half r2 = a2 > b2 ? __high2half(a) : __high2half(b);
+-  return __halves2half2(r1, r2);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pnegate(const half8& a) {
++  return -a;
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half predux<half2>(const half2& a) {
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-  return __hadd(__low2half(a), __high2half(a));
+-
+-#else  // EIGEN_CUDA_ARCH
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pconj(const half8& a) { return a; }
+ 
+-#if EIGEN_CUDA_ARCH >= 530
+-  return __hadd(__low2half(a), __high2half(a));
+-#else
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  return Eigen::half(__float2half(a1 + a2));
+-#endif
+-
+-#endif
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pmul<half8>(const half8& a, const half8& b) {
++  return a*b;
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half predux_max<half2>(const half2& a) {
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-  __half first = __low2half(a);
+-  __half second = __high2half(a);
+-  return __hgt(first, second) ? first : second;
+-
+-#else  // EIGEN_CUDA_ARCH
+-
+-#if EIGEN_CUDA_ARCH >= 530
+-  __half first = __low2half(a);
+-  __half second = __high2half(a);
+-  return __hgt(first, second) ? first : second;
+-#else
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  return a1 > a2 ? __low2half(a) : __high2half(a);
+-#endif
+-
+-#endif
+-}
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half predux_min<half2>(const half2& a) {
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-  __half first = __low2half(a);
+-  __half second = __high2half(a);
+-  return __hlt(first, second) ? first : second;
+-
+-#else  // EIGEN_CUDA_ARCH
+-
+-#if EIGEN_CUDA_ARCH >= 530
+-  __half first = __low2half(a);
+-  __half second = __high2half(a);
+-  return __hlt(first, second) ? first : second;
+-#else
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  return a1 < a2 ? __low2half(a) : __high2half(a);
+-#endif
+-
+-#endif
+-}
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half predux_mul<half2>(const half2& a) {
+-#if defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-  return __hmul(__low2half(a), __high2half(a));
+-
+-#else  // EIGEN_CUDA_ARCH
+-
+-#if EIGEN_CUDA_ARCH >= 530
+-  return __hmul(__low2half(a), __high2half(a));
+-#else
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  return Eigen::half(__float2half(a1 * a2));
+-#endif
+-
+-#endif
+-}
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 plog1p<half2>(const half2& a) {
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float r1 = log1pf(a1);
+-  float r2 = log1pf(a2);
+-  return __floats2half2_rn(r1, r2);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pmadd<half8>(const half8& a, const half8& b, const half8& c) {
++  return a * b + c;
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pexpm1<half2>(const half2& a) {
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float r1 = expm1f(a1);
+-  float r2 = expm1f(a2);
+-  return __floats2half2_rn(r1, r2);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pdiv<half8>(const half8& a, const half8& b) {
++  return a / b;
+ }
+ 
+-#if (EIGEN_CUDACC_VER >= 80000 && defined EIGEN_CUDA_ARCH && EIGEN_CUDA_ARCH >= 530) || \
+-  defined(EIGEN_HIP_DEVICE_COMPILE)
+-
+-template<>  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE
+-half2 plog<half2>(const half2& a) {
+-  return h2log(a);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pmin<half8>(const half8& a, const half8& b) {
++  half8 result;
++  for (int i=0; i<8; i++)
++    result[i] = a[i] < b[i] ? a[i] : b[i];
++  return result;
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE
+-half2 pexp<half2>(const half2& a) {
+-  return h2exp(a);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pmax<half8>(const half8& a, const half8& b) {
++  half8 result;
++  for (int i=0; i<8; i++)
++    result[i] = a[i] > b[i] ? a[i] : b[i];
++  return result;
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE
+-half2 psqrt<half2>(const half2& a) {
+-  return h2sqrt(a);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half predux<half8>(const half8& a) {
++  _Float16 result = a[0];
++  for (int i=1; i<8; i++)
++    result += a[i];
++  return reinterpret_cast<const Eigen::half&>(result);
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE
+-half2 prsqrt<half2>(const half2& a) {
+-  return h2rsqrt(a);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half predux_max<half8>(const half8& a) {
++  _Float16 result = a[0];
++  for (int i=1; i<8; i++)
++    result = (result>a[i]) ? result : a[i];
++  return reinterpret_cast<const Eigen::half&>(result);
+ }
+ 
+-#else
+-
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 plog<half2>(const half2& a) {
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float r1 = logf(a1);
+-  float r2 = logf(a2);
+-  return __floats2half2_rn(r1, r2);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half predux_min<half8>(const half8& a) {
++  _Float16 result = a[0];
++  for (int i=1; i<8; i++)
++    result = (result<a[i]) ? result : a[i];
++  return reinterpret_cast<const Eigen::half&>(result);
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pexp<half2>(const half2& a) {
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float r1 = expf(a1);
+-  float r2 = expf(a2);
+-  return __floats2half2_rn(r1, r2);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half predux_mul<half8>(const half8& a) {
++  _Float16 result = a[0];
++  for (int i=1; i<8; i++)
++    result *= a[i];
++  return reinterpret_cast<const Eigen::half&>(result);
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 psqrt<half2>(const half2& a) {
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float r1 = sqrtf(a1);
+-  float r2 = sqrtf(a2);
+-  return __floats2half2_rn(r1, r2);
++#define CWISE_OP(X, Y) \
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 X<half8>(const half8& a) {       \
++  half8 result;                                                                         \
++  for (int i=0; i<8; i++)                                                               \
++    result[i] = _Float16(Y(float(a[i])));                                               \
++  return result;                                                                        \
+ }
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 prsqrt<half2>(const half2& a) {
+-  float a1 = __low2float(a);
+-  float a2 = __high2float(a);
+-  float r1 = rsqrtf(a1);
+-  float r2 = rsqrtf(a2);
+-  return __floats2half2_rn(r1, r2);
++#define CWISE_OP_NO_TEMPLATE(X, Y) \
++__host__ __device__ EIGEN_STRONG_INLINE half8 X(const half8& a) {                         \
++  half8 result;                                                                         \
++  for (int i=0; i<8; i++)                                                               \
++    result[i] = _Float16(Y(float(a[i])));                                               \
++  return result;                                                                        \
+ }
+ 
+-#endif
++CWISE_OP(plog1p, log1pf)
++CWISE_OP(pexpm1, expm1f)
++CWISE_OP(plog, logf)
++CWISE_OP(pexp, expf)
++CWISE_OP(psqrt, sqrtf)
++CWISE_OP(prsqrt, rsqrtf)
++CWISE_OP(pfloor, floorf)
++CWISE_OP_NO_TEMPLATE(floor, floorf)
+ 
+ #elif defined EIGEN_VECTORIZE_AVX512
+ 
+diff --git a/Eigen/src/Core/arch/GPU/TypeCasting.h b/Eigen/src/Core/arch/GPU/TypeCasting.h
+index 57a55d08b..688b66c50 100644
+--- a/Eigen/src/Core/arch/GPU/TypeCasting.h
++++ b/Eigen/src/Core/arch/GPU/TypeCasting.h
+@@ -79,30 +79,39 @@ template <>
+ struct type_casting_traits<Eigen::half, float> {
+   enum {
+     VectorizedCast = 1,
+-    SrcCoeffRatio = 2,
+-    TgtCoeffRatio = 1
++    SrcCoeffRatio = 1,
++    TgtCoeffRatio = 2
+   };
+ };
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE float4 pcast<half2, float4>(const half2& a, const half2& b) {
+-  float2 r1 = __half22float2(a);
+-  float2 r2 = __half22float2(b);
+-  return make_float4(r1.x, r1.y, r2.x, r2.y);
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE float4 pcast<half8, float4>(const half8& a) {
++  return float4{__half2float(a[0]), __half2float(a[1]), __half2float(a[2]), __half2float(a[3])};
+ }
+ 
+ template <>
+ struct type_casting_traits<float, Eigen::half> {
+   enum {
+     VectorizedCast = 1,
+-    SrcCoeffRatio = 1,
+-    TgtCoeffRatio = 2
++    SrcCoeffRatio = 2,
++    TgtCoeffRatio = 1
+   };
+ };
+ 
+-template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half2 pcast<float4, half2>(const float4& a) {
++
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pcast<float4, half8>(const float4& a, const float4& b) {
++    return half8{__float2half(a.x), __float2half(a.y), __float2half(a.z), __float2half(a.w),
++      __float2half(b.x), __float2half(b.y), __float2half(b.z), __float2half(b.w)
++    };
++}
++
++
++/*
++template<> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE half8 pcast<float8, half8>(const float8& a) {
+   // Simply discard the second half of the input
+-  return __floats2half2_rn(a.x, a.y);
++  return half8{__float2half(a.x), __float2half(a.y), __float2half(a.z), __float2half(a.w),
++          __float2half(a.s4), __float2half(a.s5), __float2half(a.s6), __float2half(a.s7)};
+ }
++*/
+ 
+ #elif defined EIGEN_VECTORIZE_AVX512
+ template <>
+diff --git a/unsupported/Eigen/CXX11/src/Tensor/TensorBroadcasting.h b/unsupported/Eigen/CXX11/src/Tensor/TensorBroadcasting.h
+index b35b36475..c115e4761 100644
+--- a/unsupported/Eigen/CXX11/src/Tensor/TensorBroadcasting.h
++++ b/unsupported/Eigen/CXX11/src/Tensor/TensorBroadcasting.h
+@@ -105,7 +105,7 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
+   typedef typename XprType::CoeffReturnType CoeffReturnType;
+   typedef typename PacketType<CoeffReturnType, Device>::type PacketReturnType;
+   static const int PacketSize = internal::unpacket_traits<PacketReturnType>::size;
+-  bool nByOne = false, oneByN = false;
++  bool nByOne = false, oneByN = false, noOp = false;
+ 
+   enum {
+     IsAligned = true,
+@@ -123,6 +123,16 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
+     EIGEN_STATIC_ASSERT((NumDims > 0), YOU_MADE_A_PROGRAMMING_MISTAKE);
+     const InputDimensions& input_dims = m_impl.dimensions();
+     const Broadcast& broadcast = op.broadcast();
++
++
++    noOp = true;
++    for (int i = 0; i < NumDims; ++i) {
++      if (broadcast[i] != 1) {
++        noOp = false;
++        break;
++      }
++    }
++
+     for (int i = 0; i < NumDims; ++i) {
+       eigen_assert(input_dims[i] > 0);
+       m_dimensions[i] = input_dims[i] * broadcast[i];
+@@ -196,6 +206,9 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
+       return m_impl.coeff(0);
+     }
+ 
++    if (noOp)
++      return m_impl.coeff(index);
++
+     if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+       return coeffColMajor(index);
+     } else {
+@@ -271,7 +284,11 @@ struct TensorEvaluator<const TensorBroadcastingOp<Broadcast, ArgType>, Device>
+       return internal::pset1<PacketReturnType>(m_impl.coeff(0));
+     }
+ 
+-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
++    if (noOp) {
++     return m_impl.template packet<LoadMode>(index);
++   }
++
++    if constexpr (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+       if (oneByN && !nByOne) {
+         return packetNByOne<LoadMode>(index);
+       } else if (!oneByN && nByOne) {
+diff --git a/unsupported/Eigen/CXX11/src/Tensor/TensorConversion.h b/unsupported/Eigen/CXX11/src/Tensor/TensorConversion.h
+index 182bef918..4bc0d2b9b 100644
+--- a/unsupported/Eigen/CXX11/src/Tensor/TensorConversion.h
++++ b/unsupported/Eigen/CXX11/src/Tensor/TensorConversion.h
+@@ -122,7 +122,11 @@ struct PacketConverter<TensorEvaluator, SrcPacket, TgtPacket, 1, 2> {
+     // coefficients twice, but in practice this doesn't negatively impact performance.
+     if (m_impl.data() && (index + SrcPacketSize < m_maxIndex)) {
+       // Force unaligned memory loads since we can't ensure alignment anymore
++#if EIGEN_HIP_DEVICE_COMPILE
++      return internal::pcast<SrcPacket, TgtPacket>(m_impl.template packet<LoadMode>(index));
++#else
+       return internal::pcast<SrcPacket, TgtPacket>(m_impl.template packet<Unaligned>(index));
++#endif
+     } else {
+       const int TgtPacketSize = internal::unpacket_traits<TgtPacket>::size;
+       typedef typename internal::unpacket_traits<SrcPacket>::type SrcType;
+@@ -193,7 +197,7 @@ struct TensorEvaluator<const TensorConversionOp<TargetType, ArgType>, Device>
+   static const int PacketSize = internal::unpacket_traits<PacketReturnType>::size;
+ 
+   enum {
+-    IsAligned = false,
++    IsAligned = true,
+     PacketAccess = true,
+     Layout = TensorEvaluator<ArgType, Device>::Layout,
+     RawAccess = false
+diff --git a/unsupported/Eigen/CXX11/src/Tensor/TensorExecutor.h b/unsupported/Eigen/CXX11/src/Tensor/TensorExecutor.h
+index 1181c2753..78fe2e324 100644
+--- a/unsupported/Eigen/CXX11/src/Tensor/TensorExecutor.h
++++ b/unsupported/Eigen/CXX11/src/Tensor/TensorExecutor.h
+@@ -255,8 +255,11 @@ inline void TensorExecutor<Expression, GpuDevice, Vectorizable>::run(
+     const int max_blocks = device.getNumGpuMultiProcessors() *
+                            device.maxGpuThreadsPerMultiProcessor() / block_size;
+     const Index size = array_prod(evaluator.dimensions());
++    const Index PacketSize = unpacket_traits<typename TensorEvaluator<Expression, GpuDevice>::PacketReturnType>::size;
++    const Index vector_size = Vectorizable ? divup<int>(size, PacketSize) : size;
+     // Create a least one block to ensure we won't crash when tensorflow calls with tensors of size 0.
+-    const int num_blocks = numext::maxi<int>(numext::mini<int>(max_blocks, divup<int>(size, block_size)), 1);
++    const int num_blocks = numext::maxi<int>(numext::mini<int>(max_blocks, divup<int>(vector_size, block_size)), 1);
++    //printf("size %d, vector_size %d, blocks %d\n", size, vector_size, num_blocks);
+ 
+     LAUNCH_GPU_KERNEL(
+         (EigenMetaKernel<TensorEvaluator<Expression, GpuDevice>, Index>),
+diff --git a/unsupported/Eigen/CXX11/src/Tensor/TensorMeta.h b/unsupported/Eigen/CXX11/src/Tensor/TensorMeta.h
+index 87be090f9..dac63f7aa 100644
+--- a/unsupported/Eigen/CXX11/src/Tensor/TensorMeta.h
++++ b/unsupported/Eigen/CXX11/src/Tensor/TensorMeta.h
+@@ -53,10 +53,12 @@ struct PacketType : internal::packet_traits<Scalar> {
+ 
+ // For CUDA packet types when using a GpuDevice
+ #if defined(EIGEN_USE_GPU) && defined(EIGEN_HAS_GPU_FP16)
++
++
+ template <>
+ struct PacketType<half, GpuDevice> {
+-  typedef half2 type;
+-  static const int size = 2;
++  typedef _Float16 type __attribute__((ext_vector_type(8)));
++  static const int size = 8;
+   enum {
+     HasAdd    = 1,
+     HasSub    = 1,
+diff --git a/unsupported/Eigen/CXX11/src/Tensor/TensorReduction.h b/unsupported/Eigen/CXX11/src/Tensor/TensorReduction.h
+index 313a3a258..612851ced 100644
+--- a/unsupported/Eigen/CXX11/src/Tensor/TensorReduction.h
++++ b/unsupported/Eigen/CXX11/src/Tensor/TensorReduction.h
+@@ -340,10 +340,11 @@ __global__ void FullReductionKernel(R, const S, I, typename S::CoeffReturnType*,
+ 
+ 
+ #if defined(EIGEN_HAS_GPU_FP16)
++typedef _Float16 half8 __attribute__((ext_vector_type(8)));
+ template <typename S, typename R, typename I>
+-__global__ void ReductionInitFullReduxKernelHalfFloat(R, const S, I, half2*);
++__global__ void ReductionInitFullReduxKernelHalfFloat(R, const S, I, half8*);
+ template <int B, int N, typename S, typename R, typename I>
+-__global__ void FullReductionKernelHalfFloat(R, const S, I, half*, half2*);
++__global__ void FullReductionKernelHalfFloat(R, const S, I, half*, half8*);
+ template <int NPT, typename S, typename R, typename I>
+ __global__ void InnerReductionKernelHalfFloat(R, const S, I, I, half*);
+ 
+@@ -704,8 +705,8 @@ struct TensorEvaluator<const TensorReductionOp<Op, Dims, ArgType, MakePointer_>,
+ #if defined(EIGEN_USE_GPU) && (defined(EIGEN_GPUCC))
+   template <int B, int N, typename S, typename R, typename I> KERNEL_FRIEND void internal::FullReductionKernel(R, const S, I, typename S::CoeffReturnType*, unsigned int*);
+ #if defined(EIGEN_HAS_GPU_FP16)
+-  template <typename S, typename R, typename I> KERNEL_FRIEND void internal::ReductionInitFullReduxKernelHalfFloat(R, const S, I, half2*);
+-  template <int B, int N, typename S, typename R, typename I> KERNEL_FRIEND void internal::FullReductionKernelHalfFloat(R, const S, I, half*, half2*);
++  template <typename S, typename R, typename I> KERNEL_FRIEND void internal::ReductionInitFullReduxKernelHalfFloat(R, const S, I, internal::half8*);
++  template <int B, int N, typename S, typename R, typename I> KERNEL_FRIEND void internal::FullReductionKernelHalfFloat(R, const S, I, half*, internal::half8*);
+   template <int NPT, typename S, typename R, typename I> KERNEL_FRIEND void internal::InnerReductionKernelHalfFloat(R, const S, I, I, half*);
+ #endif
+   template <int NPT, typename S, typename R, typename I> KERNEL_FRIEND void internal::InnerReductionKernel(R, const S, I, I, typename S::CoeffReturnType*);
+diff --git a/unsupported/Eigen/CXX11/src/Tensor/TensorReductionGpu.h b/unsupported/Eigen/CXX11/src/Tensor/TensorReductionGpu.h
+index fc4a61fd1..8fc234654 100644
+--- a/unsupported/Eigen/CXX11/src/Tensor/TensorReductionGpu.h
++++ b/unsupported/Eigen/CXX11/src/Tensor/TensorReductionGpu.h
+@@ -98,6 +98,25 @@ __device__ inline void atomicReduce(half2* output, half2 accum, R<half>& reducer
+     }
+   }
+ }
++
++template <template <typename T> class R>
++__device__ inline void atomicReduce(half8* output, half8 accum, R<half>& reducer) {
++  unsigned int oldval = *reinterpret_cast<unsigned int*>(output);
++  unsigned int newval = oldval;
++  reducer.reducePacket(accum, reinterpret_cast<half8*>(&newval));
++  if (newval == oldval) {
++    return;
++  }
++  unsigned int readback;
++  while ((readback = atomicCAS((unsigned int*)output, oldval, newval)) != oldval) {
++    oldval = readback;
++    newval = oldval;
++    reducer.reducePacket(accum, reinterpret_cast<half8*>(&newval));
++    if (newval == oldval) {
++      return;
++    }
++  }
++}
+ #endif // EIGEN_HAS_GPU_FP16
+ 
+ template <>
+@@ -204,14 +223,17 @@ __global__ void FullReductionKernel(Reducer reducer, const Self input, Index num
+ #ifdef EIGEN_HAS_GPU_FP16
+ template <typename Self,
+           typename Reducer, typename Index>
+-__global__ void ReductionInitFullReduxKernelHalfFloat(Reducer reducer, const Self input, Index num_coeffs, half2* scratch) {
++__global__ void ReductionInitFullReduxKernelHalfFloat(Reducer reducer, const Self input, Index num_coeffs, half8* scratch) {
+   eigen_assert(blockDim.x == 1);
+   eigen_assert(gridDim.x == 1);
+-  if (num_coeffs % 2 != 0) {
+-    half last = input.m_impl.coeff(num_coeffs-1);
+-    *scratch = __halves2half2(last, reducer.initialize());
++  if (num_coeffs % 8 != 0) {
++    Index i;
++    for(i=0; i<(num_coeffs % 8); i++)
++      (*scratch)[i] = input.m_impl.coeff((num_coeffs&~7)+i).data;
++    for(; i<8; i++)
++      (*scratch)[i] = reducer.initialize().data;
+   } else {
+-    *scratch = reducer.template initializePacket<half2>();
++    *scratch = reducer.template initializePacket<half8>();
+   }
+ }
+ 
+@@ -220,12 +242,15 @@ template <typename Self,
+ __global__ void ReductionInitKernelHalfFloat(Reducer reducer, const Self input, Index num_coeffs, half* output) {
+   const Index thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+   const Index num_threads = blockDim.x * gridDim.x;
+-  const Index num_packets = num_coeffs / 2;
++  const Index num_packets = num_coeffs / 8;
+   for (Index i = thread_id; i < num_packets; i += num_threads) {
+-    ((half2*)output)[i] = reducer.template initializePacket<half2>();
++    ((half8*)output)[i] = reducer.template initializePacket<half8>();
+   }
+ 
+-  if (thread_id == 0 && num_coeffs % 2 != 0) {
++  if (thread_id == 0 && (num_coeffs % 8) != 0) {
++    for (Index i = 0; i < (num_coeffs % 8); i++) {
++      output[num_packets*8 + i] = reducer.initialize();
++    }
+     output[num_coeffs-1] = reducer.initialize();
+   }
+ }
+@@ -233,7 +258,7 @@ __global__ void ReductionInitKernelHalfFloat(Reducer reducer, const Self input,
+ template <int BlockSize, int NumPerThread, typename Self,
+           typename Reducer, typename Index>
+ __global__ void FullReductionKernelHalfFloat(Reducer reducer, const Self input, Index num_coeffs,
+-                                    half* output, half2* scratch) {
++                                    half* output, half8* scratch) {
+   eigen_assert(NumPerThread % 2 == 0);
+ 
+   const Index first_index = blockIdx.x * BlockSize * NumPerThread + 2*threadIdx.x;
+@@ -242,39 +267,37 @@ __global__ void FullReductionKernelHalfFloat(Reducer reducer, const Self input,
+ 
+   if (gridDim.x == 1) {
+     if (first_index == 0) {
+-      if (num_coeffs % 2 != 0) {
+-        half last = input.m_impl.coeff(num_coeffs-1);
+-        *scratch = __halves2half2(last, reducer.initialize());
++      if (num_coeffs % 8 != 0) {
++        //half last = input.m_impl.coeff(num_coeffs-1);
++        //*scratch = __halves2half2(last, reducer.initialize());
++        Index i;
++        for(i=0; i<(num_coeffs % 8); i++)
++          (*scratch)[i] = input.m_impl.coeff((num_coeffs&~7)+i).data;
++        for(; i<8; i++)
++          (*scratch)[i] = reducer.initialize().data;
+       } else {
+-        *scratch = reducer.template initializePacket<half2>();
++        *scratch = reducer.template initializePacket<half8>();
+       }
+     }
+     __syncthreads();
+   }
+   
+-  half2 accum = reducer.template initializePacket<half2>();
+-  const Index max_iter = numext::mini<Index>((num_coeffs - first_index) / 2, NumPerThread*BlockSize / 2);
++  half8 accum = reducer.template initializePacket<half8>();
++  const Index max_iter = numext::mini<Index>((num_coeffs - first_index) / 8, NumPerThread*BlockSize / 8);
+   for (Index i = 0; i < max_iter; i += BlockSize) {
+-    const Index index = first_index + 2*i;
++    const Index index = first_index + 8*i;
+     eigen_assert(index + 1 < num_coeffs);
+-    half2 val = input.m_impl.template packet<Unaligned>(index);
++    half8 val = input.m_impl.template packet<Unaligned>(index);
+     reducer.reducePacket(val, &accum);
+   }
+ 
+ #pragma unroll
+   for (int offset = warpSize/2; offset > 0; offset /= 2) {
+-  #if defined(EIGEN_HIPCC)
+-    // FIXME : remove this workaround once we have native half/half2 support for __shfl_down
+-    union { int i; half2 h; } wka_in, wka_out;
++    union { int i[4]; half8 h; } wka_in, wka_out;
+     wka_in.h = accum;
+-    wka_out.i = __shfl_down(wka_in.i, offset, warpSize);
++    for(int k=0; k<4; k++)
++      wka_out.i[k] = __shfl_down(wka_in.i[k], offset, warpSize);
+     reducer.reducePacket(wka_out.h, &accum);
+-  #elif defined(EIGEN_CUDACC_VER) && EIGEN_CUDACC_VER < 90000
+-    reducer.reducePacket(__shfl_down(accum, offset, warpSize), &accum);
+-  #else
+-    int temp = __shfl_down_sync(0xFFFFFFFF, *(int*)(&accum), (unsigned)offset, warpSize);
+-    reducer.reducePacket(*(half2*)(&temp), &accum);
+-  #endif
+   }
+ 
+   if ((threadIdx.x & (warpSize - 1)) == 0) {
+@@ -284,18 +307,20 @@ __global__ void FullReductionKernelHalfFloat(Reducer reducer, const Self input,
+   if (gridDim.x == 1) {
+     __syncthreads();
+     if (first_index == 0) {
+-      half tmp = __low2half(*scratch);
+-      reducer.reduce(__high2half(*scratch), &tmp);
++      half tmp = half((*scratch)[0]);
++      for (int k=1; k<8; k++)
++        reducer.reduce(half((*scratch)[k]), &tmp);
+       *output = tmp;
+     }
+   }
+ }
+ 
+ template <typename Op>
+-__global__ void ReductionCleanupKernelHalfFloat(Op reducer, half* output, half2* scratch) {
++__global__ void ReductionCleanupKernelHalfFloat(Op reducer, half* output, half8* scratch) {
+   eigen_assert(threadIdx.x == 1);
+-  half tmp = __low2half(*scratch);
+-  reducer.reduce(__high2half(*scratch), &tmp);
++  half tmp = half((*scratch)[0]);
++  for (int i=1; i<8; i++)
++    reducer.reduce(half((*scratch)[i]), &tmp);
+   *output = tmp;
+ }
+ 
+@@ -349,7 +374,7 @@ struct FullReductionLauncher<Self, Op, Eigen::half, true> {
+     const int block_size = 256;
+     const int num_per_thread = 128;
+     const int num_blocks = divup<int>(num_coeffs, block_size * num_per_thread);
+-    half2* scratch = static_cast<half2*>(device.scratchpad());
++    half8* scratch = static_cast<half8*>(device.scratchpad());
+ 
+     if (num_blocks > 1) {
+       // We initialize the output and the scrathpad outside the reduction kernel when we can't be sure that there
+@@ -498,18 +523,18 @@ __global__ void InnerReductionKernelHalfFloat(Reducer reducer, const Self input,
+   eigen_assert(NumPerThread % unroll_times == 0);
+   eigen_assert(unroll_times % 2 == 0);
+ 
+-  const Index input_col_blocks = divup<Index>(num_coeffs_to_reduce, blockDim.x * NumPerThread * 2);
+-  const Index num_input_blocks = divup<Index>(input_col_blocks * num_preserved_coeffs, 2);
++  const Index input_col_blocks = divup<Index>(num_coeffs_to_reduce, blockDim.x * NumPerThread * 8);
++  const Index num_input_blocks = divup<Index>(input_col_blocks * num_preserved_coeffs, 8);
+ 
+   const Index num_threads = blockDim.x * gridDim.x;
+   const Index thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+ 
+   // Initialize the output values if they weren't initialized by the ReductionInitKernel
+   if (gridDim.x == 1) {
+-    Index i = 2*thread_id;
+-    for (; i + 1 < num_preserved_coeffs; i += 2*num_threads) {
++    Index i = 8*thread_id;
++    for (; i + 7 < num_preserved_coeffs; i += 8*num_threads) {
+       half* loc = output + i;
+-      *((half2*)loc) = reducer.template initializePacket<half2>();
++      *((half8*)loc) = reducer.template initializePacket<half8>();
+     }
+     if (i < num_preserved_coeffs) {
+       output[i] = reducer.initialize();
+@@ -518,33 +543,38 @@ __global__ void InnerReductionKernelHalfFloat(Reducer reducer, const Self input,
+   }
+ 
+   for (Index i = blockIdx.x; i < num_input_blocks; i += gridDim.x) {
+-    const Index row = 2 * (i / input_col_blocks);
++    const Index row = 8 * (i / input_col_blocks);
+ 
+     if (row + 1 < num_preserved_coeffs) {
+       const Index col_block = i % input_col_blocks;
+       const Index col_begin = 2 * (col_block * blockDim.x * NumPerThread + threadIdx.x);
+ 
+-      half2 reduced_val1 = reducer.template initializePacket<half2>();
+-      half2 reduced_val2 = reducer.template initializePacket<half2>();
++      half8 reduced_val1 = reducer.template initializePacket<half8>();
++      half8 reduced_val2 = reducer.template initializePacket<half8>();
+ 
+       for (Index j = 0; j < NumPerThread; j += unroll_times) {
+         const Index last_col = col_begin + blockDim.x * (j + unroll_times - 1) * 2;
+         if (last_col >= num_coeffs_to_reduce) {
+           Index col = col_begin + blockDim.x * j;
+-          for (; col + 1 < num_coeffs_to_reduce; col += blockDim.x) {
+-            const half2 val1 = input.m_impl.template packet<Unaligned>(row * num_coeffs_to_reduce + col);
++          for (; col + 7 < num_coeffs_to_reduce; col += blockDim.x) {
++            const half8 val1 = input.m_impl.template packet<Unaligned>(row * num_coeffs_to_reduce + col);
+             reducer.reducePacket(val1, &reduced_val1);
+-            const half2 val2 = input.m_impl.template packet<Unaligned>((row+1) * num_coeffs_to_reduce + col);
++            const half8 val2 = input.m_impl.template packet<Unaligned>((row+1) * num_coeffs_to_reduce + col);
+             reducer.reducePacket(val2, &reduced_val2);
+           }
+           if (col < num_coeffs_to_reduce) {
+             // Peel;
+-            const half last1 = input.m_impl.coeff(row * num_coeffs_to_reduce + col);
+-            const half2 val1 = __halves2half2(last1, reducer.initialize());
+-            reducer.reducePacket(val1, &reduced_val1);
+-            const half last2 = input.m_impl.coeff((row+1) * num_coeffs_to_reduce + col);
+-            const half2 val2 = __halves2half2(last2, reducer.initialize());
+-            reducer.reducePacket(val2, &reduced_val2);
++            //const half last1 = input.m_impl.coeff(row * num_coeffs_to_reduce + col);
++            for (int z = 0; z<2; z++) {
++              half8 val1;
++              int k;
++              for (k = 0; k < num_coeffs_to_reduce-col; k++) 
++                val1[k] = input.m_impl.coeff((row+z) * num_coeffs_to_reduce + col).data;
++              for (; k<8; k++)
++                val1[k] = reducer.initialize().data;
++              //const half2 val1 = __halves2half2(last1, reducer.initialize());
++              reducer.reducePacket(val1, &reduced_val1);
++            }
+           }
+           break;
+         } else {
+@@ -560,34 +590,26 @@ __global__ void InnerReductionKernelHalfFloat(Reducer reducer, const Self input,
+ 
+ #pragma unroll
+       for (int offset = warpSize/2; offset > 0; offset /= 2) {
+-      #if defined(EIGEN_HIPCC)
+-	// FIXME : remove this workaround once we have native half/half2 support for __shfl_down
+-	union { int i; half2 h; } wka_in, wka_out;
++        union { int i[4]; half8 h; } wka_in, wka_out;
+ 
+-	wka_in.h = reduced_val1;
+-	wka_out.i = __shfl_down(wka_in.i, offset, warpSize);
++        wka_in.h = reduced_val1;
++        for(int k = 0; k < 4; k++)
++          wka_out.i[k] = __shfl_down(wka_in.i[k], offset, warpSize);
+         reducer.reducePacket(wka_out.h, &reduced_val1);
+-	
+-	wka_in.h = reduced_val2;
+-	wka_out.i = __shfl_down(wka_in.i, offset, warpSize);
++        
++        wka_in.h = reduced_val2;
++        for(int k = 0; k < 4; k++)
++          wka_out.i[k] = __shfl_down(wka_in.i[k], offset, warpSize);
+         reducer.reducePacket(wka_out.h, &reduced_val2);
+-      #elif defined(EIGEN_CUDACC_VER) && EIGEN_CUDACC_VER < 90000
+-        reducer.reducePacket(__shfl_down(reduced_val1, offset, warpSize), &reduced_val1);
+-        reducer.reducePacket(__shfl_down(reduced_val2, offset, warpSize), &reduced_val2);
+-      #else
+-        int temp1 = __shfl_down_sync(0xFFFFFFFF, *(int*)(&reduced_val1), (unsigned)offset, warpSize);
+-        int temp2 = __shfl_down_sync(0xFFFFFFFF, *(int*)(&reduced_val2), (unsigned)offset, warpSize);
+-        reducer.reducePacket(*(half2*)(&temp1), &reduced_val1);
+-        reducer.reducePacket(*(half2*)(&temp2), &reduced_val2);
+-      #endif
+       }
+ 
+-      half val1 =  __low2half(reduced_val1);
+-      reducer.reduce(__high2half(reduced_val1), &val1);
+-      half val2 =  __low2half(reduced_val2);
+-      reducer.reduce(__high2half(reduced_val2), &val2);
++      half val1 = half(reduced_val1[0]);
++      for(int k = 1; k < 8; k++)
++        reducer.reduce(half(reduced_val1[k]), &val1);
++      half val2 = half(reduced_val2[0]);
++      for(int k = 1; k < 8; k++)
++        reducer.reduce(half(reduced_val2[k]), &val2);
+       half2 val = __halves2half2(val1, val2);
+-
+       if ((threadIdx.x & (warpSize - 1)) == 0) {
+         half* loc = output + row;
+         atomicReduce((half2*)loc, val, reducer);
+-- 
+2.25.1
+
