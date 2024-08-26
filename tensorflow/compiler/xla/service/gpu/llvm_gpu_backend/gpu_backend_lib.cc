@@ -693,9 +693,9 @@ void HsacoCache::Add(const std::string& ir, uint64_t hash,
 // Emits the given module to HSA Code Object. target_machine is an initialized
 // TargetMachine for the AMDGPU target.
 StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
-    llvm::Module* module, llvm::TargetMachine* target_machine, const std::string& gcn_arch_name,
-    const std::string& optimized_ir_path, const std::string& isabin_path,
-    const std::string& hsaco_path) {
+    llvm::Module* module, llvm::TargetMachine* target_machine,
+    const std::string& gcn_arch_name, const std::string& optimized_ir_path,
+    const std::string& isabin_path, const std::string& hsaco_path) {
   std::string error_message;
   std::vector<std::string> tokens = absl::StrSplit(gcn_arch_name, ':');
   std::string gfx = tokens[0];
