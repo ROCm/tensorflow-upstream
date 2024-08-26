@@ -228,8 +228,9 @@ bool CouldNeedDeviceBitcode(const llvm::Module& module) {
 // Links the module with a vector of path to bitcode modules.
 // The caller must guarantee that the paths exist.
 Status LinkWithBitcodeVector(
-    llvm::Module* module, const std::vector<std::string>& bitcode_path_vector) {
-  llvm::Linker linker(*module);
+    llvm::Module* module, const std::vector<std::string>& bitcode_path_vector, const std::string& ir_path, const std::string& linked_ir_path, const std::string& optimized_ir_path) {
+  std::error_code ec;
+  std::string error_message;
 
   for (auto& bitcode_path : bitcode_path_vector) {
     if (!tsl::Env::Default()->FileExists(bitcode_path).ok()) {
@@ -238,22 +239,60 @@ Status LinkWithBitcodeVector(
                  << bitcode_path;
       return xla::InternalError("bitcode module not found at %s", bitcode_path);
     }
+  }
 
-    std::unique_ptr<llvm::Module> bitcode_module =
-        LoadIRModule(bitcode_path, &module->getContext());
-    // Ignore the data layout of the module we're importing. This avoids a
-    // warning from the linker.
-    bitcode_module->setDataLayout(module->getDataLayout());
-    if (linker.linkInModule(
-            std::move(bitcode_module), llvm::Linker::Flags::LinkOnlyNeeded,
-            [](llvm::Module& M, const llvm::StringSet<>& GVS) {
-              internalizeModule(M, [&GVS](const llvm::GlobalValue& GV) {
-                return !GV.hasName() || (GVS.count(GV.getName()) == 0);
-              });
-            })) {
-      return xla::InternalError("Error linking bitcode module from %s",
-                                bitcode_path);
-    }
+  // Dump LLVM IR.
+  std::unique_ptr<llvm::raw_fd_ostream> ir_fs(
+      new llvm::raw_fd_ostream(ir_path, ec, llvm::sys::fs::OF_None));
+  module->print(*ir_fs, nullptr);
+  ir_fs->flush();
+
+  // Locate llvm-link.
+  std::string llvmlink_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
+  auto llvmlink_program = llvm::sys::findProgramByName("llvm-link", {llvmlink_path});
+  if (!llvmlink_program) {
+    return xla::InternalError("unable to find llvm-link in PATH: %s", llvmlink_program.getError().message());
+  }
+  // Setup llvm-link arguments.
+  std::vector<llvm::StringRef> llvmlink_args{
+      llvm_ir::AsStringRef("llvm-link"),
+      llvm_ir::AsStringRef("-o"),
+      llvm_ir::AsStringRef(linked_ir_path),
+  };
+
+  llvmlink_args.push_back(llvm_ir::AsStringRef(ir_path));
+  for (auto& bitcode_path : bitcode_path_vector) {
+    llvmlink_args.push_back(llvm_ir::AsStringRef(bitcode_path));
+  }
+
+  int llvmlink_result =
+      llvm::sys::ExecuteAndWait(*llvmlink_program, llvm_ir::AsArrayRef(llvmlink_args),
+                                std::nullopt, {}, 0, 0, &error_message);
+
+  if (llvmlink_result) {
+    return xla::InternalError("llvm-link execute fail: %s", error_message);
+  }
+
+  // Locate opt.
+  std::string opt_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
+  auto opt_program = llvm::sys::findProgramByName("opt", {opt_path});
+  if (!opt_program) {
+    return xla::InternalError("unable to find opt in PATH: %s", opt_program.getError().message());
+  }
+  std::vector<llvm::StringRef> opt_args{
+      llvm_ir::AsStringRef("opt"),
+      llvm_ir::AsStringRef("-O3"),
+      llvm_ir::AsStringRef("-o"),
+      llvm_ir::AsStringRef(optimized_ir_path),
+      llvm_ir::AsStringRef(linked_ir_path),
+  };
+
+  int opt_result =
+      llvm::sys::ExecuteAndWait(*opt_program, llvm_ir::AsArrayRef(opt_args),
+                               std::nullopt, {}, 0, 0, &error_message);
+
+  if (opt_result) {
+    return xla::InternalError("opt execute fail: %s", error_message);
   }
   return OkStatus();
 }
@@ -277,12 +316,12 @@ Status LinkLibdeviceIfNecessary(llvm::Module* module,
   }
 
   VLOG(1) << "Linking with libdevice from: " << libdevice_path;
-  return LinkWithBitcodeVector(module, {libdevice_path});
+  return LinkWithBitcodeVector(module, {libdevice_path}, "", "", "");
 }
 
 Status NVPTXTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
                                const HloModuleConfig& hlo_module_config,
-                               const std::string& device_bitcode_dir_path) {
+                               const std::string& device_bitcode_dir_path, const std::string& ir_path, const std::string& linked_ir_path, const std::string& optimized_ir_path) {
   // Link the input module with libdevice, to pull in implementations of some
   // builtins.
   TF_RETURN_IF_ERROR(LinkLibdeviceIfNecessary(module, device_bitcode_dir_path));
@@ -317,7 +356,7 @@ std::unique_ptr<llvm::TargetMachine> NVPTXGetTargetMachine(
 }
 
 using TargetModuleLinker = std::function<Status(
-    llvm::Module*, GpuVersion, const HloModuleConfig&, const std::string&)>;
+    llvm::Module*, GpuVersion, const HloModuleConfig&, const std::string&, const std::string&, const std::string&, const std::string&)>;
 
 void DumpModule(const std::string output_filename, const llvm::Module* module) {
   std::error_code ec;
@@ -379,89 +418,9 @@ Status LinkAndOptimizeModule(llvm::Module* module, GpuVersion gpu_version,
                              TargetModuleLinker module_linker,
                              llvm::Triple default_target_triple,
                              llvm::TargetMachine* target_machine,
-                             int inline_threshold) {
-  TF_RETURN_IF_ERROR(module_linker(module, gpu_version, hlo_module_config,
-                                   device_bitcode_dir_path));
-
-  llvm::LoopAnalysisManager lam;
-  llvm::FunctionAnalysisManager fam;
-  llvm::CGSCCAnalysisManager cgam;
-  llvm::ModuleAnalysisManager mam;
-
-  fam.registerPass([&] { return target_machine->getTargetIRAnalysis(); });
-
-  llvm::PipelineTuningOptions pto;
-  pto.SLPVectorization = true;
-  pto.InlinerThreshold = inline_threshold;
-
-  llvm::PassInstrumentationCallbacks pic;
-
-  llvm::StandardInstrumentations si(module->getContext(), false);
-  si.registerCallbacks(pic, &mam);
-
-  llvm::PassBuilder pb(target_machine, pto, std::nullopt, &pic);
-  pb.registerModuleAnalyses(mam);
-  pb.registerCGSCCAnalyses(cgam);
-  pb.registerFunctionAnalyses(fam);
-  pb.registerLoopAnalyses(lam);
-  pb.crossRegisterProxies(lam, fam, cgam, mam);
-
-  if (hlo_module_config.debug_options().xla_gpu_dump_llvmir()) {
-    std::string outputs_dir;
-    if (!tsl::io::GetTestUndeclaredOutputsDir(&outputs_dir)) {
-      outputs_dir = hlo_module_config.debug_options().xla_dump_to();
-    }
-    if (!outputs_dir.empty()) {
-      pic.registerBeforeNonSkippedPassCallback(
-          DumpCallbackForModule(module->getModuleIdentifier(), outputs_dir));
-    } else {
-      LOG(ERROR) << "--xla_gpu_dump_llvmir is set, but neither the environment "
-                 << "variable TEST_UNDECLARED_OUTPUTS_DIR nor the flag "
-                 << "--xla_dump_to is set, so the llvm dumps are disabled.";
-    }
-  }
-
-  int32_t opt_level =
-      hlo_module_config.debug_options().xla_backend_optimization_level();
-
-  if (opt_level < 2) {
-    LOG(ERROR) << std::string(80, '*');
-    LOG(ERROR) << "The XLA GPU backend doesn't support unoptimized code "
-                  "generation but ";
-    LOG(ERROR) << "--xla_backend_optimization_level is set to " << opt_level
-               << "!";
-    LOG(ERROR) << "(Supported configuration is "
-                  "--xla_backend_optimization_level >= 2.)";
-    LOG(ERROR) << std::string(80, '*');
-  }
-  llvm::OptimizationLevel ol;
-  switch (opt_level) {
-    case 0:
-      ol = llvm::OptimizationLevel::O0;
-      break;
-    case 1:
-      ol = llvm::OptimizationLevel::O1;
-      break;
-    case 2:
-      ol = llvm::OptimizationLevel::O2;
-      break;
-    case 3:
-      ol = llvm::OptimizationLevel::O3;
-      break;
-  }
-
-  llvm::ModulePassManager mpm;
-  mpm.addPass(llvm::VerifierPass());
-  if (ol == llvm::OptimizationLevel::O0) {
-    mpm.addPass(pb.buildO0DefaultPipeline(ol));
-  } else {
-    mpm.addPass(pb.buildPerModuleDefaultPipeline(ol));
-  }
-  mpm.addPass(llvm::VerifierPass());
-
-  mpm.run(*module, mam);
-
-  return OkStatus();
+                             int inline_threshold, const std::string& ir_path, const std::string& linked_ir_path, const std::string& optimized_ir_path) {
+  return module_linker(module, gpu_version, hlo_module_config,
+                                   device_bitcode_dir_path, ir_path, linked_ir_path, optimized_ir_path);
 }
 
 // One-time module initializer.
@@ -614,7 +573,7 @@ StatusOr<std::string> CompileToPtx(
     TF_RETURN_IF_ERROR(LinkAndOptimizeModule(
         module, gpu_version, hlo_module_config, libdevice_dir_path,
         NVPTXTargetModuleLinker, default_target_triple, target_machine.get(),
-        kDefaultInlineThreshold));
+        kDefaultInlineThreshold, "", "", ""));
 
     uint64_t end_usecs = tsl::Env::Default()->NowMicros();
     RecordLlvmPassesDuration(end_usecs - start_usecs);
@@ -642,7 +601,8 @@ std::vector<std::string> GetROCDLPaths(std::string gcn_arch_name,
       new std::vector<std::string>(
           {"opencl.bc", "ocml.bc", "ockl.bc", "oclc_finite_only_off.bc",
            "oclc_daz_opt_off.bc", "oclc_correctly_rounded_sqrt_on.bc",
-           "oclc_unsafe_math_off.bc", "oclc_wavefrontsize64_on.bc"});
+           "oclc_unsafe_math_off.bc", "oclc_wavefrontsize64_on.bc",
+           "hip.bc", "oclc_abi_version_500.bc", "oclc_isa_version_942.bc"});
 
   // Construct full path to ROCDL bitcode libraries.
   std::vector<std::string> result;
@@ -721,95 +681,60 @@ void HsacoCache::Add(const std::string& ir, uint64_t hash,
 // Emits the given module to HSA Code Object. target_machine is an initialized
 // TargetMachine for the AMDGPU target.
 StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
-    llvm::Module* module, llvm::TargetMachine* target_machine) {
-  auto* env = tsl::Env::Default();
-  std::vector<std::string> tempdir_vector;
-  env->GetLocalTempDirectories(&tempdir_vector);
-  if (tempdir_vector.empty()) {
-    return xla::InternalError(
-        "Unable to locate a temporary directory for compile-time artifacts.");
+    llvm::Module* module, llvm::TargetMachine* target_machine, const std::string& optimized_ir_path, const std::string& isabin_path, const std::string& hsaco_path) {
+   std::string error_message;
+
+  // Locate llc.
+  std::string llc_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
+  auto llc_program = llvm::sys::findProgramByName("llc", {llc_path});
+  if (!llc_program) {
+    return xla::InternalError("unable to find llc in PATH: %s", llc_program.getError().message());
   }
-  std::string tempdir_name = tempdir_vector.front();
-  VLOG(1) << "Compile-time artifacts located at: " << tempdir_name;
+  std::vector<llvm::StringRef> llc_args{
+      llvm_ir::AsStringRef("llc"),
+      llvm_ir::AsStringRef("-march=amdgcn"),
+      llvm_ir::AsStringRef("-mcpu=gfx942"),
+      llvm_ir::AsStringRef("-filetype=obj"),
+      llvm_ir::AsStringRef("-o"),
+      llvm_ir::AsStringRef(isabin_path),
+      llvm_ir::AsStringRef(optimized_ir_path),
+  };
 
-  bool keep_tempfiles = false;
-  TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_KEEP_XLA_TEMPFILES",
-                                      /*default_val=*/false, &keep_tempfiles));
-  // Prepare filenames for all stages of compilation:
-  // IR, binary ISA, and HSACO.
-  std::string random_number = std::to_string(tsl::random::New64());
-  std::string ir_filename =
-      absl::StrCat(module->getModuleIdentifier(), random_number + ".ll");
-  std::string ir_path = tsl::io::JoinPath(tempdir_name, ir_filename);
+  int llc_result =
+      llvm::sys::ExecuteAndWait(*llc_program, llvm_ir::AsArrayRef(llc_args),
+                                std::nullopt, {}, 0, 0, &error_message);
 
-  std::string ir_opt_filename =
-      absl::StrCat(module->getModuleIdentifier(), random_number + "_opt.ll");
-  std::string ir_opt_path = tsl::io::JoinPath(tempdir_name, ir_opt_filename);
-
-  std::string isabin_filename =
-      absl::StrCat(module->getModuleIdentifier(), random_number + ".o");
-  std::string isabin_path = tsl::io::JoinPath(tempdir_name, isabin_filename);
-
-  std::string hsaco_filename =
-      absl::StrCat(module->getModuleIdentifier(), random_number + ".hsaco");
-  std::string hsaco_path = tsl::io::JoinPath(tempdir_name, hsaco_filename);
-
-  std::error_code ec;
-
-  // Dump LLVM IR.
-  std::unique_ptr<llvm::raw_fd_ostream> ir_fs(
-      new llvm::raw_fd_ostream(ir_path, ec, llvm::sys::fs::OF_None));
-  module->print(*ir_fs, nullptr);
-  ir_fs->flush();
-
-  // Emit GCN ISA binary.
-  llvm::legacy::PassManager pm;
-  pm.add(new llvm::TargetLibraryInfoWrapperPass(
-      llvm::Triple(module->getTargetTriple())));
-  llvm::SmallVector<char, 0> stream;
-  llvm::raw_svector_ostream pstream(stream);
-  std::unique_ptr<llvm::raw_fd_ostream> isabin_fs(
-      new llvm::raw_fd_ostream(isabin_path, ec, llvm::sys::fs::OF_Text));
-  module->setDataLayout(target_machine->createDataLayout());
-  target_machine->addPassesToEmitFile(pm, *isabin_fs, nullptr,
-                                      llvm::CGFT_ObjectFile);
-  pm.run(*module);
-  isabin_fs->flush();
-
-  if (keep_tempfiles) {
-    std::unique_ptr<llvm::raw_fd_ostream> ir_fs(
-        new llvm::raw_fd_ostream(ir_opt_path, ec, llvm::sys::fs::OF_None));
-    module->print(*ir_fs, nullptr);
-    ir_fs->flush();
+  if (llc_result) {
+    return xla::InternalError("llc execute fail: %s", error_message);
   }
+
   // Locate lld.
-  std::string lld_path;
-  if (std::getenv("ROCM_PATH")) {
-       lld_path = tsl::io::JoinPath(std::getenv("ROCM_PATH"), "llvm/bin");
-  }
-  else {
-       lld_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
-  }
-
-  auto lld_program = llvm::sys::findProgramByName("ld.lld", {lld_path});
+  // TODO(whchung@gmail.com): change to tensorflow::ROCmRoot() after
+  // ROCm-Device-Libs PR.
+  std::string lld_path_1 = tsl::io::JoinPath("/opt/rocm", "hcc/bin");
+  std::string lld_path_2 = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
+  auto lld_program =
+      llvm::sys::findProgramByName("ld.lld", {lld_path_1, lld_path_2});
   if (!lld_program) {
-    return xla::InternalError("unable to find ld.lld in %s: %s", lld_path,
+    return xla::InternalError("unable to find ld.lld in PATH: %s",
                               lld_program.getError().message());
   }
   std::vector<llvm::StringRef> lld_args{
-      llvm_ir::AsStringRef("ld.lld"),    llvm_ir::AsStringRef("-flavor"),
-      llvm_ir::AsStringRef("gnu"),       llvm_ir::AsStringRef("-shared"),
-      llvm_ir::AsStringRef(isabin_path), llvm_ir::AsStringRef("-o"),
+      llvm_ir::AsStringRef("ld.lld"),
+      llvm_ir::AsStringRef("-flavor"),
+      llvm_ir::AsStringRef("gnu"),
+      llvm_ir::AsStringRef("-shared"),
+      llvm_ir::AsStringRef(isabin_path),
+      llvm_ir::AsStringRef("-o"),
       llvm_ir::AsStringRef(hsaco_path),
   };
 
-  std::string error_message;
   int lld_result =
       llvm::sys::ExecuteAndWait(*lld_program, llvm_ir::AsArrayRef(lld_args),
-                                std::nullopt, {}, 0, 0, &error_message);
+                               std::nullopt, {}, 0, 0, &error_message);
+
   if (lld_result) {
-    return xla::InternalError("ld.lld execute fail: %s, error code %d",
-                              error_message, lld_result);
+    return xla::InternalError("ld.lld execute fail: %s", error_message);
   }
 
   // Read HSACO.
@@ -819,29 +744,23 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   std::vector<uint8_t> hsaco(hsaco_file_size);
   hsaco_file.seekg(0, std::ios::beg);
   hsaco_file.read(reinterpret_cast<char*>(&hsaco[0]), hsaco_file_size);
-  hsaco_file.close();
-  if (!keep_tempfiles) {
-    remove(ir_path.c_str());
-    remove(isabin_path.c_str());
-    remove(hsaco_path.c_str());
-  }
   return hsaco;
 }
 
 // Links ROCm-Device-Libs into the given module if the module needs it.
 Status LinkROCDLIfNecessary(llvm::Module* module, std::string gcn_arch_name,
-                            const std::string& rocdl_dir_path) {
+                            const std::string& rocdl_dir_path, const std::string& ir_path, const std::string& linked_ir_path, const std::string& optimized_ir_path) {
   if (!CouldNeedDeviceBitcode(*module)) {
     return OkStatus();
   }
 
   return LinkWithBitcodeVector(module,
-                               GetROCDLPaths(gcn_arch_name, rocdl_dir_path));
+                               GetROCDLPaths(gcn_arch_name, rocdl_dir_path), ir_path, linked_ir_path, optimized_ir_path);
 }
 
 Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
                                 const HloModuleConfig& hlo_module_config,
-                                const std::string& device_bitcode_dir_path) {
+                                const std::string& device_bitcode_dir_path, const std::string& ir_path, const std::string& linked_ir_path, const std::string& optimized_ir_path) {
   // Link the input module with ROCDL.
 
   auto compute_capability =
@@ -852,7 +771,7 @@ Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
 
   std::string gcn_arch_name = compute_capability->gcn_arch_name();
   TF_RETURN_IF_ERROR(
-      LinkROCDLIfNecessary(module, gcn_arch_name, device_bitcode_dir_path));
+      LinkROCDLIfNecessary(module, gcn_arch_name, device_bitcode_dir_path, ir_path, linked_ir_path, optimized_ir_path));
 
   // For rocm, we always enable flush to zero. (for cuda, this is determined
   // via environemnt variables). This deceision was based on the observation
@@ -1014,14 +933,44 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
         AMDGPUGetTargetMachine(default_target_triple, gpu_version,
                                hlo_module_config);
 
+    auto* env = tsl::Env::Default();
+    std::vector<std::string> tempdir_vector;
+    env->GetLocalTempDirectories(&tempdir_vector);
+    if (tempdir_vector.empty()) {
+      return xla::InternalError(
+          "Unable to locate a temporary directory for compile-time artifacts.");
+    }
+    std::string tempdir_name = tempdir_vector.front();
+    VLOG(1) << "Compile-time artifacts located at: " << tempdir_name;
+
+    // Prepare filenames for all stages of compilation:
+    // IR, binary ISA, and HSACO.
+    std::string ir_filename = absl::StrCat(module->getModuleIdentifier(), ".ll");
+    std::string ir_path = tsl::io::JoinPath(tempdir_name, ir_filename);
+
+    std::string linked_ir_filename = absl::StrCat(module->getModuleIdentifier(), "-linked.ll");
+    std::string linked_ir_path = tsl::io::JoinPath(tempdir_name, linked_ir_filename);
+
+    std::string optimized_ir_filename = absl::StrCat(module->getModuleIdentifier(), "-opt.ll");
+    std::string optimized_ir_path = tsl::io::JoinPath(tempdir_name, optimized_ir_filename);
+
+    std::string isabin_filename =
+        absl::StrCat(module->getModuleIdentifier(), ".o");
+    std::string isabin_path =
+        tsl::io::JoinPath(tempdir_name, isabin_filename);
+
+    std::string hsaco_filename =
+        absl::StrCat(module->getModuleIdentifier(), ".hsaco");
+    std::string hsaco_path =
+        tsl::io::JoinPath(tempdir_name, hsaco_filename);
     // Link with ROCm-Device-Libs, and optimize the LLVM module.
     TF_RETURN_IF_ERROR(LinkAndOptimizeModule(
         module, gpu_version, hlo_module_config, rocdl_dir_path,
         AMDGPUTargetModuleLinker, default_target_triple, target_machine.get(),
-        kAMDGPUInlineThreshold));
+        kAMDGPUInlineThreshold, ir_path, linked_ir_path, optimized_ir_path));
 
     // Lower optimized LLVM module to HSA code object.
-    TF_ASSIGN_OR_RETURN(hsaco, EmitModuleToHsaco(module, target_machine.get()));
+    TF_ASSIGN_OR_RETURN(hsaco, EmitModuleToHsaco(module, target_machine.get(), optimized_ir_path, isabin_path, hsaco_path));
     HsacoCache::Add(str, hash, gcn_arch_name, hsaco);
   }
   return hsaco;
