@@ -693,11 +693,12 @@ void HsacoCache::Add(const std::string& ir, uint64_t hash,
 // Emits the given module to HSA Code Object. target_machine is an initialized
 // TargetMachine for the AMDGPU target.
 StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
-    llvm::Module* module, llvm::TargetMachine* target_machine,
+    llvm::Module* module, llvm::TargetMachine* target_machine, const std::string& gcn_arch_name,
     const std::string& optimized_ir_path, const std::string& isabin_path,
     const std::string& hsaco_path) {
   std::string error_message;
-
+  std::vector<std::string> tokens = absl::StrSplit(gcn_arch_name, ':');
+  std::string gfx = tokens[0];
   // Locate llc.
   std::string llc_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
   auto llc_program = llvm::sys::findProgramByName("llc", {llc_path});
@@ -708,7 +709,7 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   std::vector<llvm::StringRef> llc_args{
       llvm_ir::AsStringRef("llc"),
       llvm_ir::AsStringRef("-march=amdgcn"),
-      llvm_ir::AsStringRef("-mcpu=gfx942"),
+      llvm_ir::AsStringRef(absl::StrCat("-mcpu=", gfx)),
       llvm_ir::AsStringRef("-filetype=obj"),
       llvm_ir::AsStringRef("-o"),
       llvm_ir::AsStringRef(isabin_path),
@@ -994,7 +995,7 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
 
     // Lower optimized LLVM module to HSA code object.
     TF_ASSIGN_OR_RETURN(
-        hsaco, EmitModuleToHsaco(module, target_machine.get(),
+        hsaco, EmitModuleToHsaco(module, target_machine.get(), gcn_arch_name,
                                  optimized_ir_path, isabin_path, hsaco_path));
     HsacoCache::Add(str, hash, gcn_arch_name, hsaco);
   }
