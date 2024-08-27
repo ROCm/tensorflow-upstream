@@ -1413,6 +1413,8 @@ ExecutorState::ExecutorState(const Executor::Args& args, ExecutorImpl* impl)
       stream_id_(args.stream_id),
       log_memory_(LogMemory::IsEnabled()),
       step_id_(args.step_id),
+      query_priority_(args.query_priority),
+      round_step_id_(args.round_step_id),
       rendezvous_(args.rendezvous),
       create_rendezvous_(&impl->params_.rendezvous_factory),
       collective_executor_(args.collective_executor),
@@ -1666,6 +1668,8 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_nsec) {
   params.stream_id = stream_id_;
 
   params.step_id = step_id_;
+  params.query_priority = query_priority_;
+  params.round_step_id = round_step_id_;
   // Override device's threadpool if user provides an intra_op_threadpool
   Device* device = impl_->params_.device;
   if (user_device_) {

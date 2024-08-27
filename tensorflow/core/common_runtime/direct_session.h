@@ -349,13 +349,13 @@ class DirectSession : public Session {
       DataTypeVector* output_types, int64* collective_graph_key);
 
   ::tensorflow::Status RunInternal(
-      int64 step_id, const RunOptions& run_options,
+      int64 step_id, int64 priority, const RunOptions& run_options,
       CallFrameInterface* call_frame, ExecutorsAndKeys* executors_and_keys,
       RunMetadata* run_metadata,
       const thread::ThreadPoolOptions& threadpool_options, int blaze_stream_id = -1);
 
   void RunInternalAsync(
-      int64 step_id, const RunOptions& run_options,
+      int64 step_id, int64 priority, const RunOptions& run_options,
       CallFrameInterface* call_frame, ExecutorsAndKeys* executors_and_keys,
       RunMetadata* run_metadata,
       const thread::ThreadPoolOptions& threadpool_options,
@@ -526,6 +526,7 @@ class DirectSession : public Session {
 
   // For generating step ids that are unique among all sessions.
   static std::atomic_int_fast64_t step_id_counter_;
+  static std::atomic_int_fast64_t query_priority_;
 
   // Global timeout for all blocking operations in this session.
   const int64 operation_timeout_in_ms_ = 0;

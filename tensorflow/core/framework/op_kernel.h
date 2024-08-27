@@ -766,6 +766,7 @@ class OpKernelContext {
   
   int64 round_step_id() const { return params_->round_step_id; }
   int64 step_id() const { return params_->step_id; }
+  int64 query_priority() const { return params_->query_priority; }
 
   bool is_eager() const { return params_->is_eager; }
 
