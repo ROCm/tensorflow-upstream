@@ -614,7 +614,7 @@ std::vector<std::string> GetROCDLPaths(std::string gcn_arch_name,
           {"opencl.bc", "ocml.bc", "ockl.bc", "oclc_finite_only_off.bc",
            "oclc_daz_opt_off.bc", "oclc_correctly_rounded_sqrt_on.bc",
            "oclc_unsafe_math_off.bc", "oclc_wavefrontsize64_on.bc", "hip.bc",
-           "oclc_abi_version_500.bc", "oclc_isa_version_942.bc"});
+           "oclc_abi_version_500.bc"});
 
   // Construct full path to ROCDL bitcode libraries.
   std::vector<std::string> result;
