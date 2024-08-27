@@ -68,7 +68,9 @@ limitations under the License.
 #include "tensorflow/tsl/profiler/lib/traceme.h"
 #include "tensorflow/tsl/util/env_var.h"
 
+
 #if !defined(PLATFORM_GOOGLE) && TENSORFLOW_USE_ROCM
+#include "tensorflow/tsl/platform/rocm_rocdl_path.h"
 #include "rocm/rocm_config.h"
 #endif
 
@@ -250,7 +252,7 @@ Status LinkWithBitcodeVector(
   ir_fs->flush();
 
   // Locate llvm-link.
-  std::string llvmlink_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
+  std::string llvmlink_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
   auto llvmlink_program =
       llvm::sys::findProgramByName("llvm-link", {llvmlink_path});
   if (!llvmlink_program) {
@@ -278,7 +280,7 @@ Status LinkWithBitcodeVector(
   }
 
   // Locate opt.
-  std::string opt_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
+  std::string opt_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
   auto opt_program = llvm::sys::findProgramByName("opt", {opt_path});
   if (!opt_program) {
     return xla::InternalError("unable to find opt in PATH: %s",
@@ -700,7 +702,7 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   std::vector<std::string> tokens = absl::StrSplit(gcn_arch_name, ':');
   std::string gfx = tokens[0];
   // Locate llc.
-  std::string llc_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
+  std::string llc_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
   auto llc_program = llvm::sys::findProgramByName("llc", {llc_path});
   if (!llc_program) {
     return xla::InternalError("unable to find llc in PATH: %s",
@@ -725,10 +727,8 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   }
 
   // Locate lld.
-  // TODO(whchung@gmail.com): change to tensorflow::ROCmRoot() after
-  // ROCm-Device-Libs PR.
-  std::string lld_path_1 = tsl::io::JoinPath("/opt/rocm", "hcc/bin");
-  std::string lld_path_2 = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
+  std::string lld_path_1 = tsl::io::JoinPath(tsl::RocmRoot(), "hcc/bin");
+  std::string lld_path_2 = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
   auto lld_program =
       llvm::sys::findProgramByName("ld.lld", {lld_path_1, lld_path_2});
   if (!lld_program) {
