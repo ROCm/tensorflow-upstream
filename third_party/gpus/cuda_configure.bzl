@@ -708,7 +708,7 @@ def _find_libs(repository_ctx, cuda_config):
             repository_ctx,
             cpu_value,
             cuda_config.config["cupti_library_dir"],
-            cuda_config.cuda_version,
+            cuda_config.cupti_version,
         ),
         "cusparse": _find_cuda_lib(
             "cusparse",
@@ -768,8 +768,10 @@ def _get_cuda_config(repository_ctx):
         # The libcudart soname in CUDA 11.x is versioned as 11.0 for backward compatability.
         if int(cuda_major) == 11:
             cudart_version = "64_110" if is_windows else "11.0"
+            cupti_version = cuda_version
         else:
             cudart_version = ("64_%s" if is_windows else "%s") % cuda_major
+            cupti_version = cudart_version
         cublas_version = ("64_%s" if is_windows else "%s") % config["cublas_version"].split(".")[0]
         cusolver_version = ("64_%s" if is_windows else "%s") % config["cusolver_version"].split(".")[0]
         curand_version = ("64_%s" if is_windows else "%s") % config["curand_version"].split(".")[0]
@@ -779,6 +781,7 @@ def _get_cuda_config(repository_ctx):
         # cuda_lib_version is for libraries like cuBLAS, cuFFT, cuSOLVER, etc.
         # It changed from 'x.y' to just 'x' in CUDA 10.1.
         cuda_lib_version = ("64_%s" if is_windows else "%s") % cuda_major
+        cupti_version = cuda_version
         cudart_version = cuda_version
         cublas_version = cuda_lib_version
         cusolver_version = cuda_lib_version
@@ -787,6 +790,7 @@ def _get_cuda_config(repository_ctx):
         cusparse_version = cuda_lib_version
     else:
         cudart_version = cuda_version
+        cupti_version = cuda_version
         cublas_version = cuda_version
         cusolver_version = cuda_version
         curand_version = cuda_version
@@ -796,6 +800,7 @@ def _get_cuda_config(repository_ctx):
     return struct(
         cuda_toolkit_path = toolkit_path,
         cuda_version = cuda_version,
+        cupti_version = cupti_version,
         cuda_version_major = cuda_major,
         cudart_version = cudart_version,
         cublas_version = cublas_version,
@@ -1172,7 +1177,16 @@ def _create_local_cuda_repository(repository_ctx):
     ))
 
     cudnn_headers = ["cudnn.h"]
-    if cuda_config.cudnn_version.rsplit("_", 1)[-1] >= "8":
+    if cuda_config.cudnn_version.rsplit("_", 1)[-1] >= "9":
+        cudnn_headers += [
+            "cudnn_adv.h",
+            "cudnn_backend.h",
+            "cudnn_cnn.h",
+            "cudnn_graph.h",
+            "cudnn_ops.h",
+            "cudnn_version.h",
+        ]
+    elif cuda_config.cudnn_version.rsplit("_", 1)[-1] >= "8":
         cudnn_headers += [
             "cudnn_backend.h",
             "cudnn_adv_infer.h",

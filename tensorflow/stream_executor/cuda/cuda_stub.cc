@@ -71,27 +71,27 @@ typedef enum CUexternalSemaphoreHandleType_enum {
 #endif
 
 // Forward-declare types introduced in CUDA 10.0.
-typedef struct CUextMemory_st* CUexternalMemory;
-typedef struct CUextSemaphore_st* CUexternalSemaphore;
-typedef struct CUgraph_st* CUgraph;
-typedef struct CUgraphNode_st* CUgraphNode;
-typedef struct CUgraphExec_st* CUgraphExec;
-typedef struct CUDA_KERNEL_NODE_PARAMS_st CUDA_KERNEL_NODE_PARAMS;
-typedef struct CUDA_MEMSET_NODE_PARAMS_st CUDA_MEMSET_NODE_PARAMS;
-typedef struct CUDA_HOST_NODE_PARAMS_st CUDA_HOST_NODE_PARAMS;
-typedef struct CUDA_EXTERNAL_MEMORY_HANDLE_DESC_st
-    CUDA_EXTERNAL_MEMORY_HANDLE_DESC;
-typedef struct CUDA_EXTERNAL_MEMORY_BUFFER_DESC_st
-    CUDA_EXTERNAL_MEMORY_BUFFER_DESC;
-typedef struct CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC_st
-    CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC;
-typedef struct CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC_st
-    CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC;
-typedef struct CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS_st
-    CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS;
-typedef struct CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS_st
-    CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS;
-typedef void(CUDA_CB* CUhostFn)(void* userData);
+// typedef struct CUextMemory_st* CUexternalMemory;
+// typedef struct CUextSemaphore_st* CUexternalSemaphore;
+// typedef struct CUgraph_st* CUgraph;
+// typedef struct CUgraphNode_st* CUgraphNode;
+// typedef struct CUgraphExec_st* CUgraphExec;
+// typedef struct CUDA_KERNEL_NODE_PARAMS_st CUDA_KERNEL_NODE_PARAMS;
+// typedef struct CUDA_MEMSET_NODE_PARAMS_st CUDA_MEMSET_NODE_PARAMS;
+// typedef struct CUDA_HOST_NODE_PARAMS_st CUDA_HOST_NODE_PARAMS;
+// typedef struct CUDA_EXTERNAL_MEMORY_HANDLE_DESC_st
+//     CUDA_EXTERNAL_MEMORY_HANDLE_DESC;
+// typedef struct CUDA_EXTERNAL_MEMORY_BUFFER_DESC_st
+//     CUDA_EXTERNAL_MEMORY_BUFFER_DESC;
+// typedef struct CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC_st
+//     CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC;
+// typedef struct CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC_st
+//     CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC;
+// typedef struct CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS_st
+//     CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS;
+// typedef struct CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS_st
+//     CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS;
+// typedef void(CUDA_CB* CUhostFn)(void* userData);
 
 #if CUDA_VERSION < 10000
 #include "tensorflow/stream_executor/cuda/cuda_9_0.inc"
@@ -103,6 +103,8 @@ typedef void(CUDA_CB* CUhostFn)(void* userData);
 #include "tensorflow/stream_executor/cuda/cuda_10_2.inc"
 #elif CUDA_VERSION < 11020
 #include "tensorflow/stream_executor/cuda/cuda_11_0.inc"
-#else
+#elif CUDA_VERSION < 12000
 #include "tensorflow/stream_executor/cuda/cuda_11_2.inc"
+#else
+#include "tensorflow/stream_executor/cuda/cuda_12_0.inc"
 #endif

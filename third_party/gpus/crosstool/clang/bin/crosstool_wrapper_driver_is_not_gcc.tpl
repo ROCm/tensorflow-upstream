@@ -168,11 +168,9 @@ def InvokeNvcc(argv, log=False):
   defines = ''.join([' -D' + define for define in defines])
   undefines = GetOptionValue(argv, 'U')
   undefines = ''.join([' -U' + define for define in undefines])
-  std_options = GetOptionValue(argv, 'std')
+  #std_options = GetOptionValue(argv, 'std')
   # currently only c++11 is supported by Cuda 7.0 std argument
-  nvcc_allowed_std_options = ["c++11"]
-  std_options = ''.join([' -std=' + define
-      for define in std_options if define in nvcc_allowed_std_options])
+  std_options = ' -std=c++14'
 
   # The list of source files get passed after the -c option. I don't know of
   # any other reliable way to just get the list of source files to be compiled.
