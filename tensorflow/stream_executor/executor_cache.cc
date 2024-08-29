@@ -17,7 +17,7 @@ limitations under the License.
 
 #include "tensorflow/core/util/env_var.h"
 
-#ifdef GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/stream_executor/gpu/gpu_driver.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
@@ -31,7 +31,7 @@ namespace {
 static absl::once_flag flag_init;
 static void SetNumCudaContexts(int ordinal, int64 *num_cuda_contexts) {
   *num_cuda_contexts = 1;
-#ifdef GOOGLE_CUDA
+#if GOOGLE_CUDA
   gpu::GpuDeviceHandle device;
   if (gpu::GpuDriver::GetDevice(ordinal, &device).ok()) {
     int64 num_contexts_env;
