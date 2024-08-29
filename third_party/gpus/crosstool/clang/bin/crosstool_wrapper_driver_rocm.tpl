@@ -185,6 +185,7 @@ def InvokeHipcc(argv, log=False):
   hipccopts += warnings
   hipccopts += std_options
   hipccopts += m_options
+  hipccopts += ' -mllvm=-amdgpu-kernarg-preload-count=16'
 
   if depfiles:
     # Generate the dependency file
