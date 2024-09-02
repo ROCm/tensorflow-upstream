@@ -766,10 +766,6 @@ Status LinkROCDLIfNecessary(llvm::Module* module, std::string gcn_arch_name,
                             const std::string& ir_path,
                             const std::string& linked_ir_path,
                             const std::string& optimized_ir_path) {
-  if (!CouldNeedDeviceBitcode(*module)) {
-    return OkStatus();
-  }
-
   return LinkWithBitcodeVector(module,
                                GetROCDLPaths(gcn_arch_name, rocdl_dir_path),
                                ir_path, linked_ir_path, optimized_ir_path);
