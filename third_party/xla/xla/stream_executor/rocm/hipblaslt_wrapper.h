@@ -20,8 +20,8 @@ limitations under the License.
 #define __HIP_DISABLE_CPP_FUNCTIONS__
 
 #include "rocm/rocm_config.h"
-
 #if TF_HIPBLASLT
+#include "rocm/include/hipblas/hipblas.h"
 #if TF_ROCM_VERSION >= 50500
 #include "rocm/include/hipblaslt/hipblaslt.h"
 #else
