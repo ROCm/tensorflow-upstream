@@ -41,7 +41,8 @@ ENV TF_ROCM_GCC=1
 ENV ROCM_TOOLKIT_PATH=${ROCM_PATH}
 
 RUN pip install --no-cache-dir /${TF_PKGS_DIR}/${TENSORFLOW_PACKAGE}
-RUN echo 'ALL ALL=NOPASSWD:ALL' | tee -a /etc/sudoers.d/sudo-nopasswd
+RUN mkdir -p /etc/sudoers.d/ && \
+    echo 'ALL ALL=NOPASSWD:ALL' | tee /etc/sudoers.d/sudo-nopasswd
 
 ARG TF_TESTING_FL
 ENV TF_TESTING_FL=${TF_TESTING_FL}
