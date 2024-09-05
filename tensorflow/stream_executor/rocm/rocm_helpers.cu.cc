@@ -26,8 +26,8 @@ __global__ void broadcast_fp32_kernel(float* dst, int dst_stride, int batches,
 
 void broadcast_fp32(void* stream, float* dst, int dst_stride, int batches,
                     float* src, int size) {
-  int x_blocks = (size+255)/256;
-  hipLaunchKernelGGL(broadcast_fp32_kernel, dim3(x_blocks, (batches+3)/4, 1), min(256, (int)size), 0,
+  hipLaunchKernelGGL(broadcast_fp32_kernel, dim3((size+255)/256, (batches+3)/4, 1), 
+                     min(256, (int)size), 0,
                      (hipStream_t)stream, dst, dst_stride, batches, src, size);
 }
 

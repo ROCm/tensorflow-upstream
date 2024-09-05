@@ -1331,7 +1331,7 @@ class Stream {
                        DeviceMemory<std::complex<double>> *x, int incx);
 
   // See BlasSupport::DoBlasGemm.
-  template <class T> Stream& ThenBlasGemmImpl(T ctx);
+  template <class T, class U> Stream &ThenBlasGemmImpl(blas::GemmCallContext< T, U > ctx);
   template <class T> Stream& ThenBlasGemmBatchedImpl(T ctx);
 
   TF_EXPORT Stream &ThenBlasGemm(blas::GemmCallContext<Eigen::half> ctx);
