@@ -238,8 +238,9 @@ struct BlasLt {
         size_t max_algorithm_count = 128,
         size_t max_workspace_size = 1ll << 32) = 0;
 
-    virtual xla::Status SetAlgorithm(const MatmulAlgorithm& algorithm, 
-                        ScratchAllocator * scratch_allocator) = 0;
+    virtual xla::Status SetAlgorithm(
+            const MatmulAlgorithm& algorithm, 
+            ScratchAllocator * scratch_allocator) = 0;
 
     virtual xla::Status ExecuteOnStream(Stream *stream, 
           const gpu::GroupedGemmConfig& cfg,
