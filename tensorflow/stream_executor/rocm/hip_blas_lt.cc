@@ -99,13 +99,13 @@ xla::Status SetAttr(hipblasLtMatmulPreference_t handle,
                   value);
 }
 
-static hipblasPointerMode_t AsHipblasLtPointerMode(
+static hipblasLtPointerMode_t AsHipblasLtPointerMode(
     gpu::BlasLt::PointerMode pointer_mode) {
   switch (pointer_mode) {
     case gpu::BlasLt::PointerMode::kHost:
-      return HIPBLAS_POINTER_MODE_HOST;
+      return HIPBLASLT_POINTER_MODE_HOST;
     case gpu::BlasLt::PointerMode::kDevice:
-      return HIPBLAS_POINTER_MODE_DEVICE;
+      return HIPBLASLT_POINTER_MODE_DEVICE;
   }
 }
 

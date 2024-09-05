@@ -204,9 +204,8 @@ def _rocm_include_path(repository_ctx, rocm_config):
 
     # Add rocBLAS headers
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/rocblas/include")
-
-    # Add hipblas-lt headers
-    #inc_dirs.append(rocm_config.rocm_toolkit_path + "/hipblaslt/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hipblaslt/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hipblas-common/include")
 
     # Add MIOpen headers
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/miopen/include")

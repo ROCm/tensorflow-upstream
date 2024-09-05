@@ -69,8 +69,8 @@ class BlasLt : public gpu::BlasLt {
     hipblasComputeType_t compute_type() const { return compute_type_; }
     hipDataType scale_type() const { return datatype_; }
     bool has_bias_epilogue() const { return has_bias_epilogue_; }
-    hipblasPointerMode_t pointer_mode() const {
-      return HIPBLAS_POINTER_MODE_HOST;
+    hipblasLtPointerMode_t pointer_mode() const {
+      return HIPBLASLT_POINTER_MODE_HOST;
     }
     hipblasLtMatmulDesc_t get() const { return handle_.get(); }
 
