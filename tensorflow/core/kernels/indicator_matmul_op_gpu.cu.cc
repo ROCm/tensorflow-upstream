@@ -22,6 +22,7 @@
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/platform/stream_executor.h"
 #include "tensorflow/stream_executor/gpu/gpu_stream.h"
+#include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
 #define EIGEN_USE_GPU
 #include "tensorflow/core/util/gpu_kernel_helper.h"
 
@@ -275,39 +276,38 @@ void LaunchIndicatorMatmul<GPUDevice, Scalar, TIndex>::operator()(
                                   &scratch_allocator);
     return;
   }
-//#if TENSORFLOW_USE_ROCM
-
-  if(!UseGroupedGemm()) {
-  auto ind_ptr = indicator.template flat<TIndex>().data();
-  const int64 size = parallel_num * batch_b * m * k;
-  //VLOG(0) << "Allocating " << (size * sizeof(Scalar)) << " bytes..";
-  Tensor a_strided;
-  OP_REQUIRES_OK(
+#if TENSORFLOW_USE_ROCM
+  // we use StridedBatched variant if hipblaslt is enabled (GroupedGemm not yet ready)
+  if(se::gpu::GpuBlasLtEnabled()) { 
+    auto ind_ptr = indicator.template flat<TIndex>().data();
+    const int64 size = parallel_num * batch_b * m * k;
+    //VLOG(0) << "Allocating " << (size * sizeof(Scalar)) << " bytes..";
+    Tensor a_strided;
+    OP_REQUIRES_OK(
        context, context->allocate_temp(DataTypeToEnum<Scalar>::v(), 
                                     TensorShape({size}), &a_strided));
   
-  auto a_strided_ptr = a_strided.flat<Scalar>().data();
-  auto* stream = context->op_device_context()->stream();
+    auto a_strided_ptr = a_strided.flat<Scalar>().data();
+    auto* stream = context->op_device_context()->stream();
 
-  dim3 grid(parallel_num, batch_b, 1);
-  constexpr uint32_t BlockSz = 256;
-  StridedCopyParams params{ (uint32_t)m, (uint32_t)n, (uint32_t)k, 
+    dim3 grid(parallel_num, batch_b, 1);
+    constexpr uint32_t BlockSz = 256;
+    StridedCopyParams params{ (uint32_t)m, (uint32_t)n, (uint32_t)k, 
         (uint32_t)batch_a, (uint32_t)batch_b, (uint32_t)sizeof(Scalar)};
 
-  TF_CHECK_OK(GpuLaunchKernel(StridedCopyKernel<BlockSz, TIndex>, grid,
+    TF_CHECK_OK(GpuLaunchKernel(StridedCopyKernel<BlockSz, TIndex>, grid,
                         BlockSz, 0, se::gpu::AsGpuStreamValue(stream), 
                   reinterpret_cast<const uint8_t *>(a_base_ptr), ind_ptr, 
                   reinterpret_cast<uint8_t *>(a_strided_ptr), params));
 
-  auto a_dev_ptr = AsDeviceMemory(a_strided_ptr);
-  auto B = parallel_num * batch_b;
-  RunGemmStridedBatched<Scalar>(context, trans_a, trans_b, m, n, k,
+    auto a_dev_ptr = AsDeviceMemory(a_strided_ptr);
+    auto B = parallel_num * batch_b;
+    return RunGemmStridedBatched<Scalar>(context, trans_a, trans_b, m, n, k,
                             Scalar(1.0), a_dev_ptr, m * k, b_dev_ptr, k * n,
                             Scalar(0.0), &out_dev_ptr, m * n, B,
                             &scratch_allocator);
-  } else {
-//#else // !TENSORFLOW_USE_ROCM
-
+  } 
+#endif // TENSORFLOW_USE_ROCM 
   IMatmulParam<Scalar, TIndex> param;
   param.A = const_cast<Scalar*>(a_base_ptr);
   param.B = const_cast<Scalar*>(b_base_ptr);
