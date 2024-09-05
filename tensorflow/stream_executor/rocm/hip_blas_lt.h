@@ -69,9 +69,6 @@ class BlasLt : public gpu::BlasLt {
     hipblasComputeType_t compute_type() const { return compute_type_; }
     hipDataType scale_type() const { return datatype_; }
     bool has_bias_epilogue() const { return has_bias_epilogue_; }
-    hipblasPointerMode_t pointer_mode() const {
-      return HIPBLAS_POINTER_MODE_HOST;
-    }
     hipblasLtMatmulDesc_t get() const { return handle_.get(); }
 
    private:
@@ -157,6 +154,9 @@ class BlasLt : public gpu::BlasLt {
 
     GroupedMatmulPlan(const BlasLt& blas_lt);
 
+    xla::Status SetAlgorithm(const MatmulAlgorithm& algorithm, 
+              ScratchAllocator *scratch_allocator) override;
+
     xla::Status ExecuteOnStream(Stream *stream,
           const gpu::GroupedGemmConfig& cfg,
           blas::ProfileResult* profile_result) override;
@@ -164,9 +164,6 @@ class BlasLt : public gpu::BlasLt {
     xla::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
         size_t max_algorithm_count,
         size_t max_workspace_size) override;
-
-    xla::Status SetAlgorithm(const MatmulAlgorithm& algorithm, 
-              ScratchAllocator * scratch_allocator) override;
 
     //xla::Status UpdateArgs(Stream *stream, const gpu::GroupedGemmConfig& cfg);
 

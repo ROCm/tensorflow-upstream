@@ -114,17 +114,7 @@ xla::Status SetAttr(hipblasLtMatmulPreference_t handle,
                   value);
 }
 
-static hipblasPointerMode_t AsHipblasLtPointerMode(
-    gpu::BlasLt::PointerMode pointer_mode) {
-  switch (pointer_mode) {
-    case gpu::BlasLt::PointerMode::kHost:
-      return HIPBLAS_POINTER_MODE_HOST;
-    case gpu::BlasLt::PointerMode::kDevice:
-      return HIPBLAS_POINTER_MODE_DEVICE;
-  }
-}
-
-static xla::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
+xla::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
     gpu::BlasLt::Epilogue epilogue) {
   switch (epilogue) {
     case gpu::BlasLt::Epilogue::kDefault:
@@ -192,8 +182,9 @@ xla::Status BlasLt::Init() {
       m.leading_dim_stride));
   // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
   BlasLt::MatrixLayout layout(hip_layout, hipblas_data_type_, m);
-  if (m.order != gpu::MatrixLayout::Order::kColumnMajor)
+  if (m.order != gpu::MatrixLayout::Order::kColumnMajor) {
     return xla::InternalError("HipblasLT does not support row-major matrices");
+  }
   TF_RETURN_IF_ERROR(SetAttr(hip_layout, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT,
                              static_cast<int32_t>(m.batch_size)));
 
@@ -376,7 +367,7 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     DeviceMemoryBase aux, DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
     DeviceMemoryBase c_scale, DeviceMemoryBase d_scale, DeviceMemoryBase d_amax,
     absl::optional<DeviceMemoryBase> workspace,
-    absl::optional<ScratchAllocator*> scratch_allocator,
+    absl::optional<ScratchAllocator *> allocator,
     blas::ProfileResult* profile_result) const {
   VLOG(1) << "BlasLt::MatmulPlan::DoMatmul";
 
@@ -397,10 +388,12 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     workspace_size = workspace.value().size();
     TF_RET_CHECK(workspace_size >= algorithm_->workspace_size);
   } else if (algorithm_->workspace_size > 0) {
-    TF_RET_CHECK(scratch_allocator.has_value());
-    TF_ASSIGN_OR_RETURN(
-        DeviceMemory<uint8_t> alloc,
-        scratch_allocator.value()->AllocateBytes(algorithm_->workspace_size));
+    
+    if (!allocator || allocator.value() == nullptr) {
+      return xla::InternalError("Allocator is not set: skipping solution!");
+    }
+    TF_ASSIGN_OR_RETURN(auto alloc,
+        allocator.value()->AllocateBytes(algorithm_->workspace_size));
     workspace_addr = gpu::GpuMemoryMutable(&alloc);
     workspace_size = algorithm_->workspace_size;
   }
@@ -540,7 +533,7 @@ xla::Status BlasLt::MatmulPlan::ExecuteOnStream(
 
 #undef TYPED_MATMUL
 
-  return xla::Internal("Unexpected dtype");
+  return xla::InternalError("Unexpected dtype");
 }
 
 
