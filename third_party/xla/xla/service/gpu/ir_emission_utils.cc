@@ -61,9 +61,9 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/strings/proto_serialization.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/platform/statusor.h"
 
@@ -546,37 +546,41 @@ static std::optional<TransposeDescription> FindTiledTranspose(
     return std::nullopt;
   }
 
-  if (std::optional<Vector3> tr = ShapeUtil::GetNormalizedTransposeShape(
-          instr.operand(0)->shape(), instr.shape(), Vector3{0, 2, 1})) {
+  absl::InlinedVector<int64_t, 3> permutation;
+  auto tr = ShapeUtil::GetNormalizedTransposeShape(instr.operand(0)->shape(),
+                                                   instr.shape(), permutation);
+  if (!tr.has_value()) {
+    return std::nullopt;
+  }
+  if (permutation == absl::InlinedVector<int64_t, 3>{0, 2, 1}) {
     if ((tr->at(1) >= kMinDimensionToTransposeTiled &&
          tr->at(2) >= kMinDimensionToTransposeTiled) ||
         (tr->at(1) >= kMinDimensionToTransposeTiled2 &&
          tr->at(2) >= kMinDimensionToTransposeTiled2 &&
          tr->at(1) * tr->at(2) >= kMinTotalDimensionsToTransposeTiled)) {
-      return TransposeDescription{&instr, *tr,
-                                  /*permutation=*/Vector3{0, 2, 1}};
+      return TransposeDescription{
+          &instr, *tr,
+          /*permutation=*/absl::InlinedVector<int64_t, 3>{0, 2, 1}};
     }
-  }
-  if (std::optional<Vector3> tr = ShapeUtil::GetNormalizedTransposeShape(
-          instr.operand(0)->shape(), instr.shape(), Vector3{2, 1, 0})) {
+  } else if (permutation == absl::InlinedVector<int64_t, 3>{2, 1, 0}) {
     if ((tr->at(0) >= kMinDimensionToTransposeTiled &&
          tr->at(2) >= kMinDimensionToTransposeTiled) ||
         (tr->at(0) >= kMinDimensionToTransposeTiled2 &&
          tr->at(2) >= kMinDimensionToTransposeTiled2 &&
          tr->at(0) * tr->at(2) >= kMinTotalDimensionsToTransposeTiled)) {
-      return TransposeDescription{&instr, *tr,
-                                  /*permutation=*/Vector3{2, 1, 0}};
+      return TransposeDescription{
+          &instr, *tr,
+          /*permutation=*/absl::InlinedVector<int64_t, 3>{2, 1, 0}};
     }
-  }
-  if (IsMlirTransposeEmitterEnabled(instr)) {
-    if (std::optional<Vector3> tr = ShapeUtil::GetNormalizedTransposeShape(
-            instr.operand(0)->shape(), instr.shape(), Vector3{1, 0, 2})) {
+  } else if (IsMlirTransposeEmitterEnabled(instr)) {
+    if (permutation == absl::InlinedVector<int64_t, 3>{1, 0, 2}) {
       auto byte_width = primitive_util::ByteWidth(instr.shape().element_type());
       if (byte_width * tr->at(2) <= kMaxBytesInMostMinorDimension &&
           byte_width * tr->at(2) * std::min(tr->at(0), tr->at(1)) >=
               kMinDimensionToTransposeTiled) {
-        return TransposeDescription{&instr, *tr,
-                                    /*permutation=*/Vector3{1, 0, 2}};
+        return TransposeDescription{
+            &instr, *tr,
+            /*permutation=*/absl::InlinedVector<int64_t, 3>{1, 0, 2}};
       }
     }
   }
@@ -590,43 +594,47 @@ static std::optional<TransposeDescription> FindTiledLogicalTranspose(
     return std::nullopt;
   }
 
-  // TODO(cheshire): avoid code duplication.
-  if (std::optional<Vector3> tr = ShapeUtil::GetNormalizedLogicalTransposeShape(
-          instr.operand(0)->shape(), instr.shape(), instr.dimensions(),
-          Vector3{0, 2, 1})) {
-    if ((tr->at(1) >= kMinDimensionToTransposeTiled &&
-         tr->at(2) >= kMinDimensionToTransposeTiled) ||
-        (tr->at(1) >= kMinDimensionToTransposeTiled2 &&
-         tr->at(2) >= kMinDimensionToTransposeTiled2 &&
-         tr->at(1) * tr->at(2) >= kMinTotalDimensionsToTransposeTiled)) {
-      return TransposeDescription{&instr, *tr,
-                                  /*permutation=*/Vector3{0, 2, 1}};
-    }
+  // We can assume that TransposeDimensionGrouper pass has run, so no need to
+  // call GetNormalizedLogicalTransposeShape here.
+  absl::InlinedVector<int64_t, 3> permutation(instr.dimensions().begin(),
+                                              instr.dimensions().end());
+  // A real transpose needs at least 2 transpose dimensions.
+  if (permutation.size() < 2) {
+    return std::nullopt;
   }
-  if (std::optional<Vector3> tr = ShapeUtil::GetNormalizedLogicalTransposeShape(
-          instr.operand(0)->shape(), instr.shape(), instr.dimensions(),
-          Vector3{2, 1, 0})) {
-    if ((tr->at(0) >= kMinDimensionToTransposeTiled &&
-         tr->at(2) >= kMinDimensionToTransposeTiled) ||
-        (tr->at(0) >= kMinDimensionToTransposeTiled2 &&
-         tr->at(2) >= kMinDimensionToTransposeTiled2 &&
-         tr->at(0) * tr->at(2) >= kMinTotalDimensionsToTransposeTiled)) {
-      return TransposeDescription{&instr, *tr,
-                                  /*permutation=*/Vector3{2, 1, 0}};
+  absl::InlinedVector<int64_t, 3> dimensions(instr.shape().dimensions().begin(),
+                                             instr.shape().dimensions().end());
+  int64_t operand_most_minor_dim =
+      instr.operand(0)->shape().dimensions().back();
+  if (permutation == absl::InlinedVector<int64_t, 3>{0, 2, 1} ||
+      permutation == absl::InlinedVector<int64_t, 3>{2, 1, 0}) {
+    if ((dimensions.back() >= kMinDimensionToTransposeTiled &&
+         operand_most_minor_dim >= kMinDimensionToTransposeTiled) ||
+        (dimensions.back() >= kMinDimensionToTransposeTiled2 &&
+         operand_most_minor_dim >= kMinDimensionToTransposeTiled2 &&
+         dimensions.back() * operand_most_minor_dim >=
+             kMinTotalDimensionsToTransposeTiled)) {
+      return TransposeDescription{&instr, dimensions, permutation};
     }
-  }
-  if (IsMlirTransposeEmitterEnabled(instr)) {
-    if (std::optional<Vector3> tr =
-            ShapeUtil::GetNormalizedLogicalTransposeShape(
-                instr.operand(0)->shape(), instr.shape(), instr.dimensions(),
-                Vector3{1, 0, 2})) {
+  } else if (IsMlirTransposeEmitterEnabled(instr)) {
+    if (permutation.back() == dimensions.size() - 1) {
+      operand_most_minor_dim =
+          instr.operand(0)->shape().dimensions(dimensions.size() - 2);
       auto byte_width = primitive_util::ByteWidth(instr.shape().element_type());
-      if (byte_width * tr->at(2) <= kMaxBytesInMostMinorDimension &&
-          byte_width * tr->at(2) * std::min(tr->at(0), tr->at(1)) >=
+      if (byte_width * dimensions.back() <= kMaxBytesInMostMinorDimension &&
+          byte_width * dimensions.back() *
+                  std::min(operand_most_minor_dim,
+                           dimensions[dimensions.size() - 2]) >=
               kMinDimensionToTransposeTiled) {
-        return TransposeDescription{&instr, *tr,
-                                    /*permutation=*/Vector3{1, 0, 2}};
+        return TransposeDescription{&instr, dimensions, permutation};
       }
+    } else if ((operand_most_minor_dim >= kMinDimensionToTransposeTiled &&
+                dimensions.back() >= kMinDimensionToTransposeTiled) ||
+               (operand_most_minor_dim >= kMinDimensionToTransposeTiled2 &&
+                dimensions.back() >= kMinDimensionToTransposeTiled2 &&
+                operand_most_minor_dim * dimensions.back() >=
+                    kMinTotalDimensionsToTransposeTiled)) {
+      return TransposeDescription{&instr, dimensions, permutation};
     }
   }
   return std::nullopt;
@@ -634,12 +642,6 @@ static std::optional<TransposeDescription> FindTiledLogicalTranspose(
 
 std::optional<TransposeDescription> GetDescriptionForTiledTransposeEmitter(
     const HloInstruction& root, const HloInstruction& hero) {
-  // TODO(b/284431534): Figure out how to make the shared memory transpose
-  // emitter faster for this case.
-  if (hero.shape().element_type() == F32 && root.shape().element_type() == S8) {
-    return std::nullopt;
-  }
-
   if (auto d1 = FindTiledTranspose(hero)) {
     return d1;
   }

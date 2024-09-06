@@ -29,7 +29,14 @@ load(
     "tf_additional_gpu_compilation_copts",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google", "if_nccl", "internal_visibility", "tsl_copts")
+load(
+    "//xla/tsl:tsl.bzl",
+    "if_google",
+    "if_hermetic_cuda_tools",
+    "if_nccl",
+    "internal_visibility",
+    "tsl_copts",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -134,9 +141,21 @@ cuda_only_cc_library(
 
 # Buildozer can not remove dependencies inside select guards, so we have to use
 # an intermediate target.
-cc_library(name = "ptxas_wrapper")
+cc_library(
+    name = "ptxas_wrapper",
+    data = if_hermetic_cuda_tools(
+        ["@cuda_nvcc//:ptxas"],
+        [],
+    ),
+)
 
-cc_library(name = "nvlink_wrapper")
+cc_library(
+    name = "nvlink_wrapper",
+    data = if_hermetic_cuda_tools(
+        ["@cuda_nvcc//:nvlink"],
+        [],
+    ),
+)
 
 cuda_only_cc_library(
     name = "cuda_driver",
@@ -226,12 +245,9 @@ xla_test(
     name = "cuda_driver_test",
     srcs = ["cuda_driver_test.cc"],
     backends = ["gpu"],
-    tags = [
-        # TODO(b/317293391) Remove once Bazel test_suite handles tags correctly
-        "gpu",
-        "no_rocm",
-    ],
+    tags = ["no_rocm"],
     deps = [
+        ":cuda_diagnostics",
         ":cuda_driver",
         ":cuda_status",
         "//xla/stream_executor/gpu:gpu_driver_header",
@@ -429,7 +445,6 @@ gpu_kernel_library(
         "//xla/stream_executor/gpu:gpu_driver_header",
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/stream_executor/gpu:gpu_semaphore",
-        "//xla/stream_executor/gpu:gpu_stream",
         "@com_google_absl//absl/status:statusor",
     ],
 )
@@ -601,6 +616,23 @@ cc_library(
     ],
 )
 
+xla_test(
+    name = "cuda_platform_test",
+    srcs = ["cuda_platform_test.cc"],
+    backends = ["gpu"],
+    tags = ["no_rocm"],
+    deps = [
+        ":cuda_platform",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_googletest//:gtest_main",
+        "@local_tsl//tsl/platform:statusor",
+        "@local_tsl//tsl/platform:test",
+        "@local_tsl//tsl/platform:test_main",
+    ],
+)
+
 xla_cc_test(
     name = "ptx_compiler_test",
     srcs = ["ptx_compiler_test.cc"],
@@ -712,7 +744,7 @@ xla_cc_test(
     name = "nvjitlink_test",
     srcs = ["nvjitlink_test.cc"],
     args = if_google([
-        # nvjitlink allocates memory and only keeps a pointer past the usual offest of 1024 bytes;
+        # nvjitlink allocates memory and only keeps a pointer past the usual offset of 1024 bytes;
         # so we need to increase the max pointer offset. -1 means no limit.
         # This is only relevant for Google's HeapLeakChecker. The newer Leak sanitizer doesn't
         # have this issue.
@@ -750,6 +782,13 @@ cuda_only_cc_library(
     # "@local_config_cuda//cuda:runtime_ptxas",
     # ],
     # copybara:uncomment_end
+    # copybara:comment_begin
+    data = if_hermetic_cuda_tools([
+        "@cuda_nvcc//:fatbinary",
+        "@cuda_nvcc//:nvlink",
+        "@cuda_nvcc//:ptxas",
+    ]),
+    # copybara:comment_end
     visibility = internal_visibility([
         "//third_party/py/jax:__subpackages__",
         "//tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
