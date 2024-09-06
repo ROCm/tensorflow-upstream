@@ -27,8 +27,7 @@
 #if GOOGLE_CUDA
 constexpr int kWarpSize = 32;
 #else
-//constexpr int kWarpSize = 64;
-constexpr int kWarpSize = 32;
+constexpr int kWarpSize = 64;
 #endif
 
 #define MAKE_SHARED2(T, Name, N, M)                                     \
@@ -66,7 +65,7 @@ struct IMatmulParam {
 template <typename Scalar, int SUM_NUM>
 __forceinline__ __device__ Scalar warpReduceSum(Scalar val) {
   for (int offset = SUM_NUM / 2; offset > 0; offset >>= 1)
-    val += __shfl_down(val, offset);
+    val += __shfl_xor(val, offset);
   return val;
 }
 
@@ -83,11 +82,37 @@ __forceinline__ __device__ Scalar blockReduceSum(Scalar val, int n) {
   __syncthreads();
   if (wid == 0) {
     val = (threadIdx.x <= blockDim.x / kWarpSize) ? s_data[n][lane] : 0;
-    if (M_SIZE > 128) {
+    if (M_SIZE > kWarpSize*4) {
       val = warpReduceSum<Scalar, 8>(val);
-    } else if (M_SIZE > 64) {
+    } else if (M_SIZE > kWarpSize*2) {
       val = warpReduceSum<Scalar, 4>(val);
-    } else if (M_SIZE > 32) {
+    } else if (M_SIZE > kWarpSize) {
+      val = warpReduceSum<Scalar, 2>(val);
+    }
+  }
+  return val;
+}
+
+template <typename Scalar, int M_SIZE, int N_SIZE>
+__forceinline__ __device__ Scalar blockReduceSum_Phase1(Scalar* s_data, Scalar val, int n) {
+  int lane = threadIdx.x % kWarpSize;
+  int wid = threadIdx.x / kWarpSize;
+  val = warpReduceSum<Scalar, kWarpSize>(val);
+  return val;
+}
+
+template <typename Scalar, int M_SIZE, int N_SIZE>
+__forceinline__ __device__ Scalar blockReduceSum_Phase2(Scalar* s_data, int n) {
+  int lane = threadIdx.x % kWarpSize;
+  int wid = threadIdx.x / kWarpSize;
+  Scalar val = 0;
+  if (wid == 0) {
+    val = (threadIdx.x <= blockDim.x / kWarpSize) ? s_data[n*kWarpSize+lane] : 0;
+    if (M_SIZE > kWarpSize*4) {
+      val = warpReduceSum<Scalar, 8>(val);
+    } else if (M_SIZE > kWarpSize*2) {
+      val = warpReduceSum<Scalar, 4>(val);
+    } else if (M_SIZE > kWarpSize) {
       val = warpReduceSum<Scalar, 2>(val);
     }
   }
@@ -96,7 +121,7 @@ __forceinline__ __device__ Scalar blockReduceSum(Scalar val, int n) {
 
 template <bool use_indicator, typename Scalar, typename TIndex, int POW_NUM,
           int M_SIZE, int K_SIZE, int N_SIZE>
-__global__ void ComputeCoActionIndicator(IMatmulParam<Scalar, TIndex> param) {
+__global__ void ComputeCoActionIndicator(IMatmulParam<Scalar, TIndex> param, int global_flag) {
   int ind = 0;
   if (use_indicator) {
     ind = (int)param.indicators[blockIdx.x];
@@ -115,7 +140,7 @@ __global__ void ComputeCoActionIndicator(IMatmulParam<Scalar, TIndex> param) {
           N_SIZE;
 
   // step 1: load matrix b to shared memory
-  MAKE_SHARED(Scalar,Bs,K_SIZE *N_SIZE);
+  MAKE_SHARED(Scalar,Bs,K_SIZE*N_SIZE);
   if (threadIdx.x < K_SIZE * N_SIZE) {
     Bs[threadIdx.x] = B[threadIdx.x];
   }
@@ -124,27 +149,77 @@ __global__ void ComputeCoActionIndicator(IMatmulParam<Scalar, TIndex> param) {
   // step 2: pow + concat + matmul
   float C_local[N_SIZE] = {0.0f};
 
-  #pragma unroll
-    for (int k = 0; k < K_SIZE; k++) {
-      float a_val = float(A[k]);
-  #pragma unroll
-      for (int n = 0; n < N_SIZE; n++) {
-        if (blockIdx.z == 0) {
-          C_local[n] += a_val * float(Bs[k * N_SIZE + n]);
-        } else {
-          C_local[n] += a_val * a_val * float(Bs[k * N_SIZE + n]);
+  // ~46 us (dropping: 240 us -> 194 us)
+  if (threadIdx.x < M_SIZE) {
+    #pragma unroll
+      for (int k = 0; k < K_SIZE; k++) {
+        float a_val = float(A[k]);
+    #pragma unroll
+        for (int n = 0; n < N_SIZE; n++) {
+          if (blockIdx.z == 0) {
+            C_local[n] += a_val * float(Bs[k * N_SIZE + n]);
+          } else {
+            C_local[n] += a_val * a_val * float(Bs[k * N_SIZE + n]);
+          }
         }
       }
-    }
+  }
   __syncthreads();
 
+  constexpr int nMaxWarps = 3;
+  //MAKE_SHARED2(float, s_data, N_SIZE, kWarpSize);
+  __shared__ float s_data[N_SIZE*nMaxWarps];
+
   // step 3: tanh and wrap reduce.
+  for (int n = 0; n < N_SIZE; n++)
+    C_local[n] = tanhf(C_local[n]);
+
+  int lane = threadIdx.x % kWarpSize;
+  int wid = threadIdx.x / kWarpSize;
+
+  int nWarps = blockDim.x / kWarpSize;
+
+    // in the slow mode, executed as M=150, K=5, N=4, POW_NUM=2, grid size (1494000 150)
+    // ( 9960 blocks, 498 blocks/CU )
+    // Each thread executes 6*N_SIZE = 24 shfl 
+    // ~109 us (dropping: 131 us)
+
+    //float val = global_flag ? blockReduceSum_Phase1<float, M_SIZE, N_SIZE>(s_data, C_local[n], n) : 0.f;
+  for (int offset = kWarpSize / 2; offset > 0; offset >>= 1)
+      for (int n = 0; n < N_SIZE; n++)
+        C_local[n] += __shfl_xor(C_local[n], offset);
+  //for (int offset = kWarpSize / 2; offset > 0; offset >>= 1)
+  //    for (int n = 0; n < N_SIZE; n++)
+  //      C_local[n] += __shfl_xor(C_local[n], offset);
+
+    // ~16 us (dropping: 224 us)
+  if (lane == 0)
+    for (int n = 0; n < N_SIZE; n++)
+      s_data[n*nMaxWarps+wid] = C_local[n];
+
+  __syncthreads();
+
 #pragma unroll
   for (int n = 0; n < N_SIZE; n++) {
-    C_local[n] = tanhf(C_local[n]);
-    C_local[n] = blockReduceSum<float, M_SIZE, N_SIZE>(C_local[n], n);
+    // ~20 us (dropping: 240 us -> 220 us)
+    /*
+    C_local[n] = blockReduceSum_Phase2<float, M_SIZE, N_SIZE>(s_data, n);
     if (threadIdx.x == 0) {
       C[n] = Scalar(C_local[n]);
+    }
+    */
+    if (wid == 0) {
+      float val = (threadIdx.x < nWarps) ? s_data[n*nMaxWarps+lane] : 0;
+      if (M_SIZE > kWarpSize*4) {
+        val = warpReduceSum<float, 8>(val);
+      } else if (M_SIZE > kWarpSize*2) {
+        val = warpReduceSum<float, 4>(val);
+      } else if (M_SIZE > kWarpSize) {
+        val = warpReduceSum<float, 2>(val);
+      }
+      if (threadIdx.x == 0) {
+        C[n] = Scalar(val);
+      }
     }
   }
 }
@@ -162,17 +237,17 @@ Status LaunchCoAction<GPUDevice, Scalar>::operator()(
   param.batch_a = batch_a;
   param.parallel_num = paralle_num;
   dim3 grid_dim(batch_b, paralle_num, pow_num);
-  dim3 block_dim(m);
+  dim3 block_dim((m+kWarpSize-1) & ~(kWarpSize-1));
   const auto& d = context->eigen_device<GPUDevice>();
-  int shared_memory_size = k * n * sizeof(Scalar) + kWarpSize * n * sizeof(float);
+  int shared_memory_size = 0; //k * n * sizeof(Scalar) + kWarpSize * n * sizeof(float);
   if (m == 50 && k == 5 && n == 4 && pow_num == 2) {
     TF_CHECK_OK(GpuLaunchKernel(
         ComputeCoActionIndicator<false, Scalar, int64, 2, 50, 5, 4>, grid_dim,
-        block_dim, shared_memory_size, d.stream(), param));
+        block_dim, shared_memory_size, d.stream(), param, 0));
   } else if (m == 150 && k == 5 && n == 4 && pow_num == 2) {
     TF_CHECK_OK(GpuLaunchKernel(
         ComputeCoActionIndicator<false, Scalar, int64, 2, 150, 5, 4>, grid_dim,
-        block_dim, shared_memory_size, d.stream(), param));
+        block_dim, shared_memory_size, d.stream(), param, 0));
   } else {
     return errors::InvalidArgument("Unsupported m, k, n, pow_num: ", m, k, n,
                                    pow_num);
@@ -201,17 +276,17 @@ Status LaunchCoActionIndicator<GPUDevice, Scalar, TIndex>::operator()(
   param.batch_a = batch_a;
   param.parallel_num = paralle_num;
   dim3 grid_dim(batch_b, paralle_num, pow_num);
-  dim3 block_dim(m);
+  dim3 block_dim((m+kWarpSize-1) & ~(kWarpSize-1));
   const auto& d = context->eigen_device<GPUDevice>();
   int shared_memory_size = k * n * sizeof(Scalar) + kWarpSize * n * sizeof(float);
   if (m == 50 && k == 5 && n == 4 && pow_num == 2) {
     TF_CHECK_OK(GpuLaunchKernel(
         ComputeCoActionIndicator<true, Scalar, TIndex, 2, 50, 5, 4>, grid_dim,
-        block_dim, shared_memory_size, d.stream(), param));
+        block_dim, shared_memory_size, d.stream(), param, 0));
   } else if (m == 150 && k == 5 && n == 4 && pow_num == 2) {
     TF_CHECK_OK(GpuLaunchKernel(
         ComputeCoActionIndicator<true, Scalar, TIndex, 2, 150, 5, 4>, grid_dim,
-        block_dim, shared_memory_size, d.stream(), param));
+        block_dim, shared_memory_size, d.stream(), param, 0));
   } else {
     return errors::InvalidArgument("Unsupported m, k, n, pow_num: ", m, k, n,
                                    pow_num);
