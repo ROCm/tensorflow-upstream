@@ -38,7 +38,7 @@ limitations under the License.
 // clang-format off
 #include "third_party/eigen3/unsupported/Eigen/CXX11/FixedPoint"
 // clang-format on
-
+#undef TENSORFLOW_USE_MKLDNN_CONTRACTION_KERNEL
 #if defined(TENSORFLOW_USE_MKLDNN_CONTRACTION_KERNEL)
 #include "mkldnn.h"
 #endif

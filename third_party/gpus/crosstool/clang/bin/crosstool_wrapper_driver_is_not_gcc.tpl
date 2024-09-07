@@ -113,7 +113,7 @@ def GetHostCompilerOptions(argv):
     opts += ' -no-canonical-prefixes'
   if args.sysroot:
     opts += ' --sysroot ' + args.sysroot[0]
-
+  opts += " -Wno-error=array-parameter "
   return opts
 
 def _update_options(nvcc_options):
@@ -260,7 +260,8 @@ def main():
   # this).
   cpu_compiler_flags = [flag for flag in sys.argv[1:]
                              if not flag.startswith(('--cuda_log'))]
-
+  cpu_compiler_flags += ["Wno-error=array-parameter"]
+  print("cpu_compiler_flags", cpu_compiler_flags)
   return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
 
 if __name__ == '__main__':

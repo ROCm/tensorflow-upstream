@@ -13,7 +13,7 @@ TF_PKG_LOC=/tmp/tensorflow_pkg
 rm -f $TF_PKG_LOC/tensorflow*.whl
 
 # First positional argument (if any) specifies the ROCM_INSTALL_DIR
-ROCM_INSTALL_DIR=/opt/rocm-6.1.1
+ROCM_INSTALL_DIR=`readlink -f /opt/rocm`
 if [ "$#" -ge 1 ]; then
     ROCM_INSTALL_DIR=$1
 fi
@@ -34,7 +34,10 @@ bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=r
             --copt -Wno-deprecated-declarations \
             --copt -Wno-sign-compare \
             --copt -Wno-bitwise-instead-of-logical \
-            --action_env=TF_ROCM_AMDGPU_TARGETS=gfx942 \
+            --copt=-Wno-error=array-parameter  \
+            --copt=-Wno-error=array-bounds \
+            --cxxopt -std=c++17    \
+            --action_env=TF_ROCM_AMDGPU_TARGETS=gfx942 -s  \
             //tensorflow:libtensorflow_cc.so \
             //tensorflow:libtensorflow_framework.so
 

@@ -1,4 +1,4 @@
-# This file is expanded from a template by cuda_configure.bzl
+# This file is expanded from a template by rocm_configure.bzl
 # Update cuda_configure.bzl#verify_build_defines when adding new variables.
 
 load(":cc_toolchain_config.bzl", "cc_toolchain_config")

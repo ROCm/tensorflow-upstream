@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_KERNELS_MKL_CONV_OPS_H_
 #define TENSORFLOW_CORE_KERNELS_MKL_CONV_OPS_H_
 
+#if INTEL_MKL
+
 #include <limits>
 #include <memory>
 #include <vector>
@@ -635,5 +637,7 @@ class MklDummyOp : public OpKernel {
 #undef MKLDNN_SIZE_DTYPE
 
 }  // namespace tensorflow
+
+#endif
 
 #endif  // TENSORFLOW_CORE_KERNELS_MKL_CONV_OPS_H_

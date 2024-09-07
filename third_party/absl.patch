@@ -1,0 +1,7 @@
+diff -r -u a/absl/synchronization/internal/graphcycles.cc  b/absl/synchronization/internal/graphcycles.cc
+--- com_google_absl/absl/synchronization/internal/graphcycles.cc
++++ com_google_absl/absl/synchronization/internal/graphcycles.cc
+@@ -38,2 +38,3 @@
+ #include <algorithm>
++#include <limits>
+ #include <array>

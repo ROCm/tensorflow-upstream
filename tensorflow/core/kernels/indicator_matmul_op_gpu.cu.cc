@@ -69,40 +69,6 @@ class BlasScratchAllocator : public se::ScratchAllocator {
   std::vector<Tensor> allocated_tensors_;
 };
 
-
-class BlasScratchAllocator : public se::ScratchAllocator {
- public:
-  using Stream = se::Stream;
-  using DeviceMemoryBytes = se::DeviceMemory<uint8>;
-
-  BlasScratchAllocator(OpKernelContext* context) : context_(context) {}
-
-  int64 GetMemoryLimitInBytes() override { return -1; }
-
-  se::port::StatusOr<DeviceMemoryBytes> AllocateBytes(
-      int64 byte_size) override {
-    Tensor temporary_memory;
-
-    Status allocation_status(context_->allocate_temp(
-        DT_UINT8, TensorShape({byte_size}), &temporary_memory));
-    if (!allocation_status.ok()) {
-      return se::port::StatusOr<DeviceMemoryBytes>(
-          DeviceMemoryBytes::MakeFromByteSize(nullptr, 0));
-    }
-    // Hold the reference of the allocated tensors until the end of the
-    // allocator.
-    allocated_tensors_.push_back(temporary_memory);
-    return se::port::StatusOr<DeviceMemoryBytes>(
-        DeviceMemoryBytes::MakeFromByteSize(
-            temporary_memory.flat<uint8>().data(),
-            temporary_memory.flat<uint8>().size()));
-  }
-
- private:
-  OpKernelContext* context_;
-  std::vector<Tensor> allocated_tensors_;
-};
-
 }  // namespace
 
 template <typename T>

@@ -13,4 +13,5 @@ def repo():
         strip_prefix = "hwloc-2.0.3",
         build_file = "//third_party/hwloc:BUILD.bazel",
         system_build_file = "//third_party/hwloc:BUILD.system",
+#        patch_file = "//third_party:hwloc.patch"
     )

@@ -193,7 +193,9 @@ def _rocm_include_path(repository_ctx, rocm_config):
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/15.0.0/include")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/15.0.0/include")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/17/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/18/include")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/17/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/18/include")
 
     # Add rocrand and hiprand headers
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/rocrand/include")

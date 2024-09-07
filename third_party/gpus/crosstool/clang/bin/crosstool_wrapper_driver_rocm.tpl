@@ -93,7 +93,8 @@ def GetHostCompilerOptions(argv):
     opts += ' --sysroot ' + args.sysroot[0]
   if args.genco:
     opts += ' --genco'
-
+  opts += ' -Wno-error=array-parameter '
+  print(opts)
   return opts
 
 def system(cmd):
@@ -265,6 +266,8 @@ def main():
 
     # XXX: SE codes need to be built with gcc, but need this macro defined
     cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")
+    cpu_compiler_flags.append("-Wno-error=array-parameter")
+    cpu_compiler_flags.append("-Wno-error=array-bounds")
     if VERBOSE: print(' '.join([CPU_COMPILER] + cpu_compiler_flags))
     return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
 
