@@ -46,7 +46,7 @@ class HostExecutor : public internal::StreamExecutorInterface {
   explicit HostExecutor(const PluginConfig &plugin_config);
   ~HostExecutor() override;
 
-  port::Status Init(int device_ordinal, DeviceOptions device_options) override {
+  port::Status Init(int device_ordinal, int virt_ordinal, DeviceOptions device_options) override {
     return port::Status::OK();
   }
 
@@ -113,7 +113,7 @@ class HostExecutor : public internal::StreamExecutorInterface {
   port::Status SynchronizeEvent(Event *event) override;
   Event::Status PollForEventStatus(Event *event) override;
 
-  bool AllocateStream(Stream *stream) override;
+  bool AllocateStream(Stream *stream, int priority) override;
   void DeallocateStream(Stream *stream) override;
   bool CreateStreamDependency(Stream *dependent, Stream *other) override;
 

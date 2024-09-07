@@ -36,6 +36,7 @@ limitations under the License.
 #include "tensorflow/stream_executor/platform/thread_annotations.h"
 #include "tensorflow/stream_executor/stream_executor_internal.h"
 
+
 namespace stream_executor {
 namespace gpu {
 
@@ -59,7 +60,13 @@ class GpuExecutor : public internal::StreamExecutorInterface {
 
   ~GpuExecutor() override;
 
-  port::Status Init(int device_ordinal, DeviceOptions device_options) override;
+  port::Status Init(int device_ordinal, int virt_ordinal, DeviceOptions device_options) override;
+
+  StreamPool GetStreamPool() override { return stream_pool_; }
+  void SetStreamPool(StreamPool pool) override { stream_pool_ =  pool; }
+  port::Status CreateStreamPool() override;
+  int device_ordinal() const override { return device_ordinal_; }
+  int virtual_ordinal() const override { return virtual_ordinal_; }
 
   port::Status GetKernel(const MultiKernelLoaderSpec& spec,
                          KernelBase* kernel) override;
@@ -155,7 +162,7 @@ class GpuExecutor : public internal::StreamExecutorInterface {
   bool HostCallback(Stream* stream,
                     std::function<port::Status()> callback) override;
 
-  bool AllocateStream(Stream* stream) override;
+  bool AllocateStream(Stream* stream, int priority) override;
 
   void DeallocateStream(Stream* stream) override;
 
@@ -328,6 +335,7 @@ class GpuExecutor : public internal::StreamExecutorInterface {
   // The device ordinal value that this executor was initialized with; recorded
   // for use in getting device metadata. Immutable post-initialization.
   int device_ordinal_;
+  int virtual_ordinal_;
 
   // The major verion of the compute capability for device_.
   int cc_major_;
@@ -340,6 +348,8 @@ class GpuExecutor : public internal::StreamExecutorInterface {
 
   // The plugin configuration associated with this instance.
   PluginConfig plugin_config_;
+
+  StreamPool stream_pool_;
 
   SE_DISALLOW_COPY_AND_ASSIGN(GpuExecutor);
 };

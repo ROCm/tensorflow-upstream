@@ -182,7 +182,7 @@ class XlaDevice : public LocalDevice {
       EXCLUSIVE_LOCKS_REQUIRED(mu_);
   Status EnsureStreamOkLocked(xla::Backend* backend, const string& name,
                               std::shared_ptr<se::Stream>* stream,
-                              bool* stream_was_changed)
+                              bool* stream_was_changed, int priority)
       EXCLUSIVE_LOCKS_REQUIRED(mu_);
   xla::StatusOr<XlaDeviceContext*> GetDeviceContextLocked()
       EXCLUSIVE_LOCKS_REQUIRED(mu_);

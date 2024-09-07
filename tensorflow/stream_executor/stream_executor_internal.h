@@ -49,6 +49,8 @@ limitations under the License.
 
 namespace stream_executor {
 
+using StreamPool = std::vector<void*>;
+
 class Stream;
 class Timer;
 
@@ -176,7 +178,7 @@ class StreamExecutorInterface {
   virtual StreamExecutorInterface *GetUnderlyingExecutor() { return this; }
 
   // See the StreamExecutor interface for comments on the same-named methods.
-  virtual port::Status Init(int device_ordinal,
+  virtual port::Status Init(int device_ordinal, int virt_ordinal,
                             DeviceOptions device_options) = 0;
 
   virtual port::Status GetKernel(const MultiKernelLoaderSpec &spec,
@@ -249,7 +251,7 @@ class StreamExecutorInterface {
   virtual port::Status WaitForEvent(Stream *stream, Event *event) = 0;
   virtual port::Status SynchronizeEvent(Event *event) = 0;
   virtual Event::Status PollForEventStatus(Event *event) = 0;
-  virtual bool AllocateStream(Stream *stream) = 0;
+  virtual bool AllocateStream(Stream *stream, int priority) = 0;
   virtual void DeallocateStream(Stream *stream) = 0;
   virtual bool CreateStreamDependency(Stream *dependent, Stream *other) = 0;
   virtual bool AllocateTimer(Timer *timer) = 0;
@@ -381,6 +383,13 @@ class StreamExecutorInterface {
   // compilation cache exists or if clearing the compilation cache is
   // unsupported. Caches in non-volatile storage are unaffected.
   virtual port::Status FlushCompilationCache() { return port::Status::OK(); }
+
+  virtual StreamPool GetStreamPool() { return StreamPool(); }
+  virtual void SetStreamPool(StreamPool pool) { }
+  virtual port::Status CreateStreamPool() { return port::Status::OK(); }
+  virtual int device_ordinal() const { return 0; }
+  virtual int virtual_ordinal() const { return 0; }
+
 
  private:
   SE_DISALLOW_COPY_AND_ASSIGN(StreamExecutorInterface);

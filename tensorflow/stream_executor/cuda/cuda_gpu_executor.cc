@@ -141,7 +141,7 @@ port::Status GpuExecutor::Init(int device_ordinal,
     return status;
   }
 
-  status = GpuDriver::CreateContext(device_ordinal_, device_, device_options,
+  status = GpuDriver::CreateContext(device_ordinal_, 0, device_, device_options,
                                     &context_);
   if (!status.ok()) {
     return status;
@@ -708,7 +708,7 @@ Event::Status GpuExecutor::PollForEventStatus(Event* event) {
   return AsGpuEvent(event)->PollForStatus();
 }
 
-bool GpuExecutor::AllocateStream(Stream* stream) {
+bool GpuExecutor::AllocateStream(Stream* stream, int priority) {
   return AsGpuStream(stream)->Init();
 }
 

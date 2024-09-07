@@ -19,6 +19,8 @@ limitations under the License.
 #include "tensorflow/core/platform/stream_executor.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 
+#include "tensorflow/core/util/env_var.h"
+
 namespace tensorflow {
 
 namespace {
@@ -102,6 +104,11 @@ EventMgr::EventMgr(se::StreamExecutor* se, const GPUOptions& gpu_options)
       accumulated_tensor_bytes_(0),
       threadpool_(Env::Default(), "GPU_Event_Manager", kNumThreads) {
   gpu_event_mgr::InitThreadpoolLabels(&threadpool_);
+
+  int64 poll_rate = 1000;
+  tensorflow::ReadInt64FromEnvVar("POLL_RATE", 1000, &poll_rate);
+  poll_rate_ = 0.001*poll_rate;
+
   StartPollingLoop();
 }
 
@@ -259,6 +266,12 @@ void EventMgr::PollEvents(bool is_dedicated_poller,
                           gtl::InlinedVector<InUse, 4>* to_free) {
   VLOG(2) << "PollEvents  free_events_ " << free_events_.size()
           << " used_events_ " << used_events_.size();
+
+  if (!is_dedicated_poller) {
+    float rng = float(rand()) / float(RAND_MAX);
+    if (rng > poll_rate_)
+      return;
+  }
   // Sweep the remaining events in order.  If this is the dedicated
   // polling thread, check the entire set.  Otherwise, just sweep up to
   // the first non-complete record that is still pending.

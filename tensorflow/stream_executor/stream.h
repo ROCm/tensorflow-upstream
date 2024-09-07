@@ -123,7 +123,7 @@ class Stream {
 
   // Initialize the stream. This must be performed before entraining any other
   // operations.
-  Stream &Init() LOCKS_EXCLUDED(mu_);
+  Stream &Init(int priority=0) LOCKS_EXCLUDED(mu_);
 
   // Initializes timer t via the StreamExecutor.
   Stream &InitTimer(Timer *t);

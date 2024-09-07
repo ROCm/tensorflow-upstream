@@ -45,6 +45,15 @@ limitations under the License.
 #include "tensorflow/stream_executor/scratch_allocator.h"
 #include "tensorflow/stream_executor/stream_executor.h"
 
+
+namespace std {
+  std::string to_string(rocblas_handle ptr) {
+    char s[64];
+    sprintf(s, "%p", ptr);
+    return std::string(s);
+  };
+};
+
 namespace stream_executor {
 namespace gpu {
 
@@ -60,6 +69,11 @@ extern void rocm_Broadcast_rank3_fp32(void* stream, float* dst, int dst_stride, 
 
 extern void rocm_Broadcast_general(void* stream, 
                 void* pdst, const void** ppsrc, int size, int batches);
+
+void log_general(const char* str);
+void launch_notify(const char* name, void* stream);
+void launch_notify_finish(const char* name, void* stream);
+
 namespace wrap {
 
 #ifdef PLATFORM_GOOGLE
@@ -546,11 +560,18 @@ bool ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
     return false;
   }
 
+  //char str[64];
+  //sprintf(str, " %p", blas_);
+  std::string name = std::string(typeid(rocblas_func).name()) + " " + std::to_string(blas_);
+  launch_notify(name.c_str(), AsGpuStreamValue(stream));
+
   rocblas_status ret = rocblas_func(parent_, blas_, args...);
   if (err_on_failure && ret != rocblas_status_success) {
     LOG(ERROR) << "failed to run ROCBLAS routine " << rocblas_func.kName << ": "
                << ToString(ret);
   }
+  launch_notify_finish(name.c_str(), AsGpuStreamValue(stream));
+
   return ret == rocblas_status_success;
 }
 

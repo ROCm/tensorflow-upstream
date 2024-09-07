@@ -74,7 +74,7 @@ class StreamExecutor {
   StreamExecutor(
       const Platform *platform,
       std::unique_ptr<internal::StreamExecutorInterface> implementation,
-      int device_ordinal);
+      int device_ordinal, int virtual_ordinal = 0);
 
   ~StreamExecutor();
 
@@ -597,7 +597,7 @@ class StreamExecutor {
 
   // Allocates stream resources on the underlying platform and initializes its
   // internals.
-  bool AllocateStream(Stream *stream);
+  bool AllocateStream(Stream *stream, int priority);
 
   // Deallocates stream resources on the underlying platform.
   void DeallocateStream(Stream *stream);
@@ -696,7 +696,7 @@ class StreamExecutor {
   // The device ordinal that this object was initialized with.
   //
   // Immutable post-initialization.
-  int device_ordinal_;
+  int device_ordinal_, virtual_ordinal_;
 
   // Executor for handling host callback work that cannot be performed
   // by a host callback thread - for example, cleanup after a host BLAS routine

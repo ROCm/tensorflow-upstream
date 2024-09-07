@@ -270,10 +270,11 @@ Status XlaDevice::EnsureDeviceContextOk() {
 Status XlaDevice::EnsureStreamOkLocked(xla::Backend* backend,
                                        const string& name,
                                        std::shared_ptr<se::Stream>* stream,
-                                       bool* stream_was_changed) {
+                                       bool* stream_was_changed, 
+                                       int priority) {
   if (!(*stream) || !(*stream)->ok()) {
     xla::StreamPool::Ptr ptr;
-    TF_ASSIGN_OR_RETURN(ptr, backend->BorrowStream(device_ordinal_));
+    TF_ASSIGN_OR_RETURN(ptr, backend->BorrowStream(device_ordinal_, priority));
     *stream = std::shared_ptr<se::Stream>(std::move(ptr));
     VLOG(1) << "XlaDevice " << this << " new " << name << " "
             << (*stream)->DebugStreamPointers();
@@ -288,7 +289,7 @@ xla::StatusOr<XlaDeviceContext*> XlaDevice::GetDeviceContextLocked() {
   // Ensure all our streams are valid, borrowing new streams if necessary.
   bool need_new_device_context = !device_context_;
   TF_RETURN_IF_ERROR(EnsureStreamOkLocked(backend, "stream", &stream_,
-                                          &need_new_device_context));
+                                          &need_new_device_context, 0));
 
   std::shared_ptr<se::Stream> host_to_device_stream;
   std::shared_ptr<se::Stream> device_to_host_stream;
@@ -296,11 +297,11 @@ xla::StatusOr<XlaDeviceContext*> XlaDevice::GetDeviceContextLocked() {
   if (use_multiple_streams_) {
     TF_RETURN_IF_ERROR(EnsureStreamOkLocked(backend, "host_to_device_stream",
                                             &host_to_device_stream_,
-                                            &need_new_device_context));
+                                            &need_new_device_context, 1));
     for (std::shared_ptr<se::Stream>& stream : device_to_device_streams_) {
       TF_RETURN_IF_ERROR(
           EnsureStreamOkLocked(backend, "device_to_device_stream", &stream,
-                               &need_new_device_context));
+                               &need_new_device_context, 3));
     }
     host_to_device_stream = host_to_device_stream_;
     device_to_device_streams = device_to_device_streams_;

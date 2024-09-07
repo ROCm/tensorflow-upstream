@@ -289,7 +289,7 @@ port::Status Stream::RefreshStatus() {
   return status;
 }
 
-Stream &Stream::Init() {
+Stream &Stream::Init(int priority) {
   VLOG_CALL();
 
   absl::MutexLock lock(&mu_);
@@ -297,7 +297,7 @@ Stream &Stream::Init() {
       << "stream appears to already have been initialized";
   CHECK(!ok_) << "stream should be in !ok() state pre-initialization";
 
-  if (parent_->AllocateStream(this)) {
+  if (parent_->AllocateStream(this, priority)) {
     // Successful initialization!
     allocated_ = true;
     ok_ = true;

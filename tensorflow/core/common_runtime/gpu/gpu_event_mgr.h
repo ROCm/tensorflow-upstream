@@ -114,6 +114,8 @@ class EventMgr {
   mutex mu_;
   condition_variable events_pending_ GUARDED_BY(mu_);
 
+  float poll_rate_ = 1.0;
+
   void FlushAccumulatedTensors() EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
   struct InUse {

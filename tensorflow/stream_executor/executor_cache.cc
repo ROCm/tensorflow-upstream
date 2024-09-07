@@ -30,17 +30,7 @@ namespace stream_executor {
 namespace {
 static absl::once_flag flag_init;
 static void SetNumCudaContexts(int ordinal, int64 *num_cuda_contexts) {
-  *num_cuda_contexts = 1;
-#ifdef GOOGLE_CUDA
-  gpu::GpuDeviceHandle device;
-  if (gpu::GpuDriver::GetDevice(ordinal, &device).ok()) {
-    int64 num_contexts_env;
-    tensorflow::ReadInt64FromEnvVar("TF_NUM_CONTEXTS_PER_GPU", 4,
-                                    &num_contexts_env);
-    if (num_contexts_env > 0) *num_cuda_contexts = num_contexts_env;
-    LOG(INFO) << "TF_NUM_CONTEXTS_PER_GPU = " << *num_cuda_contexts;
-  }
-#endif  // GOOGLE_CUDA
+  *num_cuda_contexts = 4;
 }
 }  // end namespace
 
@@ -95,10 +85,37 @@ port::StatusOr<StreamExecutor*> ExecutorCache::GetOrCreate(
 }
 
 port::StatusOr<StreamExecutor*> ExecutorCache::Get(
-    const StreamExecutorConfig& config, int num_cuda_contexts) {
+    const StreamExecutorConfig& config, int num_cuda_contexts, bool must_lock) {
   std::string key = std::to_string(config.ordinal) + "," +
                     std::to_string(config.virtual_ordinal % num_cuda_contexts);
   Entry *entry = nullptr;
+
+  if (!must_lock) {
+    auto it = cache_.find(key);
+    if (it != cache_.end()) {
+      entry = &it->second;
+    } else {
+      return port::Status(
+          port::error::NOT_FOUND,
+          absl::StrFormat("No executors registered for ordinal %d",
+                          config.ordinal));
+    }
+    if (entry->configurations.empty()) {
+      return port::Status(
+        port::error::NOT_FOUND,
+        absl::StrFormat("No executors registered for ordinal %d",
+                        config.ordinal));
+    }  
+    for (const auto& iter : entry->configurations) {
+      if (iter.first.plugin_config == config.plugin_config &&
+        iter.first.device_options == config.device_options) {
+        VLOG(2) << "hit in cache for device ordinal " << key;
+        return iter.second.get();
+      }
+    }
+    return port::Status(port::error::NOT_FOUND,
+                      "No executor found with a matching config.");
+  }
   {
     absl::ReaderMutexLock lock{&mutex_};
     auto it = cache_.find(key);

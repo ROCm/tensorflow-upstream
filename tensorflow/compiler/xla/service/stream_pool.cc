@@ -20,7 +20,7 @@ limitations under the License.
 
 namespace xla {
 
-StreamPool::Ptr StreamPool::BorrowStream(se::StreamExecutor* executor) {
+StreamPool::Ptr StreamPool::BorrowStream(se::StreamExecutor* executor, int priority) {
   std::unique_ptr<se::Stream> stream;
   {
     tensorflow::mutex_lock lock(mu_);
@@ -42,7 +42,8 @@ StreamPool::Ptr StreamPool::BorrowStream(se::StreamExecutor* executor) {
   if (!stream) {
     // Create a new stream.
     stream = absl::make_unique<se::Stream>(executor);
-    stream->Init();
+
+    stream->Init(priority);
     VLOG(1) << stream->DebugStreamPointers()
             << " StreamPool created new stream";
   }

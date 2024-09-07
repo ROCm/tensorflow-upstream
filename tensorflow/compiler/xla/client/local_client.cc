@@ -33,11 +33,11 @@ namespace xla {
 
 namespace {
 StatusOr<StreamPool::Ptr> BorrowStreamForDevice(int device_ordinal,
-                                                Backend* backend) {
+                                                Backend* backend, int priority) {
   if (device_ordinal < 0) {
     device_ordinal = backend->default_device_ordinal();
   }
-  return backend->BorrowStream(device_ordinal);
+  return backend->BorrowStream(device_ordinal, priority);
 }
 }  // namespace
 
@@ -154,7 +154,7 @@ LocalExecutable::RunHelper(
     // ExecuteOnStreamWrapper), which is why it isn't declared in the inner "if"
     // scope.
     TF_ASSIGN_OR_RETURN(
-        stream, BorrowStreamForDevice(run_options.device_ordinal(), backend_));
+        stream, BorrowStreamForDevice(run_options.device_ordinal(), backend_, 4));
     run_options.set_stream(stream.get());
   }
   if (run_options.allocator() == nullptr) {
@@ -287,7 +287,7 @@ StatusOr<ScopedShapedBuffer> LocalClient::LiteralToShapedBuffer(
                       backend().transfer_manager()->AllocateScopedShapedBuffer(
                           literal.shape(), allocator, device_ordinal));
   TF_ASSIGN_OR_RETURN(auto stream,
-                      mutable_backend()->BorrowStream(device_ordinal));
+                      mutable_backend()->BorrowStream(device_ordinal, 4));
   TF_RETURN_IF_ERROR(backend().transfer_manager()->TransferLiteralToDevice(
       stream.get(), literal, scoped_buffer));
   return std::move(scoped_buffer);
@@ -296,7 +296,7 @@ StatusOr<ScopedShapedBuffer> LocalClient::LiteralToShapedBuffer(
 StatusOr<Literal> LocalClient::ShapedBufferToLiteral(
     const ShapedBuffer& shaped_buffer) {
   TF_ASSIGN_OR_RETURN(auto stream, mutable_backend()->BorrowStream(
-                                       shaped_buffer.device_ordinal()));
+                                       shaped_buffer.device_ordinal(), 4));
   return backend().transfer_manager()->TransferLiteralFromDevice(stream.get(),
                                                                  shaped_buffer);
 }
@@ -337,7 +337,7 @@ StatusOr<TransferToServerResponse> LocalClient::TransferToLocalServer(
       backend().transfer_manager()->AllocateScopedShapedBuffer(
           shape, backend().memory_allocator(), device_oridinal));
   TF_ASSIGN_OR_RETURN(auto stream,
-                      mutable_backend()->BorrowStream(device_oridinal));
+                      mutable_backend()->BorrowStream(device_oridinal, 4));
   TF_RETURN_IF_ERROR(backend().transfer_manager()->TransferLiteralToDevice(
       stream.get(), literal, shaped_buffer));
   std::vector<::xla::ScopedShapedBuffer> replicated_buffer;

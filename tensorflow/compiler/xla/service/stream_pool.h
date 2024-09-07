@@ -45,7 +45,7 @@ class StreamPool {
   // returns the stream to the pool on destruction.
   //
   // This method is thread-safe.
-  Ptr BorrowStream(se::StreamExecutor* executor);
+  Ptr BorrowStream(se::StreamExecutor* executor, int priority);
 
  private:
   // Puts a pointer to a stream back into the pool, leaving it free

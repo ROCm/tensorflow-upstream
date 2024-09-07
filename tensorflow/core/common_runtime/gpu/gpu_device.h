@@ -401,16 +401,18 @@ class StreamGroupFactory {
         &streams_[key_type(tf_gpu_id.value(), stream_group_within_gpu)];
     if (!group->compute) {
       group->compute = new se::Stream(executor);
-      group->compute->Init();
+      group->compute->Init(0);
       VLOG(2) << "Created stream[" << stream_group_within_gpu
               << "] = " << group->compute;
 
 #if TENSORFLOW_USE_ROCM
+      // NOTE: this is probably obsolete in 6.x
+      //
       // ROCm streams are lightweight and will not necessarily trigger device
       // queue init until they are first used. For optimal performance,
       // compute and nccl streams must be immediate siblings.
       group->nccl = new se::Stream(executor);
-      group->nccl->Init();
+      group->nccl->Init(3);
       VLOG(2) << "Created nccl_stream[" << stream_group_within_gpu
               << "] = " << group->nccl;
 
@@ -423,12 +425,12 @@ class StreamGroupFactory {
 #endif
 
       group->host_to_device = new se::Stream(executor);
-      group->host_to_device->Init();
+      group->host_to_device->Init(1);
       VLOG(2) << "Created host_to_device_stream[" << stream_group_within_gpu
               << "] = " << group->host_to_device;
 
       group->device_to_host = new se::Stream(executor);
-      group->device_to_host->Init();
+      group->device_to_host->Init(2);
       VLOG(2) << "Created device_to_host_stream[" << stream_group_within_gpu
               << "] = " << group->device_to_host;
 
@@ -443,7 +445,7 @@ class StreamGroupFactory {
       }
       for (int i = 0; i < num_d2d_streams; ++i) {
         se::Stream* stream = new se::Stream(executor);
-        stream->Init();
+        stream->Init(3);
         group->device_to_device.push_back(stream);
         VLOG(2) << "Created device_to_device_stream[" << stream_group_within_gpu
                 << "] = " << group->device_to_device.back();

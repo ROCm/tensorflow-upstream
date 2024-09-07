@@ -158,7 +158,7 @@ bool HostExecutor::HostCallback(Stream *stream,
   return true;
 }
 
-bool HostExecutor::AllocateStream(Stream *stream) { return true; }
+bool HostExecutor::AllocateStream(Stream *stream, int priority) { return true; }
 
 void HostExecutor::DeallocateStream(Stream *stream) {}
 

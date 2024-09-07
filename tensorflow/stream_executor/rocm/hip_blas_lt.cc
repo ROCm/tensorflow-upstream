@@ -56,6 +56,10 @@ namespace stream_executor {
 
 namespace gpu {
 void rocm_null_gpu_job(void* stream);
+void launch_notify(const char* name, void* stream);
+void launch_notify_finish(const char* name, void* stream);
+int launch_notify2(const char* name, void* stream);
+void launch_notify_finish2(const char* name, void* stream, int t);
 }
 
 namespace rocm {
@@ -427,6 +431,13 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_};
 
     if (palgo != nullptr) {
+      char str[129];
+      sprintf(str, "hipblasLtMatmul %d %d %d %d %d %d",
+        a_desc_.m_.num_rows, a_desc_.m_.num_cols,
+        b_desc_.m_.num_rows, b_desc_.m_.num_cols,
+        c_desc_.m_.num_rows, c_desc_.m_.num_cols);
+      //hipStreamSynchronize(stream_executor::gpu::AsGpuStreamValue(stream));
+      int t = stream_executor::gpu::launch_notify2(str, stream_executor::gpu::AsGpuStreamValue(stream));
       SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtMatmul(
           blas_lt_ref_.blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
           a_desc_.get(), b.opaque(), b_desc_.get(), beta, c.opaque(),
@@ -470,7 +481,8 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
             exit(0);
         }
       }
-
+      //hipStreamSynchronize(stream_executor::gpu::AsGpuStreamValue(stream));
+      stream_executor::gpu::launch_notify_finish2(str, stream_executor::gpu::AsGpuStreamValue(stream), t);
     } else {
       return xla::InternalError("hipblaslt: Invalid algorithm type");
     }

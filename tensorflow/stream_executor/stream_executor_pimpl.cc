@@ -138,10 +138,11 @@ static int64 GetMemoryLimitBytes() {
 StreamExecutor::StreamExecutor(
     const Platform *platform,
     std::unique_ptr<internal::StreamExecutorInterface> implementation,
-    int device_ordinal)
+    int device_ordinal, int virtual_ordinal)
     : platform_(platform),
       implementation_(std::move(implementation)),
       device_ordinal_(device_ordinal),
+      virtual_ordinal_(virtual_ordinal),
       background_threads_(new port::ThreadPool(
           port::Env::Default(), "stream_executor", kNumBackgroundThreads)),
       live_stream_count_(0),
@@ -183,7 +184,7 @@ StreamExecutor::~StreamExecutor() {
 }
 
 port::Status StreamExecutor::Init(DeviceOptions device_options) {
-  return implementation_->Init(device_ordinal_, std::move(device_options));
+  return implementation_->Init(device_ordinal_, virtual_ordinal_, std::move(device_options));
 }
 
 port::Status StreamExecutor::Init() { return Init(DeviceOptions::Default()); }
@@ -555,7 +556,7 @@ bool StreamExecutor::SynchronizeAllActivity() {
 
   // This should all be quick and infallible work, so we can perform the
   // synchronization even in the case of failure.
-  BlockOnThreadExecutor(background_threads_.get());
+//  BlockOnThreadExecutor(background_threads_.get());
 
   return ok;
 }
@@ -734,9 +735,9 @@ Event::Status StreamExecutor::PollForEventStatus(Event *event) {
   return implementation_->PollForEventStatus(event);
 }
 
-bool StreamExecutor::AllocateStream(Stream *stream) {
+bool StreamExecutor::AllocateStream(Stream *stream, int priority) {
   live_stream_count_.fetch_add(1, std::memory_order_relaxed);
-  if (!implementation_->AllocateStream(stream)) {
+  if (!implementation_->AllocateStream(stream, priority)) {
     auto count = live_stream_count_.fetch_sub(1);
     CHECK_GE(count, 0) << "live stream count should not dip below zero";
     LOG(INFO) << "failed to allocate stream; live stream count: " << count;

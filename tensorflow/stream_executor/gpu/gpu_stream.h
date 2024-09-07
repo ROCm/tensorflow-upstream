@@ -47,7 +47,7 @@ class GpuStream : public internal::StreamInterface {
 
   // Explicitly initialize the CUDA resources associated with this stream, used
   // by StreamExecutor::AllocateStream().
-  bool Init();
+  bool Init(int priority=0);
 
   // Explicitly destroy the CUDA resources associated with this stream, used by
   // StreamExecutor::DeallocateStream().

@@ -27,7 +27,7 @@ namespace xla {
 // data.
 class ServiceExecutableRunOptions {
  public:
-  using StreamBorrower = std::function<StatusOr<StreamPool::Ptr>(int)>;
+  using StreamBorrower = std::function<StatusOr<StreamPool::Ptr>(int,int)>;
 
   ServiceExecutableRunOptions()
       : ServiceExecutableRunOptions(ExecutableRunOptions()) {}
@@ -50,9 +50,9 @@ class ServiceExecutableRunOptions {
 
   // Borrows a stream and returns a smart pointer which returns the stream on
   // destruction.
-  StatusOr<StreamPool::Ptr> BorrowStream(int device_ordinal) const {
+  StatusOr<StreamPool::Ptr> BorrowStream(int device_ordinal, int priority) const {
     return borrow_stream_
-               ? borrow_stream_(device_ordinal)
+               ? borrow_stream_(device_ordinal, priority)
                : Status(tensorflow::error::UNIMPLEMENTED, "No stream cache");
   }
 

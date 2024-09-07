@@ -176,9 +176,22 @@ port::StatusOr<StreamExecutor*> ROCmPlatform::GetExecutor(
 
 port::StatusOr<std::unique_ptr<StreamExecutor>>
 ROCmPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
+  // TODO: serialize this?
+
+  StreamExecutor* first_executor = nullptr;
+  for (int i=0; i<4; i++) {
+    StreamExecutorConfig cfg(config.ordinal);
+    cfg.virtual_ordinal = i;
+    port::StatusOr<StreamExecutor*> result = executor_cache_.Get(cfg, 4, false);
+    if (result.ok()) {
+      first_executor = result.ValueOrDie();
+      break;
+    }
+  }  
+
   auto executor = absl::make_unique<StreamExecutor>(
       this, absl::make_unique<GpuExecutor>(config.plugin_config),
-      config.ordinal);
+      config.ordinal, config.virtual_ordinal);
   auto init_status = executor->Init(config.device_options);
   if (!init_status.ok()) {
     return port::Status{
@@ -187,6 +200,11 @@ ROCmPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
             "failed initializing StreamExecutor for ROCM device ordinal %d: %s",
             config.ordinal, init_status.ToString().c_str())};
   }
+
+  if (first_executor)
+    executor->implementation()->SetStreamPool(first_executor->implementation()->GetStreamPool());
+  else
+    executor->implementation()->CreateStreamPool();
 
   return std::move(executor);
 }

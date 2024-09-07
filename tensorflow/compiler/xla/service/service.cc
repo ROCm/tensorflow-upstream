@@ -427,7 +427,7 @@ Service::ExecuteParallelAndRegisterResult(
     std::vector<ScopedShapedBuffer> result_buffers;
     for (int64 replica = 0; replica < replicas.size(); ++replica) {
       TF_ASSIGN_OR_RETURN(StreamPool::Ptr stream,
-                          backend->BorrowStream(replicas[replica]));
+                          backend->BorrowStream(replicas[replica], 5));
       streams.push_back(std::move(stream));
 
       if (replica == 0 && profile != nullptr) {
@@ -529,7 +529,7 @@ StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
   TF_RET_CHECK(!replicas.empty());
   for (se::StreamExecutor* executor : replicas) {
     TF_ASSIGN_OR_RETURN(StreamPool::Ptr stream,
-                        backend->BorrowStream(executor));
+                        backend->BorrowStream(executor, 5));
     streams.push_back(std::move(stream));
   }
 
@@ -702,7 +702,7 @@ Status Service::ExecuteGraphParallel(const ExecuteGraphParallelRequest* arg,
       *snapshots[i].mutable_hlo() = *executable_ptrs[i]->hlo_proto();
       TF_ASSIGN_OR_RETURN(auto stream,
                           execute_backend_->BorrowStream(
-                              all_executors[i][0]->device_ordinal()));
+                              all_executors[i][0]->device_ordinal(), 5));
       TF_RETURN_IF_ERROR(RecordArguments(all_arguments[i].front(), stream.get(),
                                          execute_backend_->transfer_manager(),
                                          &snapshots[i]));
@@ -749,7 +749,7 @@ Status Service::ExecuteGraphParallel(const ExecuteGraphParallelRequest* arg,
       TF_ASSIGN_OR_RETURN(const ShapedBuffer* result_buffer,
                           allocation_tracker_.ResolveForReplica(outputs[i], 0));
       TF_ASSIGN_OR_RETURN(auto stream,
-                          execute_backend_->BorrowStream(all_executors[i][0]));
+                          execute_backend_->BorrowStream(all_executors[i][0], 5));
       TF_RETURN_IF_ERROR(RecordResult(*result_buffer, stream.get(),
                                       execute_backend_->transfer_manager(),
                                       &snapshots[i]));
@@ -895,7 +895,7 @@ Status Service::Execute(const ExecuteRequest* arg, ExecuteResponse* result) {
 
   TF_ASSIGN_OR_RETURN(auto stream,
                       execute_backend_->BorrowStream(
-                          execute_backend_->default_stream_executor()));
+                          execute_backend_->default_stream_executor(), 5));
   HloSnapshot snapshot;
   if (executable->dumping_snapshot()) {
     *snapshot.mutable_hlo() = *executable->hlo_proto();
@@ -958,7 +958,7 @@ Status Service::TransferToClient(const TransferToClientRequest* arg,
   }
 
   TF_ASSIGN_OR_RETURN(auto stream, execute_backend_->BorrowStream(
-                                       shaped_buffer->device_ordinal()));
+                                       shaped_buffer->device_ordinal(), 5));
 
   TF_ASSIGN_OR_RETURN(
       Literal result_literal,
@@ -997,7 +997,7 @@ Status Service::TransferToServer(const TransferToServerRequest* arg,
         execute_backend_->transfer_manager()->AllocateScopedShapedBuffer(
             shape, execute_backend_->memory_allocator(),
             executor->device_ordinal()));
-    TF_ASSIGN_OR_RETURN(auto stream, execute_backend_->BorrowStream(executor));
+    TF_ASSIGN_OR_RETURN(auto stream, execute_backend_->BorrowStream(executor, 5));
     TF_RETURN_IF_ERROR(
         execute_backend_->transfer_manager()->TransferLiteralToDevice(
             stream.get(), literal, shaped_buffer));

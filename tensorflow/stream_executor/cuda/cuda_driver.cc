@@ -418,7 +418,7 @@ class PrimaryContexts {
 /* static */ absl::Mutex PrimaryContexts::mu_{absl::kConstInit};
 
 /* static */ port::Status GpuDriver::CreateContext(
-    int device_ordinal, CUdevice device, const DeviceOptions& device_options,
+    int device_ordinal, int virt_ordinal, CUdevice device, const DeviceOptions& device_options,
     GpuContext** context) {
   *context = nullptr;
 

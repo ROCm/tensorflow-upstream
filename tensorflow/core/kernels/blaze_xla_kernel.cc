@@ -19,6 +19,12 @@ limitations under the License.
 #include "tensorflow/core/util/env_var.h"
 #include "tensorflow/compiler/jit/flags.h"
 
+namespace stream_executor {
+  namespace gpu {
+    void log_general(const char* str);
+  }
+}
+
 namespace tensorflow {
 
 class BlazeXlaOp : public AsyncOpKernel {
@@ -238,11 +244,13 @@ void BlazeXlaOp::Schedule(OpKernelContext* ctx, const DoneCallback& done, uint64
                           errors::DeadlineExceeded("blaze wait too long ", schedule_time - begin),
                           done);
       }
+      stream_executor::gpu::log_general("BlazeXlaOp compute begin");
       Status status = predictor_->Compute(ctx);
       --running_counter_;
       --total_running_counter_;
       --total_waiting_counter_;
       OP_REQUIRES_ASYNC(ctx, status.ok(), status, done);
+      stream_executor::gpu::log_general("BlazeXlaOp compute end");
       done();
   });
 } 

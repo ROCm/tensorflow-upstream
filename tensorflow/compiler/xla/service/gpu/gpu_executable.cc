@@ -156,7 +156,7 @@ Status GpuExecutable::ExecuteThunks(
   while (sub_streams.size() + 1 < thunk_schedule_->StreamCount()) {
     sub_streams.emplace_back();
     TF_ASSIGN_OR_RETURN(sub_streams.back(),
-                        run_options->BorrowStream(executor->device_ordinal()));
+                        run_options->BorrowStream(executor->device_ordinal(), 6));
   }
 
   HloExecutionProfiler profiler(do_profile, hlo_execution_profile, main_stream,

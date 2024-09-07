@@ -72,7 +72,7 @@ port::StatusOr<std::unique_ptr<StreamExecutor>>
 HostPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
   auto executor = absl::make_unique<StreamExecutor>(
       this, absl::make_unique<HostExecutor>(config.plugin_config),
-      config.ordinal);
+      config.ordinal, 0);
   auto init_status = executor->Init(config.device_options);
   if (!init_status.ok()) {
     return port::Status(

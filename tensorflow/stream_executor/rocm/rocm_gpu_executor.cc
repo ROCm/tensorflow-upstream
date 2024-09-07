@@ -158,9 +158,22 @@ void GpuExecutor::UnloadKernel(const KernelBase* kernel) {
   kernel_to_gpu_binary_.erase(gpu_binary_it);
 }
 
-port::Status GpuExecutor::Init(int device_ordinal,
+void UpdateStreamDeviceMap(hipStream_t s, int i);
+
+port::Status GpuExecutor::CreateStreamPool() {
+  stream_pool_.resize(12);
+  for (int i=0; i<12; i++) {
+    if (!GpuDriver::CreateStream(context_, reinterpret_cast<hipStream_t*>(&stream_pool_[i]))) 
+      return port::InternalError("Failed to allocate the stream pool");
+    UpdateStreamDeviceMap((hipStream_t)stream_pool_[i], device_ordinal_ * 100 + (i & 3));
+  }
+  return port::Status::OK();
+}
+
+port::Status GpuExecutor::Init(int device_ordinal, int virt_ordinal,
                                DeviceOptions device_options) {
   device_ordinal_ = device_ordinal;
+  virtual_ordinal_ = virt_ordinal;
 
   auto status = GpuDriver::Init();
   if (!status.ok()) {
@@ -172,12 +185,14 @@ port::Status GpuExecutor::Init(int device_ordinal,
     return status;
   }
 
-  status = GpuDriver::CreateContext(device_ordinal_, device_, device_options,
+  status = GpuDriver::CreateContext(device_ordinal_, virt_ordinal,
+                                    device_, device_options,
                                     &context_);
   if (!status.ok()) {
     return status;
   }
-
+/*
+*/
   return GpuDriver::GetGpuISAVersion(&version_, device_);
 }
 
@@ -647,8 +662,8 @@ Event::Status GpuExecutor::PollForEventStatus(Event* event) {
   return AsGpuEvent(event)->PollForStatus();
 }
 
-bool GpuExecutor::AllocateStream(Stream* stream) {
-  return AsGpuStream(stream)->Init();
+bool GpuExecutor::AllocateStream(Stream* stream, int priority) {
+  return AsGpuStream(stream)->Init(priority);
 }
 
 void GpuExecutor::DeallocateStream(Stream* stream) {

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#define gettid() syscall(SYS_gettid)
 
 #include <map>
 #include <set>
@@ -26,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
+#include "tensorflow/core/util/env_var.h"
 #include "tensorflow/stream_executor/gpu/gpu_diagnostics.h"
 #include "tensorflow/stream_executor/gpu/gpu_driver.h"
 #include "tensorflow/stream_executor/lib/env.h"
@@ -68,13 +72,56 @@ constexpr bool kVerifyGpuContext = false;
 namespace stream_executor {
 namespace gpu {
 
+std::map<hipStream_t, int> stream_device_map;
+std::map<hipStream_t, int> launch_counts;
+
+
+std::mutex gpu_mutex;
+int gpu_context_count = 0;
+
+FILE* fGpuApiCallLogFile = 0;
+std::chrono::time_point<std::chrono::high_resolution_clock> start_;
+
+tensorflow::int64 launch_sync_frequency = 4;
+bool gpu_logger = false;
+
+void UpdateStreamDeviceMap(hipStream_t s, int i) { 
+  if (fGpuApiCallLogFile == 0)
+    return;
+  stream_device_map[s] = i; 
+}
+
 // GpuContext wraps the device_ordinal.
 // Only reason we need this wrapper class is to make the GpuDriver* API
 class GpuContext {
  public:
-  GpuContext(const int v) : device_ordinal_(v) {}
+  GpuContext(const int v, const int vi) : device_ordinal_(v), virt_ordinal_(vi) {
+    gpu_mutex.lock();
+    printf("Creating a new GpuContext for device ordinal %d, virt ordinal %d\n", v, vi);
+    id_ = gpu_context_count;
+    gpu_context_count++;
 
+    if (id_ == 0) {
+      tensorflow::ReadInt64FromEnvVar("LAUNCH_SYNC", 4, &launch_sync_frequency);
+      tensorflow::ReadBoolFromEnvVar("GPU_LOGGER", false, &gpu_logger);
+      if (gpu_logger)
+        fGpuApiCallLogFile=fopen("log.txt","w");
+      start_ = now();
+    }
+
+    gpu_mutex.unlock();
+  } 
+  static std::chrono::time_point<std::chrono::high_resolution_clock> now() { return std::chrono::high_resolution_clock::now(); }
+  ~GpuContext() { 
+  }
+  static int t() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(now() - start_).count();
+  }
+  int id_;
+  int kernel_count_ = 0;
+  int stream_count_ = 0;
   int device_ordinal() const { return device_ordinal_; }
+  int virt_ordinal() const { return virt_ordinal_; }
 
   // Disallow copying and moving.
   GpuContext(GpuContext&&) = delete;
@@ -85,10 +132,65 @@ class GpuContext {
   void synchronize();
   void register_stream(hipStream_t s);
   void unregister_stream(hipStream_t s);
+  
+  // copy of the master pool owned by StreamExecutor
  private:
   const int device_ordinal_;
+  const int virt_ordinal_;
   std::set<hipStream_t> streams_;
 };
+
+#define LOG_PREFIX "%d device %d tid %ld "
+#define LOG_ARGS GpuContext::t(), get_device(stream), gettid()
+
+int get_device(void* stream)
+{
+  if (stream_device_map.find((hipStream_t)stream) == stream_device_map.end())
+    return -1;
+  return stream_device_map[(hipStream_t)stream];
+}
+
+void log_general(const char* str) {
+  if (fGpuApiCallLogFile)
+    fprintf(fGpuApiCallLogFile, "%d tid %ld %s\n", GpuContext::t(), gettid(), str);
+}
+
+void launch_notify(const char* name, void* stream) {
+  if (fGpuApiCallLogFile)
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "Launch %s\n", LOG_ARGS, name);
+}
+
+int launch_notify2(const char* name, void* stream) {
+  if (fGpuApiCallLogFile)
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "Launch %s\n", LOG_ARGS, name);
+  return GpuContext::t();
+}
+
+void launch_notify_finish(const char* name, void* stream) {
+  if (!fGpuApiCallLogFile)
+    return;
+  launch_counts[(hipStream_t)stream]++;
+  if (!(launch_counts[(hipStream_t)stream] % launch_sync_frequency)) {
+    hipStreamSynchronize((hipStream_t)stream);
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "Launch %s finish (synchronized)\n", LOG_ARGS, name);
+  }
+  else {
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "Launch %s finish\n", LOG_ARGS, name);
+  }
+}
+
+void launch_notify_finish2(const char* name, void* stream, int t) {
+  if (!fGpuApiCallLogFile)
+    return;
+  launch_counts[(hipStream_t)stream]++;
+  if (!(launch_counts[(hipStream_t)stream] % launch_sync_frequency)) {
+    hipStreamSynchronize((hipStream_t)stream);
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "Launch %s finish (synchronized) - %d us\n", LOG_ARGS, name, GpuContext::t() - t);
+  }
+  else {
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "Launch %s finish - %d us\n", LOG_ARGS, name, GpuContext::t() - t);
+  }
+}
 
 void GpuContext::synchronize() {
   for (auto s: streams_)
@@ -310,8 +412,8 @@ std::string ROCMPointersToCanAccessString(hipDeviceptr_t from, hipDeviceptr_t to
     return "error";
   }
 
-  GpuContext fromCtx(from_pointerAttributes.device);
-  GpuContext toCtx(to_pointerAttributes.device);
+  GpuContext fromCtx(from_pointerAttributes.device, 0);
+  GpuContext toCtx(to_pointerAttributes.device, 0);
 
   return GpuDriver::CanEnablePeerAccess(&fromCtx, &toCtx) ? "true" : "false";
 }
@@ -383,11 +485,13 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
 }
 
 /* static */ port::Status GpuDriver::CreateContext(
-    int device_ordinal, hipDevice_t device, const DeviceOptions& device_options,
+    int device_ordinal, int virt_ordinal, hipDevice_t device, const DeviceOptions& device_options,
     GpuContext** context) {
-  *context = new GpuContext(device_ordinal);
+  printf("GpuDriver::CreateContext(%d, %d)\n", device_ordinal, virt_ordinal);
+  *context = new GpuContext(device_ordinal, virt_ordinal);
   return port::Status::OK();
 }
+
 /* static */ void GpuDriver::DestroyContext(GpuContext* context) {
   if (context == nullptr) {
     return;
@@ -450,6 +554,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
           << " bdx: " << block_dim_x << " bdy: " << block_dim_y
           << " bdz: " << block_dim_z << " smem: " << shared_mem_bytes;
 
+  if (fGpuApiCallLogFile)
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "Launch %s %d x %d\n", LOG_ARGS, hipKernelNameRef(function), grid_dim_x*grid_dim_y*grid_dim_z, block_dim_x*block_dim_y*block_dim_z);
+
   // for in-process kernels we use non-null kernel_params:
   auto res = hipSuccess;
   if (kernel_params != nullptr) {
@@ -462,6 +569,18 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
       function, grid_dim_x, grid_dim_y, grid_dim_z, block_dim_x, block_dim_y,
       block_dim_z, shared_mem_bytes, stream, nullptr, extra);
   }
+
+  if (fGpuApiCallLogFile) {
+    launch_counts[stream]++;
+    if (!(launch_counts[stream] % launch_sync_frequency)) {
+      hipStreamSynchronize(stream);
+      fprintf(fGpuApiCallLogFile, LOG_PREFIX "Launch %s %d x %d done (synchronized)\n", LOG_ARGS, hipKernelNameRef(function), grid_dim_x*grid_dim_y*grid_dim_z, block_dim_x*block_dim_y*block_dim_z);
+    }
+    else {
+      fprintf(fGpuApiCallLogFile, LOG_PREFIX "Launch %s %d x %d done (unsynchronized)\n", LOG_ARGS, hipKernelNameRef(function), grid_dim_x*grid_dim_y*grid_dim_z, block_dim_x*block_dim_y*block_dim_z);
+    }
+  }
+
   if (res != hipSuccess) {
     return port::InternalError(
         absl::StrCat("Failed to launch ROCM kernel: ", ToString(res)));
@@ -635,20 +754,17 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
                                           GpuStreamHandle* stream,
                                           int priority) {
   ScopedActivateContext activated{context};
-  hipError_t res;
-  if (priority == 0) {
-    res = tensorflow::wrap::hipStreamCreateWithFlags(
+  hipError_t res = tensorflow::wrap::hipStreamCreateWithFlags(
         stream, hipStreamDefault);  // switch to hipStreamNonBlocking?
-  } else {
-    res = tensorflow::wrap::hipStreamCreateWithPriority(
-        stream, hipStreamDefault, priority);  // switch to hipStreamNonBlocking?
-  }
+
   if (res != hipSuccess) {
     LOG(ERROR) << "could not allocate ROCM stream for device "
                << context->device_ordinal() << ": " << ToString(res);
     return false;
   }
   context->register_stream(*stream);
+  if (fGpuApiCallLogFile)
+    stream_device_map[*stream] = context->device_ordinal() * 100 + context->virt_ordinal();
 
   VLOG(2) << "successfully created stream " << *stream << " for device "
           << context->device_ordinal() << " on thread";
@@ -870,6 +986,8 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
                                                GpuStreamHandle stream,
                                                GpuEventHandle event) {
   ScopedActivateContext activation{context};
+  if (fGpuApiCallLogFile)
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "WaitStreamOnEvent\n", LOG_ARGS);
   hipError_t res =
       tensorflow::wrap::hipStreamWaitEvent(stream, event, 0 /* = flags */);
   if (res != hipSuccess) {
@@ -980,6 +1098,8 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
                                                    uint64 size,
                                                    GpuStreamHandle stream) {
   ScopedActivateContext activation{context};
+  if (fGpuApiCallLogFile)
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "AsyncD2H %d\n", LOG_ARGS, size);
   hipError_t res =
       tensorflow::wrap::hipMemcpyDtoHAsync(host_dst, gpu_src, size, stream);
   if (res != hipSuccess) {
@@ -1010,6 +1130,8 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
   }
 */
   VLOG(1) << "AsyncMemcpyH2D " << gpu_dst << " " << host_src << " " << size;
+  if (fGpuApiCallLogFile)
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "AsyncH2D %d\n", LOG_ARGS, size);
   hipError_t res = tensorflow::wrap::hipMemcpyHtoDAsync(
       gpu_dst, const_cast<void*>(host_src), size, stream);
   if (res != hipSuccess) {
@@ -1031,6 +1153,8 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
                                                    uint64 size,
                                                    GpuStreamHandle stream) {
   ScopedActivateContext activation{context};
+  if (fGpuApiCallLogFile)
+    fprintf(fGpuApiCallLogFile, LOG_PREFIX "AsyncD2D %d\n", LOG_ARGS, size);
   hipError_t result =
       tensorflow::wrap::hipMemcpyDtoDAsync(gpu_dst, gpu_src, size, stream);
   if (result != hipSuccess) {
