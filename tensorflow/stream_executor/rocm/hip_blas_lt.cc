@@ -70,7 +70,22 @@ using tensorflow::errors::InvalidArgument;
 using tensorflow::bfloat16;
 using namespace hipblaslt_ext;
 
+// void GroupGemmUpdateArgs(hipStream_t stream, 
+//         UserArguments *dev_args,
+//         const gpu::GroupedGemmConfig& cfg);
+
+void GroupGemmUpdateArgs(hipStream_t stream, 
+        UserArguments *dev_args,
+        const void **a, const void **b, const void **c, void **d,
+      uint32_t num_gemms);
+
 namespace {
+
+typedef struct __attribute__((packed, aligned(8))) _rocblaslt_matmul_algo {
+    uint8_t data[8] = {0};
+    bool fallback = false;
+    size_t max_workspace_bytes = 0;
+} rocblaslt_matmul_algo;
 
 template <typename T>
 xla::Status SetAttr(hipblasLtMatrixLayout_t handle,
@@ -103,17 +118,7 @@ xla::Status SetAttr(hipblasLtMatmulPreference_t handle,
                   value);
 }
 
-static hipblasPointerMode_t AsHipblasLtPointerMode(
-    gpu::BlasLt::PointerMode pointer_mode) {
-  switch (pointer_mode) {
-    case gpu::BlasLt::PointerMode::kHost:
-      return HIPBLAS_POINTER_MODE_HOST;
-    case gpu::BlasLt::PointerMode::kDevice:
-      return HIPBLAS_POINTER_MODE_DEVICE;
-  }
-}
-
-static xla::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
+xla::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
     gpu::BlasLt::Epilogue epilogue) {
   switch (epilogue) {
     case gpu::BlasLt::Epilogue::kDefault:
@@ -181,8 +186,9 @@ xla::Status BlasLt::Init() {
       m.leading_dim_stride));
   // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
   BlasLt::MatrixLayout layout(hip_layout, hipblas_data_type_, m);
-  if (m.order != gpu::MatrixLayout::Order::kColumnMajor)
+  if (m.order != gpu::MatrixLayout::Order::kColumnMajor) {
     return xla::InternalError("HipblasLT does not support row-major matrices");
+  }
   TF_RETURN_IF_ERROR(SetAttr(hip_layout, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT,
                              static_cast<int32_t>(m.batch_size)));
 
@@ -286,8 +292,9 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
   return std::move(algorithms);
 }
 
-void BlasLt::MatmulPlan::SetAlgorithm(const MatmulAlgorithm& algorithm) {
+xla::Status BlasLt::MatmulPlan::SetAlgorithm(const MatmulAlgorithm& algorithm) {
   algorithm_ = algorithm;
+  return xla::Status::OK();
 }
 
 auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
@@ -364,7 +371,7 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     DeviceMemoryBase aux, DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
     DeviceMemoryBase c_scale, DeviceMemoryBase d_scale, DeviceMemoryBase d_amax,
     absl::optional<DeviceMemoryBase> workspace,
-    absl::optional<ScratchAllocator*> scratch_allocator,
+    absl::optional<ScratchAllocator *> allocator,
     blas::ProfileResult* profile_result) const {
   VLOG(1) << "BlasLt::MatmulPlan::DoMatmul";
 
@@ -385,10 +392,12 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     workspace_size = workspace.value().size();
     TF_RET_CHECK(workspace_size >= algorithm_->workspace_size);
   } else if (algorithm_->workspace_size > 0) {
-    TF_RET_CHECK(scratch_allocator.has_value());
-    TF_ASSIGN_OR_RETURN(
-        DeviceMemory<uint8_t> alloc,
-        scratch_allocator.value()->AllocateBytes(algorithm_->workspace_size));
+    
+    if (!allocator || allocator.value() == nullptr) {
+      return xla::InternalError("Allocator is not set: skipping solution!");
+    }
+    TF_ASSIGN_OR_RETURN(auto alloc,
+        allocator.value()->AllocateBytes(algorithm_->workspace_size));
     workspace_addr = gpu::GpuMemoryMutable(&alloc);
     workspace_size = algorithm_->workspace_size;
   }
@@ -488,12 +497,6 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     }
   }
 
-  typedef struct __attribute__((packed, aligned(8))) _rocblaslt_matmul_algo {
-    uint8_t data[8] = {0};
-    bool fallback = false;
-    size_t max_workspace_bytes = 0;
-  } rocblaslt_matmul_algo;
-
   if (profile_result != nullptr) {
     if (!timer->Stop(gpu::AsGpuStream(stream))) {
       return xla::InternalError("Unable to stop gpu timer");
@@ -542,13 +545,9 @@ xla::Status BlasLt::MatmulPlan::ExecuteOnStream(
 
 #undef TYPED_MATMUL
 
-  return xla::Internal("Unexpected dtype");
+  return xla::InternalError("Unexpected dtype");
 }
 
-// BlasLt::GroupedMatmulPlan::GroupedMatmulPlan(const BlasLt& blas_lt, 
-//     GroupedGemmPtr&& ptr, DeviceMemoryArgs&& args_mem) : 
-//         blas_lt_ref_(blas_lt), grouped_gemm_(std::move(ptr)),
-//         device_args_(std::move(args_mem)) {}
 
 BlasLt::GroupedMatmulPlan::GroupedMatmulPlan(const BlasLt& blas_lt) : 
         blas_lt_ref_(blas_lt) {}
@@ -562,8 +561,8 @@ BlasLt::GroupedMatmulPlan::~GroupedMatmulPlan() {
   }
 }
 
-auto BlasLt::GetGroupedMatmulPlan(DeviceMemoryAllocator *allocator, 
-                              const gpu::GroupedGemmConfig& cfg) const 
+auto BlasLt::GetGroupedMatmulPlan(Stream *stream, 
+          const gpu::GroupedGemmConfig& cfg) const 
     -> xla::StatusOr<GroupedMatmulPlanPtr> {
 
   auto plan = std::make_unique< GroupedMatmulPlan >(*this);
@@ -636,21 +635,25 @@ auto BlasLt::GetGroupedMatmulPlan(DeviceMemoryAllocator *allocator,
       return xla::InternalError("Unable to allocate memory for grouped gemm params!");
     }
     plan->device_args_ = GroupedMatmulPlan::DeviceMemoryArgs{raw_mem, mem_size};
+
+    if(!stream->ThenMemcpy(&plan->device_args_, plan->host_args_, mem_size).ok()) {
+       return xla::InternalError("Memcpy failed!");
+    }
+
   } // end block
 
   //for(const auto& a : plan->host_args_) 
   {
-    const auto& a = plan->host_args_[0];
-
-    std::ostringstream os;
-    for(int i = 0; i < sizeof(a.alpha); i++) {
-      os << std::hex << (uint32_t)a.alpha[i];
-    }
-    VLOG(0) << a.m << "," << a.n << "," << a.batch << "," << a.k <<
-      " alpha " << os.str() <<
-      " pointers: " << a.d << "," << a.c << "," << a.a << "," << a.b <<
-      " strides: " << a.strideD1 << "," << a.strideD2 << "," << a.strideA1 << "," << a.strideA2 <<
-      " activate: " << a.activationType;
+    // const auto& a = plan->host_args_[0];
+    // std::ostringstream os;
+    // for(int i = 0; i < sizeof(a.alpha); i++) {
+    //   os << std::hex << (uint32_t)a.alpha[i];
+    // }
+    // VLOG(0) << a.m << "," << a.n << "," << a.batch << "," << a.k <<
+    //   " alpha " << os.str() <<
+    //   " pointers: " << a.d << "," << a.c << "," << a.a << "," << a.b <<
+    //   " strides: " << a.strideD1 << "," << a.strideD2 << "," << a.strideA1 << "," << a.strideA2 <<
+    //   " activate: " << a.activationType;
   }
   return xla::StatusOr<GroupedMatmulPlanPtr>(std::move(plan));
 }
@@ -659,32 +662,26 @@ auto BlasLt::GroupedMatmulPlan::GetAlgorithms(
         size_t max_algorithm_count, size_t max_workspace_size) ->
     xla::StatusOr<std::vector<MatmulAlgorithm>> {
 
-// gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_}; ??
-
   // GemmPreference gemmPref;
   // gemmPref.setMaxWorkspaceBytes(max_workspace_size);
   
   std::vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
   std::vector<MatmulAlgorithm> algorithms;
 
+  gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_};
   absl::MutexLock lock(&blas_lt_ref_.mu_);
-
+  
   auto problem = grouped_gemm_->getProblemTypes()[0];
-  VLOG(0) << problem.op_a <<","<<
-                            problem.op_b<<","<<
-                            problem.type_a<<","<<
-                            problem.type_b<<","<<
-                            problem.type_c<<","<<
-                            problem.type_d<<","<<
-                            problem.type_compute;
-
-
+  // VLOG(0) << problem.op_a <<","<<
+  //                           problem.op_b<<","<<
+  //                           problem.type_a<<","<<
+  //                           problem.type_b<<","<<
+  //                           problem.type_c<<","<<
+  //                           problem.type_d<<","<<
+  //                           problem.type_compute;
     // HIPBLAS_OP_N = 111, /**<  Operate with the matrix. */
     // HIPBLAS_OP_T = 112, /**<  Operate with the transpose of the matrix. */
     // HIPBLAS_OP_C = 113 /**< Operate with the conjugate transpose of the matrix. */
-
-// 2024-07-25 08:43:40.947586: I tensorflow/stream_executor/rocm/hip_blas_lt.cc:572] 1,200,1,24 alpha 00ffffff803f000000000000 pointers: 0x7f1653bac000,0x7f1653bac000,0x7f16540dc300,0x7f1653c42200 strides: 1,200,24,24 activate: 0
-// 2024-07-25 08:43:40.947641: I tensorflow/stream_executor/rocm/hip_blas_lt.cc:596] 112,111,0,0,0,0,2
 
   SE_HIPBLAS_RETURN_IF_ERROR(getAllAlgos(blas_lt_ref_.blas_lt_.get(),
                                        GemmType::HIPBLASLT_GROUPED_GEMM,
@@ -699,7 +696,7 @@ auto BlasLt::GroupedMatmulPlan::GetAlgorithms(
   // SE_HIPBLAS_RETURN_IF_ERROR(
   //       grouped_gemm_->algoGetHeuristic(max_algorithm_count, gemmPref, 
   //             heuristicResult));
-  VLOG(0) << "Total heuristics found: " << heuristicResult.size();
+  VLOG(2) << "Total heuristics found: " << heuristicResult.size();
   algorithms.reserve(heuristicResult.size());
   for(auto& res : heuristicResult) {
     size_t workspace_size = 0;
@@ -711,50 +708,92 @@ auto BlasLt::GroupedMatmulPlan::GetAlgorithms(
 }
 
 xla::Status BlasLt::GroupedMatmulPlan::SetAlgorithm(
-            const MatmulAlgorithm& algorithm) 
+            const MatmulAlgorithm& algorithm, 
+            ScratchAllocator *allocator) 
 {
   auto palgo = absl::any_cast<hipblasLtMatmulAlgo_t>(&algorithm.opaque_algo);
   if(palgo == nullptr) {
     return xla::InternalError("Wrong algorithm instance !");
   }
+  algorithm_ = algorithm;
+
+  void* workspace_addr = nullptr;
+  uint64_t workspace_size = algorithm_->workspace_size;
+  if (workspace_size > 0) {
+    if (allocator == nullptr) {
+      return xla::InternalError("This algorithm requires a non-zero workspace!");
+    }
+    TF_ASSIGN_OR_RETURN(auto alloc, allocator->AllocateBytes(workspace_size));
+    workspace_addr = gpu::GpuMemoryMutable(&alloc);
+  }
+
+  gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_}; 
   absl::MutexLock lock(&blas_lt_ref_.mu_);
-  void *d_workspace = nullptr;
-  // NOTE: initialize requires a lot of time !!!
-  // TODO: add workspace
+  // NOTE NOTE: it could be that workspace is no longer valid after
+  // this function returns !!!!
   SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->initialize(
-          *palgo, d_workspace));
+          *palgo, workspace_addr));
   return xla::Status::OK();
 }
 
 xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(Stream *stream,
-          const gpu::GroupedGemmConfig& cfg) {
-  VLOG(1) << "BlasLt::GroupedMatmulPlan::ExecuteOnStream";
-  if((size_t)cfg.batch_count != device_args_.size()) {
-    return xla::InternalError("GroupedGemm config mismatch !");
-  }
-  // NOTE: we can also use GPU kernel to update pointers directly 
-  // in device mem => then memcpy won't be necessary
-  for(size_t i = 0; i < device_args_.size(); i++) {
-    host_args_[i].a = const_cast< void * >(cfg.a[i]);
-    host_args_[i].b = const_cast< void * >(cfg.b[i]);
-    host_args_[i].c = const_cast< void * >(cfg.c[i]);
-    host_args_[i].d = const_cast< void * >(cfg.d[i]);
+          const gpu::GroupedGemmConfig& cfg, 
+          blas::ProfileResult* profile_result) {
+  
+  if((size_t)cfg.batch_count * sizeof(UserArguments) != device_args_.size() || 
+      !algorithm_.has_value())
+  {
+    return xla::InternalError("GroupedGemm config mismatch or algorithm is unset!");
   }
 
-  // gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_}; ??
+  std::unique_ptr<gpu::GpuTimer, gpu::GpuTimerDeleter> timer;
+  if (profile_result != nullptr) {
+    timer.reset(new gpu::GpuTimer(blas_lt_ref_.parent_));
+    if (!timer->Init() || !timer->Start(gpu::AsGpuStream(stream))) {
+      return xla::InternalError("Unable to start gpu timer");
+    }
+  }
+
+  // VLOG(0) << "Cmp ptrs: " << host_args_[0].a << "," <<
+  //     host_args_[0].b << "," << host_args_[0].c << " vs " <<
+  //     cfg.a[0] << "," << cfg.b[0] << "," << cfg.c[0];
+
+  // NOTE: we can also use GPU kernel to update pointers directly 
+  // in device mem => then memcpy won't be necessary
+  // for(size_t i = 0; i < cfg.batch_count; i++) {
+  //   host_args_[i].a = const_cast< void * >(cfg.a[i]);
+  //   host_args_[i].b = const_cast< void * >(cfg.b[i]);
+  //   host_args_[i].c = const_cast< void * >(cfg.c[i]);
+  //   host_args_[i].d = const_cast< void * >(cfg.d[i]);
+  // }
+  //TF_RETURN_IF_ERROR(UpdateArgs(stream, cfg));
+  GroupGemmUpdateArgs(gpu::AsGpuStreamValue(stream), 
+        static_cast<UserArguments *>(device_args_.opaque()),
+        cfg.a, cfg.b, cfg.c, cfg.d,
+        cfg.batch_count);
+
+  gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_}; 
   {
     
   absl::MutexLock lock(&blas_lt_ref_.mu_);
-  if(!blas_lt_ref_.parent_->Memcpy(stream, &device_args_, host_args_,
-        device_args_.size())) {
-    return xla::InternalError("Memcpy failed!");
-  }
-
+  
   SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->run(
         device_args_.opaque(), gpu::AsGpuStreamValue(stream)));
   } // end block
 
-
+  if (profile_result != nullptr) {
+    if (!timer->Stop(gpu::AsGpuStream(stream))) {
+      return xla::InternalError("Unable to stop gpu timer");
+    }
+    // algorithm_ is alrady verified for correctness !
+    auto palgo = absl::any_cast<hipblasLtMatmulAlgo_t>(&algorithm_->opaque_algo);
+    // set algorithm ID to be unique (otherwise it gets kDefaultAlgorithm ID)
+    auto roc_algo = (const rocblaslt_matmul_algo*)palgo;
+    auto pindex = (int*)roc_algo->data;
+    profile_result->set_algorithm(static_cast<blas::AlgorithmType>(*pindex));
+    profile_result->set_is_valid(true);
+    profile_result->set_elapsed_time_in_ms(timer->GetElapsedMilliseconds());
+  }
   return xla::Status::OK();
 }
 

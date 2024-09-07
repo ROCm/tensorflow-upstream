@@ -65,15 +65,15 @@ cc_library(
 )
 
 cc_library(
-    name = "gpu_blas_lt_gemm_runner_header",
-    hdrs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.h"]),
-)
-
-cc_library(
     name = "gpu_blas_lt_gemm_runner",
     srcs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.cc"]),
     hdrs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.h"]),
     deps = if_gpu_is_configured([
+        "//tensorflow/core:autotuning_proto_cc",
+        "//tensorflow/core:autotune_results_proto_cc",
+        "//tensorflow/compiler/xla:xla_proto",
+        "//tensorflow/stream_executor:scratch_allocator",
+        #"//tensorflow/compiler/xla/service/gpu:gemm_algorithm_picker",
         ":gpu_blas_lt"
     ]),
 )

@@ -367,7 +367,7 @@ Status XlaCompilationCache::CompileImpl(
   int64 current_request_count = ++entry->request_count;
   if (!entry->compiled) {
     VLOG(0) << "Compilation cache entry hit: " << entry->compiled << " " 
-            << " signature: " << signature.HumanString() << " with request count "
+            << " signature: ?" << " with request count "
             << current_request_count << " and compile threshold "
             << compile_threshold.value_or(0) << " shape info="
             << inputs_shape_info.get();

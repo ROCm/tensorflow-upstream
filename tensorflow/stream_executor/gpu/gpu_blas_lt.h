@@ -177,7 +177,7 @@ struct BlasLt {
         size_t max_workspace_size = 1ll << 32) const = 0;
 
     // Algorithm needs to be set before calling ExecuteOnStream function
-    virtual void SetAlgorithm(const MatmulAlgorithm& algorithm) = 0;
+    virtual xla::Status SetAlgorithm(const MatmulAlgorithm& algorithm) = 0;
 
     // The most general form: to be implemented by derived clases.
     virtual xla::Status ExecuteOnStream(
@@ -239,10 +239,13 @@ struct BlasLt {
         size_t max_algorithm_count = 128,
         size_t max_workspace_size = 1ll << 32) = 0;
 
-    virtual xla::Status SetAlgorithm(const MatmulAlgorithm& algorithm) = 0;
+    virtual xla::Status SetAlgorithm(
+            const MatmulAlgorithm& algorithm, 
+            ScratchAllocator * scratch_allocator) = 0;
 
     virtual xla::Status ExecuteOnStream(Stream *stream, 
-          const gpu::GroupedGemmConfig& cfg) = 0;
+          const gpu::GroupedGemmConfig& cfg,
+          blas::ProfileResult* profile_result = nullptr) = 0;
 
     virtual ~GroupedMatmulPlan() {}
   };
@@ -256,7 +259,7 @@ struct BlasLt {
       const GemmConfig& cfg, Epilogue epilogue) const = 0;
 
   virtual xla::StatusOr<GroupedMatmulPlanPtr> GetGroupedMatmulPlan(
-          DeviceMemoryAllocator *allocator, 
+          Stream *stream,
           const GroupedGemmConfig& config) const = 0;
 
   static BlasLt* Get(const Stream* stream);
@@ -267,8 +270,8 @@ struct BlasLt {
                                                      Epilogue epilogue);
 
   // convenience function to create GroupedMatmulPlan directly using stream
-  static xla::StatusOr<GroupedMatmulPlanPtr> GetGroupedMatmulPlan(
-            const Stream* stream, DeviceMemoryAllocator *allocator, 
+  static xla::StatusOr<GroupedMatmulPlanPtr> CreateGroupedMatmulPlan(
+            Stream* stream, 
             const GroupedGemmConfig& cfg);
 
   virtual ~BlasLt() {}

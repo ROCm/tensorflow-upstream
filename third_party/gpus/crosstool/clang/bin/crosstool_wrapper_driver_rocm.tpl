@@ -13,8 +13,6 @@ DESCRIPTION:
   present, this wrapper invokes gcc with the input arguments as is.
 """
 
-from __future__ import print_function
-
 __author__ = 'whchung@gmail.com (Wen-Heng (Jack) Chung)'
 
 from argparse import ArgumentParser
@@ -26,12 +24,9 @@ import pipes
 
 # Template values set by rocm_configure.bzl.
 CPU_COMPILER = ('%{cpu_compiler}')
-GCC_HOST_COMPILER_PATH = ('%{gcc_host_compiler_path}')
 
 HIPCC_PATH = '%{hipcc_path}'
-PREFIX_DIR = os.path.dirname(GCC_HOST_COMPILER_PATH)
 HIPCC_ENV = '%{hipcc_env}'
-HIPCC_IS_HIPCLANG = '%{hipcc_is_hipclang}'=="True"
 HIP_RUNTIME_PATH = '%{hip_runtime_path}'
 HIP_RUNTIME_LIBRARY = '%{hip_runtime_library}'
 ROCR_RUNTIME_PATH = '%{rocr_runtime_path}'
@@ -80,6 +75,7 @@ def GetHostCompilerOptions(argv):
   parser.add_argument('--sysroot', nargs=1)
   parser.add_argument('-g', nargs='*', action='append')
   parser.add_argument('-fno-canonical-system-headers', action='store_true')
+  parser.add_argument('--genco', action='store_true')
 
   args, _ = parser.parse_known_args(argv)
 
@@ -93,31 +89,28 @@ def GetHostCompilerOptions(argv):
     opts += ' -g' + ' -g'.join(sum(args.g, []))
   if args.fno_canonical_system_headers:
     opts += ' -no-canonical-prefixes'
-    #opts += ' -fno-canonical-system-headers'
   if args.sysroot:
     opts += ' --sysroot ' + args.sysroot[0]
+  if args.genco:
+    opts += ' --genco'
 
   return opts
 
-def GetHipccOptions(argv):
-  """Collect the -hipcc_options values from argv.
+def system(cmd):
+  """Invokes cmd with os.system().
 
   Args:
-    argv: A list of strings, possibly the argv passed to main().
+    cmd: The command.
 
   Returns:
-    The string that can be passed directly to hipcc.
+    The exit code if the process exited with exit() or -signal
+    if the process was terminated by a signal.
   """
-
-  parser = ArgumentParser()
-  parser.add_argument('-hipcc_options', nargs='*', action='append')
-
-  args, _ = parser.parse_known_args(argv)
-
-  if args.hipcc_options:
-    options = _update_options(sum(args.hipcc_options, []))
-    return ' '.join(['--'+a for a in options])
-  return ''
+  retv = os.system(cmd)
+  if os.WIFEXITED(retv):
+    return os.WEXITSTATUS(retv)
+  else:
+    return -os.WTERMSIG(retv)
 
 
 def InvokeHipcc(argv, log=False):
@@ -132,7 +125,6 @@ def InvokeHipcc(argv, log=False):
   """
 
   host_compiler_options = GetHostCompilerOptions(argv)
-  hipcc_compiler_options = GetHipccOptions(argv)
   opt_option = GetOptionValue(argv, 'O')
   m_options = GetOptionValue(argv, 'm')
   m_options = ''.join([' -m' + m for m in m_options if m in ['32', '64']])
@@ -146,7 +138,7 @@ def InvokeHipcc(argv, log=False):
   warnings = GetOptionValue(argv, 'W')
   warnings = ''.join([' -W' + warn for warn in warnings])
   std_options = GetOptionValue(argv, 'std')
-  hipcc_allowed_std_options = ["c++11", "c++14"]
+  hipcc_allowed_std_options = ["c++11", "c++14", "c++17"]
   std_options = ''.join([' -std=' + define
       for define in std_options if define in hipcc_allowed_std_options])
 
@@ -179,26 +171,27 @@ def InvokeHipcc(argv, log=False):
   # Otherwise, we get build error.
   # Also we need to retain warning about uninitialised shared variable as
   # warning only, even when -Werror option is specified.
-  if HIPCC_IS_HIPCLANG:
-    hipccopts += ' --include=hip/hip_runtime.h '
-  hipccopts += ' ' + hipcc_compiler_options
+  hipccopts += ' --include=hip/hip_runtime.h '
+  # Force C++17 dialect (note, everything in just one string!)
+  hipccopts += ' --std=c++17 '
   # Use -fno-gpu-rdc by default for early GPU kernel finalization
   # This flag would trigger GPU kernels be generated at compile time, instead
   # of link time. This allows the default host compiler (gcc) be used as the
   # linker for TensorFlow on ROCm platform.
   hipccopts += ' -fno-gpu-rdc '
+  hipccopts += ' -fcuda-flush-denormals-to-zero '
   hipccopts += undefines
   hipccopts += defines
   hipccopts += warnings
   hipccopts += std_options
   hipccopts += m_options
+  hipccopts += ' -mllvm=-amdgpu-kernarg-preload-count=16'
 
   if depfiles:
     # Generate the dependency file
     depfile = depfiles[0]
     cmd = (HIPCC_PATH + ' ' + hipccopts +
            host_compiler_options +
-           ' ' + GCC_HOST_COMPILER_PATH +
            ' -I .' + includes + ' ' + srcs + ' -M -o ' + depfile)
     cmd = HIPCC_ENV.replace(';', ' ') + ' ' + cmd
     if log: Log(cmd)
@@ -209,24 +202,20 @@ def InvokeHipcc(argv, log=False):
 
   cmd = (HIPCC_PATH + ' ' + hipccopts +
          host_compiler_options + ' -fPIC' +
-         ' ' + GCC_HOST_COMPILER_PATH +
          ' -I .' + opt + includes + ' -c ' + srcs + out)
 
-  # TODO(zhengxq): for some reason, 'gcc' needs this help to find 'as'.
-  # Need to investigate and fix.
-  cmd = 'PATH=' + PREFIX_DIR + ':$PATH '\
-        + HIPCC_ENV.replace(';', ' ') + ' '\
+  cmd = HIPCC_ENV.replace(';', ' ') + ' '\
         + cmd
   if log: Log(cmd)
   if VERBOSE: print(cmd)
-  return os.system(cmd)
+  return system(cmd)
 
 
 def main():
   # ignore PWD env var
   os.environ['PWD']=''
 
-  parser = ArgumentParser()
+  parser = ArgumentParser(fromfile_prefix_chars='@')
   parser.add_argument('-x', nargs=1)
   parser.add_argument('--rocm_log', action='store_true')
   parser.add_argument('-pass-exit-codes', action='store_true')
@@ -257,8 +246,8 @@ def main():
     gpu_linker_flags.append('-L' + HIP_RUNTIME_PATH)
     gpu_linker_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
     gpu_linker_flags.append('-l' + HIP_RUNTIME_LIBRARY)
-    if HIPCC_IS_HIPCLANG:
-      gpu_linker_flags.append("-lrt")
+    gpu_linker_flags.append("-lrt")
+    gpu_linker_flags.append("-lstdc++")
 
     if VERBOSE: print(' '.join([CPU_COMPILER] + gpu_linker_flags))
     return subprocess.call([CPU_COMPILER] + gpu_linker_flags)
