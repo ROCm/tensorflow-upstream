@@ -3,11 +3,11 @@
 FROM ubuntu:focal
 MAINTAINER Jeff Poznanovic <jeffrey.poznanovic@amd.com>
 
-ARG ROCM_DEB_REPO=https://repo.radeon.com/rocm/apt/6.1/
+ARG ROCM_DEB_REPO=https://repo.radeon.com/rocm/apt/6.2/
 ARG ROCM_BUILD_NAME=ubuntu
 ARG ROCM_BUILD_NUM=main
-ARG ROCM_PATH=/opt/rocm-6.1.0
-ARG GPU_DEVICE_TARGETS="gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"
+ARG ROCM_PATH=/opt/rocm-6.2.0
+ARG GPU_DEVICE_TARGETS="gfx942"
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TF_NEED_ROCM 1
@@ -62,7 +62,7 @@ RUN bin/bash -c 'if [[ $ROCM_DEB_REPO == https://repo.radeon.com/rocm/*  ]] ; th
       echo "deb [arch=amd64 trusted=yes] $ROCM_DEB_REPO $ROCM_BUILD_NAME $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/rocm.list ; \
     fi'
 RUN echo "deb [arch=amd64 trusted=yes] http://apt.llvm.org/focal/ llvm-toolchain-focal-17 main" > /etc/apt/sources.list.d/llvm.list
-RUN echo "deb [arch=amd64] https://repo.radeon.com/amdgpu/6.1/ubuntu focal $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/amdgpu.list
+RUN echo "deb [arch=amd64] https://repo.radeon.com/amdgpu/6.2/ubuntu focal $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/amdgpu.list
 
 # Install rocm pkgs
 #RUN apt-get update --allow-insecure-repositories && \
@@ -98,7 +98,7 @@ RUN touch ${ROCM_PATH}/.info/version
 RUN bash -c 'ln -s ${ROCM_PATH} /opt/rocm'
 
 # Add target file to help determine which device(s) to build for
-RUN bash -c 'echo -e "gfx906\ngfx908\ngfx90a\ngfx940\ngfx941\ngfx942\ngfx1030\ngfx1100" >> ${ROCM_PATH}/bin/target.lst'
+RUN bash -c 'echo -e "gfx942" >> ${ROCM_PATH}/bin/target.lst'
 
 # Upgrade pip.
 RUN pip3 install --upgrade pip
