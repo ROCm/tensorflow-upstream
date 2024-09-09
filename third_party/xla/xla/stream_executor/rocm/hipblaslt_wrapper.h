@@ -22,7 +22,7 @@ limitations under the License.
 #include "rocm/rocm_config.h"
 
 #if TF_HIPBLASLT
-#include "rocm/include/hipblas/hipblas.h"
+#define LEGACY_HIPBLAS_DIRECT
 #if TF_ROCM_VERSION >= 50500
 #include "rocm/include/hipblaslt/hipblaslt.h"
 #else
