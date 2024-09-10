@@ -129,9 +129,9 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
     return kAllNHWC;
   }
 
-  const auto* rocm_compute_capability =
-      std::get_if<se::RocmComputeCapability>(&gpu_version);
-  if (rocm_compute_capability && input_ty == F16) return kAllNHWC;
+  //const auto* rocm_compute_capability =
+  //    std::get_if<se::RocmComputeCapability>(&gpu_version);
+  //if (rocm_compute_capability && input_ty == F16) return kAllNHWC;
 
   // If we're not Volta or not fp16/bfloat16, or not conv2D, the decision is
   // easy: Use NCHW.
