@@ -290,7 +290,7 @@ Status LinkWithBitcodeVector(llvm::Module* module,
   //llvm::buffer_ostream pstream(stream);
   module->print(stream, nullptr);
   stream.flush();
-  ir_string = absl::StrReplaceAll(ir_string, {{"v1024:1024-v2048:2048-n32:64-S32-A5", "v1024:1024-v2048:2048-n32:64-S32-A5-G1-ni:7:8"}});
+  ir_string = absl::StrReplaceAll(ir_string, {{"v1024:1024-v2048:2048-n32:64-S32-A5", "v1024:1024-v2048:2048-n32:64-S32-A5-G1-ni:7:8:9"}});
 
   std::unique_ptr<llvm::raw_fd_ostream> ir_fs(
       new llvm::raw_fd_ostream(ir_path, ec, llvm::sys::fs::F_None));
