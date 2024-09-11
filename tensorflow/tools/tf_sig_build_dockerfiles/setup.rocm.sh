@@ -31,7 +31,7 @@ if [[ -n $1 ]]; then
     ROCM_VERSION=$1
 fi
 if [[ -n $2 ]]; then
-    if [[ "$2" == "focal" ]] || [[ "$2" == "jammy" ]] || [[ "$2" == "el7" ]] || [[ "$2" == "el8" ]]; then
+    if [[ "$2" == "noble" ]] || [[ "$2" == "focal" ]] || [[ "$2" == "jammy" ]] || [[ "$2" == "el7" ]] || [[ "$2" == "el8" ]]; then
         DISTRO=$2
     else
         echo "Distro not supported"
