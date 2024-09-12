@@ -145,5 +145,7 @@ echo $ROCM_PATH
 echo $GPU_DEVICE_TARGETS
 
 # Ensure the ROCm target list is set up
+mkdir -p "$ROCM_PATH/bin/"
 printf '%s\n' ${GPU_DEVICE_TARGETS} | tee -a "$ROCM_PATH/bin/target.lst"
+mkdir -p "${ROCM_PATH}/.info/" 
 touch "${ROCM_PATH}/.info/version"
