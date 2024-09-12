@@ -50,7 +50,31 @@ def _get_win_rocm_defines(repository_ctx):
         "%{msvc_lib_path}": "msvc_not_used",
     }
 
+def get_host_environ(repository_ctx, name, default_value = None):
+    """Returns the value of an environment variable on the host platform.
+
+    The host platform is the machine that Bazel runs on.
+
+    Args:
+      repository_ctx: the repository_ctx
+      name: the name of environment variable
+
+    Returns:
+      The value of the environment variable 'name' on the host platform.
+    """
+    if name in repository_ctx.os.environ:
+        return repository_ctx.os.environ.get(name).strip()
+
+    if hasattr(repository_ctx.attr, "environ") and name in repository_ctx.attr.environ:
+        return repository_ctx.attr.environ.get(name).strip()
+
+    return default_value
+
 def find_cc(repository_ctx):
+    rocm_path = get_host_environ(repository_ctx, "ROCM_TOOLKIT_PATH")
+    return rocm_path+"/llvm/bin/amdclang"
+    #return rocm_path+"/llvm/bin/clang"
+
     """Find the C++ compiler."""
 
     # Return a dummy value for GCC detection here to avoid error
@@ -319,6 +343,7 @@ def _hipcc_is_hipclang(repository_ctx,rocm_config):
         The functions returns "False" if not (ie: based on HIP/HCC toolchain).
     """
 
+    return "True"
     #  check user-defined hip-clang environment variables
     for name in ["HIP_CLANG_PATH", "HIP_VDI_HOME"]:
         if name in repository_ctx.os.environ:
@@ -588,7 +613,7 @@ def _create_dummy_repository(repository_ctx):
         repository_ctx,
         "rocm:BUILD",
         {
-            "%{hip_lib}": _lib_name("hip", cpu_value),
+            "%{hip_lib}": _lib_name("amdhip64", cpu_value),
             "%{rocblas_lib}": _lib_name("rocblas", cpu_value),
             "%{miopen_lib}": _lib_name("miopen", cpu_value),
             "%{rccl_lib}": _lib_name("rccl", cpu_value),
@@ -809,12 +834,15 @@ def _create_local_rocm_repository(repository_ctx):
     # .d file - given that includes that are prefixed with "../" multiple
     # time quickly grow longer than the root of the tree, this can lead to
     # bazel's header check failing.
-    rocm_defines["%{extra_no_canonical_prefixes_flags}"] = "\"-fno-canonical-system-headers\""
+    #rocm_defines["%{extra_no_canonical_prefixes_flags}"] = "\"-fno-canonical-system-headers\""
+    rocm_defines["%{extra_no_canonical_prefixes_flags}"] = ""
 
     rocm_defines["%{unfiltered_compile_flags}"] = to_list_of_strings([
         "-DTENSORFLOW_USE_ROCM=1",
         "-D__HIP_PLATFORM_AMD__",
         "-DEIGEN_USE_HIP",
+        "-Wno-unused-but-set-variable",
+        "-Wno-c++11-narrowing",
     ] + _if_hipcc_is_hipclang(repository_ctx, rocm_config, [
         #
         # define "TENSORFLOW_COMPILER_IS_HIP_CLANG" when we are using clang
@@ -835,7 +863,7 @@ def _create_local_rocm_repository(repository_ctx):
     # # But disable some that are problematic.
     # compiler_flag: "-Wno-free-nonheap-object" # has false positives
 
-    rocm_defines["%{host_compiler_warnings}"] = to_list_of_strings(["-Wunused-but-set-parameter", "-Wno-free-nonheap-object"])
+    rocm_defines["%{host_compiler_warnings}"] = to_list_of_strings(["-Wno-unused-but-set-parameter", "-Wno-unused-but-set-variable", "-Wno-array-parameter", "-Wno-free-nonheap-object"])
 
     rocm_defines["%{cxx_builtin_include_directories}"] = to_list_of_strings(host_compiler_includes +
                                                                             _rocm_include_path(repository_ctx, rocm_config))
@@ -870,7 +898,7 @@ def _create_local_rocm_repository(repository_ctx):
             "%{hipcc_is_hipclang}": _hipcc_is_hipclang(repository_ctx,rocm_config),
             "%{rocr_runtime_path}": rocm_config.rocm_toolkit_path + "/lib",
             "%{rocr_runtime_library}": "hsa-runtime64",
-            "%{hip_runtime_path}": rocm_config.rocm_toolkit_path + "/hip/lib",
+            "%{hip_runtime_path}": rocm_config.rocm_toolkit_path + "/lib",
             "%{hip_runtime_library}": "amdhip64",
             "%{crosstool_verbose}": _crosstool_verbose(repository_ctx),
             "%{gcc_host_compiler_path}": str(cc),

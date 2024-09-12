@@ -705,8 +705,8 @@ def tf_additional_cloud_op_deps():
         "//tensorflow:windows_and_api_version_2": [],
         "//tensorflow:no_gcp_support": [],
         "//conditions:default": [
-            "//tensorflow/contrib/cloud:bigquery_reader_ops_op_lib",
-            "//tensorflow/contrib/cloud:gcs_config_ops_op_lib",
+       #     "//tensorflow/contrib/cloud:bigquery_reader_ops_op_lib",
+       #     "//tensorflow/contrib/cloud:gcs_config_ops_op_lib",
         ],
     })
 

@@ -1,0 +1,63 @@
+From 9e9a5a16902a446e7665ff5fc345362dbf40730b Mon Sep 17 00:00:00 2001
+From: Jason Furmanek <Jason.Furmanek@amd.com>
+Date: Mon, 9 Sep 2024 22:22:34 +0000
+Subject: [PATCH] fix build
+
+---
+ include/pybind11/cast.h     |  4 ++--
+ include/pybind11/pybind11.h | 21 ++++++++++++++-------
+ 2 files changed, 16 insertions(+), 9 deletions(-)
+
+diff --git a/include/pybind11/cast.h b/include/pybind11/cast.h
+index 8d0fd5d9..9684253b 100644
+--- a/include/pybind11/cast.h
++++ b/include/pybind11/cast.h
+@@ -574,10 +574,10 @@ public:
+             if (type->operator_new) {
+                 vptr = type->operator_new(type->type_size);
+             } else {
+-                #if defined(PYBIND11_CPP17)
++                #ifdef __cpp_aligned_new
+                     if (type->type_align > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+                         vptr = ::operator new(type->type_size,
+-                                              (std::align_val_t) type->type_align);
++                                               std::align_val_t(type->type_align));
+                     else
+                 #endif
+                 vptr = ::operator new(type->type_size);
+diff --git a/include/pybind11/pybind11.h b/include/pybind11/pybind11.h
+index 0cc5dd52..a32bcc04 100644
+--- a/include/pybind11/pybind11.h
++++ b/include/pybind11/pybind11.h
+@@ -1003,14 +1003,21 @@ void call_operator_delete(T *p, size_t s, size_t) { T::operator delete(p, s); }
+ 
+ inline void call_operator_delete(void *p, size_t s, size_t a) {
+     (void)s; (void)a;
+-#if defined(PYBIND11_CPP17)
+-    if (a > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+-        ::operator delete(p, s, std::align_val_t(a));
+-    else
++    #ifdef __cpp_aligned_new
++        if (a > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
++            #ifdef __cpp_sized_deallocation
++                ::operator delete(p, s, std::align_val_t(a));
++            #else
++                ::operator delete(p, std::align_val_t(a));
++            #endif
++            return;
++        }
++    #endif
++    #ifdef __cpp_sized_deallocation
+         ::operator delete(p, s);
+-#else
+-    ::operator delete(p);
+-#endif
++    #else
++        ::operator delete(p);
++    #endif
+ }
+ 
+ NAMESPACE_END(detail)
+-- 
+2.43.5
+

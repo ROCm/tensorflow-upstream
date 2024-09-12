@@ -341,7 +341,7 @@ def _impl(ctx):
                 ],
                 flag_groups = [
                     flag_group(
-                        flags = ctx.attr.host_unfiltered_compile_flags,
+                        flags = ["-Wno-unused-but-set-variable", "-Wno-deprecated-non-prototype", "-Wdeprecated-builtins"] + ctx.attr.host_unfiltered_compile_flags,
                     ),
                 ],
             ),
@@ -423,7 +423,8 @@ def _impl(ctx):
         flag_sets = [
             flag_set(
                 actions = all_link_actions,
-                flag_groups = [flag_group(flags = ["-pass-exit-codes"])],
+                #flag_groups = [flag_group(flags = ["-pass-exit-codes"])],
+                flag_groups = [flag_group(flags = [""])],
             ),
         ],
     )
@@ -559,7 +560,8 @@ def _impl(ctx):
                 actions = [ACTION_NAMES.c_compile, ACTION_NAMES.cpp_compile],
                 flag_groups = [
                     flag_group(
-                        flags = ["-Wall"] + ctx.attr.host_compiler_warnings,
+                        #flags = ["-Wall"] + ctx.attr.host_compiler_warnings,
+                        flags = [""] + ctx.attr.host_compiler_warnings,
                     ),
                 ],
             ),

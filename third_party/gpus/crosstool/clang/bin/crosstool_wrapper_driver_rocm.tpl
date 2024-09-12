@@ -79,7 +79,10 @@ def GetHostCompilerOptions(argv):
   parser.add_argument('-iquote', nargs='*', action='append')
   parser.add_argument('--sysroot', nargs=1)
   parser.add_argument('-g', nargs='*', action='append')
-  parser.add_argument('-fno-canonical-system-headers', action='store_true')
+  #parser.add_argument('-fno-canonical-system-headers', action='store_true')
+  parser.add_argument('-no-canonical-prefixes', action='store_true')
+  parser.add_argument('-Wno-unused-variable', action='store_true')
+  parser.add_argument('-Wno-unused-but-set-variable', action='store_true')
 
   args, _ = parser.parse_known_args(argv)
 
@@ -91,8 +94,8 @@ def GetHostCompilerOptions(argv):
     opts += ' -iquote ' + ' -iquote '.join(sum(args.iquote, []))
   if args.g:
     opts += ' -g' + ' -g'.join(sum(args.g, []))
-  if args.fno_canonical_system_headers:
-    opts += ' -no-canonical-prefixes'
+  #if args.fno_canonical_system_headers:
+   #opts += ' -no-canonical-prefixes'
     #opts += ' -fno-canonical-system-headers'
   if args.sysroot:
     opts += ' --sysroot ' + args.sysroot[0]
@@ -131,6 +134,7 @@ def InvokeHipcc(argv, log=False):
     The return value of calling os.system('hipcc ' + args)
   """
 
+  if VERBOSE: print("InvokeHipcc")
   host_compiler_options = GetHostCompilerOptions(argv)
   hipcc_compiler_options = GetHipccOptions(argv)
   opt_option = GetOptionValue(argv, 'O')
@@ -226,7 +230,6 @@ def main():
   parser = ArgumentParser()
   parser.add_argument('-x', nargs=1)
   parser.add_argument('--rocm_log', action='store_true')
-  parser.add_argument('-pass-exit-codes', action='store_true')
   args, leftover = parser.parse_known_args(sys.argv[1:])
 
   if VERBOSE: print('PWD=' + os.getcwd())
@@ -239,7 +242,7 @@ def main():
     if args.rocm_log: Log('using hipcc')
     return InvokeHipcc(leftover, log=args.rocm_log)
 
-  elif args.pass_exit_codes:
+#  elif args.pass_exit_codes:
     # link
     # with hipcc compiler invoked with -fno-gpu-rdc by default now, it's ok to 
     # use host compiler as linker, but we have to link with HCC/HIP runtime.
@@ -268,11 +271,18 @@ def main():
     # We not only want to pass -x to the CPU compiler, but also keep it in its
     # relative location in the argv list (the compiler is actually sensitive to
     # this).
+    if VERBOSE: print("Compiler HOST")
     cpu_compiler_flags = [flag for flag in sys.argv[1:]
                                if not flag.startswith(('--rocm_log'))]
 
     # XXX: SE codes need to be built with gcc, but need this macro defined
-    cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")
+    #cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")
+    cpu_compiler_flags.append("-D__HIP_PLATFORM_AMD__")
+    cpu_compiler_flags.append('-L' + HIP_RUNTIME_PATH)
+    cpu_compiler_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
+    cpu_compiler_flags.append('-l' + HIP_RUNTIME_LIBRARY)
+    cpu_compiler_flags.append("-lrt")
+    cpu_compiler_flags.append("-Wno-unused-command-line-argument")
     if VERBOSE: print(' '.join([CPU_COMPILER] + cpu_compiler_flags))
     return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
 

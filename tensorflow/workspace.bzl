@@ -582,6 +582,7 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
 
     tf_http_archive(
         name = "boringssl",
+        patch_file = clean_dep("//third_party/boringssl:0001-patch-build.patch"),
         sha256 = "1188e29000013ed6517168600fc35a010d58c5d321846d6a6dfee74e4c788b45",
         strip_prefix = "boringssl-7f634429a04abc48e2eb041c81c5235816c96514",
         system_build_file = clean_dep("//third_party/systemlibs:boringssl.BUILD"),
@@ -914,6 +915,7 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
 
     tf_http_archive(
         name = "pybind11",
+        patch_file = clean_dep("//third_party:0001-fix-build.patch"),
         urls = [
             "https://mirror.bazel.build/github.com/pybind/pybind11/archive/v2.3.0.tar.gz",
             "https://github.com/pybind/pybind11/archive/v2.3.0.tar.gz",
