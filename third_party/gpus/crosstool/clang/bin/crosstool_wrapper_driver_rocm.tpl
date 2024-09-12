@@ -36,7 +36,8 @@ HIP_RUNTIME_PATH = '%{hip_runtime_path}'
 HIP_RUNTIME_LIBRARY = '%{hip_runtime_library}'
 ROCR_RUNTIME_PATH = '%{rocr_runtime_path}'
 ROCR_RUNTIME_LIBRARY = '%{rocr_runtime_library}'
-VERBOSE = '%{crosstool_verbose}'=='1'
+#VERBOSE = '%{crosstool_verbose}'=='1'
+VERBOSE = 1
 
 def Log(s):
   print('gpus/crosstool: {0}'.format(s))
@@ -94,8 +95,8 @@ def GetHostCompilerOptions(argv):
     opts += ' -iquote ' + ' -iquote '.join(sum(args.iquote, []))
   if args.g:
     opts += ' -g' + ' -g'.join(sum(args.g, []))
-  if args.fno_canonical_system_headers:
-    opts += ' -no-canonical-prefixes'
+  #if args.fno_canonical_system_headers:
+   #opts += ' -no-canonical-prefixes'
     #opts += ' -fno-canonical-system-headers'
   if args.sysroot:
     opts += ' --sysroot ' + args.sysroot[0]
@@ -134,6 +135,7 @@ def InvokeHipcc(argv, log=False):
     The return value of calling os.system('hipcc ' + args)
   """
 
+  if VERBOSE: print("InvokeHipcc")
   host_compiler_options = GetHostCompilerOptions(argv)
   hipcc_compiler_options = GetHipccOptions(argv)
   opt_option = GetOptionValue(argv, 'O')
@@ -247,20 +249,20 @@ def main():
     # use host compiler as linker, but we have to link with HCC/HIP runtime.
     # Such restriction would be revised further as the bazel script get
     # improved to fine tune dependencies to ROCm libraries.
-    #gpu_linker_flags = [flag for flag in sys.argv[1:]
-    #                           if not flag.startswith(('--rocm_log'))]
-#
-#    gpu_linker_flags.append('-L' + ROCR_RUNTIME_PATH)
-#    gpu_linker_flags.append('-Wl,-rpath=' + ROCR_RUNTIME_PATH)
-#    gpu_linker_flags.append('-l' + ROCR_RUNTIME_LIBRARY)
-#    gpu_linker_flags.append('-L' + HIP_RUNTIME_PATH)
-#    gpu_linker_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
-#    gpu_linker_flags.append('-l' + HIP_RUNTIME_LIBRARY)
-#    if HIPCC_IS_HIPCLANG:
-#      gpu_linker_flags.append("-lrt")
-#
-#    if VERBOSE: print(' '.join([CPU_COMPILER] + gpu_linker_flags))
-#    return subprocess.call([CPU_COMPILER] + gpu_linker_flags)
+    gpu_linker_flags = [flag for flag in sys.argv[1:]
+                               if not flag.startswith(('--rocm_log'))]
+
+    gpu_linker_flags.append('-L' + ROCR_RUNTIME_PATH)
+    gpu_linker_flags.append('-Wl,-rpath=' + ROCR_RUNTIME_PATH)
+    gpu_linker_flags.append('-l' + ROCR_RUNTIME_LIBRARY)
+    gpu_linker_flags.append('-L' + HIP_RUNTIME_PATH)
+    gpu_linker_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
+    gpu_linker_flags.append('-l' + HIP_RUNTIME_LIBRARY)
+    if HIPCC_IS_HIPCLANG:
+      gpu_linker_flags.append("-lrt")
+
+    if VERBOSE: print(' '.join([CPU_COMPILER] + gpu_linker_flags))
+    return subprocess.call([CPU_COMPILER] + gpu_linker_flags)
 
   else:
     # compilation for host objects
@@ -270,11 +272,18 @@ def main():
     # We not only want to pass -x to the CPU compiler, but also keep it in its
     # relative location in the argv list (the compiler is actually sensitive to
     # this).
+    if VERBOSE: print("Compiler HOST")
     cpu_compiler_flags = [flag for flag in sys.argv[1:]
                                if not flag.startswith(('--rocm_log'))]
 
     # XXX: SE codes need to be built with gcc, but need this macro defined
-    cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")
+    #cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")
+    cpu_compiler_flags.append("-D__HIP_PLATFORM_AMD__")
+    cpu_compiler_flags.append('-L' + HIP_RUNTIME_PATH)
+    cpu_compiler_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
+    cpu_compiler_flags.append('-l' + HIP_RUNTIME_LIBRARY)
+    cpu_compiler_flags.append("-lrt")
+    cpu_compiler_flags.append("-Wno-unused-command-line-argument")
     if VERBOSE: print(' '.join([CPU_COMPILER] + cpu_compiler_flags))
     return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
 

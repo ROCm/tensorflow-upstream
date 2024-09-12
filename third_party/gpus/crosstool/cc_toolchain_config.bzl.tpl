@@ -543,7 +543,8 @@ def _impl(ctx):
                 actions = [ACTION_NAMES.c_compile, ACTION_NAMES.cpp_compile],
                 flag_groups = [
                     flag_group(
-                        flags = ["-Wall"] + ctx.attr.host_compiler_warnings,
+                        #flags = ["-Wall"] + ctx.attr.host_compiler_warnings,
+                        flags = [""] + ctx.attr.host_compiler_warnings,
                     ),
                 ],
             ),

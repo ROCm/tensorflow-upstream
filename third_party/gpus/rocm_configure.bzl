@@ -343,6 +343,7 @@ def _hipcc_is_hipclang(repository_ctx,rocm_config):
         The functions returns "False" if not (ie: based on HIP/HCC toolchain).
     """
 
+    return "True"
     #  check user-defined hip-clang environment variables
     for name in ["HIP_CLANG_PATH", "HIP_VDI_HOME"]:
         if name in repository_ctx.os.environ:
@@ -612,7 +613,7 @@ def _create_dummy_repository(repository_ctx):
         repository_ctx,
         "rocm:BUILD",
         {
-            "%{hip_lib}": _lib_name("hip", cpu_value),
+            "%{hip_lib}": _lib_name("amdhip64", cpu_value),
             "%{rocblas_lib}": _lib_name("rocblas", cpu_value),
             "%{miopen_lib}": _lib_name("miopen", cpu_value),
             "%{rccl_lib}": _lib_name("rccl", cpu_value),
@@ -833,12 +834,15 @@ def _create_local_rocm_repository(repository_ctx):
     # .d file - given that includes that are prefixed with "../" multiple
     # time quickly grow longer than the root of the tree, this can lead to
     # bazel's header check failing.
-    rocm_defines["%{extra_no_canonical_prefixes_flags}"] = "\"-fno-canonical-system-headers\""
+    #rocm_defines["%{extra_no_canonical_prefixes_flags}"] = "\"-fno-canonical-system-headers\""
+    rocm_defines["%{extra_no_canonical_prefixes_flags}"] = ""
 
     rocm_defines["%{unfiltered_compile_flags}"] = to_list_of_strings([
         "-DTENSORFLOW_USE_ROCM=1",
         "-D__HIP_PLATFORM_AMD__",
         "-DEIGEN_USE_HIP",
+        "-Wno-unused-but-set-variable",
+        "-Wno-c++11-narrowing",
     ] + _if_hipcc_is_hipclang(repository_ctx, rocm_config, [
         #
         # define "TENSORFLOW_COMPILER_IS_HIP_CLANG" when we are using clang
@@ -894,7 +898,7 @@ def _create_local_rocm_repository(repository_ctx):
             "%{hipcc_is_hipclang}": _hipcc_is_hipclang(repository_ctx,rocm_config),
             "%{rocr_runtime_path}": rocm_config.rocm_toolkit_path + "/lib",
             "%{rocr_runtime_library}": "hsa-runtime64",
-            "%{hip_runtime_path}": rocm_config.rocm_toolkit_path + "/hip/lib",
+            "%{hip_runtime_path}": rocm_config.rocm_toolkit_path + "/lib",
             "%{hip_runtime_library}": "amdhip64",
             "%{crosstool_verbose}": _crosstool_verbose(repository_ctx),
             "%{gcc_host_compiler_path}": str(cc),
