@@ -1,0 +1,40 @@
+From 41148f6f918dcd87dc26ae27e261dcad23e035e1 Mon Sep 17 00:00:00 2001
+From: Jason Furmanek <Jason.Furmanek@amd.com>
+Date: Mon, 9 Sep 2024 21:56:57 +0000
+Subject: [PATCH] patch build
+
+---
+ BUILD              | 3 +++
+ src/CMakeLists.txt | 2 +-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/BUILD b/BUILD
+index d7c731bf6..67aa2ba3e 100644
+--- a/BUILD
++++ b/BUILD
+@@ -74,6 +74,9 @@ posix_copts = [
+     "-Wwrite-strings",
+     "-Wshadow",
+     "-fno-common",
++    "-Wno-unused-but-set-parameter",
++    "-Wno-unused-but-set-variable",
++    "-Wno-array-parameter",
+ 
+     # Modern build environments should be able to set this to use atomic
+     # operations for reference counting rather than locks. However, it's
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 4eb0d0d6b..6b674167a 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -52,7 +52,7 @@ endif()
+ if(CMAKE_COMPILER_IS_GNUCXX OR CLANG)
+   # Note clang-cl is odd and sets both CLANG and MSVC. We base our configuration
+   # primarily on our normal Clang one.
+-  set(C_CXX_FLAGS "-Werror -Wformat=2 -Wsign-compare -Wmissing-field-initializers -Wwrite-strings")
++  set(C_CXX_FLAGS "-Werror -Wformat=2 -Wsign-compare -Wmissing-field-initializers -Wwrite-strings -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-array-parameter")
+   if(MSVC)
+     # clang-cl sets different default warnings than clang. It also treats -Wall
+     # as -Weverything, to match MSVC. Instead -W3 is the alias for -Wall.
+-- 
+2.43.5
+
