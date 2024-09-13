@@ -32,7 +32,8 @@ _TF_ROCM_CONFIG_REPO = "TF_ROCM_CONFIG_REPO"
 _DEFAULT_ROCM_VERSION = ""
 _DEFAULT_MIOPEN_VERSION = ""
 _DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm"
-_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx90a", "gfx9040", "gfx9041", "gfx9042"]
+_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx9042:xnack+"]
+#_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx9042"]
 
 def _get_win_rocm_defines(repository_ctx):
     """Return CROSSTOOL defines for Windows"""
@@ -718,8 +719,8 @@ def _read_dir(repository_ctx, src_dir):
     return result
 
 def _compute_rocm_extra_copts(repository_ctx, amdgpu_targets):
-    if False:
-        amdgpu_target_flags = ["--amdgpu-target=" +
+    if amdgpu_targets:
+        amdgpu_target_flags = ["--offload-arch=" +
                                amdgpu_target for amdgpu_target in amdgpu_targets]
     else:
         # AMDGPU targets are handled in the "crosstool_wrapper_driver_is_not_gcc"
