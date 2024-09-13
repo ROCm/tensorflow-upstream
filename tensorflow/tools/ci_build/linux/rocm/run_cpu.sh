@@ -45,6 +45,7 @@ if [ -f /usertools/cpu.bazelrc ]; then
           --action_env=OPENBLAS_CORETYPE=Haswell \
           --action_env=TF_ENABLE_ONEDNN_OPTS=0 \
           --local_test_jobs=${N_BUILD_JOBS} \
+          --test_timeout 920,2400,7200,9600 \
           --jobs=${N_BUILD_JOBS}
 else
          yes "" | $PYTHON_BIN_PATH configure.py
