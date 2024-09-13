@@ -145,6 +145,7 @@ build:tensorrt --action_env TF_NEED_TENSORRT=1
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
 build:rocm --action_env TF_NEED_ROCM=1
+build:rocm_asan --linkopt=-shared-libsan --linkopt=-fsanitize=address --linkopt=-fPIC --define=using_rocm=true
 
 build:sycl --crosstool_top=@local_config_sycl//crosstool:toolchain
 build:sycl --define=using_sycl=true
