@@ -437,6 +437,11 @@ class StreamExecutor {
       absl::string_view kernel_name, absl::string_view ptx,
       absl::Span<const uint8> cubin_data);
 
+  // Same as above but for in-process kernels
+   template <typename... Args>
+  port::StatusOr<std::unique_ptr<TypedKernel<Args...>>> CreateTypedKernel(
+        absl::string_view kernel_name, void *symbol);
+
   // Warning: use Stream::ThenLaunch instead, this method is not for general
   // consumption. However, this is the only way to launch a kernel for which
   // the type signature is only known at runtime; say, if an application
@@ -783,6 +788,18 @@ StreamExecutor::CreateTypedKernel(absl::string_view kernel_name,
     loader_spec.AddCudaCubinInMemory(
         reinterpret_cast<const char *>(cubin_data.data()), kernel_name);
   }
+
+  TF_RETURN_IF_ERROR(GetKernel(loader_spec, kernel_base.get()));
+  return std::move(kernel_base);
+}
+
+template <typename... Args>
+inline port::StatusOr<std::unique_ptr<TypedKernel<Args...>>>
+StreamExecutor::CreateTypedKernel(absl::string_view kernel_name,
+                                  void *symbol) {
+  auto kernel_base = absl::make_unique<TypedKernel<Args...>>(this);
+  MultiKernelLoaderSpec loader_spec(kernel_base->kNumberOfParameters);
+  loader_spec.AddInProcessSymbol(symbol, kernel_name);
 
   TF_RETURN_IF_ERROR(GetKernel(loader_spec, kernel_base.get()));
   return std::move(kernel_base);

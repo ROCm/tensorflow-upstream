@@ -19,6 +19,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/types/span.h"
+#include "absl/synchronization/mutex.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/types.h"

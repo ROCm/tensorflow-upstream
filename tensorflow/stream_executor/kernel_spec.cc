@@ -21,6 +21,9 @@ namespace stream_executor {
 KernelLoaderSpec::KernelLoaderSpec(absl::string_view kernelname)
     : kernelname_(string(kernelname)) {}
 
+InProcessSymbol::InProcessSymbol(void *symbol, absl::string_view kernel_name)
+    : KernelLoaderSpec(kernel_name), symbol_(symbol) {}
+
 OnDiskKernelLoaderSpec::OnDiskKernelLoaderSpec(absl::string_view filename,
                                                absl::string_view kernelname)
     : KernelLoaderSpec(kernelname), filename_(string(filename)) {}
@@ -167,6 +170,14 @@ OpenCLTextInMemory::OpenCLTextInMemory(absl::string_view text,
 OpenCLBinaryOnDisk::OpenCLBinaryOnDisk(absl::string_view filename,
                                        absl::string_view kernelname)
     : OnDiskKernelLoaderSpec(filename, kernelname) {}
+
+MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddInProcessSymbol(
+    void *symbol, absl::string_view kernel_name) {
+  CHECK(in_process_symbol_ == nullptr);
+  in_process_symbol_ =
+      std::make_shared<InProcessSymbol>(symbol, std::string(kernel_name));
+  return this;
+}
 
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddOpenCLTextOnDisk(
     absl::string_view filename, absl::string_view kernelname) {

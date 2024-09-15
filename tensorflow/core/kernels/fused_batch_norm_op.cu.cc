@@ -153,9 +153,9 @@ void SetNanFunctor<T>::operator()(const Eigen::GpuDevice& d,
       To32Bit(out).constant(Eigen::NumTraits<T>::quiet_NaN());
 }
 
-template class VarianceToInvVariance<float>;
-template class InvVarianceToVariance<float>;
-template class SetNanFunctor<float>;
+template struct VarianceToInvVariance<float>;
+template struct InvVarianceToVariance<float>;
+template struct SetNanFunctor<float>;
 
 // -------------------------------------------------------------------------- //
 // FusedBatchNormInferenceFunctor implementation.                             //
