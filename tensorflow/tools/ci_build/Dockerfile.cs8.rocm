@@ -3,9 +3,8 @@
 FROM almalinux:8
 MAINTAINER Jeff Poznanovic <jeffrey.poznanovic@amd.com>
 
-ARG ROCM_DEB_REPO=https://repo.radeon.com/rocm/rhel8/6.2/
-ARG RPM_ROCM_REPO=http://repo.radeon.com/rocm/rhel8/6.2/main
-ARG ROCM_PATH=/opt/rocm-6.2.0
+ARG RPM_ROCM_REPO=https://compute-artifactory.amd.com/artifactory/list/rocm-osdb-rhel-8.x/compute-rocm-dkms-no-npi-hipclang-14671/
+ARG ROCM_PATH=/opt/rocm-6.3.0-14671/
 ARG GPU_DEVICE_TARGETS="gfx942"
 
 ENV ROCM_PATH=$ROCM_PATH
@@ -109,7 +108,9 @@ RUN dnf --enablerepo=extras,build_system  install -y \
   hipcub-devel  \
   rccl-devel  \
   hipsparse-devel  \
-  hipsolver-devel
+  hipsolver-devel \
+  msgpack-devel \
+  hipblas-common-devel
 
 
 ENV OPENCL_ROOT=$ROCM_PATH/opencl
@@ -133,6 +134,7 @@ RUN /install/build-py-3.7.sh
 RUN /install/install_pip_packages.sh
 RUN /install/install_bazel.sh
 RUN /install/install_golang.sh
+RUN python3 -m pip install cmake joblib wheel
 
 # Set up the master bazelrc configuration file.
 COPY install/.bazelrc /etc/bazel.bazelrc
