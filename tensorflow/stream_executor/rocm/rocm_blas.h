@@ -137,12 +137,6 @@ class ROCMBlas : public blas::BlasSupport {
   template <class T, class V>
   port::Status DoBlasGemmBatchedImpl(Stream *stream, blas::BatchedGemmCallContext2<T> ctx, V strided_fun);
 
-	template <class T, class V, class Alpha_T>
-	port::Status DoBlasGemmBatchedImpl2( V rocblas_func, Stream *stream, blas::Transpose transa,
-			blas::Transpose transb, uint64 m, uint64 n, uint64 k, Alpha_T alpha,
-			const T **a_array, int lda, const T **b_array, int ldb, Alpha_T beta,
-			T **c_array, int ldc, int batch_count);
-
   // Helper function for implementing DoBlasGemvWithProfiling.
   template <typename T>
   bool DoBlasGemvWithProfilingImpl(Stream *stream, blas::Transpose trans,

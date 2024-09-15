@@ -4047,10 +4047,7 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     float beta, float** c, int ldc,
                                     int batch_count,
                                     ScratchAllocator* allocator) {
-<<<<<<< HEAD
-//	VLOG(-1) << "Running ThenBlasGemmBatched fp32";
-=======
->>>>>>> 124edffb8e8 (gpu_blas_lt_runner: major update)
+
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -4076,12 +4073,9 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     uint64 k, double alpha, const double** a,
                                     int lda, const double** b, int ldb,
                                     double beta, double** c, int ldc,
-<<<<<<< HEAD
-                                    int batch_count, ScratchAllocator* allocator) {
-=======
                                     int batch_count,
                                     ScratchAllocator* allocator) {
->>>>>>> 124edffb8e8 (gpu_blas_lt_runner: major update)
+
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -4101,17 +4095,29 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
               k, alpha, a, lda, b, ldb, beta, c, ldc, batch_count, allocator);
 }
 
-template <class T>
-Stream &Stream::ThenBlasGemmImpl(T ctx)
+template <class T, class U>
+Stream &Stream::ThenBlasGemmImpl(blas::GemmCallContext< T, U > ctx)
 {
+  // no support for int8/int32 gemms yet
+  if constexpr(!std::is_same< T, int8 >::value) {
+    if(gpu::GpuBlasLtEnabled()) {
+      auto& r = gpu::BlasLtGemmRunner::i(this);
+      CheckStatus(r.Run(*this, ctx.transa, ctx.transb, ctx.m, ctx.n, ctx.k, 
+        ctx.alpha, *ctx.pa, ctx.lda, *ctx.pb, ctx.ldb, ctx.beta, ctx.c, ctx.ldc, 
+        /* ctx.allocator */nullptr)); //! NOTE: allocator is not available!!
+      return *this;
+    }
+  }
+
+  using CtxType = blas::GemmCallContext< T, U >;
   if(ctx.output_profile_result == 0)
   {
-    ThenBlasImpl<T, blas::ProfileResult*> impl;
+    ThenBlasImpl<CtxType, blas::ProfileResult*> impl;
     return impl(this, &blas::BlasSupport::DoBlasGemm, ctx, (blas::ProfileResult*)nullptr);
   }
   else
   {
-    ThenBlasWithProfileImpl<T> impl;
+    ThenBlasWithProfileImpl<CtxType> impl;
     return impl(this, &blas::BlasSupport::DoBlasGemm, ctx, ctx.output_profile_result);
   }
 }
@@ -4149,6 +4155,15 @@ Stream &Stream::ThenBlasGemm(blas::GemmCallContext<int8, int32> ctx)
 template <class T>
 Stream &Stream::ThenBlasGemmBatchedImpl(T ctx)
 {
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunBatched(*this, ctx.transa, ctx.transb, 
+        ctx.m, ctx.n, ctx.k, ctx.alpha, 
+        *ctx.pa, ctx.lda, *ctx.pb, ctx.ldb, ctx.beta, 
+        *ctx.pc, ctx.ldc, ctx.batch_count, /*ctx.allocator*/nullptr));
+
+    return *this;
+  }
   ThenBlasImpl<T> impl;
   return impl(this, &blas::BlasSupport::DoBlasGemmBatched, ctx);
 }
