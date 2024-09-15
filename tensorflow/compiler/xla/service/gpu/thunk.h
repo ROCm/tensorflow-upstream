@@ -48,6 +48,7 @@ class Thunk {
     kConditional,
     kConvolution,
     kCopy,
+    kCublasLtMatmul,
     kCudnnBatchNormBackward,
     kCudnnBatchNormForwardInference,
     kCudnnBatchNormForwardTraining,

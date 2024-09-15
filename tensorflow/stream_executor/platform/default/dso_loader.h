@@ -82,6 +82,7 @@ port::StatusOr<void*> GetCuptiDsoHandle();
 port::StatusOr<void*> GetCudnnDsoHandle();
 
 port::StatusOr<void*> GetRocblasDsoHandle();
+port::StatusOr<void*> GetHipblasltDsoHandle();
 port::StatusOr<void*> GetMiopenDsoHandle();
 port::StatusOr<void*> GetHipfftDsoHandle();
 port::StatusOr<void*> GetRocrandDsoHandle();

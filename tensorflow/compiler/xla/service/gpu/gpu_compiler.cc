@@ -63,6 +63,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/target_constants.h"
 #include "tensorflow/compiler/xla/service/gpu/thunk_schedule.h"
 #include "tensorflow/compiler/xla/service/gpu/variadic_op_splitter.h"
+#include "tensorflow/compiler/xla/service/gpu/autotuner_util.h"
 #include "tensorflow/compiler/xla/service/hlo_computation.h"
 #include "tensorflow/compiler/xla/service/hlo_constant_folding.h"
 #include "tensorflow/compiler/xla/service/hlo_cse.h"
@@ -116,10 +117,21 @@ GpuCompiler::GpuCompiler(se::Platform::Id platform_id,
       pointer_size_(llvm::DataLayout(data_layout)
                         .getPointerSize(0 /* default address space */)) {}
 
+static AutotuneConfig GetAutotuneConfig(
+    se::StreamExecutor* stream_exec, const DebugOptions& debug_options,
+    se::DeviceMemoryAllocator* device_allocator) {
+
+  CHECK(stream_exec != nullptr);
+  return AutotuneConfig{DeviceConfig{stream_exec, device_allocator},
+                          debug_options};
+}
+
 // Runs optimization passes on the given HLO module.
 Status GpuCompiler::OptimizeHloModule(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     se::DeviceMemoryAllocator* device_allocator) {
+
+  const auto& debug_options = hlo_module->config().debug_options();
   {
     HloPassPipeline pipeline("optimization");
     pipeline.AddInvariantChecker<HloVerifier>(/*layout_sensitive=*/false,
@@ -137,7 +149,7 @@ Status GpuCompiler::OptimizeHloModule(
     pipeline.AddPass<DynamicIndexSplitter>();
     pipeline.AddPass<GpuHloSupportChecker>();
     ReducePrecisionInsertion::AddPasses(
-        &pipeline, hlo_module->config().debug_options(),
+        &pipeline, debug_options,
         ReducePrecisionInsertion::PassTiming::BEFORE_OPTIMIZATION);
 
     // TODO(b/64094172): make Call work on GPU instead of inlining.
@@ -166,7 +178,7 @@ Status GpuCompiler::OptimizeHloModule(
       // If cudnn batchnorms are enabled, rewrite batchnorm HLOs to cudnn calls
       // where possible.  Not every batchnorm op can be implemented as a call to
       // cudnn, so decompose any remaining batchnorm ops into a soup of HLOs.
-      if (hlo_module->config().debug_options().xla_gpu_use_cudnn_batchnorm()) {
+      if (debug_options.xla_gpu_use_cudnn_batchnorm()) {
         pass.AddPass<CudnnBatchNormRewriter>();
       }
       pass.AddPass<BatchNormExpander>(
@@ -239,9 +251,12 @@ Status GpuCompiler::OptimizeHloModule(
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
 
+  auto cfg = GetAutotuneConfig(stream_exec, debug_options,
+          device_allocator);
+
   // Run target-specific HLO optimization passes after layout assignment.
-  TF_RETURN_IF_ERROR(OptimizeHloPostLayoutAssignment(hlo_module, stream_exec,
-                                                     device_allocator));
+  TF_RETURN_IF_ERROR(OptimizeHloPostLayoutAssignment(hlo_module, cfg, 
+          stream_exec, device_allocator));
 
   {
     HloPassFix<HloPassPipeline> fusion("fusion");
@@ -326,11 +341,20 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   tensorflow::profiler::TraceMe activity(
       [&] { return absl::StrCat("HLO Transforms:", module->name()); },
       tensorflow::profiler::TraceMeLevel::kInfo);
+
+  const DebugOptions& debug_opts = module->config().debug_options();
+  TF_RETURN_IF_ERROR(LoadAutotuneResultsFromFile(debug_opts));
+
   TF_RETURN_IF_ERROR(
       OptimizeHloModule(module.get(), stream_exec, device_allocator));
 
   TF_RETURN_IF_ERROR(PrepareHloModuleForIrEmitting(module.get()));
 
+  tensorflow::AutotuneResults autotune_results;
+  TF_RETURN_IF_ERROR(
+        AutotunerUtil::SerializeAutotuneResults(&autotune_results));
+  TF_RETURN_IF_ERROR(SerializeAutotuneResultsToFile(debug_opts));
+ 
   return std::move(module);
 }
 
@@ -470,6 +494,35 @@ StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
 GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
                                 const AotCompilationOptions& options) {
   return Unimplemented("not yet implemented: GpuCompiler::CompileAheadOfTime");
+}
+
+Status GpuCompiler::LoadAutotuneResultsFromFile(
+    const DebugOptions& debug_options) {
+  // We are doing this before the timer is started.
+  absl::string_view file_path =
+          debug_options.xla_gpu_load_autotune_results_from();
+  if (!file_path.empty()) {
+    static absl::once_flag once;
+    auto status = Status::OK();
+    absl::call_once(once, [&file_path, &status] {
+      status = AutotunerUtil::LoadAutotuneResultsFromFile(file_path);
+    });
+    TF_RETURN_IF_ERROR(status);
+  }
+  return Status::OK();
+}
+
+Status GpuCompiler::SerializeAutotuneResultsToFile(
+    const DebugOptions& debug_options) {
+  // We are doing this after the timer is finished.
+  absl::string_view file_path = debug_options.xla_gpu_dump_autotune_results_to();
+  if (!file_path.empty()) {
+    // Warning: This writes the autotune results at every compilation,
+    // possibly multiple times per process.
+    TF_RETURN_IF_ERROR(
+        AutotunerUtil::SerializeAutotuneResultsToFile(file_path));
+  }
+  return Status::OK();
 }
 
 }  // namespace gpu
