@@ -552,6 +552,7 @@ def tf_additional_all_protos():
 def tf_protos_all_impl():
     return [
         "//tensorflow/core:autotuning_proto_cc_impl",
+        "//tensorflow/core:autotune_results_proto_cc_impl",
         "//tensorflow/core:conv_autotuning_proto_cc_impl",
         "//tensorflow/core:protos_all_cc_impl",
     ]

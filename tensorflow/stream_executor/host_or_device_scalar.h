@@ -44,6 +44,10 @@ class HostOrDeviceScalar {
     return value_;
   }
 
+  const void* opaque() const {
+    return is_pointer() ? pointer_.opaque() : &value_;
+  }
+
  private:
   union {
     ElemT value_;

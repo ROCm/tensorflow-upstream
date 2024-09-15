@@ -51,7 +51,8 @@ Status GemmThunk::ExecuteOnStream(const ExecuteParams &params) {
     return params.buffer_allocations->GetDeviceAddress(slice);
   };
 
-  VLOG(3) << "Running GEMM thunk on instruction: " << hlo_instruction();
+  //VLOG(0) << "Running GEMM thunk on device: " << params.stream->parent()->device_ordinal();
+
   se::DeviceMemoryBase lhs_data = get_device_address(lhs_buffer_);
   se::DeviceMemoryBase rhs_data = get_device_address(rhs_buffer_);
   se::DeviceMemoryBase output_data = get_device_address(output_buffer_);
