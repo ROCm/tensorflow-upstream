@@ -4047,10 +4047,6 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     float beta, float** c, int ldc,
                                     int batch_count,
                                     ScratchAllocator* allocator) {
-<<<<<<< HEAD
-//	VLOG(-1) << "Running ThenBlasGemmBatched fp32";
-=======
->>>>>>> 124edffb8e8 (gpu_blas_lt_runner: major update)
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
@@ -4076,12 +4072,8 @@ Stream& Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     uint64 k, double alpha, const double** a,
                                     int lda, const double** b, int ldb,
                                     double beta, double** c, int ldc,
-<<<<<<< HEAD
-                                    int batch_count, ScratchAllocator* allocator) {
-=======
                                     int batch_count,
                                     ScratchAllocator* allocator) {
->>>>>>> 124edffb8e8 (gpu_blas_lt_runner: major update)
   VLOG_CALL(PARAM(transa), PARAM(transb), PARAM(m), PARAM(n), PARAM(k),
             PARAM(alpha), PARAM(a), PARAM(lda), PARAM(b), PARAM(ldb),
             PARAM(beta), PARAM(c), PARAM(ldc), PARAM(batch_count));
