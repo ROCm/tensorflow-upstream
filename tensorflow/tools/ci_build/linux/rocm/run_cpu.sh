@@ -43,6 +43,7 @@ if [ -f /usertools/cpu.bazelrc ]; then
           --config=pycpp \
           --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
           --local_test_jobs=${N_BUILD_JOBS} \
+          --test_timeout 920,2400,7200,9600 \
           --jobs=${N_BUILD_JOBS}
 else
          yes "" | $PYTHON_BIN_PATH configure.py
