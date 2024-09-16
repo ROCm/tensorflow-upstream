@@ -138,7 +138,7 @@ RUN /install/install_bazel.sh
 RUN /install/install_golang.sh
 RUN ln -sf /usr/bin/python3.8 /usr/bin/python3
 RUN ln -sf /usr/bin/python3 /usr/bin/python
-RUN pip install cmake joblib wheel
+RUN python3 -m pip install cmake joblib wheel
 
 # Set up the master bazelrc configuration file.
 COPY install/.bazelrc /etc/bazel.bazelrc
