@@ -28,9 +28,6 @@ RUN dnf --enablerepo=extras,epel,elrepo,powertools,build_system  install -y \
   openssl-devel  \
   libffi-devel  \
   hdf5-devel \
-  python38-devel \
-  python38 \
-  python38-pip \
   wget \
   make \
   patch \
@@ -132,12 +129,10 @@ ARG PATH=$HCC_HOME/bin:$HIP_PATH/bin:$PATH
 # Copy and run the install scripts.
 COPY install/*.sh /install/
 ARG DEBIAN_FRONTEND=noninteractive
-
+RUN /install/build-py-3.7.sh
 RUN /install/install_pip_packages.sh
 RUN /install/install_bazel.sh
 RUN /install/install_golang.sh
-RUN ln -sf /usr/bin/python3.8 /usr/bin/python3
-RUN ln -sf /usr/bin/python3 /usr/bin/python
 RUN python3 -m pip install cmake joblib wheel
 
 # Set up the master bazelrc configuration file.
