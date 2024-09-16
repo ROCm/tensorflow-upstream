@@ -20,6 +20,7 @@
 TF_PKG_LOC=.
 rm -f $TF_PKG_LOC/tensorflow*.whl
 
+echo "Do TensorFlow build"
 
 yes "" | TF_NEED_ROCM=1 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
 pip3 uninstall -y tensorflow || true

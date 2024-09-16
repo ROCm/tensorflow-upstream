@@ -120,6 +120,7 @@ DOCKER_IMG_NAME=$(echo "${DOCKER_IMG_NAME}" | sed -e 's/=/_/g' -e 's/,/-/g')
 
 # Convert to all lower-case, as per requirement of Docker image names
 DOCKER_IMG_NAME=$(echo "${DOCKER_IMG_NAME}" | tr '[:upper:]' '[:lower:]')
+PWD=$(pwd)
 
 # Print arguments.
 echo "WORKSPACE: ${WORKSPACE}"
@@ -130,6 +131,7 @@ echo "CI_COMMAND_PREFIX: ${CI_COMMAND_PREFIX[*]}"
 echo "CONTAINER_TYPE: ${CONTAINER_TYPE}"
 echo "BUILD_TAG: ${BUILD_TAG}"
 echo "  (docker container name will be ${DOCKER_IMG_NAME})"
+echo "PWD: "${PWD}
 echo ""
 
 
@@ -150,7 +152,11 @@ if [ -n "${CI_BUILD_USER_FORCE_BADNAME}" ]; then
 fi
 
 # Run the command inside the container.
+PWD=$(pwd)
+echo "PWD: "${PWD}
+echo "WORKSPACE: ${WORKSPACE}"
 echo "Running '${COMMAND[*]}' inside ${DOCKER_IMG_NAME}..."
+ls -l
 mkdir -p ${WORKSPACE}/bazel-ci_build-cache
 # By default we cleanup - remove the container once it finish running (--rm)
 # and share the PID namespace (--pid=host) so the process inside does not have
@@ -170,5 +176,6 @@ ${DOCKER_BINARY} run --rm --pid=host \
     ${ROCM_EXTRA_PARAMS} \
     ${CI_DOCKER_EXTRA_PARAMS[@]} \
     "${DOCKER_IMG_NAME}" \
-    ${CI_COMMAND_PREFIX[@]} \
     ${COMMAND[@]}
+    
+#${PWD}/${CI_COMMAND_PREFIX[@]} \
