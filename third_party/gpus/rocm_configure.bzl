@@ -32,8 +32,8 @@ _TF_ROCM_CONFIG_REPO = "TF_ROCM_CONFIG_REPO"
 _DEFAULT_ROCM_VERSION = ""
 _DEFAULT_MIOPEN_VERSION = ""
 _DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm"
-_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx9042:xnack+"]
-#_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx9042"]
+_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx942:xnack+"]
+#_DEFAULT_ROCM_AMDGPU_TARGETS = ["gfx942"]
 
 def _get_win_rocm_defines(repository_ctx):
     """Return CROSSTOOL defines for Windows"""
@@ -303,7 +303,7 @@ def _amdgpu_targets(repository_ctx):
     amdgpu_targets_str = repository_ctx.os.environ[_TF_ROCM_AMDGPU_TARGETS]
     amdgpu_targets = amdgpu_targets_str.split(",")
     for amdgpu_target in amdgpu_targets:
-        if amdgpu_target[:3] != "gfx" or not amdgpu_target[3:].isdigit():
+        if amdgpu_target[:3] != "gfx":
             auto_configure_fail("Invalid AMDGPU target: %s" % amdgpu_target)
     return amdgpu_targets
 
