@@ -194,7 +194,7 @@ def InvokeHipcc(argv, log=False):
   hipccopts += std_options
   hipccopts += m_options
 
-  offload_arch = '--offload-arch=gfx942:xnack+ '
+  offload_arch = '--offload-arch=%{rocm_amdgpu_targets} '
   if depfiles:
     # Generate the dependency file
     depfile = depfiles[0]

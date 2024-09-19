@@ -72,29 +72,8 @@ def get_host_environ(repository_ctx, name, default_value = None):
     return default_value
 
 def find_cc(repository_ctx):
-    rocm_path = get_host_environ(repository_ctx, "ROCM_TOOLKIT_PATH")
-    return rocm_path+"/llvm/bin/amdclang"
-    #return rocm_path+"/llvm/bin/clang"
-
-    """Find the C++ compiler."""
-
-    # Return a dummy value for GCC detection here to avoid error
-    target_cc_name = "gcc"
-    cc_path_envvar = _GCC_HOST_COMPILER_PATH
-    cc_name = target_cc_name
-
-    if cc_path_envvar in repository_ctx.os.environ:
-        cc_name_from_env = repository_ctx.os.environ[cc_path_envvar].strip()
-        if cc_name_from_env:
-            cc_name = cc_name_from_env
-    if cc_name.startswith("/"):
-        # Absolute path, maybe we should make this supported by our which function.
-        return cc_name
-    cc = repository_ctx.which(cc_name)
-    if cc == None:
-        fail(("Cannot find {}, either correct your path or set the {}" +
-              " environment variable").format(target_cc_name, cc_path_envvar))
-    return cc
+    rocm_path = _rocm_toolkit_path(repository_ctx)
+    return rocm_path + "/llvm/bin/amdclang"
 
 _INC_DIR_MARKER_BEGIN = "#include <...>"
 
@@ -345,21 +324,6 @@ def _hipcc_is_hipclang(repository_ctx,rocm_config):
     """
 
     return "True"
-    #  check user-defined hip-clang environment variables
-    for name in ["HIP_CLANG_PATH", "HIP_VDI_HOME"]:
-        if name in repository_ctx.os.environ:
-            return "True"
-
-    # grep for "HIP_COMPILER=clang" in /opt/rocm/hip/lib/.hipInfo
-    grep_result = _execute(
-        repository_ctx,
-        ["grep", "HIP_COMPILER=clang", rocm_config.rocm_toolkit_path + "/lib/.hipInfo"],
-        empty_stdout_fine = True,
-    )
-    result = grep_result.stdout.strip()
-    if result == "HIP_COMPILER=clang":
-        return "True"
-    return "False"
 
 def _if_hipcc_is_hipclang(repository_ctx, rocm_config, if_true, if_false = []):
     """
