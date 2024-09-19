@@ -28,8 +28,8 @@ fi
 export ROCM_TOOLKIT_PATH=$ROCM_INSTALL_DIR
 
 yes "" | TF_NEED_ROCM=1 ROCM_TOOLKIT_PATH=${ROCM_INSTALL_DIR} PYTHON_BIN_PATH=/usr/bin/python3 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
-HSA_XNACK=1 TF_ROCM_AMDGPU_TARGETS=gfx942:xnack+ bazel build --config=rocm_asan --config=opt --config=rocm --action_env=HIP_PLATFORM=amd --cxxopt=-std=c++14 --host_cxxopt=-std=c++14 --action_env=ROCM_PATH=${ROCM_TOOLKIT_PATH} //tensorflow/core/kernels/asan:asan_test
+TF_ROCM_AMDGPU_TARGETS=gfx942:xnack+ bazel build --config=rocm_asan --config=opt --config=rocm --action_env=HIP_PLATFORM=amd --cxxopt=-std=c++14 --host_cxxopt=-std=c++14 --action_env=ROCM_PATH=${ROCM_TOOLKIT_PATH} //tensorflow/core/kernels/asan:asan_test
 
 # Run Test
 cd ./bazel-out/k8-opt/bin/tensorflow/core/kernels/asan/
-LD_LIBRARY_PATH=/opt/rocm-6.3.0-14671/lib/llvm/lib/clang/18/lib/linux ./asan_test
+HSA_XNACK=1 LD_LIBRARY_PATH=/opt/rocm-6.3.0-14671/lib/llvm/lib/clang/18/lib/linux ./asan_test
