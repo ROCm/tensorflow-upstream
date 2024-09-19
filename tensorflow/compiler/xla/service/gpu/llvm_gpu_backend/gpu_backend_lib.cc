@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/base/call_once.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
@@ -64,6 +65,7 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/tracing.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
+#include "tensorflow/core/util/env_var.h"
 
 namespace xla {
 namespace gpu {
@@ -524,6 +526,28 @@ StatusOr<string> CompileToPtx(llvm::Module* module, GpuVersion gpu_version,
 }  // namespace nvptx
 
 namespace {
+static std::string hsaco_cache_dir;
+
+static void InitHsacoCacheDir() {
+  static absl::once_flag init_once;
+  absl::call_once(init_once, [] {
+    auto env = tensorflow::Env::Default();
+    tensorflow::ReadStringFromEnvVar("TF_XLA_HSACO_CACHE_DIR", "/tmp",
+                                     &hsaco_cache_dir);
+    if (hsaco_cache_dir.empty()) {
+      LOG(INFO) << "Will not cache XLA HSACOs. "
+                << "This line is logged at most "
+                << "once for the lifetime of the process.";
+    } else {
+      if(!env->IsDirectory(hsaco_cache_dir).ok()){
+        env->CreateDir(hsaco_cache_dir);
+      }
+      LOG(INFO) << "Cache XLA HSACOs in " << hsaco_cache_dir << ". "
+                << "This line is logged at most "
+                << "once for the lifetime of the process.";
+    }
+  });
+}
 
 // Gets the ROCm-Device-Libs filenames for a particular AMDGPU version.
 static std::vector<string> GetROCDLPaths(int amdgpu_version,
@@ -546,6 +570,18 @@ static std::vector<string> GetROCDLPaths(int amdgpu_version,
       rocdl_dir_path,
       absl::StrCat("oclc_isa_version_", amdgpu_version, ".bc")));
   return result;
+}
+
+Status ReadHsaco(std::string hsaco_path, std::vector<uint8>& hsaco){
+  if(tensorflow::Env::Default()->FileExists(hsaco_path).ok()){
+    std::ifstream hsaco_file(hsaco_path, std::ios::binary | std::ios::ate);
+    std::ifstream::pos_type hsaco_file_size = hsaco_file.tellg();
+    hsaco = std::vector<uint8>(hsaco_file_size);
+    hsaco_file.seekg(0, std::ios::beg);
+    hsaco_file.read(reinterpret_cast<char*>(&hsaco[0]), hsaco_file_size);
+    return Status::OK();
+  }
+  return xla::InternalErrorStrCat("Can't find Hsaco: ", hsaco_path);
 }
 
 // Emits the given module to HSA Code Object. target_machine is an initialized
@@ -608,12 +644,8 @@ StatusOr<std::vector<uint8>> EmitModuleToHsaco(
   }
 
   // Read HSACO.
-  std::ifstream hsaco_file(hsaco_path, std::ios::binary | std::ios::ate);
-  std::ifstream::pos_type hsaco_file_size = hsaco_file.tellg();
-
-  std::vector<uint8> hsaco(hsaco_file_size);
-  hsaco_file.seekg(0, std::ios::beg);
-  hsaco_file.read(reinterpret_cast<char*>(&hsaco[0]), hsaco_file_size);
+  std::vector<uint8> hsaco;
+  ReadHsaco(hsaco_path, hsaco);
   return hsaco;
 }
 
@@ -653,6 +685,7 @@ void AMDGPUBackendInit(const HloModuleConfig& hlo_module_config) {
   // its specific initialization functions instead of the catch-all
   // InitializeAll*.
 #if TENSORFLOW_USE_ROCM
+  InitHsacoCacheDir();
   LLVMInitializeAMDGPUTarget();
   LLVMInitializeAMDGPUTargetInfo();
   LLVMInitializeAMDGPUTargetMC();
@@ -666,62 +699,6 @@ void AMDGPUBackendInit(const HloModuleConfig& hlo_module_config) {
 }  // namespace
 
 namespace amdgpu {
-
-
-struct HsacoCacheEntry {
-  uint64_t hash;
-  std::string ir;
-  std::string gfx;
-  std::vector<uint8_t> hsaco;
-};
-
-struct HsacoCache {
- protected:
-  std::vector<HsacoCacheEntry> cache;
-  std::mutex m_mutex;
-  int request_count = 0;
-  int hit_count = 0;
-
- public:
-  static bool Find(const std::string& ir, uint64_t& hash,
-                   const std::string& gfx, std::vector<uint8_t>& hsaco);
-  static void Add(const std::string& ir, uint64_t hash, const std::string& gfx,
-                  const std::vector<uint8_t>& hsaco);
-};
-
-static HsacoCache g_hsacoCache;  // NOLINT: static/global vars forbidden
-
-bool HsacoCache::Find(const std::string& ir, uint64_t& hash,
-                      const std::string& gfx, std::vector<uint8_t>& hsaco) {
-  std::lock_guard<std::mutex> lg(g_hsacoCache.m_mutex);
-  hash = std::hash<std::string>{}(ir);
-  bool hit = false;
-  for (auto& x : g_hsacoCache.cache) {
-    if (x.hash != hash) continue;
-    if (x.gfx != gfx) continue;
-    if (x.ir != ir) continue;
-    hsaco = x.hsaco;
-    hit = true;
-    break;
-  }
-  g_hsacoCache.request_count++;
-  if (hit) g_hsacoCache.hit_count++;
-  if (!(g_hsacoCache.request_count % 50))
-    VLOG(1) << "HSACO cache: " << g_hsacoCache.request_count << " requests, "
-            << g_hsacoCache.hit_count << " hits";
-  return hit;
-}
-
-void HsacoCache::Add(const std::string& ir, uint64_t hash,
-                     const std::string& gfx,
-                     const std::vector<uint8_t>& hsaco) {
-  std::lock_guard<std::mutex> lg(g_hsacoCache.m_mutex);
-  g_hsacoCache.cache.resize(g_hsacoCache.cache.size() + 1);
-  g_hsacoCache.cache.back().ir = ir;
-  g_hsacoCache.cache.back().hash = hash;
-  g_hsacoCache.cache.back().gfx = gfx;
-  g_hsacoCache.cache.back().hsaco = hsaco;
-}
 
 StatusOr<std::vector<uint8>> CompileToHsaco(
     llvm::Module* module, GpuVersion gpu_version,
@@ -758,9 +735,12 @@ StatusOr<std::vector<uint8>> CompileToHsaco(
       return xla::InternalError(
           "Incompatible AMD GCN ISA version was specified.");
     }
+    
+    std::string hsaco_filename =
+        absl::StrCat(module->getModuleIdentifier(), ".hsaco");
+    std::string hsaco_path = tensorflow::io::JoinPath(hsaco_cache_dir, hsaco_filename);
 
-    uint64_t hash;
-    if (HsacoCache::Find(str, hash, std::to_string(*amdgpu_version), hsaco)) {
+    if (ReadHsaco(hsaco_path, hsaco).ok()) {
       VLOG(1) << "HSACO cache hit";
       return hsaco;
     }
@@ -789,8 +769,6 @@ StatusOr<std::vector<uint8>> CompileToHsaco(
     std::string isabin_path =
         absl::StrCat(module_path, ".o");
 
-    std::string hsaco_path =
-        absl::StrCat(module_path, ".hsaco");
 
     // Link with ROCm-Device-Libs, and optimize the LLVM module.
     TF_RETURN_IF_ERROR(LinkAndOptimizeModule(
@@ -800,12 +778,11 @@ StatusOr<std::vector<uint8>> CompileToHsaco(
 
     // Lower optimized LLVM module to HSA code object.
     TF_ASSIGN_OR_RETURN(hsaco, EmitModuleToHsaco(module, target_machine.get(), optimized_ir_path, isabin_path, hsaco_path));
-    HsacoCache::Add(str, hash, std::to_string(*amdgpu_version), hsaco);
-    std::async(std::launch::async, [env](std::vector<std::string> files){
+    std::async(std::launch::async, [](std::vector<std::string> files){
       for(auto& file : files){
-        env->DeleteFile(file);
+        tensorflow::Env::Default()->DeleteFile(file);
       }
-    }, std::vector<std::string>{ir_path, linked_ir_path, optimized_ir_path, isabin_path, hsaco_path});
+    }, std::vector<std::string>{ir_path, linked_ir_path, optimized_ir_path, isabin_path});
 
   }
   return hsaco;
