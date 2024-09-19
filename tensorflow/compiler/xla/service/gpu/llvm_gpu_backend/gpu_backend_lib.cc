@@ -16,6 +16,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 
 #include <fstream>
+#include <future>
 #include <map>
 #include <memory>
 #include <string>
@@ -800,6 +801,12 @@ StatusOr<std::vector<uint8>> CompileToHsaco(
     // Lower optimized LLVM module to HSA code object.
     TF_ASSIGN_OR_RETURN(hsaco, EmitModuleToHsaco(module, target_machine.get(), optimized_ir_path, isabin_path, hsaco_path));
     HsacoCache::Add(str, hash, std::to_string(*amdgpu_version), hsaco);
+    std::async(std::launch::async, [env](std::vector<std::string> files){
+      for(auto& file : files){
+        env->DeleteFile(file);
+      }
+    }, std::vector<std::string>{ir_path, linked_ir_path, optimized_ir_path, isabin_path, hsaco_path});
+
   }
   return hsaco;
 }
