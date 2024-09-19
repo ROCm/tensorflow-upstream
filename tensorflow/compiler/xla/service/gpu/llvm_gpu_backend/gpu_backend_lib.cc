@@ -772,35 +772,24 @@ StatusOr<std::vector<uint8>> CompileToHsaco(
                                hlo_module_config);
 
     auto* env = tensorflow::Env::Default();
-    std::vector<std::string> tempdir_vector;
-    env->GetLocalTempDirectories(&tempdir_vector);
-    if (tempdir_vector.empty()) {
-      return xla::InternalError(
-          "Unable to locate a temporary directory for compile-time artifacts.");
-    }
-    std::string tempdir_name = tempdir_vector.front();
-    VLOG(1) << "Compile-time artifacts located at: " << tempdir_name;
-
     // Prepare filenames for all stages of compilation:
     // IR, binary ISA, and HSACO.
-    std::string ir_filename = absl::StrCat(module->getModuleIdentifier(), ".ll");
-    std::string ir_path = tensorflow::io::JoinPath(tempdir_name, ir_filename);
+    std::string module_path;
+    if (!env->LocalTempFilename(&module_path)) {
+      return xla::InternalError(
+          "Could not get temporary filenames for modules.");
+    }
+    std::string ir_path = absl::StrCat(module_path, ".ll");
 
-    std::string linked_ir_filename = absl::StrCat(module->getModuleIdentifier(), "-linked.ll");
-    std::string linked_ir_path = tensorflow::io::JoinPath(tempdir_name, linked_ir_filename);
+    std::string linked_ir_path = absl::StrCat(module_path, "-linked.ll");
 
-    std::string optimized_ir_filename = absl::StrCat(module->getModuleIdentifier(), "-opt.ll");
-    std::string optimized_ir_path = tensorflow::io::JoinPath(tempdir_name, optimized_ir_filename);
+    std::string optimized_ir_path = absl::StrCat(module_path, "-opt.ll");
 
-    std::string isabin_filename =
-        absl::StrCat(module->getModuleIdentifier(), ".o");
     std::string isabin_path =
-        tensorflow::io::JoinPath(tempdir_name, isabin_filename);
+        absl::StrCat(module_path, ".o");
 
-    std::string hsaco_filename =
-        absl::StrCat(module->getModuleIdentifier(), ".hsaco");
     std::string hsaco_path =
-        tensorflow::io::JoinPath(tempdir_name, hsaco_filename);
+        absl::StrCat(module_path, ".hsaco");
 
     // Link with ROCm-Device-Libs, and optimize the LLVM module.
     TF_RETURN_IF_ERROR(LinkAndOptimizeModule(
