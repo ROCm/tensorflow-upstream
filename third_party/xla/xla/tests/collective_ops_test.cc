@@ -17,18 +17,16 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "absl/strings/str_replace.h"
-#include "absl/types/span.h"
-#include "tsl/lib/core/status_test_util.h"
-#include "tsl/platform/blocking_counter.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/threadpool.h"
 #include "xla/literal.h"
 #include "xla/primitive_util.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_macros.h"
 #include "xla/tests/test_utils.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/threadpool.h"
 
 // Tests cross-GPU operations.
 //
