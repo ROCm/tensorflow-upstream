@@ -59,7 +59,7 @@ if [[ "$DISTRO" == "focal" ]] || [[ "$DISTRO" == "jammy" ]]; then
     ROCM_DEB_REPO=${ROCM_DEB_REPO_HOME}${ROCM_VERS}/
     AMDGPU_DEB_REPO=${AMDGPU_DEB_REPO_HOME}${ROCM_VERS}/
 
-    DEBIAN_FRONTEND=noninteractive apt-get --allow-unauthenticated update 
+    DEBIAN_FRONTEND=noninteractive apt-get --allow-unauthenticated update
     DEBIAN_FRONTEND=noninteractive apt install -y wget software-properties-common
     DEBIAN_FRONTEND=noninteractive apt-get clean all
 
@@ -136,7 +136,7 @@ elif [[ "$DISTRO" == "el8" ]]; then
     dnf --enablerepo=extras,epel,elrepo,build_system install -y hipblaslt-devel || true
 fi
 
-GPU_DEVICE_TARGETS=${GPU_DEVICE_TARGETS:-"gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"}
+GPU_DEVICE_TARGETS=${GPU_DEVICE_TARGETS:-"gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100 gfx1200 gfx1201"}
 
 echo $ROCM_VERSION
 echo $ROCM_REPO
