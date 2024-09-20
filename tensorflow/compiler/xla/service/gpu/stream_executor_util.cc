@@ -414,28 +414,28 @@ static void InitializeTypedBuffer(se::Stream* stream,
     // Nothing more to do
     return;
   }
-#ifdef GOOGLE_CUDA
   // Repeat the host_buffer_size elements at the start of `buf` to the end
   CHECK_EQ(elements_to_fill, buffer.size() / sizeof(T) - host_buffer_size);
   se::StreamExecutor* executor = stream->parent();
-  auto kernel =
-      se::TypedKernelFactory<se::DeviceMemoryBase, int64, int64>::Create(
-          executor, "RepeatBufferKernel", repeat_buffer_kernel::kernel());
+
+  auto kernel = 
+      executor->CreateTypedKernel<se::DeviceMemoryBase, int64_t, int64_t>(
+           "RepeatBufferKernel", repeat_buffer_kernel::kernel());
   if (!kernel.ok()) {
     LOG(FATAL) << "Could not create RepeatBufferKernel: " << kernel.status();
   }
   // Launch the kernel with at least host_buffer_bytes threads. Each thread
   // will read one byte of `host_buffer` from the start of `buffer`, where the
   // Memcpy call(s) above put it, and scatter it through the rest of `buffer`.
-  constexpr int64 host_buffer_bytes = host_buffer_size * sizeof(T);
+  constexpr int64_t host_buffer_bytes = host_buffer_size * sizeof(T);
   constexpr int threads_per_block = 256;
   constexpr int blocks_per_grid =
       (host_buffer_bytes + threads_per_block - 1) / threads_per_block;
-  TF_CHECK_OK(stream->ThenLaunch(se::ThreadDim(threads_per_block, 1, 1),
-                                 se::BlockDim(blocks_per_grid, 1, 1), *kernel,
+  stream->ThenLaunch(se::ThreadDim(threads_per_block, 1, 1),
+                                 se::BlockDim(blocks_per_grid, 1, 1), 
+                                 *kernel.ValueOrDie(),
                                  buffer, host_buffer_bytes,
-                                 static_cast<int64>(buffer.size())));
-#endif
+                                 static_cast<int64_t>(buffer.size()));
 }
 
 void InitializeBuffer(se::Stream* stream, PrimitiveType buffer_type,

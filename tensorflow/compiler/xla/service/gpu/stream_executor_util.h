@@ -33,6 +33,10 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+namespace repeat_buffer_kernel {
+void* kernel();
+} // namespace repeat_buffer_kernel
+
 // Returns true if the given StreamExecutor is for a Volta or newer nvidia GPU.
 bool IsVoltaOrLater(const se::StreamExecutor& stream_exec);
 
