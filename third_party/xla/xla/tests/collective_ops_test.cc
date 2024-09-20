@@ -1849,8 +1849,7 @@ XLA_TEST_F(Fp8CollectiveOpsTest, DISABLED_ON_CPU(AllGather_8BitFloat)) {
                        absl::StrReplaceAll(kModuleStr, replacements_), config));
   TF_ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
-                        kNumReplicas,
+      ExecuteReplicated(std::move(module), {}, kNumReplicas,
                         /*use_threads=*/true, /*run_hlo_passes=*/true));
   ASSERT_EQ(results.size(), kNumReplicas);
   for (const Literal& result : results) {
@@ -1875,8 +1874,7 @@ XLA_TEST_F(Fp8CollectiveOpsTest, DISABLED_ON_CPU(AllToAll_8BitFloat)) {
                        absl::StrReplaceAll(kModuleStr, replacements_), config));
   TF_ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
-                        kNumReplicas,
+      ExecuteReplicated(std::move(module), {}, kNumReplicas,
                         /*use_threads=*/true, /*run_hlo_passes=*/true));
   ASSERT_EQ(results.size(), kNumReplicas);
   LiteralTestUtil::ExpectR1Equal<float>({1, 1}, results[0]);
@@ -1900,8 +1898,7 @@ XLA_TEST_F(Fp8CollectiveOpsTest, DISABLED_ON_CPU(CollectivePermute_8BitFloat)) {
                        absl::StrReplaceAll(kModuleStr, replacements_), config));
   TF_ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
-                        kNumReplicas,
+      ExecuteReplicated(std::move(module), {}, kNumReplicas,
                         /*use_threads=*/true, /*run_hlo_passes=*/true));
   ASSERT_EQ(results.size(), kNumReplicas);
   LiteralTestUtil::ExpectR1Equal<float>({1, 2}, results[0]);
