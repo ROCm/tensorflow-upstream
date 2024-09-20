@@ -19,16 +19,16 @@ limitations under the License.
 
 #include "absl/strings/str_replace.h"
 #include "absl/types/span.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/threadpool.h"
 #include "xla/literal.h"
 #include "xla/primitive_util.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_macros.h"
 #include "xla/tests/test_utils.h"
-#include "tsl/lib/core/status_test_util.h"
-#include "tsl/platform/blocking_counter.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/threadpool.h"
 
 // Tests cross-GPU operations.
 //
@@ -1879,8 +1879,7 @@ XLA_TEST_F(Fp8CollectiveOpsTest, DISABLED_ON_CPU(AllGather_8BitFloat)) {
                        absl::StrReplaceAll(kModuleStr, replacements_), config));
   TF_ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
-                        kNumReplicas,
+      ExecuteReplicated(std::move(module), {}, kNumReplicas,
                         /*use_threads=*/true, /*run_hlo_passes=*/true));
   ASSERT_EQ(results.size(), kNumReplicas);
   for (const Literal& result : results) {
@@ -1905,8 +1904,7 @@ XLA_TEST_F(Fp8CollectiveOpsTest, DISABLED_ON_CPU(AllToAll_8BitFloat)) {
                        absl::StrReplaceAll(kModuleStr, replacements_), config));
   TF_ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
-                        kNumReplicas,
+      ExecuteReplicated(std::move(module), {}, kNumReplicas,
                         /*use_threads=*/true, /*run_hlo_passes=*/true));
   ASSERT_EQ(results.size(), kNumReplicas);
   LiteralTestUtil::ExpectR1Equal<float>({1, 1}, results[0]);
@@ -1930,8 +1928,7 @@ XLA_TEST_F(Fp8CollectiveOpsTest, DISABLED_ON_CPU(CollectivePermute_8BitFloat)) {
                        absl::StrReplaceAll(kModuleStr, replacements_), config));
   TF_ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
-                        kNumReplicas,
+      ExecuteReplicated(std::move(module), {}, kNumReplicas,
                         /*use_threads=*/true, /*run_hlo_passes=*/true));
   ASSERT_EQ(results.size(), kNumReplicas);
   LiteralTestUtil::ExpectR1Equal<float>({1, 2}, results[0]);
