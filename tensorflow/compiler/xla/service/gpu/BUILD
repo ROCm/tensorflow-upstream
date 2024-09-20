@@ -23,10 +23,7 @@ load(
     "//tensorflow/core/platform:default/cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
-load(
-    "@local_config_rocm//rocm:build_defs.bzl",
-    "if_rocm_is_configured",
-)
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts")
 
 package(
     default_visibility = [":friends"],
@@ -1417,6 +1414,19 @@ cc_library(
 )
 
 cc_library(
+    name = "stream_executor_util_kernel",
+    srcs = ["stream_executor_util_kernel.cu.cc"],
+    tags = ["no_rocm"],
+    copts = rocm_copts(),
+    deps = if_rocm_is_configured([
+       "@local_config_rocm//rocm:rocm_headers",
+    ]) + 
+    if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ])
+)
+
+cc_library(
     name = "stream_executor_util",
     srcs = ["stream_executor_util.cc"],
     hdrs = ["stream_executor_util.h"],
@@ -1439,6 +1449,7 @@ cc_library(
         "//tensorflow/core/profiler/lib:traceme",
         "//tensorflow/stream_executor:kernel_spec",
         "//tensorflow/stream_executor:gpu_asm_opts",
+        ":stream_executor_util_kernel",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
