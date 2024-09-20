@@ -17,6 +17,8 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_replace.h"
+#include "absl/types/span.h"
 #include "xla/literal.h"
 #include "xla/primitive_util.h"
 #include "xla/tests/hlo_test_base.h"
