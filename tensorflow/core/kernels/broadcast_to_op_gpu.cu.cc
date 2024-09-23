@@ -26,7 +26,7 @@ namespace tensorflow {
 typedef Eigen::GpuDevice GPUDevice;
 
 #define INSTANTIATE_GPU_KERNEL(Type) \
-  template class functor::BroadcastTo<GPUDevice, Type>;
+  template struct functor::BroadcastTo<GPUDevice, Type>;
 TF_CALL_GPU_ALL_TYPES(INSTANTIATE_GPU_KERNEL);
 #undef INSTANTIATE_GPU_KERNEL
 

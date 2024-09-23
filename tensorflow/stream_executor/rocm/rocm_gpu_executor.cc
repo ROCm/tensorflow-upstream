@@ -264,25 +264,42 @@ port::Status GpuExecutor::GetKernel(const MultiKernelLoaderSpec& spec,
       }
     }
     kernel_to_gpu_binary_[kernel] = hsaco;
+  } else if (spec.has_in_process_symbol()) {
+    kernelname = &spec.in_process_symbol().kernelname();
+    void* symbol = spec.in_process_symbol().symbol();
+
+    VLOG(1) << "Resolve ROCM kernel " << *kernelname
+            << " from symbol pointer: " << symbol;
+
+    *rocm_kernel->gpu_function_ptr() = static_cast<hipFunction_t>(symbol);
+    rocm_kernel->SetInProcessSymbol(true);
   } else {
     return port::InternalError("No method of loading ROCM kernel provided");
   }
 
-  VLOG(2) << "getting function " << *kernelname << " from module " << module;
-  if (!GpuDriver::GetModuleFunction(context_, module, kernelname->c_str(),
+  // If we resolved kernel from a symbol pointer, there is no need to load it
+  // from a module, as ROCm runtime did that automatically for us.
+  if (!spec.has_in_process_symbol()) {
+    VLOG(2) << "getting function " << *kernelname << " from module " << module;
+    if (!GpuDriver::GetModuleFunction(context_, module, kernelname->c_str(),
                                     rocm_kernel->gpu_function_ptr())) {
-    return port::InternalError("Failed getting module function");
+      return port::InternalError("Failed getting module function");
+    }
   }
 
   // We have to trust the kernel loader spec arity because there doesn't appear
   // to be a way to reflect on the number of expected arguments w/the ROCM API.
   rocm_kernel->set_arity(spec.arity());
 
-  KernelMetadata kernel_metadata;
-  if (!GetKernelMetadata(rocm_kernel, &kernel_metadata)) {
-    LOG(WARNING) << "Unable to get metadata for kernel " << kernelname;
+  // unable to get kernel metadata for in-process kernel
+  if (!spec.has_in_process_symbol()) {
+    KernelMetadata kernel_metadata;
+    if (!GetKernelMetadata(rocm_kernel, &kernel_metadata)) {
+      LOG(WARNING) << "Unable to get metadata for kernel " << kernelname;
+    }
+    kernel->set_metadata(kernel_metadata);
   }
-  kernel->set_metadata(kernel_metadata);
+  
   kernel->set_name(*kernelname);
   return port::Status::OK();
 }
@@ -336,10 +353,19 @@ port::Status GpuExecutor::Launch(Stream* stream, const ThreadDim& thread_dims,
     VLOG(2) << "*(arg.address): "
             << reinterpret_cast<void*>(
                    *static_cast<const uint64_t*>(arg.address));
-    kernargs.push_back(
+
+    // in-process kernel launches need a list of pointers to the params
+    kernargs.push_back(rocm_kernel->IsInProcessSymbol() ?
+        const_cast<void*>(arg.address) :
         reinterpret_cast<void*>(*static_cast<const uint64_t*>(arg.address)));
   }
 
+  if(rocm_kernel->IsInProcessSymbol()) {
+    return GpuDriver::LaunchKernel(
+      GetGpuContext(stream), hipfunc, block_dims.x, block_dims.y, block_dims.z,
+      thread_dims.x, thread_dims.y, thread_dims.z,
+      args.number_of_shared_bytes(), hipstream, kernargs.data(), nullptr);
+  }
   size_t size = sizeof(void*) * kernargs.size();
   void* config[] = {HIP_LAUNCH_PARAM_BUFFER_POINTER, kernargs.data(),
                     HIP_LAUNCH_PARAM_BUFFER_SIZE, &size, HIP_LAUNCH_PARAM_END};

@@ -26,11 +26,13 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/custom_call_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/fft_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/gemm_thunk.h"
+#include "tensorflow/compiler/xla/service/gpu/gpublas_lt_matmul_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/infeed_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
 #include "tensorflow/compiler/xla/service/gpu/outfeed_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/sequential_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/triangular_solve_thunk.h"
+#include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
 #include "tensorflow/compiler/xla/service/hlo_casting_utils.h"
 
 namespace xla {
@@ -104,6 +106,65 @@ std::unique_ptr<Thunk> ThunkEmitter::BuildGemmThunk(
       GetAllocationSlice(*inst),  // The output buffer.
       /*implements_whole_instruction=*/true, inst, std::move(gemm_config));
 }
+
+std::unique_ptr<Thunk> ThunkEmitter::BuildCublasLtThunk(
+               const HloInstruction* instr) {
+
+  auto config = instr->backend_config<GemmBackendConfig>().ValueOrDie();
+  auto epilogue = config.epilogue();
+
+  bool has_vector_bias = gpublas_lt::EpilogueAddsVectorBias(epilogue).ValueOrDie();
+  bool has_matrix_bias = config.beta() != 0;
+
+  CHECK_EQ(instr->operand_count(), 
+               2 + int{has_matrix_bias} + int{has_vector_bias});
+
+  bool has_aux_output = gpublas_lt::EpilogueHasAuxiliaryOutput(epilogue).ValueOrDie();
+  xla::ShapeIndex output_index =
+      instr->shape().IsTuple() ? xla::ShapeIndex{0} : xla::ShapeIndex{};
+
+  auto a = GetAllocationSlice(*instr->operand(0));
+  auto b = GetAllocationSlice(*instr->operand(1));
+
+  BufferAllocation::Slice c;
+  if (has_matrix_bias) {
+    c = GetAllocationSlice(*instr->operand(2));
+  } else {
+    c = GetAllocationSlice(*instr, output_index);
+  }
+  auto d = GetAllocationSlice(*instr, output_index);
+
+  BufferAllocation::Slice bias;
+  if (has_vector_bias) {
+    bias = GetAllocationSlice(*instr->operand(has_matrix_bias ? 3 : 2));
+  }
+
+  BufferAllocation::Slice aux;
+  if (has_aux_output) {
+    aux = GetAllocationSlice(*instr, {1});
+  }
+
+  absl::optional<BufferAllocation::Slice> workspace_buffer;
+  int64 tuple_size = instr->shape().tuple_shapes_size();
+  if (instr->shape().IsTuple() &&
+      (tuple_size - has_aux_output - 1) > 0) {
+    CHECK_EQ((has_aux_output && tuple_size == 3) ||
+                 (!has_aux_output && tuple_size == 2), true);
+    workspace_buffer = GetAllocationSlice(
+                            *instr, {tuple_size - 1});
+  }
+
+  // Use the first algorithm by default (i.e. fastest according to heuristics).
+  int64_t algorithm = config.selected_algorithm();
+
+  BufferAllocation::Slice a_scale, b_scale, c_scale, d_scale, d_amax;
+  auto blas_lt_epilogue = gpublas_lt::AsBlasLtEpilogue(epilogue).ValueOrDie();
+  return std::make_unique<CublasLtMatmulThunk>(
+      instr, std::move(config),
+      blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
+      c_scale, d_scale, d_amax, workspace_buffer);
+}
+
 
 std::unique_ptr<Thunk> ThunkEmitter::BuildInfeedThunk(
     const HloInstruction* inst) {
@@ -285,8 +346,12 @@ Status ThunkEmitter::HandleCustomCall(HloInstruction* custom_call) {
   }
 #endif
 
-  if (IsCublasGemm(*custom_call)) {
+  if (IsLegacyCublasMatmul(*custom_call)) {
     AddThunkToThunkSequence(BuildGemmThunk(custom_call));
+    return Status::OK();
+  }
+  if (IsCublasLtMatmul(*custom_call)) {
+    AddThunkToThunkSequence(BuildCublasLtThunk(custom_call));
     return Status::OK();
   }
 

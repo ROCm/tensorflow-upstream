@@ -24,8 +24,15 @@ message ComputeCapability {
 message AutotuneResult {
   enum FailureKind {
     UNKNOWN = 0;
+
+    // Algorithm wrote memory outside its output buffers.
     REDZONE_MODIFIED = 1;
+
+    // Algorithm gave a different result from a reference algorithm.
     WRONG_RESULT = 2;
+
+    // Algorithm was rejected for failing to run or for known bugs.
+    DISQUALIFIED = 3;
   }
 
   message FailureResult {
@@ -46,6 +53,7 @@ message AutotuneResult {
     int64 buffer_address = 13;
   }
 
+  // Legacy and unused in new data; superseded by AlgorithmProto.
   message ConvKey {
     int64 algorithm = 1;
     bool tensor_ops_enabled = 2;

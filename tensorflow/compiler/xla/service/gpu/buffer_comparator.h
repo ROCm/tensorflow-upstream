@@ -1,4 +1,4 @@
-/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2018 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,10 +18,14 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/hlo_module_config.h"
 #include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/core/platform/stream_executor_no_cuda.h"
+#include "tensorflow/stream_executor/device_memory.h"
+#include "tensorflow/stream_executor/stream_executor.h"
 
-namespace xla {
-namespace gpu {
+#if TENSORFLOW_USE_ROCM
+#include "rocm/rocm_config.h"
+#endif
+
+namespace xla::gpu {
 
 // A device-side comparator that compares buffers.
 class BufferComparator {
@@ -29,7 +33,8 @@ class BufferComparator {
   BufferComparator(const BufferComparator&) = delete;
   BufferComparator(BufferComparator&&) = default;
 
-  BufferComparator(const Shape& shape, const HloModuleConfig& config);
+  BufferComparator(const Shape& shape, double tolerance = 0.1,
+              bool verbose = true);
 
   // Returns true if the two buffers compare equal. The definition of "equal"
   // is:
@@ -40,15 +45,27 @@ class BufferComparator {
   //     abs(a - b) / (max(abs(a), abs(b)) + 1) < tolerance
   //
   // See the implementation for the tolerance value.
-  StatusOr<bool> CompareEqual(se::Stream* stream, se::DeviceMemoryBase lhs,
-                              se::DeviceMemoryBase rhs) const;
+  StatusOr<bool> CompareEqual(se::Stream* stream,
+                                    se::DeviceMemoryBase current,
+                                    se::DeviceMemoryBase expected) const;
 
  private:
   Shape shape_;
-  HloModuleConfig config_;
+  double relative_tol_;  // relative tolerance for comparison
+  bool verbose_;          // whether to print out error message on mismatch
 };
 
-}  // namespace gpu
-}  // namespace xla
+namespace buffer_comparator {
+
+// Returns a pointer to CUDA C++ device function implementing comparison.
+void* fp16_comparison();
+void* bf16_comparison();
+void* fp32_comparison();
+void* fp64_comparison();
+void* int8_comparison();
+void* int32_comparison();
+
+}  // namespace buffer_comparator
+}  // namespace xla::gpu
 
 #endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_

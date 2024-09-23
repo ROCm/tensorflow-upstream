@@ -293,7 +293,7 @@ Status LinkWithBitcodeVector(llvm::Module* module,
   //llvm::buffer_ostream pstream(stream);
   module->print(stream, nullptr);
   stream.flush();
-  ir_string = absl::StrReplaceAll(ir_string, {{"v1024:1024-v2048:2048-n32:64-S32-A5", "v1024:1024-v2048:2048-n32:64-S32-A5-G1-ni:7:8"}});
+  ir_string = absl::StrReplaceAll(ir_string, {{"v1024:1024-v2048:2048-n32:64-S32-A5", "v1024:1024-v2048:2048-n32:64-S32-A5-G1-ni:7:8:9"}});
 
   std::unique_ptr<llvm::raw_fd_ostream> ir_fs(
       new llvm::raw_fd_ostream(ir_path, ec, llvm::sys::fs::F_None));
@@ -312,6 +312,7 @@ Status LinkWithBitcodeVector(llvm::Module* module,
       llvm_ir::AsStringRef("llvm-link"),
       llvm_ir::AsStringRef("-o"),
       llvm_ir::AsStringRef(linked_ir_path),
+      llvm_ir::AsStringRef("--suppress-warnings"),
   };
 
   llvmlink_args.push_back(llvm_ir::AsStringRef(ir_path));
@@ -600,6 +601,7 @@ StatusOr<std::vector<uint8>> EmitModuleToHsaco(
       llvm_ir::AsStringRef("llc"),
       llvm_ir::AsStringRef("-march=amdgcn"),
       llvm_ir::AsStringRef("-mcpu=gfx942"),
+      llvm_ir::AsStringRef("--amdgpu-kernarg-preload-count=16"),
       llvm_ir::AsStringRef("-filetype=obj"),
       llvm_ir::AsStringRef("-o"),
       llvm_ir::AsStringRef(isabin_path),
@@ -674,8 +676,9 @@ Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
 std::unique_ptr<llvm::TargetMachine> AMDGPUGetTargetMachine(
     llvm::Triple target_triple, int amdgpu_version,
     const HloModuleConfig& hlo_module_config) {
-  return GetTargetMachine(target_triple, absl::StrCat("gfx", amdgpu_version),
-                          hlo_module_config, "+code-object-v3");
+  return {};
+  // GetTargetMachine(target_triple, absl::StrCat("gfx", amdgpu_version),
+  //                         hlo_module_config, "+code-object-v3");
 }
 
 void AMDGPUBackendInit(const HloModuleConfig& hlo_module_config) {

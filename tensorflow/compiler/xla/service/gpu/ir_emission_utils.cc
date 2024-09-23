@@ -168,8 +168,17 @@ bool IsMatrixMultiplication(const HloInstruction& dot) {
 }
 
 bool IsCublasGemm(const HloInstruction& hlo) {
+   return IsLegacyCublasMatmul(hlo) || IsCublasLtMatmul(hlo);
+}
+
+bool IsLegacyCublasMatmul(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kCustomCall &&
          hlo.custom_call_target() == kGemmCallTarget;
+}
+
+bool IsCublasLtMatmul(const HloInstruction& hlo) {
+  return hlo.opcode() == HloOpcode::kCustomCall &&
+         hlo.custom_call_target() == kCublasLtMatmulCallTarget;
 }
 
 const char* const kCudnnBatchNormForwardInferenceCallTarget =
@@ -190,6 +199,7 @@ bool IsCustomCallToDnnBatchNorm(const HloInstruction& hlo) {
 }
 
 const char* const kGemmCallTarget = "__cublas$gemm";
+const char* const kCublasLtMatmulCallTarget = "__cublas$lt$matmul";
 const char* const kCudnnConvForwardCallTarget = "__cudnn$convForward";
 const char* const kCudnnConvBackwardInputCallTarget =
     "__cudnn$convBackwardInput";
