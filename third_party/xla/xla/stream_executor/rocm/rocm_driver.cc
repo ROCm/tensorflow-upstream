@@ -1999,6 +1999,7 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
   const uint64_t RESERVED_GFX9_X = 1048576 * 1024;
   const uint64_t RESERVED_GFX10_X = 1048576 * 512;
   const uint64_t RESERVED_GFX11_X = 1048576 * 512;
+  const uint64_t RESERVED_GFX12_X = 1048576 * 512;
   if (compute_capability.gfx9_mi100()) {
     *reserve = RESERVED_GFX908;
   } else if (compute_capability.gfx9_mi200_or_later()) {
@@ -2008,6 +2009,8 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
     *reserve = RESERVED_GFX10_X;
   } else if (compute_capability.gfx11_rx7900()) {
     *reserve = RESERVED_GFX11_X;
+  } else if (compute_capability.gfx12_rx8900()) {
+    *reserve = RESERVED_GFX12_X;
   }
 
   return true;
