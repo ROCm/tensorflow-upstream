@@ -72,3 +72,23 @@ tf_cc_test(
         "@llvm//:support",
     ],
 )
+
+
+tf_cc_test(
+    name = "gpu_backend_lib_amdgpu_test",
+    size = "small",
+    srcs = ["gpu_backend_lib_test.cc"],
+    deps = [
+        ":llvm_gpu_backend",
+        "//tensorflow/compiler/xla:statusor",
+        "//tensorflow/compiler/xla/service:hlo_module_config",
+        "//tensorflow/compiler/xla/service/gpu:gpu_types",
+        "//tensorflow/compiler/xla/service/gpu:target_constants",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core/platform:rocm_rocdl_path",
+        "@llvm//:core",
+        "@llvm//:support",
+        "@com_google_protobuf//:protobuf",
+    ],
+)
