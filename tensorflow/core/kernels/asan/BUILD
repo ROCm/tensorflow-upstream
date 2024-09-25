@@ -48,4 +48,5 @@ tf_gpu_cc_test(
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
     ],
+    linkopts = ["-shared-libasan", "-fsanitize=address"],
 )

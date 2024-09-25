@@ -145,7 +145,13 @@ build:tensorrt --action_env TF_NEED_TENSORRT=1
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
 build:rocm --action_env TF_NEED_ROCM=1
-build:rocm_asan --linkopt=-shared-libsan --linkopt=-fsanitize=address --linkopt=-fPIC --define=using_rocm=true
+build:rocm_asan --config=rocm
+#build:rocm_asan --linkopt=-shared-libsan --linkopt=-fsanitize=address --linkopt=-fPIC --define=using_rocm=true
+build:rocm_asan --action_env ASAN_OPTIONS="detect_leaks=0,detect_odr_violation=0,allocator_may_return_null=1"
+build:rocm_asan --test_env HSA_XNACK=1
+build:rocm_asan --copt=-fsanitize=address --copt=-fno-sanitize=leak --copt=-fno-sanitize-address-use-odr-indicator --copt=-fPIC
+build:rocm_asan --action_env=TF_ROCM_AMDGPU_TARGETS="gfx942:xnack+"
+build:rocm_asan --action_env=LD_PRELOAD="/opt/rocm-6.3.0.1/lib/llvm/lib/clang/18/lib/linux/libclang_rt.asan-x86_64.so /opt/rocm-6.3.0.1/lib/asan/libhsa-runtime64.so"
 
 build:sycl --crosstool_top=@local_config_sycl//crosstool:toolchain
 build:sycl --define=using_sycl=true

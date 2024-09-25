@@ -27,8 +27,8 @@ if [[ -n $1 ]]; then
 fi
 export ROCM_TOOLKIT_PATH=$ROCM_INSTALL_DIR
 
-yes "" | TF_NEED_ROCM=1 ROCM_TOOLKIT_PATH=${ROCM_INSTALL_DIR} PYTHON_BIN_PATH=/usr/bin/python3 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
+yes "" | TF_NEED_ROCM=1 ROCM_TOOLKIT_PATH=${ROCM_INSTALL_DIR} PYTHON_BIN_PATH=$PWD/py3.sh ./configure
 pip3 uninstall -y tensorflow || true
-TF_ROCM_AMDGPU_TARGETS=gfx942  bazel build --config=rocm_asan --config=opt --config=rocm --action_env=HIP_PLATFORM=amd --cxxopt=-std=c++14 --host_cxxopt=-std=c++14 --action_env=ROCM_PATH=/opt/rocm-6.3.0.1/ --action_env=ROCM_TOOLKIT_PATH=/opt/rocm-6.3.0.1/ //tensorflow/tools/pip_package:build_pip_package --verbose_failures &&
+LD_PRELOAD=/opt/rocm-6.3.0.1/lib/llvm/lib/clang/18/lib/linux/libclang_rt.asan-x86_64.so TF_ROCM_AMDGPU_TARGETS=gfx942:xnack+  bazel build --config=rocm_asan --action_env=HIP_PLATFORM=amd --cxxopt=-std=c++14 --host_cxxopt=-std=c++14 --action_env=ROCM_PATH=/opt/rocm-6.3.0.1/ --action_env=ROCM_TOOLKIT_PATH=/opt/rocm-6.3.0.1/ //tensorflow/tools/pip_package:build_pip_package --verbose_failures &&
 bazel-bin/tensorflow/tools/pip_package/build_pip_package $TF_PKG_LOC &&
 pip3 install $TF_PKG_LOC/tensorflow*.whl

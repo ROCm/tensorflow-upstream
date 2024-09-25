@@ -27,7 +27,7 @@ def _wrap_bash_cmd(ctx, cmd):
         if not bazel_sh:
             fail("BAZEL_SH environment variable is not set")
         cmd = [bazel_sh, "-l", "-c", " ".join(["\"%s\"" % s for s in cmd])]
-    return cmd
+    return ["/usr/bin/bash", "-l", "-c","unset LD_PRELOAD; " + " ".join(["\"%s\"" % s for s in cmd])]
 
 def _get_env_var(ctx, name):
     if name in ctx.os.environ:
