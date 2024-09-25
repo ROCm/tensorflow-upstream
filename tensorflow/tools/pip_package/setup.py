@@ -48,7 +48,7 @@ from setuptools.dist import Distribution
 # result for pip.
 # Also update tensorflow/tensorflow.bzl and
 # tensorflow/core/public/version.h
-_VERSION = '2.16.1'
+_VERSION = '2.16.2'
 
 
 # We use the same setup.py for all tensorflow_* packages and for the nightly
@@ -132,9 +132,6 @@ FAKE_REQUIRED_PACKAGES = [
     # different architectures having different requirements.
     # The entries here should be a simple duplicate of those in the collaborator
     # build section.
-    standard_or_nightly('tensorflow-cpu-aws', 'tf-nightly-cpu-aws') + '==' +
-    _VERSION + ';platform_system=="Linux" and (platform_machine=="arm64" or '
-    'platform_machine=="aarch64")',
     standard_or_nightly('tensorflow-intel', 'tf-nightly-intel') + '==' +
     _VERSION + ';platform_system=="Windows"',
 ]
@@ -146,11 +143,6 @@ if collaborator_build:
   # If this is a collaborator build, then build an "installer" wheel and
   # add the collaborator packages as the only dependencies.
   REQUIRED_PACKAGES = [
-      # Install the TensorFlow package built by AWS if the user is running
-      # Linux on an Aarch64 machine.
-      standard_or_nightly('tensorflow-cpu-aws', 'tf-nightly-cpu-aws') + '==' +
-      _VERSION + ';platform_system=="Linux" and (platform_machine=="arm64" or '
-      'platform_machine=="aarch64")',
       # Install the TensorFlow package built by Intel if the user is on a
       # Windows machine.
       standard_or_nightly('tensorflow-intel', 'tf-nightly-intel') + '==' +
