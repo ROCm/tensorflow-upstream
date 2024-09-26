@@ -23,7 +23,7 @@ COPY ${CUSTOM_INSTALL} /${CUSTOM_INSTALL}
 COPY setup.rocm.sh /setup.rocm.sh
 COPY devel.packages.rocm.txt /devel.packages.rocm.txt
 COPY sles.devel.packages.rocm.txt /sles.devel.packages.rocm.txt
-RUN /setup.rocm.sh $ROCM_VERSION jammy
+RUN /setup.rocm.sh $ROCM_VERSION noble
 
 # All lines past this point are reset when $CACHEBUSTER is set. We need this
 # for Python specifically because we install some nightly packages which are
