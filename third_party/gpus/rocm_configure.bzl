@@ -219,6 +219,7 @@ def _rocm_include_path(repository_ctx, rocm_config):
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/llvm/lib/clang/15.0.0/include")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/17/include")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/18/include")
+    inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/18/share")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/19/include")
     inc_dirs.append(rocm_config.rocm_toolkit_path + "/lib/llvm/lib/clang/20/include")
 
