@@ -162,7 +162,7 @@ class RocmComputeCapability {
   bool has_fast_fp16_support() const {
     static constexpr absl::string_view kList[] = {"gfx906", "gfx908", "gfx90a",
                                                   "gfx940", "gfx941", "gfx942",
-                                                  "gfx1030", "gfx1100", "gfx1200", "gfx1201"};
+                                                  "gfx1030", "gfx1100"};
     return absl::c_count(kList, gfx_version()) != 0;
   }
 
@@ -202,8 +202,6 @@ class RocmComputeCapability {
         "gfx942",  // MI300
         "gfx1030", // RX68xx / RX69xx
         "gfx1100"  // RX7900
-        "gfx1200"  // NAVI4x
-        "gfx1201"  // NAVI4x
   };
 };
 
