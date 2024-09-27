@@ -113,14 +113,16 @@ def GetHipccOptions(argv):
   """
 
   parser = ArgumentParser()
-  parser.add_argument('-hipcc_options', nargs='*', action='append')
+  parser.add_argument('--offload-arch', nargs='*', action='append')
+  # TODO find a better place for this
+  parser.add_argument('-gline-tables-only', action='store_true')
 
   args, _ = parser.parse_known_args(argv)
 
-  if args.hipcc_options:
-    options = _update_options(sum(args.hipcc_options, []))
-    return ' '.join(['--'+a for a in options])
-  return ''
+  line = ' -gline-tables-only ' if args.gline_tables_only else ''
+  if args.offload_arch:
+    return line + ' '.join(['--offload-arch=' + a for a in sum(args.offload_arch, [])])
+  return line
 
 
 def InvokeHipcc(argv, log=False):
@@ -140,6 +142,8 @@ def InvokeHipcc(argv, log=False):
   opt_option = GetOptionValue(argv, 'O')
   m_options = GetOptionValue(argv, 'm')
   m_options = ''.join([' -m' + m for m in m_options if m in ['32', '64']])
+  f_options = GetOptionValue(argv, 'f')
+  f_options = ''.join([' -f' + f for f in f_options])
   include_options = GetOptionValue(argv, 'I')
   out_file = GetOptionValue(argv, 'o')
   depfiles = GetOptionValue(argv, 'MF')
@@ -192,13 +196,13 @@ def InvokeHipcc(argv, log=False):
   hipccopts += undefines
   hipccopts += defines
   hipccopts += std_options
+  hipccopts += f_options
   hipccopts += m_options
-
-  offload_arch = '--offload-arch=gfx942:xnack+ '
+  
   if depfiles:
     # Generate the dependency file
     depfile = depfiles[0]
-    cmd = (HIPCC_PATH + ' ' + offload_arch + hipccopts +
+    cmd = (HIPCC_PATH + ' ' + hipccopts +
            host_compiler_options +
            ' ' + GCC_HOST_COMPILER_PATH +
            ' -I .' + includes + ' ' + srcs + ' -M -o ' + depfile)
@@ -209,7 +213,7 @@ def InvokeHipcc(argv, log=False):
     if exit_status != 0:
       return exit_status
 
-  cmd = (HIPCC_PATH + ' ' + offload_arch + hipccopts +
+  cmd = (HIPCC_PATH + ' ' + hipccopts +
          host_compiler_options + ' -fPIC' +
          ' ' + GCC_HOST_COMPILER_PATH +
          ' -I .' + opt + includes + ' -c ' + srcs + out)
@@ -274,7 +278,7 @@ def main():
     # this).
     if VERBOSE: print("Compiler HOST")
     cpu_compiler_flags = [flag for flag in sys.argv[1:]
-                               if not flag.startswith(('--rocm_log'))]
+                               if not flag.startswith(('--rocm_log')) and not flag.startswith(('--hipcc_option'))]
 
     # XXX: SE codes need to be built with gcc, but need this macro defined
     #cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")

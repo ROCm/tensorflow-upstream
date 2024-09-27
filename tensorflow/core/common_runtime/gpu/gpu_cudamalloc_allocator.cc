@@ -16,7 +16,18 @@ limitations under the License.
 #ifdef GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "tensorflow/stream_executor/cuda/cuda_activation.h"
+namespace ctx = stream_executor::cuda;
+#define gpuMemAlloc cuMemAlloc
+#define gpuMemFree cuMemFree
 #endif  // GOOGLE_CUDA
+
+#ifdef TENSORFLOW_USE_ROCM
+#include "hip/hip_runtime.h"
+#include "tensorflow/stream_executor/rocm/rocm_activation.h"
+namespace ctx = stream_executor::rocm;
+#define gpuMemAlloc hipMalloc
+#define gpuMemFree hipFree
+#endif
 
 #include "tensorflow/core/common_runtime/gpu/gpu_cudamalloc_allocator.h"
 
@@ -30,6 +41,7 @@ namespace tensorflow {
 GPUcudaMallocAllocator::GPUcudaMallocAllocator(Allocator* allocator,
                                                PlatformGpuId platform_gpu_id)
     : base_allocator_(allocator) {
+  LOG(ERROR) << "Using GPUcudaMallocAllocator";
   stream_exec_ =
       GpuIdUtil::ExecutorForPlatformGpuId(platform_gpu_id).ValueOrDie();
 }
@@ -37,12 +49,12 @@ GPUcudaMallocAllocator::GPUcudaMallocAllocator(Allocator* allocator,
 GPUcudaMallocAllocator::~GPUcudaMallocAllocator() { delete base_allocator_; }
 
 void* GPUcudaMallocAllocator::AllocateRaw(size_t alignment, size_t num_bytes) {
-#ifdef GOOGLE_CUDA
+#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
   // allocate with cudaMalloc
-  se::cuda::ScopedActivateExecutorContext scoped_activation{stream_exec_};
-  CUdeviceptr rv = 0;
-  CUresult res = cuMemAlloc(&rv, num_bytes);
-  if (res != CUDA_SUCCESS) {
+  ctx::ScopedActivateExecutorContext scoped_activation{stream_exec_};
+  void* rv = nullptr;
+  auto res = gpuMemAlloc(&rv, num_bytes);
+  if (res) {
     LOG(ERROR) << "cuMemAlloc failed to allocate " << num_bytes;
     return nullptr;
   }
@@ -52,10 +64,10 @@ void* GPUcudaMallocAllocator::AllocateRaw(size_t alignment, size_t num_bytes) {
 #endif  // GOOGLE_CUDA
 }
 void GPUcudaMallocAllocator::DeallocateRaw(void* ptr) {
-#ifdef GOOGLE_CUDA
+#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
   // free with cudaFree
-  CUresult res = cuMemFree(reinterpret_cast<CUdeviceptr>(ptr));
-  if (res != CUDA_SUCCESS) {
+  auto res = gpuMemFree(reinterpret_cast<void*>(ptr));
+  if (res) {
     LOG(ERROR) << "cuMemFree failed to free " << ptr;
   }
 #endif  // GOOGLE_CUDA

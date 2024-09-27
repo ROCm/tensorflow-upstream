@@ -287,6 +287,12 @@ Status LinkWithBitcodeVector(llvm::Module* module,
     }
   }
 
+#if ROCM_ASAN
+    for (llvm::Function& fn : *module) {
+      fn.addFnAttr(llvm::Attribute::SanitizeAddress);
+    }
+#endif
+
   // Dump LLVM IR.
   std::string ir_string;
   llvm::raw_string_ostream stream(ir_string);
@@ -335,7 +341,11 @@ Status LinkWithBitcodeVector(llvm::Module* module,
   }
   std::vector<llvm::StringRef> opt_args{
       llvm_ir::AsStringRef("opt"),
+#if ROCM_ASAN
+      llvm_ir::AsStringRef("-passes=default<O3>,asan"),
+#else
       llvm_ir::AsStringRef("-O3"),
+#endif
       llvm_ir::AsStringRef("-o"),
       llvm_ir::AsStringRef(optimized_ir_path),
       llvm_ir::AsStringRef(linked_ir_path),
@@ -557,7 +567,12 @@ static std::vector<string> GetROCDLPaths(int amdgpu_version,
       {"opencl.bc", "ocml.bc", "ockl.bc", "oclc_finite_only_off.bc",
        "oclc_daz_opt_off.bc", "oclc_correctly_rounded_sqrt_on.bc",
        "oclc_unsafe_math_off.bc", "oclc_wavefrontsize64_on.bc",
-       "hip.bc", "oclc_abi_version_500.bc", "oclc_isa_version_942.bc"});
+       "hip.bc", "oclc_abi_version_500.bc", "oclc_isa_version_942.bc",
+#if ROCM_ASAN
+       "asanrtl.bc",
+       "ockl.bc",
+#endif
+       });
 
   // Construct full path to ROCDL bitcode libraries.
   std::vector<string> result;
@@ -600,6 +615,9 @@ StatusOr<std::vector<uint8>> EmitModuleToHsaco(
       llvm_ir::AsStringRef("llc"),
       llvm_ir::AsStringRef("-march=amdgcn"),
       llvm_ir::AsStringRef("-mcpu=gfx942"),
+#if ROCM_ASAN
+      llvm_ir::AsStringRef("-mattr=+xnack"),
+#endif
       llvm_ir::AsStringRef("-filetype=obj"),
       llvm_ir::AsStringRef("-o"),
       llvm_ir::AsStringRef(isabin_path),

@@ -43,6 +43,9 @@ namespace tensorflow {
 namespace {
 
 bool useCudaMallocAllocator() {
+#if ROCM_ASAN
+  return true;
+#endif
   const char* debug_allocator_str = std::getenv("TF_GPU_ALLOCATOR");
   return debug_allocator_str != nullptr &&
          std::strcmp(debug_allocator_str, "cuda_malloc") == 0;
