@@ -28,8 +28,8 @@ fi
 export ROCM_TOOLKIT_PATH=$ROCM_INSTALL_DIR
 
 yes "" | TF_NEED_ROCM=1 ROCM_TOOLKIT_PATH=${ROCM_INSTALL_DIR} PYTHON_BIN_PATH=$PWD/py3.sh ./configure
-TF_ROCM_AMDGPU_TARGETS=gfx942:xnack+ bazel build --config=rocm_asan --config=opt --config=rocm --action_env=HIP_PLATFORM=amd --cxxopt=-std=c++14 --host_cxxopt=-std=c++14 --action_env=ROCM_PATH=/opt/rocm-6.3.0.1/ --action_env=ROCM_TOOLKIT_PATH=/opt/rocm-6.3.0.1/ //tensorflow/core/kernels/asan:asan_test
+TF_ROCM_AMDGPU_TARGETS=gfx942:xnack+ bazel build --config=rocm_asan --config=opt --config=rocm --action_env=HIP_PLATFORM=amd --cxxopt=-std=c++14 --host_cxxopt=-std=c++14 --action_env=ROCM_PATH=/opt/rocm-6.3.0.1/ --action_env=ROCM_TOOLKIT_PATH=/opt/rocm-6.3.0.1/ //tensorflow/compiler/xla/service/gpu/tests:xla_asan_test
 
 # Run Test
-cd ./bazel-out/k8-opt/bin/tensorflow/core/kernels/asan/
-ASAN_OPTIONS="detect_leaks=0,detect_odr_violation=0,allocator_may_return_null=1" LD_LIBRARY_PATH=/opt/rocm-6.3.0.1/lib/llvm/lib/clang/18/lib/linux ./asan_test
+cd ./bazel-out/k8-opt/bin/tensorflow/compiler/xla/service/gpu/tests
+ASAN_OPTIONS="detect_leaks=0,detect_odr_violation=0,allocator_may_return_null=1" LD_LIBRARY_PATH=/opt/rocm-6.3.0.1/lib/llvm/lib/clang/18/lib/linux ./xla_asan_test
