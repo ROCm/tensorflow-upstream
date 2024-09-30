@@ -24,8 +24,10 @@ import pipes
 
 # Template values set by rocm_configure.bzl.
 CPU_COMPILER = ('%{cpu_compiler}')
+HOST_COMPILER_PATH = ('%{host_compiler_path}')
 
 HIPCC_PATH = '%{hipcc_path}'
+PREFIX_DIR = os.path.dirname(HOST_COMPILER_PATH)
 HIPCC_ENV = '%{hipcc_env}'
 HIP_RUNTIME_PATH = '%{hip_runtime_path}'
 HIP_RUNTIME_LIBRARY = '%{hip_runtime_library}'
@@ -75,6 +77,7 @@ def GetHostCompilerOptions(argv):
   parser.add_argument('--sysroot', nargs=1)
   parser.add_argument('-g', nargs='*', action='append')
   parser.add_argument('-fno-canonical-system-headers', action='store_true')
+  parser.add_argument('-no-canonical-prefixes', action='store_true')
   parser.add_argument('--genco', action='store_true')
 
   args, _ = parser.parse_known_args(argv)
@@ -87,7 +90,7 @@ def GetHostCompilerOptions(argv):
     opts += ' -iquote ' + ' -iquote '.join(sum(args.iquote, []))
   if args.g:
     opts += ' -g' + ' -g'.join(sum(args.g, []))
-  if args.fno_canonical_system_headers:
+  if args.fno_canonical_system_headers or args.no_canonical_prefixes:
     opts += ' -no-canonical-prefixes'
   if args.sysroot:
     opts += ' --sysroot ' + args.sysroot[0]
@@ -259,10 +262,20 @@ def main():
     cpu_compiler_flags = [flag for flag in sys.argv[1:]
                                if not flag.startswith(('--rocm_log'))]
 
+    gpu_linker_flags = []
+    gpu_linker_flags.append('-L' + ROCR_RUNTIME_PATH)
+    gpu_linker_flags.append('-Wl,-rpath=' + ROCR_RUNTIME_PATH)
+    gpu_linker_flags.append('-l' + ROCR_RUNTIME_LIBRARY)
+    gpu_linker_flags.append('-L' + HIP_RUNTIME_PATH)
+    gpu_linker_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
+    gpu_linker_flags.append('-l' + HIP_RUNTIME_LIBRARY)
+    gpu_linker_flags.append("-lrt")
+    gpu_linker_flags.append("-lstdc++")
+
     # XXX: SE codes need to be built with gcc, but need this macro defined
     cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")
-    if VERBOSE: print(' '.join([CPU_COMPILER] + cpu_compiler_flags))
-    return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
+    if VERBOSE: print(' '.join([CPU_COMPILER] + cpu_compiler_flags + gpu_linker_flags))
+    return subprocess.call([CPU_COMPILER] + cpu_compiler_flags + gpu_linker_flags)
 
 if __name__ == '__main__':
   sys.exit(main())
