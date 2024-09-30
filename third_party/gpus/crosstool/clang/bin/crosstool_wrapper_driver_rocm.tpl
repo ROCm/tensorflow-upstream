@@ -294,14 +294,14 @@ def main():
                                if not flag.startswith(('--rocm_log'))]
 
     gpu_linker_flags = []
-    gpu_linker_flags.append('-L' + ROCR_RUNTIME_PATH)
-    gpu_linker_flags.append('-Wl,-rpath=' + ROCR_RUNTIME_PATH)
-    gpu_linker_flags.append('-l' + ROCR_RUNTIME_LIBRARY)
-    gpu_linker_flags.append('-L' + HIP_RUNTIME_PATH)
-    gpu_linker_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
-    gpu_linker_flags.append('-l' + HIP_RUNTIME_LIBRARY)
-    gpu_linker_flags.append("-lrt")
-    gpu_linker_flags.append("-lstdc++")
+    # gpu_linker_flags.append('-L' + ROCR_RUNTIME_PATH)
+    # gpu_linker_flags.append('-Wl,-rpath=' + ROCR_RUNTIME_PATH)
+    # gpu_linker_flags.append('-l' + ROCR_RUNTIME_LIBRARY)
+    # gpu_linker_flags.append('-L' + HIP_RUNTIME_PATH)
+    # gpu_linker_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
+    # gpu_linker_flags.append('-l' + HIP_RUNTIME_LIBRARY)
+    # gpu_linker_flags.append("-lrt")
+    # gpu_linker_flags.append("-lstdc++")
 
     # XXX: SE codes need to be built with gcc, but need this macro defined
     cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")
