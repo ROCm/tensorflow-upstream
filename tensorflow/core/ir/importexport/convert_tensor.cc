@@ -22,11 +22,11 @@ limitations under the License.
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"    // from @llvm-project
+#include "mlir/IR/Builders.h"      // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Types.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/Types.h"         // from @llvm-project
+#include "mlir/Support/LLVM.h"     // from @llvm-project
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor.pb.h"
 #include "tensorflow/core/framework/tensor_shape.pb.h"
@@ -476,6 +476,14 @@ Status ConvertToTensorProto(const ElementsAttr attr, TensorProto* output) {
       break;
     case tensorflow::DT_FLOAT8_E4M3FN:
       ConvertFloat8ElementsAttr<tsl::float8_e4m3fn>(
+          dense_attr, output->mutable_float8_val());
+      break;
+    case tensorflow::DT_FLOAT8_E5M2FNUZ:
+      ConvertFloat8ElementsAttr<tsl::float8_e5m2fnuz>(
+          dense_attr, output->mutable_float8_val());
+      break;
+    case tensorflow::DT_FLOAT8_E4M3FNUZ:
+      ConvertFloat8ElementsAttr<tsl::float8_e4m3fnuz>(
           dense_attr, output->mutable_float8_val());
       break;
     case tensorflow::DT_INT4:
