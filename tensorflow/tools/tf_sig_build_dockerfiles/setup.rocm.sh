@@ -22,7 +22,7 @@
 #   - jammy
 #   - el7
 #   - el8
-set -ex
+set -x
 
 # Get arguments (or defaults)
 ROCM_VERSION=6.1.0
