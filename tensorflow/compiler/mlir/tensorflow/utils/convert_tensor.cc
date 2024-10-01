@@ -28,13 +28,13 @@ limitations under the License.
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Types.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"              // from @llvm-project
+#include "mlir/IR/Builders.h"                // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"   // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"            // from @llvm-project
+#include "mlir/IR/Types.h"                   // from @llvm-project
 #include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"               // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_attributes.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/convert_type.h"
@@ -149,6 +149,8 @@ absl::StatusOr<ElementsAttr> ConvertTensor(const Tensor& input_tensor,
     case DT_HALF:
     case DT_FLOAT8_E5M2:
     case DT_FLOAT8_E4M3FN:
+    case DT_FLOAT8_E5M2FNUZ:
+    case DT_FLOAT8_E4M3FNUZ:
       return ConvertTensorOfCustomFloatType(input_tensor, type);
     case DT_STRING:
       return ConvertStringTensor(input_tensor, type);
@@ -464,6 +466,14 @@ Status ConvertToTensorProto(const ElementsAttr attr, TensorProto* output) {
       break;
     case DT_FLOAT8_E4M3FN:
       ConvertFloat8ElementsAttr<tsl::float8_e4m3fn>(
+          dense_attr, output->mutable_float8_val());
+      break;
+    case DT_FLOAT8_E5M2FNUZ:
+      ConvertFloat8ElementsAttr<tsl::float8_e5m2fnuz>(
+          dense_attr, output->mutable_float8_val());
+      break;
+    case DT_FLOAT8_E4M3FNUZ:
+      ConvertFloat8ElementsAttr<tsl::float8_e4m3fnuz>(
           dense_attr, output->mutable_float8_val());
       break;
     case tensorflow::DT_INT4:

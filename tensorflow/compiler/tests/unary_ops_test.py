@@ -577,7 +577,7 @@ class UnaryOpsTest(xla_test.XLATestCase):
               -128.0 / 127,
               1,
           ],
-                            dtype=dtype))
+              dtype=dtype))
 
       def quantize_and_dequantize_v2_round_half_to_even(x):
         return array_ops.quantize_and_dequantize(
@@ -601,7 +601,7 @@ class UnaryOpsTest(xla_test.XLATestCase):
               -128.0 / 127,
               1,
           ],
-                            dtype=dtype))
+              dtype=dtype))
 
   def testComplexOps(self):
     for dtype in self.complex_types:
@@ -891,7 +891,8 @@ class UnaryOpsTest(xla_test.XLATestCase):
       # TODO(b/271327511): Fix issue where casts to FP8 very rarely result in
       # NaN on Mac
       self.skipTest("Casts to FP8 sometimes result in NaN on Mac")
-    fp8_types = {dtypes.float8_e5m2, dtypes.float8_e4m3fn}
+    fp8_types = {dtypes.float8_e5m2, dtypes.float8_e4m3fn,
+                 dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz}
     other_types = {
         dtypes.bool, dtypes.float32, dtypes.float64, dtypes.complex64,
         dtypes.int32, dtypes.int64, dtypes.uint32, dtypes.uint64
@@ -1021,7 +1022,7 @@ class UnaryOpsTest(xla_test.XLATestCase):
           expected=np.array([1, 2, 0], dtype=np_dtype))
 
   def testRank(self):
-    rank_op = lambda x: array_ops.rank_internal(x, optimize=False)
+    def rank_op(x): return array_ops.rank_internal(x, optimize=False)
     for dtype in self.numeric_types:
       self._assertOpOutputMatchesExpected(
           rank_op, dtype(7), expected=np.int32(0))
@@ -1037,7 +1038,7 @@ class UnaryOpsTest(xla_test.XLATestCase):
           expected=np.int32(2))
 
   def testShape(self):
-    shape_op = lambda x: array_ops.shape_internal(x, optimize=False)
+    def shape_op(x): return array_ops.shape_internal(x, optimize=False)
     for dtype in self.numeric_types:
       self._assertOpOutputMatchesExpected(
           shape_op, dtype(7), expected=np.array([], dtype=np.int32))
@@ -1059,7 +1060,7 @@ class UnaryOpsTest(xla_test.XLATestCase):
           expected=np.array([3, 1], dtype=np.int32))
 
   def testSize(self):
-    size_op = lambda x: array_ops.size_internal(x, optimize=False)
+    def size_op(x): return array_ops.size_internal(x, optimize=False)
     for dtype in self.numeric_types:
       self._assertOpOutputMatchesExpected(
           size_op, dtype(7), expected=np.int32(1))

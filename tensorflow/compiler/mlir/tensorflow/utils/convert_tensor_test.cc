@@ -18,15 +18,14 @@ limitations under the License.
 #include <cstring>
 #include <initializer_list>
 
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"    // from @llvm-project
+#include "mlir/IR/Builders.h"      // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Dialect.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/Dialect.h"       // from @llvm-project
+#include "mlir/IR/MLIRContext.h"   // from @llvm-project
+#include "mlir/Support/LLVM.h"     // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/dynamic_shape_utils.h"
-#include "xla/test.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
 #include "tensorflow/core/framework/tensor_util.h"
 #include "tensorflow/core/framework/types.pb.h"
@@ -34,6 +33,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/platform/types.h"
 #include "tsl/platform/ml_dtypes.h"
+#include "xla/test.h"
 
 namespace tensorflow {
 namespace {
@@ -42,7 +42,7 @@ using ::testing::Eq;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
 
-static void RegisterDialects(mlir::MLIRContext &context) {
+static void RegisterDialects(mlir::MLIRContext& context) {
   context.loadDialect<mlir::TF::TensorFlowDialect>();
 }
 
@@ -148,6 +148,12 @@ TEST_F(ConvertTensorTest, Simple) {
   ASSERT_NO_FATAL_FAILURE(VerifyConversion<tsl::float8_e4m3fn>(
       {tsl::float8_e4m3fn{1.0}, tsl::float8_e4m3fn{-1.0}}, DT_FLOAT8_E4M3FN,
       mlir::FloatType::getFloat8E4M3FN(&context)));
+  ASSERT_NO_FATAL_FAILURE(VerifyConversion<tsl::float8_e5m2fnuz>(
+      {tsl::float8_e5m2fnuz{1.0}, tsl::float8_e5m2fnuz{-1.0}},
+      DT_FLOAT8_E5M2FNUZ, mlir::FloatType::getFloat8E5M2FNUZ(&context)));
+  ASSERT_NO_FATAL_FAILURE(VerifyConversion<tsl::float8_e4m3fnuz>(
+      {tsl::float8_e4m3fnuz{1.0}, tsl::float8_e4m3fnuz{-1.0}},
+      DT_FLOAT8_E4M3FNUZ, mlir::FloatType::getFloat8E4M3FNUZ(&context)));
 
   ASSERT_NO_FATAL_FAILURE(VerifyConversion<int4>(
       {static_cast<int4>(1), static_cast<int4>(-1)}, DT_INT4,

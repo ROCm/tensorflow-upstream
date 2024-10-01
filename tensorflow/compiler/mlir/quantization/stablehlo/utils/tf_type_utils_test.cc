@@ -15,30 +15,31 @@ limitations under the License.
 
 #include "tensorflow/compiler/mlir/quantization/stablehlo/utils/tf_type_utils.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "llvm/Support/Casting.h"
-#include "mlir/Dialect/Quant/QuantOps.h"  // from @llvm-project
-#include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/QuantOps.h"                // from @llvm-project
+#include "mlir/Dialect/Quant/QuantTypes.h"              // from @llvm-project
 #include "mlir/Dialect/SparseTensor/IR/SparseTensor.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"                       // from @llvm-project
+#include "mlir/IR/MLIRContext.h"                        // from @llvm-project
+#include "mlir/Pass/PassManager.h"                      // from @llvm-project
+#include "mlir/Support/LLVM.h"                          // from @llvm-project
+#include "mlir/Support/LogicalResult.h"                 // from @llvm-project
 #include "tensorflow/compiler/mlir/register_common_dialects.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/mangling_util.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "xla/tsl/framework/numeric_types.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor.pb.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/ir/types/dialect.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/tsl/framework/numeric_types.h"
 
 namespace mlir::quant::tensorflow {
 namespace {
@@ -182,6 +183,7 @@ TEST(IsTFQintTypeTest, ValidTFQintTypeSucceeds) {
 
   EXPECT_FALSE(IsTFQintType(TF::Int8RefType::get(context.get())));
   EXPECT_FALSE(IsTFQintType(TF::Float8E5M2RefType::get(context.get())));
+  EXPECT_FALSE(IsTFQintType(TF::Float8E5M2FNUZRefType::get(context.get())));
 }
 
 TEST(GetIntTypeFromTFQintTest, ChecksIntTypesFromTFQint) {
