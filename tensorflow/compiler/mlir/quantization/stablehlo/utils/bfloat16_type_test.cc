@@ -14,12 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/compiler/mlir/quantization/stablehlo/utils/bfloat16_type.h"
 
-#include <gtest/gtest.h>
-
 #include <memory>
 
+#include <gtest/gtest.h>
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"   // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/register_common_dialects.h"
 
 namespace mlir::quant::stablehlo {

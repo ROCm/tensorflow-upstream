@@ -18,14 +18,15 @@ limitations under the License.
 #include <cstring>
 #include <initializer_list>
 
-#include "mlir/IR/Attributes.h"    // from @llvm-project
-#include "mlir/IR/Builders.h"      // from @llvm-project
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Dialect.h"       // from @llvm-project
-#include "mlir/IR/MLIRContext.h"   // from @llvm-project
-#include "mlir/Support/LLVM.h"     // from @llvm-project
+#include "mlir/IR/Dialect.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/dynamic_shape_utils.h"
+#include "xla/test.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
 #include "tensorflow/core/framework/tensor_util.h"
 #include "tensorflow/core/framework/types.pb.h"
@@ -33,7 +34,6 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/platform/types.h"
 #include "tsl/platform/ml_dtypes.h"
-#include "xla/test.h"
 
 namespace tensorflow {
 namespace {
@@ -42,7 +42,7 @@ using ::testing::Eq;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
 
-static void RegisterDialects(mlir::MLIRContext& context) {
+static void RegisterDialects(mlir::MLIRContext &context) {
   context.loadDialect<mlir::TF::TensorFlowDialect>();
 }
 

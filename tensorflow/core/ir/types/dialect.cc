@@ -27,20 +27,20 @@ limitations under the License.
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/SMLoc.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/Dialect/Traits.h"            // from @llvm-project
-#include "mlir/IR/Attributes.h"             // from @llvm-project
-#include "mlir/IR/Builders.h"               // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"      // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"             // from @llvm-project
+#include "mlir/Dialect/Traits.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"           // from @llvm-project
-#include "mlir/IR/Dialect.h"                // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/IR/Dialect.h"  // from @llvm-project
 #include "mlir/IR/DialectImplementation.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"            // from @llvm-project
-#include "mlir/IR/OpImplementation.h"       // from @llvm-project
-#include "mlir/IR/OperationSupport.h"       // from @llvm-project
-#include "mlir/Support/LLVM.h"              // from @llvm-project
-#include "mlir/Support/LogicalResult.h"     // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/OpImplementation.h"  // from @llvm-project
+#include "mlir/IR/OperationSupport.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"  // from @llvm-project
 
 #define GET_ATTRDEF_CLASSES
 #include "tensorflow/core/ir/types/attributes.cc.inc"
