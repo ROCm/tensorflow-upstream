@@ -433,7 +433,7 @@ inline bool DataTypeCanUseMemcpy(DataType dt) {
 // Returns true iff 'dt' is a real, non-quantized floating point type.
 constexpr DataTypeSet kDataTypeIsFloating =
     ToSet(DT_HALF) | ToSet(DT_BFLOAT16) | ToSet(DT_FLOAT) | ToSet(DT_DOUBLE) |
-    ToSet(DT_FLOAT8_E4M3FN) | ToSet(DT_FLOAT8_E5M2) ToSet(DT_FLOAT8_E4M3FNUZ) |
+    ToSet(DT_FLOAT8_E4M3FN) | ToSet(DT_FLOAT8_E5M2) | ToSet(DT_FLOAT8_E4M3FNUZ) |
     ToSet(DT_FLOAT8_E5M2FNUZ);
 inline bool DataTypeIsFloating(DataType dt) {
   return kDataTypeIsFloating.Contains(dt);
