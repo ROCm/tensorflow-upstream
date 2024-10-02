@@ -361,7 +361,6 @@ class TypesTest(test_util.TensorFlowTestCase, parameterized.TestCase):
       if numpy_dtype == dtypes.float8_e4m3fn.as_numpy_dtype:
         self.assertEqual(dtype.min, -448.0)
         self.assertEqual(dtype.max, 448.0)
-      # TODO: figure out the correct min/max values in nanoo fp8
       if numpy_dtype == dtypes.float8_e5m2fnuz.as_numpy_dtype:
         self.assertEqual(dtype.min, -57344.0)
         self.assertEqual(dtype.max, 57344.0)

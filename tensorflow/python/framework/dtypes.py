@@ -466,20 +466,20 @@ tf_export("dtypes.experimental.float8_e4m3fn",
           "experimental.float8_e4m3fn").export_constant(__name__,
                                                         "float8_e4m3fn")
 
-# TODO: update doc for nanoo fp8
 float8_e5m2fnuz = DType(types_pb2.DT_FLOAT8_E5M2FNUZ)
 doc_typealias.document(
     obj=float8_e5m2fnuz,
-    doc="8-bit float with 5 exponent bits and 2 mantissa bits.")
+    doc="8-bit float with 5 exponent bits and 2 mantissa bits."
+    "This type is finite-only, with one NaN and one Zero.")
 tf_export("dtypes.experimental.float8_e5m2fnuz",
-          "experimental.float8_e5m2fnuz").export_constant(__name__, "float8_e5m2fnuz")
+          "experimental.float8_e5m2fnuz").export_constant(__name__,
+                                                          "float8_e5m2fnuz")
 
 float8_e4m3fnuz = DType(types_pb2.DT_FLOAT8_E4M3FNUZ)
 doc_typealias.document(
     obj=float8_e4m3fnuz,
     doc="8-bit float with 4 exponent bits and 3 mantissa bits, with extended "
-    "finite range.  This type has no representation for inf, and only two NaN "
-    "values: 0xFF for negative NaN, and 0x7F for positive NaN.")
+    "This type is finite-only, with one NaN and one Zero.")
 tf_export("dtypes.experimental.float8_e4m3fnuz",
           "experimental.float8_e4m3fnuz").export_constant(__name__,
                                                           "float8_e4m3fnuz")
