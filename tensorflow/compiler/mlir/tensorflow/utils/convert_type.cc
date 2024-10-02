@@ -137,7 +137,7 @@ Status ConvertScalarTypeToDataType(Type type, DataType* dtype) {
   } else if (type.isFloat8E5M2FNUZ()) {
     *dtype = DT_FLOAT8_E5M2FNUZ;
     return absl::OkStatus();
-  }else if (auto itype = mlir::dyn_cast<mlir::IntegerType>(type)) {
+  } else if (auto itype = mlir::dyn_cast<mlir::IntegerType>(type)) {
     switch (itype.getWidth()) {
       case 1:
         *dtype = DT_BOOL;
