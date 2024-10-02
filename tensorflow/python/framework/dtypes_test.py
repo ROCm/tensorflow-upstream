@@ -366,8 +366,8 @@ class TypesTest(test_util.TensorFlowTestCase, parameterized.TestCase):
         self.assertEqual(dtype.min, -57344.0)
         self.assertEqual(dtype.max, 57344.0)
       if numpy_dtype == dtypes.float8_e4m3fnuz.as_numpy_dtype:
-        self.assertEqual(dtype.min, -448.0)
-        self.assertEqual(dtype.max, 448.0)
+        self.assertEqual(dtype.min, -240.0)
+        self.assertEqual(dtype.max, 240.0)
       if numpy_dtype == dtypes.int4.as_numpy_dtype:
         self.assertEqual(dtype.min, -8)
         self.assertEqual(dtype.max, 7)
