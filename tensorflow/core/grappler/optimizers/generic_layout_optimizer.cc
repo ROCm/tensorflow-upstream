@@ -73,6 +73,7 @@ inline GpuStats GetNumGPUs(const Cluster& cluster) {
          compute_capability_it->second == "gfx942" ||
          compute_capability_it->second == "gfx1101" ||
          compute_capability_it->second == "gfx1102" ||
+         compute_capability_it->second == "gfx1103" ||
          compute_capability_it->second == "gfx1200" ||
          compute_capability_it->second == "gfx1201") &&
         is_enabled) {
