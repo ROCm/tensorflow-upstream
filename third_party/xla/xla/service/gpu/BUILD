@@ -2258,6 +2258,11 @@ xla_cc_test(
     ],
 )
 
+cc_library(
+    name = "stream_executor_util_kernel_stub",
+    srcs = ["stream_executor_util_kernel_stub.cc"],
+)
+
 gpu_kernel_library(
     name = "stream_executor_util_kernel",
     srcs = ["stream_executor_util_kernel.cu.cc"],
@@ -2274,7 +2279,6 @@ cc_library(
     srcs = ["stream_executor_util.cc"],
     hdrs = ["stream_executor_util.h"],
     copts = tsl_copts(),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":cublas_cudnn",
         ":launch_dimensions",
@@ -2307,9 +2311,10 @@ cc_library(
         "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/protobuf:dnn_proto_cc",
-    ] + if_gpu_is_configured([
-        ":stream_executor_util_kernel",
-    ]),
+    ] + if_gpu_is_configured(
+        if_false = [":stream_executor_util_kernel_stub"],
+        if_true = [":stream_executor_util_kernel"],
+    ),
 )
 
 xla_cc_test(
