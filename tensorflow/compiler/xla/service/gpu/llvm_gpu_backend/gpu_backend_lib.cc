@@ -16,6 +16,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 
 #include <fstream>
+#include <future>
 #include <map>
 #include <memory>
 #include <string>
@@ -606,6 +607,30 @@ StatusOr<std::string> CompileToPtx(
 }  // namespace nvptx
 
 namespace {
+static std::string hsaco_cache_dir_;
+static std::mutex hsaco_cache_mutex_;
+static absl::flat_hash_map<std::string, std::vector<uint8_t>> hsaco_cache_;
+
+static void InitHsacoCacheDir() {
+  static absl::once_flag init_once;
+  absl::call_once(init_once, [] {
+    auto env = tsl::Env::Default();
+    tsl::ReadStringFromEnvVar("TF_XLA_HSACO_CACHE_DIR", "/tmp",
+                                     &hsaco_cache_dir_);
+    if (hsaco_cache_dir_.empty()) {
+      LOG(INFO) << "Will not cache XLA HSACOs. "
+                << "This line is logged at most "
+                << "once for the lifetime of the process.";
+    } else {
+      if (!env->IsDirectory(hsaco_cache_dir_).ok()) {
+        env->CreateDir(hsaco_cache_dir_);
+      }
+      LOG(INFO) << "Cache XLA HSACOs in " << hsaco_cache_dir_ << ". "
+                << "This line is logged at most "
+                << "once for the lifetime of the process.";
+    }
+  });
+}
 
 // Gets the ROCm-Device-Libs filenames for a particular AMDGPU version.
 std::vector<std::string> GetROCDLPaths(std::string gcn_arch_name,
@@ -637,72 +662,38 @@ std::vector<std::string> GetROCDLPaths(std::string gcn_arch_name,
   return result;
 }
 
-struct HsacoCacheEntry {
-  uint64_t hash;
-  std::string ir;
-  std::string gfx;
-  std::vector<uint8_t> hsaco;
-};
-
-struct HsacoCache {
- protected:
-  std::vector<HsacoCacheEntry> cache;
-  std::mutex m_mutex;
-  int request_count = 0;
-  int hit_count = 0;
-
- public:
-  static bool Find(const std::string& ir, uint64_t& hash,
-                   const std::string& gfx, std::vector<uint8_t>& hsaco);
-  static void Add(const std::string& ir, uint64_t hash, const std::string& gfx,
-                  const std::vector<uint8_t>& hsaco);
-};
-
-static HsacoCache g_hsacoCache;
-
-bool HsacoCache::Find(const std::string& ir, uint64_t& hash,
-                      const std::string& gfx, std::vector<uint8_t>& hsaco) {
-  std::lock_guard<std::mutex> lg(g_hsacoCache.m_mutex);
-  hash = std::hash<std::string>{}(ir);
-  bool hit = false;
-  for (auto& x : g_hsacoCache.cache) {
-    if (x.hash != hash) continue;
-    if (x.gfx != gfx) continue;
-    if (x.ir != ir) continue;
-    hsaco = x.hsaco;
-    hit = true;
-    break;
+Status ReadHsaco(std::string hsaco_path, std::vector<uint8_t>& hsaco) {
+  std::lock_guard<std::mutex> lg(hsaco_cache_mutex_);
+  auto it = hsaco_cache_.find(hsaco_path);
+  if (it != hsaco_cache_.end()) {
+    VLOG(1) << "Hsaco cache hit in memory " << hsaco_path;
+    hsaco = it->second;
+    return OkStatus();
   }
-  g_hsacoCache.request_count++;
-  if (hit) g_hsacoCache.hit_count++;
-  if (!(g_hsacoCache.request_count % 50))
-    VLOG(1) << "HSACO cache: " << g_hsacoCache.request_count << " requests, "
-            << g_hsacoCache.hit_count << " hits";
-  return hit;
-}
-
-void HsacoCache::Add(const std::string& ir, uint64_t hash,
-                     const std::string& gfx,
-                     const std::vector<uint8_t>& hsaco) {
-  std::lock_guard<std::mutex> lg(g_hsacoCache.m_mutex);
-  g_hsacoCache.cache.resize(g_hsacoCache.cache.size() + 1);
-  g_hsacoCache.cache.back().ir = ir;
-  g_hsacoCache.cache.back().hash = hash;
-  g_hsacoCache.cache.back().gfx = gfx;
-  g_hsacoCache.cache.back().hsaco = hsaco;
+  if (tsl::Env::Default()->FileExists(hsaco_path).ok()) {
+    VLOG(1) << "Hsaco cache hit in file " << hsaco_path;
+    std::ifstream hsaco_file(hsaco_path, std::ios::binary | std::ios::ate);
+    std::ifstream::pos_type hsaco_file_size = hsaco_file.tellg();
+    hsaco = std::vector<uint8_t>(hsaco_file_size);
+    hsaco_file.seekg(0, std::ios::beg);
+    hsaco_file.read(reinterpret_cast<char*>(&hsaco[0]), hsaco_file_size);
+    hsaco_cache_.emplace(hsaco_path, hsaco);
+    return OkStatus();
+  }
+  return xla::InternalErrorStrCat("Can't find Hsaco: ", hsaco_path);
 }
 
 // Emits the given module to HSA Code Object. target_machine is an initialized
 // TargetMachine for the AMDGPU target.
 StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
     llvm::Module* module, llvm::TargetMachine* target_machine,
-    const std::string& gcn_arch_name, const std::string& optimized_ir_path,
-    const std::string& isabin_path, const std::string& hsaco_path) {
+    const std::string& optimized_ir_path, const std::string& isabin_path,
+    const std::string& hsaco_path, std::string& gcn_arch_name) {
   std::string error_message;
   std::vector<std::string> tokens = absl::StrSplit(gcn_arch_name, ':');
   std::string gfx = tokens[0];
   // Locate llc.
-  std::string llc_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
+  std::string llc_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
   auto llc_program = llvm::sys::findProgramByName("llc", {llc_path});
   if (!llc_program) {
     return xla::InternalError("unable to find llc in PATH: %s",
@@ -711,7 +702,9 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   std::vector<llvm::StringRef> llc_args{
       llvm_ir::AsStringRef("llc"),
       llvm_ir::AsStringRef("-march=amdgcn"),
-      llvm_ir::AsStringRef(absl::StrCat("-mcpu=", gfx)),
+      llvm_ir::AsStringRef(
+          absl::StrCat("-mcpu=", gfx)),
+      llvm_ir::AsStringRef("--amdgpu-kernarg-preload-count=16"),
       llvm_ir::AsStringRef("-filetype=obj"),
       llvm_ir::AsStringRef("-o"),
       llvm_ir::AsStringRef(isabin_path),
@@ -727,6 +720,8 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   }
 
   // Locate lld.
+  // TODO(whchung@gmail.com): change to tensorflow::ROCmRoot() after
+  // ROCm-Device-Libs PR.
   std::string lld_path_1 = tsl::io::JoinPath(tsl::RocmRoot(), "hcc/bin");
   std::string lld_path_2 = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
   auto lld_program =
@@ -751,12 +746,8 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   }
 
   // Read HSACO.
-  std::ifstream hsaco_file(hsaco_path, std::ios::binary | std::ios::ate);
-  std::ifstream::pos_type hsaco_file_size = hsaco_file.tellg();
-
-  std::vector<uint8_t> hsaco(hsaco_file_size);
-  hsaco_file.seekg(0, std::ios::beg);
-  hsaco_file.read(reinterpret_cast<char*>(&hsaco[0]), hsaco_file_size);
+  std::vector<uint8_t> hsaco;
+  ReadHsaco(hsaco_path, hsaco);
   return hsaco;
 }
 
@@ -859,13 +850,7 @@ std::pair<std::string, std::string> GetFeatureStrFromGCNArchName(
 std::unique_ptr<llvm::TargetMachine> AMDGPUGetTargetMachine(
     llvm::Triple target_triple, GpuVersion gpu_version,
     const HloModuleConfig& hlo_module_config) {
-  auto compute_capability =
-      std::get_if<se::RocmComputeCapability>(&gpu_version);
-
-  std::string gcn_arch_name = compute_capability->gcn_arch_name();
-  auto arch = GetFeatureStrFromGCNArchName(gcn_arch_name);
-  return GetTargetMachine(std::move(target_triple), arch.first,
-                          hlo_module_config, arch.second);
+  return {};
 }
 
 void AMDGPUBackendInit(const HloModuleConfig& hlo_module_config) {
@@ -876,6 +861,7 @@ void AMDGPUBackendInit(const HloModuleConfig& hlo_module_config) {
   // its specific initialization functions instead of the catch-all
   // InitializeAll*.
 #if TENSORFLOW_USE_ROCM
+  InitHsacoCacheDir();
   LLVMInitializeAMDGPUTarget();
   LLVMInitializeAMDGPUTargetInfo();
   LLVMInitializeAMDGPUTargetMC();
@@ -894,14 +880,16 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
     llvm::Module* module, GpuVersion gpu_version,
     const HloModuleConfig& hlo_module_config,
     const std::string& rocdl_dir_path) {
-  static absl::once_flag backend_init_flag;
-  absl::call_once(backend_init_flag, AMDGPUBackendInit, hlo_module_config);
+  static std::once_flag backend_init_flag;
+  std::call_once(backend_init_flag, AMDGPUBackendInit, hlo_module_config);
 
   std::vector<uint8_t> hsaco;
   std::unique_ptr<llvm::TargetMachine> target_machine;
+
   std::string str;
   llvm::raw_string_ostream stream(str);
   stream << *module;
+
   // Delete the first two lines, since they usually vary even when the rest of
   // the code is the same (but verify that they are what we expect).
   if (str.size() >= 13 && str.substr(0, 13) == "; ModuleID = ") {
@@ -912,7 +900,7 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
     auto pos = str.find('\n');
     if (pos != std::string::npos) str = str.substr(pos + 1);
   }
-  str += hlo_module_config.compilation_cache_key();
+
   {
     tsl::profiler::TraceMe activity(
         [&] { return absl::StrCat("Compiling IR", module->getName().str()); },
@@ -928,21 +916,17 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
 
     std::string gcn_arch_name = compute_capability->gcn_arch_name();
 
-    uint64_t hash;
-    if (HsacoCache::Find(str, hash, gcn_arch_name, hsaco)) {
+    std::string hsaco_filename =
+        absl::StrCat(std::hash<std::string>{}(str),
+                     gcn_arch_name, ".hsaco");
+    std::string hsaco_path =
+        tsl::io::JoinPath(hsaco_cache_dir_, hsaco_filename);
+
+    if (ReadHsaco(hsaco_path, hsaco).ok()) {
       VLOG(1) << "HSACO cache hit";
       return hsaco;
     }
     VLOG(1) << "HSACO cache miss";
-    bool dump_lls = false;
-    if (dump_lls) {
-      static int hsaco_count = 0;
-      std::string name = "/tmp/" + std::to_string(hsaco_count) + ".ll";
-      hsaco_count++;
-      std::ofstream ofs(name);
-      ofs << str;
-      ofs.close();
-    }
 
     llvm::Triple default_target_triple("amdgcn--amdhsa-amdgiz");
     // Construct LLVM TargetMachine for AMDGPU.
@@ -951,38 +935,21 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
                                hlo_module_config);
 
     auto* env = tsl::Env::Default();
-    std::vector<std::string> tempdir_vector;
-    env->GetLocalTempDirectories(&tempdir_vector);
-    if (tempdir_vector.empty()) {
-      return xla::InternalError(
-          "Unable to locate a temporary directory for compile-time artifacts.");
-    }
-    std::string tempdir_name = tempdir_vector.front();
-    VLOG(1) << "Compile-time artifacts located at: " << tempdir_name;
-
     // Prepare filenames for all stages of compilation:
     // IR, binary ISA, and HSACO.
-    std::string ir_filename =
-        absl::StrCat(module->getModuleIdentifier(), ".ll");
-    std::string ir_path = tsl::io::JoinPath(tempdir_name, ir_filename);
+    std::string module_path;
+    if (!env->LocalTempFilename(&module_path)) {
+      return xla::InternalError(
+          "Could not get temporary filenames for modules.");
+    }
+    std::string ir_path = absl::StrCat(module_path, ".ll");
 
-    std::string linked_ir_filename =
-        absl::StrCat(module->getModuleIdentifier(), "-linked.ll");
-    std::string linked_ir_path =
-        tsl::io::JoinPath(tempdir_name, linked_ir_filename);
+    std::string linked_ir_path = absl::StrCat(module_path, "-linked.ll");
 
-    std::string optimized_ir_filename =
-        absl::StrCat(module->getModuleIdentifier(), "-opt.ll");
-    std::string optimized_ir_path =
-        tsl::io::JoinPath(tempdir_name, optimized_ir_filename);
+    std::string optimized_ir_path = absl::StrCat(module_path, "-opt.ll");
 
-    std::string isabin_filename =
-        absl::StrCat(module->getModuleIdentifier(), ".o");
-    std::string isabin_path = tsl::io::JoinPath(tempdir_name, isabin_filename);
+    std::string isabin_path = absl::StrCat(module_path, ".o");
 
-    std::string hsaco_filename =
-        absl::StrCat(module->getModuleIdentifier(), ".hsaco");
-    std::string hsaco_path = tsl::io::JoinPath(tempdir_name, hsaco_filename);
     // Link with ROCm-Device-Libs, and optimize the LLVM module.
     TF_RETURN_IF_ERROR(LinkAndOptimizeModule(
         module, gpu_version, hlo_module_config, rocdl_dir_path,
@@ -990,10 +957,19 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
         kAMDGPUInlineThreshold, ir_path, linked_ir_path, optimized_ir_path));
 
     // Lower optimized LLVM module to HSA code object.
-    TF_ASSIGN_OR_RETURN(
-        hsaco, EmitModuleToHsaco(module, target_machine.get(), gcn_arch_name,
-                                 optimized_ir_path, isabin_path, hsaco_path));
-    HsacoCache::Add(str, hash, gcn_arch_name, hsaco);
+    TF_ASSIGN_OR_RETURN(hsaco, EmitModuleToHsaco(module, target_machine.get(),
+                                                 optimized_ir_path, isabin_path,
+                                                 hsaco_path, gcn_arch_name));
+
+    std::async(
+        std::launch::async,
+        [](std::vector<std::string> files) {
+          for (auto& file : files) {
+            tsl::Env::Default()->DeleteFile(file);
+          }
+        },
+        std::vector<std::string>{ir_path, linked_ir_path, optimized_ir_path,
+                                 isabin_path});
   }
   return hsaco;
 }
