@@ -693,7 +693,7 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   std::vector<std::string> tokens = absl::StrSplit(gcn_arch_name, ':');
   std::string gfx = tokens[0];
   // Locate llc.
-  std::string llc_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
+  std::string llc_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
   auto llc_program = llvm::sys::findProgramByName("llc", {llc_path});
   if (!llc_program) {
     return xla::InternalError("unable to find llc in PATH: %s",
