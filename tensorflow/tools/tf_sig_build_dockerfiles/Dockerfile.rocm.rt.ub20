@@ -40,9 +40,6 @@ ENV TF_NEED_ROCM=1
 ENV TF_ROCM_GCC=1
 ENV ROCM_TOOLKIT_PATH=${ROCM_PATH}
 
-# Install tf_keras
-RUN pip install --no-deps tf_keras==2.17.0
-
 RUN pip install --no-cache-dir /${TF_PKGS_DIR}/${TENSORFLOW_PACKAGE}
 RUN echo 'ALL ALL=NOPASSWD:ALL' | tee /etc/sudoers.d/sudo-nopasswd
 
