@@ -54,6 +54,9 @@ RUN if [ -n "${DWLD_TF_SRC_CMD}" ]; then eval "${DWLD_TF_SRC_CMD}"; fi
 COPY devel.usertools /usertools
 COPY devel.bashrc /root/.bashrc
 
+# Install tf_keras
+RUN pip install --no-deps tf_keras==2.17.0
+
 # Setup ENV variables for tensorflow pip build
 ENV TF_NEED_ROCM=1
 ENV TF_ROCM_GCC=1
