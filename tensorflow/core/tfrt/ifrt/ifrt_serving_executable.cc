@@ -79,6 +79,7 @@ limitations under the License.
 #include "tensorflow/core/tfrt/ifrt/ifrt_device_utils.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_loaded_variable_registry.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_loaded_variable_utils.h"
+#include "tensorflow/core/tfrt/ifrt/ifrt_persistent_compilation_cache.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_restore_tensor_registry.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_serving_core_selector.h"
 #include "tensorflow/core/tfrt/ifrt/ifrt_tensor_utils.h"
@@ -198,7 +199,8 @@ IfrtServingExecutable::Create(
     tensorflow::DeviceMgr* device_mgr,
     tensorflow::XlaHelpers::ShapeRepresentationFn shape_representation_fn,
     IfrtServingCoreSelector* ifrt_serving_core_selector,
-    tsl::protobuf::Message* compilation_environement_proto) {
+    tsl::protobuf::Message* compilation_environement_proto,
+    IfrtPersistentCompilationCache* persistent_compilation_cache) {
   TF_ASSIGN_OR_RETURN(
       tensorflow::tpu::TPUCompileMetadataProto original_compile_metadata,
       GetCompileMetadata(*module, *client));
@@ -217,7 +219,7 @@ IfrtServingExecutable::Create(
       std::move(original_compile_metadata),
       xla::ifrt::BasicDeviceList::Create(xla::ifrt::BasicDeviceList::Devices(
           assigned_devices.begin(), assigned_devices.end())),
-      compilation_environement_proto));
+      compilation_environement_proto, persistent_compilation_cache));
 
   return executable;
 }
@@ -639,10 +641,7 @@ absl::StatusOr<std::vector<tensorflow::Tensor>> IfrtServingExecutable::Execute(
   TF_ASSIGN_OR_RETURN(
       auto execution_result,
       executable_bundle->ifrt_executable->Execute(
-          absl::MakeSpan(args),
-          /*options=*/
-          {.untuple_result = true,
-           .use_major_to_minor_data_layout_for_callbacks = true},
+          absl::MakeSpan(args), /*options=*/{.fill_status = true},
           std::move(execution_device_list)));
 
   auto status = execution_result.status.Await();

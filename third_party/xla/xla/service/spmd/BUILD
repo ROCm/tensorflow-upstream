@@ -51,6 +51,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_reachability",
         "//xla/hlo/ir:tile_assignment",
+        "//xla/hlo/parser:hlo_lexer",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/utils:hlo_query",
@@ -61,9 +62,9 @@ cc_library(
         "//xla/service:custom_call_sharding_helper",
         "//xla/service:dot_as_convolution_util",
         "//xla/service:flatten_call_graph",
+        "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_cse",
         "//xla/service:hlo_dce",
-        "//xla/service:hlo_lexer",
         "//xla/service:hlo_module_config",
         "//xla/service:host_memory_offload_annotations_hdr",
         "//xla/service:pattern_matcher",
@@ -93,6 +94,7 @@ cc_library(
 xla_cc_test(
     name = "spmd_partitioner_test",
     srcs = ["spmd_partitioner_test.cc"],
+    shard_count = 10,
     deps = [
         ":spmd_partitioner",
         ":spmd_prepare",

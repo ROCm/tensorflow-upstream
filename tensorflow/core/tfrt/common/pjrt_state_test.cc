@@ -22,6 +22,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/protobuf/error_codes.pb.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/platform/refcount.h"
 #include "tensorflow/core/protobuf/error_codes.pb.h"

@@ -851,8 +851,8 @@ void RemoveDuplicatedStrategy(StrategyGroup& strategy_group) {
       continue;
     }
     std::string key = strategy.output_sharding.ToString();
-    if (!input_shardings.empty()) {
-      for (const auto& sharding : input_shardings) {
+    if (!input_shardings.shardings.empty()) {
+      for (const auto& sharding : input_shardings.shardings) {
         key += "/" + (sharding.has_value() ? sharding->ToString() : "none");
       }
     }
@@ -1051,17 +1051,17 @@ absl::StatusOr<int64_t> CheckArithmeticSequence(
   return delta;
 }
 
-bool IsValidTileAssignment(const HloSharding& spec) {
-  if (IsUndefined(spec)) {
+bool IsValidTileAssignment(const HloSharding& sharding) {
+  if (IsUndefined(sharding)) {
     return false;
   }
 
-  if (spec.IsReplicated()) {
+  if (sharding.IsReplicated()) {
     return true;
   }
 
   // Check all tile dims
-  const auto& tile_assignment = spec.tile_assignment();
+  const auto& tile_assignment = sharding.tile_assignment();
   for (int i = 0; i < tile_assignment.num_dimensions(); i++) {
     if (tile_assignment.dim(i) != 1) {
       std::vector<int64_t> device_ids =
@@ -1076,24 +1076,24 @@ bool IsValidTileAssignment(const HloSharding& spec) {
   return true;
 }
 
-int64_t NumTileDimensions(const HloSharding& spec) {
-  if (spec.IsReplicated()) {
+int64_t NumTileDimensions(const HloSharding& sharding) {
+  if (sharding.IsReplicated()) {
     return -1;
   }
   int64_t num_tile_dims = 0;
-  for (int i = 0; i < spec.tile_assignment().num_dimensions(); i++) {
-    if (spec.tile_assignment().dim(i) != 1) {
+  for (int i = 0; i < sharding.tile_assignment().num_dimensions(); i++) {
+    if (sharding.tile_assignment().dim(i) != 1) {
       num_tile_dims++;
     }
   }
   return num_tile_dims;
 }
 
-bool TileAssignmentMatchesMesh(const HloSharding& spec,
+bool TileAssignmentMatchesMesh(const HloSharding& sharding,
                                const DeviceMesh& mesh) {
   int sharded_dims = 0;
-  for (int i = 0; i < spec.tile_assignment().num_dimensions(); ++i) {
-    if (spec.tile_assignment().dim(i) > 1) {
+  for (int i = 0; i < sharding.tile_assignment().num_dimensions(); ++i) {
+    if (sharding.tile_assignment().dim(i) > 1) {
       sharded_dims++;
     }
   }
@@ -1191,6 +1191,55 @@ absl::StatusOr<std::vector<int64_t>> GetTensorDimToMeshDimNoCrash(
     }
   }
   return tensor_dim_to_device_dim;
+}
+
+absl::StatusOr<std::vector<absl::btree_set<int64_t>>>
+GetTensorDimToMeshDimMixedMeshSharding(int64_t tensor_shape_rank,
+                                       const HloSharding& sharding,
+                                       const DeviceMesh& device_mesh,
+                                       bool consider_reverse_device_meshes) {
+  CHECK(!sharding.IsReplicated());
+  // Check the compatibility of tensor_shape_rank and spec
+  if (tensor_shape_rank != sharding.TiledDataRank()) {
+    return absl::InvalidArgumentError(
+        "Tensor shape rank should be equal to the tiled data rank of the input "
+        "spec.");
+  }
+  if (!TileAssignmentMatchesMesh(sharding, device_mesh)) {
+    return absl::InvalidArgumentError(
+        "Device mesh and tile assignment need to have the same number of "
+        "sharded dims.");
+  }
+
+  TF_ASSIGN_OR_RETURN(
+      std::vector<int64_t> axes,
+      GetMeshDimPermutationOrderInShardingSpec(sharding, device_mesh,
+                                               consider_reverse_device_meshes));
+
+  std::vector<absl::btree_set<int64_t>> tensor_dim_to_mesh_axis_mapping;
+  int mesh_axis_idx = 0;
+  for (int i = 0; i < sharding.tile_assignment().num_dimensions(); ++i) {
+    if (sharding.tile_assignment().dim(i) == 1) {
+      tensor_dim_to_mesh_axis_mapping.push_back({});
+      continue;
+    }
+
+    absl::btree_set<int64_t> mesh_axes_for_this_tensor_dim;
+    int product = 1;
+    do {
+      if (mesh_axis_idx >= device_mesh.num_dimensions()) {
+        return absl::InternalError(
+            "Mismatched mesh shapes encountered. This can happen when the "
+            "sharding does not map well to the mesh shape provided");
+      }
+      product *= device_mesh.dim(axes[mesh_axis_idx]);
+      mesh_axes_for_this_tensor_dim.insert(axes[mesh_axis_idx]);
+      mesh_axis_idx++;
+    } while (product < sharding.tile_assignment().dim(i));
+    CHECK(!mesh_axes_for_this_tensor_dim.empty());
+    tensor_dim_to_mesh_axis_mapping.push_back(mesh_axes_for_this_tensor_dim);
+  }
+  return tensor_dim_to_mesh_axis_mapping;
 }
 
 std::vector<int64_t> GetTensorDimToMeshDim(

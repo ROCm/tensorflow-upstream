@@ -88,7 +88,7 @@ def register_extension_info(**kwargs):
 # not contain rc or alpha, only numbers.
 # Also update tensorflow/core/public/version.h
 # and tensorflow/tools/pip_package/setup.py
-VERSION = "2.18.0"
+VERSION = "2.19.0"
 VERSION_MAJOR = VERSION.split(".")[0]
 two_gpu_tags = ["requires-gpu-nvidia:2", "manual", "no_pip"]
 
@@ -141,7 +141,7 @@ def if_not_v2(a):
 
 def if_nvcc(a):
     return select({
-        "@local_config_cuda//cuda:using_nvcc": a,
+        clean_dep("//tensorflow:is_cuda_nvcc"): a,
         "//conditions:default": [],
     })
 
@@ -1671,8 +1671,7 @@ def tf_gpu_cc_test(
         linkstatic = select({
             # TODO(allenl): Remove Mac static linking when Bazel 0.6 is out.
             clean_dep("//tensorflow:macos"): 1,
-            "@local_config_cuda//cuda:using_nvcc": 1,
-            "@local_config_cuda//cuda:using_clang": 1,
+            clean_dep("//tensorflow:is_cuda_enabled"): 1,
             "//conditions:default": 0,
         }),
         suffix = "_gpu",
@@ -1699,8 +1698,7 @@ def tf_gpu_cc_test(
             linkstatic = select({
                 # TODO(allenl): Remove Mac static linking when Bazel 0.6 is out.
                 clean_dep("//tensorflow:macos"): 1,
-                "@local_config_cuda//cuda:using_nvcc": 1,
-                "@local_config_cuda//cuda:using_clang": 1,
+                clean_dep("//tensorflow:is_cuda_enabled"): 1,
                 "//conditions:default": 0,
             }),
             suffix = "_2gpu",
@@ -1762,6 +1760,7 @@ def tf_cc_tests(
         srcs,
         deps,
         name = "",
+        data = [],
         linkstatic = 0,
         tags = [],
         size = "medium",
@@ -1779,6 +1778,7 @@ def tf_cc_tests(
             size = size,
             srcs = [src],
             args = args,
+            data = data,
             kernels = kernels,
             linkopts = linkopts,
             linkstatic = linkstatic,
@@ -1901,11 +1901,11 @@ def _cuda_copts(opts = []):
         """
     return select({
         "//conditions:default": [],
-        "@local_config_cuda//cuda:using_nvcc": [
+        clean_dep("//tensorflow:is_cuda_nvcc"): [
             "-nvcc_options=relaxed-constexpr",
             "-nvcc_options=ftz=true",
         ] + opts,
-        "@local_config_cuda//cuda:using_clang": [
+        clean_dep("//tensorflow:is_cuda_clang"): [
             "-fcuda-flush-denormals-to-zero",
         ] + opts,
     })
@@ -2274,7 +2274,7 @@ def tf_custom_op_library(
         clean_dep("//tensorflow/core:stream_executor_headers_lib"),
     ]) + if_cuda([
         "@local_config_cuda//cuda:cuda_headers",
-        "@local_config_cuda//cuda:cudart_static",
+        "@local_config_cuda//cuda:cuda_runtime",
     ]) + if_windows([
         clean_dep("//tensorflow/python:pywrap_tensorflow_import_lib"),
     ]) + tf_custom_op_library_additional_deps()
@@ -3580,3 +3580,10 @@ def tf_python_framework_friends():
 
 def if_cuda_tools(if_true, if_false = []):
     return _if_cuda_tools(if_true, if_false)
+
+# The config is used to determine if we need dependency on pre-built wheels.
+def if_wheel_dependency(if_true, if_false = []):
+    return select({
+        "@local_xla//xla/tsl:enable_wheel_dependency": if_true,
+        "//conditions:default": if_false,
+    })

@@ -33,7 +33,7 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/Quant/QuantOps.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/IR/Quant.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/Dialect.h"  // from @llvm-project
@@ -51,9 +51,9 @@ limitations under the License.
 #include "tensorflow/compiler/tf2xla/xla_argument.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/translate/mhlo_to_hlo/type_to_shape.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
@@ -381,7 +381,7 @@ static void RegisterMlirInputDialects(mlir::DialectRegistry& registry) {
   registry
       .insert<mlir::arith::ArithDialect, mlir::func::FuncDialect,
               mlir::TF::TensorFlowDialect, mlir::stablehlo::StablehloDialect,
-              mlir::quant::QuantizationDialect>();
+              mlir::quant::QuantDialect>();
   mlir::func::registerAllExtensions(registry);
 }
 

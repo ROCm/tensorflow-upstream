@@ -14,7 +14,10 @@ package(
 
 filegroup(
     name = "tflite_internal_cc_3p_api_deps_src",
-    srcs = ["op_macros.h"],
+    srcs = [
+        "builtin_ops_list.inc",
+        "op_macros.h",
+    ],
     visibility = [
         "//tensorflow/lite:__pkg__",
     ],
@@ -853,17 +856,6 @@ BUILTIN_KERNEL_DEPS = [
         "//tensorflow/lite/kernels/internal:optimized_eigen",
     ],
 }) + select({
-    "//tensorflow/lite:tflite_with_xnnpack_explicit_false": [],
-    "//conditions:default": [
-        "@pthreadpool",
-    ],
-}) + select({
-    "//tensorflow/lite:tflite_with_xnnpack_explicit_false": [],
-    "//tensorflow/lite:tflite_kernel_use_xnnpack_false": [],
-    "//conditions:default": [
-        "@XNNPACK",
-    ],
-}) + select({
     # This select must match the similar select in `copts`
     "//tensorflow:linux_ppc64le": [],
     "//tensorflow:linux_s390x": [],
@@ -896,8 +888,8 @@ cc_library(
         "//tensorflow/lite:array",
         "//tensorflow/lite:builtin_ops",
         "//tensorflow/lite:cc_api_stable",
-        "@local_tsl//tsl/lib/random:philox_random",
-        "@local_tsl//tsl/lib/random:random_distributions_utils",
+        "@local_xla//xla/tsl/lib/random:philox_random",
+        "@local_xla//xla/tsl/lib/random:random_distributions_utils",
         "//tensorflow/lite/core/c:c_api_types",
         # TODO(b/179298174): Move out from the experimental directory.
         "//tensorflow/lite/experimental/resource",
@@ -1788,6 +1780,8 @@ cc_test(
     deps = [
         ":test_main",
         ":test_util",
+        "//tensorflow/lite/core/c:common",
+        "//tensorflow/lite/kernels/internal:tensor_utils_no_eigen",
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_googletest//:gtest",
     ],

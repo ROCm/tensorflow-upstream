@@ -96,7 +96,6 @@ limitations under the License.
 #include "xla/service/gpu/kernel_arguments.h"
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/gpu/runtime/kernel_thunk.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
@@ -542,6 +541,7 @@ void AddXlaGpuOpsOptimizationPasses(mlir::OpPassManager& pm) {
 
 void AddLoopTransformationPasses(mlir::OpPassManager& pm) {
   pm.addNestedPass<FuncOp>(CreateLowerXlaGpuToScfPass());
+  pm.addNestedPass<FuncOp>(CreateFuseLoopsPass());
   pm.addPass(mlir::createInlinerPass({}, [&](mlir::OpPassManager& pm) {
     // CSE after inlining because inlining can introduce duplicates.
     pm.addPass(mlir::createCSEPass());

@@ -29,26 +29,24 @@ limitations under the License.
 
 namespace stream_executor {
 namespace gpu {
-// Formats hipError_t to output prettified values into a log stream.
-// Error summaries taken from:
-std::string ToString(hipError_t result);
 
-// GpuContext implements the Context class for ROCm GPUs.
-class GpuContext : public Context {
+// RocmContext implements the Context class for ROCm GPUs.
+class RocmContext : public Context {
  public:
-  GpuContext(hipCtx_t context, const int ordinal)
+  RocmContext(hipCtx_t context, const int ordinal)
       : context_(context), device_ordinal_(ordinal) {}
 
   hipCtx_t context() const { return context_; }
   void SetActive() override;
   bool IsActive() const override;
   int device_ordinal() const override { return device_ordinal_; }
+  absl::Status Synchronize() override;
 
   // Disallow copying and moving.
-  GpuContext(GpuContext&&) = delete;
-  GpuContext(const GpuContext&) = delete;
-  GpuContext& operator=(GpuContext&&) = delete;
-  GpuContext& operator=(const GpuContext&) = delete;
+  RocmContext(RocmContext&&) = delete;
+  RocmContext(const RocmContext&) = delete;
+  RocmContext& operator=(RocmContext&&) = delete;
+  RocmContext& operator=(const RocmContext&) = delete;
 
  private:
   hipCtx_t const context_;
