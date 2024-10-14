@@ -202,13 +202,15 @@ class RocmComputeCapability {
 
   bool gfx11_rx7900() const { return gfx_version() == "gfx1100"; }
 
+  bool gfx11_r780m() const { return gfx_version() == "gfx1103"; }
+
   bool has_nhwc_layout_support() const { return gfx9_mi100_or_later(); }
 
   bool has_bf16_dtype_support() const { return gfx9_mi100_or_later(); }
 
   bool has_fast_fp16_support() const {
     return gfx9_mi100_or_later() || gfx10_rx68xx() || gfx10_rx69xx() ||
-           gfx11_rx7900();
+           gfx11_rx7900() || gfx11_r780m();
   }
 
   bool has_mfma_instr_support() const { return gfx9_mi100_or_later(); }
@@ -251,7 +253,8 @@ class RocmComputeCapability {
       "gfx90a",                       // MI200
       "gfx940",  "gfx941", "gfx942",  // MI300
       "gfx1030",                      // RX68xx / RX69xx
-      "gfx1100"                       // RX7900
+      "gfx1100",                      // RX7900
+      "gfx1103"                       // Radeon 780M
   };
 };
 
