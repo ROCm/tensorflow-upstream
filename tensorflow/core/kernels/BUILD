@@ -3498,7 +3498,6 @@ cc_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core/platform:tensor_float_32_hdr_lib",
-        "//tensorflow/tsl/platform/default/build_config:cublas_plugin",
         "//tensorflow/core/util:env_var",
     ]) + if_cuda([
         "//tensorflow/tsl/platform/default/build_config:cublas_plugin",
