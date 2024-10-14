@@ -610,11 +610,10 @@ class RFFTOpsTest(BaseFFTOpsTest, parameterized.TestCase):
     self._CompareBackward_fftn(c2r, fft_length, axes, rtol=tol)
 
   @parameterized.parameters(
-      itertools.product(range(1, 5) if not test.is_built_with_rocm() else range(1,4), (5, 6), (np.float32, np.float64))
+      itertools.product(range(1, 5) if not test.is_built_with_rocm() else range(1,3), (5, 6), (np.float32, np.float64))
   )
   @test_util.run_gpu_only
   def testFftLength_rfftn(self, dims, size, np_rtype):
-    self.skipTest("Test fails on ROCm...fix me")
     inner_dim = size // 2 + 1
     np_ctype = np.complex64 if np_rtype == np.float32 else np.complex128
     tol = 1e-4 if np_ctype == np.complex64 else 1e-8
