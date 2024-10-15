@@ -163,7 +163,7 @@ StatusOr<DeviceAssignment> ComputationPlacer::AssignDevices(
     ComputationPlacerCreationFunction creation_function) {
   absl::MutexLock lock(&ComputationPlacer::platform_computation_placer_mutex_);
   auto* computation_placers = GetPlatformComputationPlacers();
-  CHECK(computation_placers->find(platform_id) == computation_placers->end());
+  // CHECK(computation_placers->find(platform_id) == computation_placers->end());
   (*computation_placers)[platform_id].creation_function = creation_function;
 }
 

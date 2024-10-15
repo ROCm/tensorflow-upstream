@@ -450,6 +450,7 @@ tsl_gpu_library(
         ":temporary_memory_manager",
         ":timer",
         "//tensorflow/compiler/xla/stream_executor/platform",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_blas_lt_gemm_runner",
         "//tensorflow/tsl/platform:env",
         "//tensorflow/tsl/platform:errors",
         "//tensorflow/tsl/platform:logging",
