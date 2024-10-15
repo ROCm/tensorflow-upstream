@@ -70,6 +70,21 @@ cc_library(
 )
 
 tf_cc_test(
+    name = "gpu_hlo_runner_test",
+    srcs = ["gpu_hlo_runner_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        ":gpu_codegen_test",
+        "//tensorflow/compiler/xla/service:gpu_plugin",
+        "//tensorflow/compiler/xla/service:hlo_parser",
+        "//tensorflow/compiler/xla/tests:filecheck",
+        "//tensorflow/compiler/xla:error_spec",
+        "//tensorflow/compiler/xla/tests:hlo_test_base",
+        "//tensorflow/compiler/xla/tests:xla_internal_test_main",
+    ],
+)
+
+tf_cc_test(
     name = "element_wise_row_vectorization_test",
     srcs = ["element_wise_row_vectorization_test.cc"],
     tags = tf_cuda_tests_tags(),
