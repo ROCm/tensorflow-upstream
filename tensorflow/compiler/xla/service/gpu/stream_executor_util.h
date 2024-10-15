@@ -107,8 +107,7 @@ StatusOr<se::dnn::DataType> GetDNNDataTypeFromPrimitiveType(PrimitiveType type);
 // If deterministic output is requested, returns first (not failing) result.
 StatusOr<tensorflow::AutotuneResult> PickBestResult(
     absl::Span<tensorflow::AutotuneResult const> profile_results,
-    std::optional<std::string_view> instr_str,
-    HloModuleConfig hlo_module_config);
+    absl::optional<absl::string_view> instr_str);
 
 // Returns whether determinism is required.
 bool RequireDeterminism(const HloModuleConfig& config);

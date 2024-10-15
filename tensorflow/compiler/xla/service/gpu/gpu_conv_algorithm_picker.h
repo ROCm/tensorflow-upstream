@@ -25,7 +25,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
 #include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_conv_runner.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_serializable_autotuner.h"
+#include "tensorflow/compiler/xla/service/gpu/autotuner_util.h"
 #include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
 #include "tensorflow/compiler/xla/service/service_executable_run_options.h"
 #include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
@@ -79,7 +79,7 @@ class GpuConvAlgorithmPicker : public HloModulePass {
   static Status WriteAutotuneResults(AutotuneResults* results);
   static Status LoadAutotuneResults(const AutotuneResults& results);
 
-  explicit GpuConvAlgorithmPicker(AutotuningConfig config) : config_(config) {}
+  explicit GpuConvAlgorithmPicker(AutotuneConfig config) : config_(config) {}
 
   absl::string_view name() const override {
     return "gpu-conv-algorithm-picker";
@@ -172,7 +172,7 @@ class GpuConvAlgorithmPicker : public HloModulePass {
       se::DeviceMemoryAllocator* allocator, se::Stream* stream);
 
  private:
-  AutotuningConfig config_;
+  AutotuneConfig config_;
 };
 
 }  // namespace gpu

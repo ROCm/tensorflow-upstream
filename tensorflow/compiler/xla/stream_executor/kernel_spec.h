@@ -86,6 +86,18 @@ class KernelLoaderSpec {
   SE_DISALLOW_COPY_AND_ASSIGN(KernelLoaderSpec);
 };
 
+// Loads kernel from in process symbol pointer (e.g. pointer to C++ device
+// function).
+class InProcessSymbol : public KernelLoaderSpec {
+ public:
+  InProcessSymbol(void *symbol, absl::string_view kernel_name);
+
+  void *symbol() const { return symbol_; }
+
+ private:
+  void *symbol_;
+};
+
 // An abstract kernel loader spec that has an associated file path, where
 // there's a canonical suffix for the filename; e.g. see CudaPtxOnDisk whose
 // canonical filename suffix is ".ptx".
@@ -279,6 +291,7 @@ class MultiKernelLoaderSpec {
 
   // Convenience getters for testing whether these platform variants have
   // kernel loader specifications available.
+  bool has_in_process_symbol() const { return in_process_symbol_ != nullptr; }
   bool has_cuda_ptx_on_disk() const { return cuda_ptx_on_disk_ != nullptr; }
   bool has_cuda_cubin_on_disk() const { return cuda_cubin_on_disk_ != nullptr; }
   bool has_cuda_cubin_in_memory() const {
@@ -291,6 +304,10 @@ class MultiKernelLoaderSpec {
 
   // Accessors for platform variant kernel load specifications.
   // Precondition: corresponding has_* is true.
+  const InProcessSymbol &in_process_symbol() const {
+    CHECK(has_in_process_symbol());
+    return *in_process_symbol_;
+  }
   const CudaPtxOnDisk &cuda_ptx_on_disk() const {
     CHECK(has_cuda_ptx_on_disk());
     return *cuda_ptx_on_disk_;
@@ -328,6 +345,8 @@ class MultiKernelLoaderSpec {
   // the PTX or OpenCL being loaded. Also be aware that in CUDA C++ the kernel
   // name may be mangled by the compiler if it is not declared in an
   // extern "C" scope.
+  MultiKernelLoaderSpec *AddInProcessSymbol(void *symbol,
+                                            absl::string_view kernel_name);
   MultiKernelLoaderSpec *AddOpenCLTextOnDisk(absl::string_view filename,
                                              absl::string_view kernelname);
   MultiKernelLoaderSpec *AddOpenCLBinaryOnDisk(absl::string_view filename,
@@ -352,6 +371,8 @@ class MultiKernelLoaderSpec {
       absl::string_view kernelname);
 
  private:
+  std::shared_ptr<InProcessSymbol>
+      in_process_symbol_;  // In process symbol pointer.
   std::unique_ptr<CudaPtxOnDisk>
       cuda_ptx_on_disk_;  // PTX text that resides in a file.
   std::unique_ptr<CudaCubinOnDisk>

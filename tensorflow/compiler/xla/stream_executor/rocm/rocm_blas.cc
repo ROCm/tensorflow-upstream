@@ -105,12 +105,16 @@ bool ROCMBlas::Init() {
     LOG(ERROR) << "failed to create rocBLAS handle: " << ToString(ret);
     return false;
   }
-
+  if (!blas_lt_.Init().ok()) {
+    LOG(ERROR) << "Failed to initialize hipblasLt";
+    return false;
+  }
   return true;
 }
 
 ROCMBlas::ROCMBlas(gpu::GpuExecutor *parent)
-    : parent_(CHECK_NOTNULL(parent)), blas_(nullptr) {}
+    : parent_(CHECK_NOTNULL(parent)), blas_(nullptr),
+      blas_lt_(parent) {}
 
 ROCMBlas::~ROCMBlas() {
   if (blas_ != nullptr) {
@@ -120,17 +124,13 @@ ROCMBlas::~ROCMBlas() {
 }
 
 bool ROCMBlas::SetStream(Stream *stream) {
-  CHECK(stream != nullptr);
-  CHECK(AsGpuStreamValue(stream) != nullptr);
-  CHECK(blas_ != nullptr);
-  gpu::ScopedActivateExecutorContext sac{parent_};
   rocblas_status ret =
-      wrap::rocblas_set_stream(blas_, AsGpuStreamValue(stream));
+      wrap::rocblas_set_stream(blas_, 
+          stream != nullptr ? AsGpuStreamValue(stream) : 0);
   if (ret != rocblas_status_success) {
     LOG(ERROR) << "failed to set stream for rocBLAS calls: " << ToString(ret);
     return false;
   }
-
   return true;
 }
 
@@ -192,12 +192,12 @@ bool ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
                                   Args... args) {
   absl::MutexLock lock{&mu_};
 
+  gpu::ScopedActivateExecutorContext sac{parent_};
+
   CHECK(blas_ != nullptr);
   if (!SetStream(stream)) {
     return false;
   }
-
-  gpu::ScopedActivateExecutorContext sac{parent_};
 
   // set the atomics mode, leaving default to library
   bool allow_atomics = !OpDeterminismRequired();
@@ -211,6 +211,7 @@ bool ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
   }
 
   ret = rocblas_func(blas_, args...);
+  SetStream(nullptr);
   if (err_on_failure && ret != rocblas_status_success) {
     LOG(ERROR) << "failed to run ROCBLAS routine " << rocblas_func.kName << ": "
                << ToString(ret);
@@ -545,8 +546,12 @@ tsl::Status ROCMBlas::DoBlasGemmWithAlgorithm(
     blas::AlgorithmType algorithm, blas::ComputePrecision precision,
     blas::ProfileResult *output_profile_result,
     blas::CallContext context) {
-  // ROCM TODO: properly implement the interface
-  return tsl::errors::Internal("Not implemented on ROCm");
+
+  if (!(type_a == type_b && type_b == type_c)) {
+    return tsl::errors::Internal("Mixed-precision is NYI!");
+  }
+  return DoBlasGemm(stream, transa, transb, m, n, k, type_a,
+      alpha, a, lda, b, ldb, beta, c, ldc, precision, context);
 }
 
 tsl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
@@ -559,8 +564,13 @@ tsl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
     blas::AlgorithmType algorithm, blas::ComputePrecision precision,
     blas::ProfileResult *output_profile_result,
     blas::CallContext context) {
-  // ROCM TODO: properly implement the interface
-  return tsl::errors::Internal("Not implemented on ROCm");
+  
+  if (!(type_a == type_b && type_b == type_c)) {
+    return tsl::errors::Internal("Mixed-precision is NYI!");
+  }
+  return DoBlasGemmStridedBatched(stream, transa, transb, m,
+    n, k, type_a, alpha, a, lda, stride_a, b, ldb, stride_b, beta,
+    c, ldc, stride_c, batch_count, precision, context);
 }
 
 bool ROCMBlas::GetBlasGemmAlgorithms(

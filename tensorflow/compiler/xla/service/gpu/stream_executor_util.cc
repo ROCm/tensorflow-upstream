@@ -37,13 +37,13 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-namespace {
-
 using se::dnn::DataLayout;
 using se::dnn::DataLayoutString;
 using se::dnn::FilterLayout;
 using se::dnn::FilterLayoutString;
 using tensorflow::AutotuneResult;
+
+namespace {
 
 // Returns the smallest integer >= 0 that's not in the given set of numbers.
 //
@@ -94,7 +94,107 @@ StatusOr<Layout> DataLayoutToXlaLayout(
   return LayoutUtil::MakeLayoutFromMajorToMinor(layout);
 }
 
-}  // anonymous namespace
+std::vector<AutotuneResult> KeepNonFailures(
+    absl::Span<AutotuneResult const> profile_results) {
+  // Filter out all failures except WRONG_RESULT, because false-positives are
+  // possible (e.g. perhaps the reference algorithm is the one that's
+  // incorrect!). Other failures can be detected with high accuracy. E.g.
+  // REDZONE_MODIFIED which is also quite severe.
+  std::vector<AutotuneResult> filtered_results;
+  absl::c_copy_if(profile_results, std::back_inserter(filtered_results),
+                  [](const AutotuneResult& r) {
+                    return !r.has_failure() ||
+                           r.failure().kind() == AutotuneResult::WRONG_RESULT;
+                  });
+  return filtered_results;
+}
+
+Status AllAlgorithmsFailedInternalError(
+    absl::optional<absl::string_view> instr_str,
+    absl::Span<AutotuneResult const> profile_results) {
+  std::ostringstream msg;
+  if (instr_str.has_value()) {
+    msg << "All algorithms tried for " << instr_str.value()
+        << " failed. Falling back to default algorithm.  Per-algorithm "
+           "errors:";
+  } else {
+    msg << "All algorithms failed. Falling back to the default algorithm. "
+        << "Per-algorithm errors:";
+  }
+  for (const auto& result : profile_results) {
+    msg << "\n  " << result.failure().msg();
+  }
+  return Internal("%s", msg.str());
+}
+
+Status NoAlgorithmSuppliedInternalError(
+    absl::optional<absl::string_view> instr_str) {
+  std::ostringstream msg;
+  if (instr_str.has_value()) {
+    msg << "There are no algorithm candidates for computing: \n  "
+        << instr_str.value()
+        << "\nThis likely means that the instruction shape is not supported by "
+           "the target GPU library.";
+  } else {
+    msg << "There are no algorithm candidates for computing the instruction.\n"
+           "This likely means that the instruction shape is not supported by "
+           "the target GPU library.";
+  }
+  return Internal("%s", msg.str());
+}
+
+void SortAutotuningResultsByRunTime(std::vector<AutotuneResult>& results) {
+  absl::c_sort(results,
+               [](const AutotuneResult& lhs, const AutotuneResult& rhs) {
+                 return tsl::proto_utils::FromDurationProto(lhs.run_time()) <
+                        tsl::proto_utils::FromDurationProto(rhs.run_time());
+               });
+}
+
+absl::Span<AutotuneResult const> TopResultsWithinMeasurementError(
+    std::vector<AutotuneResult>& results_sorted_by_runtime) {
+  // This value was picked by repeatedly running a few kernels that run for a
+  // short time and observing the run-time variance. A more rigorous analysis
+  // of the measurement error might yield a better error threshold.
+  constexpr absl::Duration kMeasurementError = absl::Microseconds(4);
+
+  absl::Duration min_time = tsl::proto_utils::FromDurationProto(
+      results_sorted_by_runtime.front().run_time());
+  absl::Duration limit_time = min_time + kMeasurementError;
+
+  auto limit_time_it = absl::c_find_if(
+      results_sorted_by_runtime, [limit_time](const AutotuneResult& x) {
+        return tsl::proto_utils::FromDurationProto(x.run_time()) > limit_time;
+      });
+  return absl::MakeSpan(&*results_sorted_by_runtime.begin(), &*limit_time_it);
+}
+} // anonymous namespace
+
+StatusOr<AutotuneResult> PickBestResult(
+    absl::Span<AutotuneResult const> profile_results,
+    absl::optional<absl::string_view> instr_str) {
+  if (profile_results.empty()) {
+    return NoAlgorithmSuppliedInternalError(instr_str);
+  }
+
+  std::vector<AutotuneResult> filtered_results =
+      KeepNonFailures(profile_results);
+
+  if (filtered_results.empty()) {
+    return AllAlgorithmsFailedInternalError(instr_str, profile_results);
+  }
+
+  // Kernel run-time measurements within kMeasurementError are not precise.
+  // Consider the lowest measurements within the error margin as equivalent and
+  // within them prefer algorithms that use the least amount of scratch memory.
+  SortAutotuningResultsByRunTime(filtered_results);
+  auto top_within_error = TopResultsWithinMeasurementError(filtered_results);
+  return *absl::c_min_element(top_within_error, [](const AutotuneResult& lhs,
+                                                   const AutotuneResult& rhs) {
+    return lhs.scratch_bytes() < rhs.scratch_bytes();
+  });
+}
+
 
 StatusOr<std::tuple<Layout, Layout, Layout>>
 StreamExecutorConvLayoutsToXlaLayouts(const ConvolutionDimensionNumbers& dnums,
@@ -374,7 +474,6 @@ Status ExecuteKernelOnStream(const se::KernelBase& kernel,
       se::BlockDim(block_counts.x, block_counts.y, block_counts.z), kernel,
       *kernel_args);
 }
-
 // Unimplemented for integers yet.
 template <typename T, typename Generator>
 typename std::enable_if<std::is_integral<T>::value,
@@ -395,38 +494,93 @@ static void InitializeTypedBuffer(se::Stream* stream,
                                   int64_t* rng_state) {
   // Accesses to static variables are not locked, since the caller is already
   // in a critical section.
+
+  // Use a large prime number to fragment the accesses.
+  constexpr int host_buffer_size = 10069;
+
   static std::vector<T>* host_buffer = [] {
     // Use a large prime number to fragment the accesses.
-    auto* ret = new std::vector<T>(10069);
+    auto* ret = new std::vector<T>(host_buffer_size);
     // Default-seeded random numbers.
     std::mt19937 gen;
     for (auto& element : *ret) {
+      constexpr bool kIsIntegral = std::numeric_limits<T>::is_integer;
+      constexpr bool kIsLowRange =
+          !kIsIntegral && std::numeric_limits<T>::max_exponent <=
+                              std::numeric_limits<Eigen::half>::max_exponent;
       // Only double gets random values in double.  Other data types get random
       // values in float then cast them to the target data types.
-      using RandomFloatingPointType =
-          typename std::conditional<std::is_same<T, Eigen::half>::value ||
-                                        std::is_same<T, Eigen::bfloat16>::value,
-                                    float, T>::type;
-      using RandomType =
-          typename std::conditional<std::is_integral<T>::value, float,
-                                    RandomFloatingPointType>::type;
+      using RandomType = typename std::conditional<std::is_same<T, double>::value,
+                                                   double, float>::type;
       // Scale down the values for fp16 to have less overflows.
-      auto upper_bound =
-          RandomType(std::is_same<T, Eigen::half>::value ? 0.1 : 1.0);
+      auto upper_bound = RandomType(kIsLowRange ? 0.1 : 1.0);
       auto rand_val = UniformDistribution(RandomType(0), upper_bound, &gen);
       // For bf16, float or double, it is between [0,1].
       // For fp16, it ranges between [0, 0.1].
       // For integer types, element is either 0 or 1 for less overflows
       // especially for int8_t.
-      element = T(std::is_integral<T>::value ? rand_val + 0.5 : rand_val);
+      element = T(kIsIntegral ? rand_val + 0.5 : rand_val);
     }
     return ret;
   }();
 
-  int64_t& host_index = *rng_state;
-
-  char* current_addr = static_cast<char*>(buffer.opaque());
+  // The buffer of random numbers is treated as being circular, and the seed in
+  // *rng_state is the offset in host_buffer that is copied to the zeroth index
+  // on the device. For large buffers then repeatedly copying the data from the
+  // host is expensive, so we just copy it once and use a kernel to repeat the
+  // data as needed.
+#ifdef GOOGLE_CUDA
   CHECK_EQ(0, buffer.size() % sizeof(T));
+  int64_t elements_to_fill = buffer.size() / sizeof(T);
+  int64_t host_index = *rng_state;
+  CHECK_LT(host_index, host_buffer_size);
+  *rng_state = (*rng_state + elements_to_fill) % host_buffer_size;
+  // Copy the last part of `host_buffer` to the start of `buf` on the device
+  int64_t first_size =
+      std::min<int64_t>(host_buffer_size - host_index, elements_to_fill);
+  stream->ThenMemcpy(&buffer, host_buffer->data() + host_index,
+                             first_size * sizeof(T));
+  elements_to_fill -= first_size;
+  if (elements_to_fill == 0) {
+    // Nothing more to do
+    return;
+  }
+  // Issue a second host->device copy to transfer the rest of host_buffer
+  int64_t second_size = std::min<int64_t>(host_index, elements_to_fill);
+  CHECK_LE(first_size + second_size, host_buffer_size);
+  // = buffer.GetByteSlice(first_size * sizeof(T), second_size * sizeof(T));
+  se::DeviceMemoryBase mem( static_cast< uint8_t *>(buffer.opaque()) 
+		  	+ first_size * sizeof(T), second_size * sizeof(T));
+
+  stream->ThenMemcpy(&mem, host_buffer->data(), mem.size());
+  elements_to_fill -= second_size;
+  if (elements_to_fill == 0) {
+    // Nothing more to do
+    return;
+  }
+  // Repeat the host_buffer_size elements at the start of `buf` to the end
+  CHECK_EQ(elements_to_fill, buffer.size() / sizeof(T) - host_buffer_size);
+  se::StreamExecutor* executor = stream->parent();
+  auto kernel =
+      se::TypedKernelFactory<se::DeviceMemoryBase, int64_t, int64_t>::Create(
+          executor, "RepeatBufferKernel", repeat_buffer_kernel::kernel());
+  if (!kernel.ok()) {
+    LOG(FATAL) << "Could not create RepeatBufferKernel: " << kernel.status();
+  }
+  // Launch the kernel with at least host_buffer_bytes threads. Each thread
+  // will read one byte of `host_buffer` from the start of `buffer`, where the
+  // Memcpy call(s) above put it, and scatter it through the rest of `buffer`.
+  constexpr int64_t host_buffer_bytes = host_buffer_size * sizeof(T);
+  constexpr int threads_per_block = 256;
+  constexpr int blocks_per_grid =
+      (host_buffer_bytes + threads_per_block - 1) / threads_per_block;
+  TF_CHECK_OK(stream->ThenLaunch(se::ThreadDim(threads_per_block, 1, 1),
+                                 se::BlockDim(blocks_per_grid, 1, 1), *kernel,
+                                 buffer, host_buffer_bytes,
+                                 static_cast<int64_t>(buffer.size())));
+#else // GOOGLE_CUDA
+  int64_t& host_index = *rng_state;
+  char* current_addr = static_cast<char*>(buffer.opaque());
   int64_t elements_left = buffer.size() / sizeof(T);
   while (elements_left > 0) {
     CHECK_LE(host_index, host_buffer->size());
@@ -437,15 +591,16 @@ static void InitializeTypedBuffer(se::Stream* stream,
         std::min<int64_t>(host_buffer->size() - host_index, elements_left);
     se::DeviceMemoryBase mem(current_addr, elements_copied * sizeof(T));
     stream->ThenMemcpy(&mem, host_buffer->data() + host_index,
-                       elements_copied * sizeof(T));
+                               elements_copied * sizeof(T));
     current_addr += elements_copied * sizeof(T);
     elements_left -= elements_copied;
     host_index += elements_copied;
   }
+#endif // GOOGLE_CUDA
 }
 
 void InitializeBuffer(se::Stream* stream, PrimitiveType buffer_type,
-                      int64_t* rng_state, se::DeviceMemoryBase buffer) {
+                           int64_t* rng_state, se::DeviceMemoryBase buffer) {
   switch (buffer_type) {
     case xla::F16:
       return InitializeTypedBuffer<Eigen::half>(stream, buffer, rng_state);
@@ -457,16 +612,12 @@ void InitializeBuffer(se::Stream* stream, PrimitiveType buffer_type,
     case xla::F64:
     case xla::C128:
       return InitializeTypedBuffer<double>(stream, buffer, rng_state);
-    case xla::PRED:
-      // Using S8 for PRED initialization, as vector<bool> has different
-      // semantics and cannot be used as a buffer.
     case xla::S8:
       return InitializeTypedBuffer<int8_t>(stream, buffer, rng_state);
-    case xla::S32:
-      return InitializeTypedBuffer<int32_t>(stream, buffer, rng_state);
+    case xla::U8:
+      return InitializeTypedBuffer<uint8_t>(stream, buffer, rng_state);
     default:
-      LOG(FATAL) << "Unexpected type: "
-                 << primitive_util::LowercasePrimitiveTypeName(buffer_type);
+      LOG(FATAL) << "Unexpected type: " << PrimitiveType_Name(buffer_type);
   }
 }
 
@@ -519,51 +670,6 @@ bool RequireDeterminism(const HloModuleConfig& config) {
   }();
   return require_cudnn_determinism ||
          config.debug_options().xla_gpu_deterministic_ops();
-}
-
-StatusOr<AutotuneResult> PickBestResult(
-    absl::Span<AutotuneResult const> profile_results,
-    std::optional<std::string_view> instr_str,
-    HloModuleConfig hlo_module_config) {
-  std::vector<AutotuneResult> filtered_results;
-
-  // For now, we ignore WRONG_RESULT failures because false-positives are
-  // possible (e.g. perhaps the reference algorithm is the one that's
-  // incorrect!).  But we don't ignore REDZONE_MODIFIED failures because they're
-  // quite severe and can be detected with high accuracy.
-  absl::c_copy_if(
-      profile_results, std::back_inserter(filtered_results),
-      [](const AutotuneResult& r) {
-        return !(r.has_failure() &&
-                 r.failure().kind() != AutotuneResult::WRONG_RESULT);
-      });
-
-  if (filtered_results.empty()) {
-    std::ostringstream msg;
-    if (instr_str.has_value()) {
-      msg << "All algorithms tried for " << instr_str.value()
-          << " failed. Falling back to default algorithm.  Per-algorithm "
-             "errors:";
-    } else {
-      msg << "All algorithms failed. Falling back to the default algorithm. "
-          << "Per-algorithm errors:";
-    }
-    for (const auto& result : profile_results) {
-      msg << "\n  " << result.failure().msg();
-    }
-    return InternalError("%s", msg.str());
-  }
-
-  auto selected_result = filtered_results.begin();
-  if (!RequireDeterminism(hlo_module_config)) {
-    selected_result = absl::c_min_element(
-        filtered_results,
-        [](const AutotuneResult& lhs, const AutotuneResult& rhs) {
-          return tsl::proto_utils::FromDurationProto(lhs.run_time()) <
-                 tsl::proto_utils::FromDurationProto(rhs.run_time());
-        });
-  }
-  return *selected_result;
 }
 
 }  // namespace gpu

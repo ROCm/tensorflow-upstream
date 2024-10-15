@@ -747,10 +747,6 @@ tsl::StatusOr<mlir::Operation*> LhloDialectEmitter::EmitCustomCallOp(
     return EmitCublasLtMatmul(custom_call_instr);
   }
 
-  if (xla::gpu::IsCublasLtMatmulF8(*instr)) {
-    return EmitCublasLtMatmulF8(custom_call_instr);
-  }
-
   if (xla::gpu::IsCustomCallToDnnConvolution(*instr)) {
     return EmitDnnConvolution(custom_call_instr);
   }
@@ -948,19 +944,19 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitCublasLtMatmul(
 
   TF_ASSIGN_OR_RETURN(
       bool has_vector_bias,
-      xla::gpu::cublas_lt::EpilogueAddsVectorBias(config.epilogue()));
+      xla::gpu::gpublas_lt::EpilogueAddsVectorBias(config.epilogue()));
 
   TF_ASSIGN_OR_RETURN(
       bool has_aux_output,
-      xla::gpu::cublas_lt::EpilogueHasAuxiliaryOutput(config.epilogue()));
+      xla::gpu::gpublas_lt::EpilogueHasAuxiliaryOutput(config.epilogue()));
 
   TF_RET_CHECK(custom_call->operand_count() ==
                2 + int{has_matrix_bias} + int{has_vector_bias});
 
   xla::ShapeIndex output_index =
-      has_aux_output ? xla::ShapeIndex{0} : xla::ShapeIndex{};
+      has_aux_output ? xla::ShapeIndex{0, 0} : xla::ShapeIndex{0};
 
-  llvm::SmallVector<Value, 6> operands;
+  llvm::SmallVector<Value, 7> operands;
   TF_RETURN_IF_ERROR(GetOrCreateView(custom_call->operand(0), &operands));
   TF_RETURN_IF_ERROR(GetOrCreateView(custom_call->operand(1), &operands));
   if (has_matrix_bias) {
@@ -976,15 +972,18 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitCublasLtMatmul(
   }
 
   if (has_aux_output) {
-    TF_RETURN_IF_ERROR(GetOrCreateView(custom_call, &operands, {1}));
+    TF_RETURN_IF_ERROR(GetOrCreateView(custom_call, &operands, 
+          xla::ShapeIndex{0, 1}));
   }
+  TF_RETURN_IF_ERROR(GetOrCreateView(custom_call, &operands, 
+          xla::ShapeIndex{1}));
 
   auto op =
       CreateOpWithoutAttrs<lmhlo_gpu::CublasLtMatmulOp>(custom_call, operands);
   SetMatmulAttributes(op, config, builder_);
 
   int32_t operand_sizes[] = {
-      1, 1, 1, 1, has_vector_bias ? 1 : 0, has_aux_output ? 1 : 0};
+      1, 1, 1, 1, has_vector_bias ? 1 : 0, has_aux_output ? 1 : 0, 1};
   op->setAttr(op.getOperandSegmentSizeAttr(),
               builder_.getDenseI32ArrayAttr(operand_sizes));
 
@@ -1013,7 +1012,7 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitCublasLtMatmulF8(
 
   TF_ASSIGN_OR_RETURN(
       bool has_vector_bias,
-      xla::gpu::cublas_lt::EpilogueAddsVectorBias(config.epilogue()));
+      xla::gpu::gpublas_lt::EpilogueAddsVectorBias(config.epilogue()));
 
   bool has_damax = custom_call->shape().IsTuple();
   xla::ShapeIndex output_index =
