@@ -264,7 +264,7 @@ class GpuDriver {
   // way.
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html#group__CUDA__EXEC_1gb8f3dc3031b40da29d5f9a7139e52e15
   static tsl::Status LaunchKernel(
-      GpuContext* context, absl::string_view kernel_name,
+      GpuContext* context, 
       GpuFunctionHandle function, unsigned int grid_dim_x,
       unsigned int grid_dim_y, unsigned int grid_dim_z,
       unsigned int block_dim_x, unsigned int block_dim_y,

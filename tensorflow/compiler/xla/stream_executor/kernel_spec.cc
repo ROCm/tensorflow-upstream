@@ -22,6 +22,9 @@ namespace stream_executor {
 KernelLoaderSpec::KernelLoaderSpec(absl::string_view kernelname)
     : kernelname_(std::string(kernelname)) {}
 
+InProcessSymbol::InProcessSymbol(void *symbol, absl::string_view kernel_name)
+    : KernelLoaderSpec(kernel_name), symbol_(symbol) {}
+
 OnDiskKernelLoaderSpec::OnDiskKernelLoaderSpec(absl::string_view filename,
                                                absl::string_view kernelname)
     : KernelLoaderSpec(kernelname), filename_(std::string(filename)) {}
@@ -155,6 +158,14 @@ const char *CudaPtxInMemory::original_text(int compute_capability_major,
   }
 
   return ptx_iter->second;
+}
+
+MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddInProcessSymbol(
+    void *symbol, absl::string_view kernel_name) {
+  CHECK(in_process_symbol_ == nullptr);
+  in_process_symbol_ =
+      std::make_shared<InProcessSymbol>(symbol, std::string(kernel_name));
+  return this;
 }
 
 OpenCLTextOnDisk::OpenCLTextOnDisk(absl::string_view filename,

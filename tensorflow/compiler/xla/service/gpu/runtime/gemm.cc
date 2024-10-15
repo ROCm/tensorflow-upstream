@@ -84,8 +84,9 @@ Status DoRuntimeAutotuning(se::Stream* stream, GemmConfig& config,
             // we pass a non-null ProfileResult, DoGemmWithAlgorithm should
             // always return true, and the actual success-ness is returned in
             // ProfileResult::is_valid.
-            TF_RETURN_IF_ERROR(RunGemm(config, lhs, rhs, out, stream, algorithm,
-                                       &profile_result));
+            se::DeviceMemoryBase workspace{};
+            TF_RETURN_IF_ERROR(RunGemm(config, lhs, rhs, out, workspace, false, 
+                      stream, algorithm, &profile_result));
             return std::move(profile_result);
           }));
 
@@ -147,8 +148,10 @@ static absl::Status GemmImpl(const ServiceExecutableRunOptions* run_options,
 #endif
   }
 
+  se::DeviceMemoryBase workspace{};
   Status executed =
-      RunGemm(*gemm_config, lhs_data, rhs_data, output_data, stream);
+      RunGemm(*gemm_config, lhs_data, rhs_data, output_data, workspace, false, 
+          stream);
 
   if (!executed.ok()) return ToAbslStatus(executed);
 

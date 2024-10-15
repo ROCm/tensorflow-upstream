@@ -37,7 +37,7 @@ class GpuKernel : public internal::KernelInterface {
  public:
   GpuKernel()
       : gpu_function_(nullptr),
-        arity_(0),
+        arity_(0), inprocess_(false),
         preferred_cache_config_(KernelCacheConfig::kNoPreference) {}
 
   // Note that the function is unloaded when the module is unloaded, and the
@@ -54,6 +54,9 @@ class GpuKernel : public internal::KernelInterface {
     DCHECK(gpu_function_ != nullptr);
     return const_cast<GpuFunctionHandle>(gpu_function_);
   }
+
+  void SetInProcessSymbol(bool inprocess) { inprocess_ = inprocess; }
+  bool IsInProcessSymbol() const { return inprocess_; }
 
   // Returns the slot that the GpuFunctionHandle is stored within for this
   // object, for the CUDA API which wants to load into a GpuFunctionHandle*.
@@ -82,6 +85,7 @@ class GpuKernel : public internal::KernelInterface {
  private:
   GpuFunctionHandle gpu_function_;  // Wrapped CUDA kernel handle.
   unsigned arity_;  // Number of formal parameters the kernel takes.
+  bool inprocess_;
 
   // Preferred (but not required) cache configuration for this kernel.
   KernelCacheConfig preferred_cache_config_;
