@@ -431,6 +431,54 @@ cc_library(
     alwayslink = True,
 )
 
+
+cc_library(
+    name = "hipblaslt_if_static",
+    deps = if_rocm_hipblaslt([
+        "@local_config_rocm//rocm:hipblaslt",
+    ]),
+)
+
+cc_library(
+    name = "amdhipblaslt_plugin",
+    srcs = if_rocm_is_configured(["hip_blas_lt.cc"]),
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+        "hipblaslt_wrapper.h",
+        "hip_blas_utils.h",
+    ]),
+    deps = if_rocm_is_configured([
+        # keep sorted
+        ":hip_blas_utils",
+        ":hipblas_lt_header",
+        ":rocblas_plugin",
+        ":rocm_executor",
+        ":rocm_platform_id",
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:types",
+        "//xla:util",
+        "//xla/stream_executor",
+        "//xla/stream_executor:blas",
+        "//xla/stream_executor:event_based_timer",
+        "//xla/stream_executor:host_or_device_scalar",
+        "//xla/stream_executor/gpu:gpu_activation",
+        "//xla/stream_executor/gpu:gpu_blas_lt",
+        "//xla/stream_executor/gpu:gpu_helpers_header",
+        "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/platform",
+        "//xla/stream_executor/platform:dso_loader",
+        "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+    ]) + if_static([
+        ":hipblaslt_if_static",
+    ]),
+    alwayslink = True,
+)
+
 cc_library(
     name = "roctracer_if_static",
     deps = if_static([
