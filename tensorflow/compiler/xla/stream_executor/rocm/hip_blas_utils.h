@@ -16,8 +16,8 @@ limitations under the License.
 #include <string>
 
 #include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/stream_executor/blas.h"
-#include "tensorflow/stream_executor/rocm/hipblaslt_wrapper.h"
+#include "tensorflow/compiler/xla/stream_executor/blas.h"
+#include "tensorflow/compiler/xla/stream_executor/rocm/hipblaslt_wrapper.h"
 
 #if 0 //TF_ROCM_VERSION < 60000
 #define hipDataType hipblasDatatype_t

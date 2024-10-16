@@ -25,17 +25,17 @@ limitations under the License.
 #include "tensorflow/compiler/xla/primitive_util.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/core/lib/bfloat16/bfloat16.h"
-#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/tsl/platform/bfloat16.h"
+//#include "tensorflow/core/lib/core/errors.h"
 
-#include "tensorflow/stream_executor/gpu/gpu_activation.h"
-#include "tensorflow/stream_executor/gpu/gpu_helpers.h"
-#include "tensorflow/stream_executor/gpu/gpu_stream.h"
-#include "tensorflow/stream_executor/gpu/gpu_timer.h"
-#include "tensorflow/stream_executor/rocm/hip_blas_lt.h"
-#include "tensorflow/stream_executor/rocm/rocm_blas.h"
-#include "tensorflow/stream_executor/scratch_allocator.h"
-#include "tensorflow/stream_executor/stream.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_activation.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_helpers.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_timer.h"
+#include "tensorflow/compiler/xla/stream_executor/rocm/hip_blas_lt.h"
+#include "tensorflow/compiler/xla/stream_executor/rocm/rocm_blas.h"
+#include "tensorflow/compiler/xla/stream_executor/scratch_allocator.h"
+#include "tensorflow/compiler/xla/stream_executor/stream.h"
 
 #define SET_ATTR(setter, handle, attr, value) \
   ToStatus(setter(handle, attr, &value, sizeof(decltype(value))), #setter)
@@ -57,8 +57,7 @@ namespace rocm {
 
 using ::xla::complex128;
 using ::xla::complex64;
-using tensorflow::errors::InvalidArgument;
-using tensorflow::bfloat16;
+using tsl::bfloat16;
 using namespace hipblaslt_ext;
 
 // void GroupGemmUpdateArgs(hipStream_t stream, 
@@ -146,7 +145,7 @@ xla::Status BlasLt::Init() {
   SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtCreate(&blas_lt));
   absl::MutexLock lock(&mu_);
   blas_lt_.reset(blas_lt);
-  return xla::Status::OK();
+  return xla::OkStatus();
 }
 
 /*static*/ xla::StatusOr<BlasLt::MatrixLayout> BlasLt::MatrixLayout::Create(
@@ -272,7 +271,7 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
 
 xla::Status BlasLt::MatmulPlan::SetAlgorithm(const MatmulAlgorithm& algorithm) {
   algorithm_ = algorithm;
-  return xla::Status::OK();
+  return xla::OkStatus();
 }
 
 auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg) const
@@ -433,7 +432,7 @@ xla::Status BlasLt::MatmulPlan::DoMatmul(
     profile_result->set_is_valid(true);
     profile_result->set_elapsed_time_in_ms(timer->GetElapsedMilliseconds());
   }
-  return xla::Status::OK();
+  return xla::OkStatus();
 }
 
 xla::Status BlasLt::MatmulPlan::ExecuteOnStream(
@@ -518,7 +517,7 @@ auto BlasLt::GetGroupedMatmulPlan(Stream *stream,
   std::vector< GemmEpilogue > epilogue(cfg.batch_count,
             GemmEpilogue{});
   std::vector< GemmInputs > inputs(cfg.batch_count);
-  for(int64 i = 0; i < cfg.batch_count; i++) {
+  for(int64_t i = 0; i < cfg.batch_count; i++) {
     inputs[i].a = const_cast< void * >(cfg.a[i]);
     inputs[i].b = const_cast< void * >(cfg.b[i]);
     inputs[i].c = const_cast< void * >(cfg.c[i]);
@@ -553,13 +552,13 @@ auto BlasLt::GetGroupedMatmulPlan(Stream *stream,
           getDefaultValueForDeviceUserArguments(plan->host_args_));
 
     // NOTE: memory must be aligned by 16 bytes ??
-    auto raw_mem = parent_->Allocate(mem_size);
+    auto raw_mem = parent_->Allocate(mem_size, /* memory_space */ 0);
     // TF_ASSIGN_OR_RETURN(auto dev_mem, allocator->Allocate(parent_->device_ordinal(), 
     //       mem_size)));
     if(raw_mem == nullptr) {
       return xla::InternalError("Unable to allocate memory for grouped gemm params!");
     }
-    plan->device_args_ = GroupedMatmulPlan::DeviceMemoryArgs{raw_mem, mem_size};
+    plan->device_args_ = GroupedMatmulPlan::DeviceMemoryArgs(raw_mem.opaque(), mem_size);
 
     if(!stream->ThenMemcpy(&plan->device_args_, plan->host_args_, mem_size).ok()) {
        return xla::InternalError("Memcpy failed!");
@@ -672,7 +671,7 @@ xla::Status BlasLt::GroupedMatmulPlan::SetAlgorithm(
 
   SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->initialize(
           *palgo, workspace_addr));
-  return xla::Status::OK();
+  return xla::OkStatus();
 }
 
 xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(Stream *stream,
@@ -726,7 +725,7 @@ xla::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(Stream *stream,
     profile_result->set_is_valid(true);
     profile_result->set_elapsed_time_in_ms(timer->GetElapsedMilliseconds());
   }
-  return xla::Status::OK();
+  return xla::OkStatus();
 }
 
 }  // namespace rocm

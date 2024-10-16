@@ -63,6 +63,37 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_blas_lt",
+    srcs = if_gpu_is_configured(["gpu_blas_lt.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_blas_lt.h"]),
+    deps = if_gpu_is_configured([
+        "//tensorflow/compiler/xla/stream_executor",
+        "//tensorflow/compiler/xla:xla_data_proto_cc",
+        "//tensorflow/compiler/xla:statusor",
+        "//tensorflow/compiler/xla:util",
+        "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/core/platform:env",
+        "@com_google_absl//absl/types:any",
+    ]),
+)
+
+
+cc_library(
+    name = "gpu_blas_lt_gemm_runner",
+    srcs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.h"]),
+    deps = if_gpu_is_configured([
+        "//tensorflow/core:autotuning_proto_cc",
+	"//tensorflow/core:autotune_results_proto_cc",	        
+	"//tensorflow/compiler/xla:xla_proto",		 
+	"//tensorflow/compiler/xla/stream_executor:scratch_allocator",			        
+	"//tensorflow/compiler/xla/service/gpu:autotuner_util",
+    "//tensorflow/compiler/xla:debug_options_flags",
+	":gpu_blas_lt",
+    ]),
+)
+
+cc_library(
     name = "gpu_diagnostics_header",
     hdrs = if_gpu_is_configured(["gpu_diagnostics.h"]),
     deps = [
@@ -174,7 +205,7 @@ tsl_gpu_library(
         "//tensorflow/compiler/tf2xla:__subpackages__",
         "//tensorflow/compiler/xla:__subpackages__",
         "//tensorflow/core/common_runtime/gpu:__subpackages__",
-        "//tensorflow/stream_executor:__subpackages__",
+        "//tensorflow/compiler/xla/stream_executor:__subpackages__",
     ]),
     deps = [
         "//tensorflow/compiler/xla/stream_executor:multi_platform_manager",

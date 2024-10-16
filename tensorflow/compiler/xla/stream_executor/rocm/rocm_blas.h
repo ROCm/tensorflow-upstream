@@ -34,6 +34,8 @@ limitations under the License.
 #include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
 #include "tensorflow/compiler/xla/stream_executor/temporary_device_memory.h"
 
+#include "tensorflow/compiler/xla/stream_executor/rocm/hip_blas_lt.h"
+
 namespace stream_executor {
 
 class Stream;
@@ -93,6 +95,10 @@ class ROCMBlas : public blas::BlasSupport {
   ~ROCMBlas() override;
 
   TENSORFLOW_STREAM_EXECUTOR_GPU_BLAS_SUPPORT_OVERRIDES
+
+  gpu::BlasLt *GetBlasLt() override {
+    return &blas_lt_;
+  }
 
  private:
   // Tells rocBLAS to enqueue the BLAS operation onto a particular Stream.
@@ -190,6 +196,7 @@ class ROCMBlas : public blas::BlasSupport {
 
   // rocBLAS library handle on the device.
   rocblas_handle blas_ ABSL_GUARDED_BY(mu_);
+  rocm::BlasLt blas_lt_;
 
   SE_DISALLOW_COPY_AND_ASSIGN(ROCMBlas);
 };

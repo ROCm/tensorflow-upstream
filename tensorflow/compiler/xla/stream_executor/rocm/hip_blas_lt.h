@@ -13,14 +13,13 @@ limitations under the License.
 #ifndef TENSORFLOW_STREAM_EXECUTOR_ROCM_HIP_BLAS_LT_H_
 #define TENSORFLOW_STREAM_EXECUTOR_ROCM_HIP_BLAS_LT_H_
 
-#include "tensorflow/core/lib/core/status.h"
 #include "rocm/rocm_config.h"
-#include "tensorflow/stream_executor/device_memory_allocator.h"
-#include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
-#include "tensorflow/stream_executor/host_or_device_scalar.h"
+#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_blas_lt.h"
+#include "tensorflow/compiler/xla/stream_executor/host_or_device_scalar.h"
 #include "tensorflow/compiler/xla/types.h"
 
-#include "tensorflow/stream_executor/rocm/hip_blas_utils.h"
+#include "tensorflow/compiler/xla/stream_executor/rocm/hip_blas_utils.h"
 
 namespace hipblaslt_ext {
   class GroupedGemm;

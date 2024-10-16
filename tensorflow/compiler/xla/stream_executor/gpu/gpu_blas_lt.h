@@ -23,19 +23,16 @@ limitations under the License.
 
 #include "absl/types/optional.h"
 #include "absl/types/any.h"
-#include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/compiler/xla/statusor.h"
 #include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/stream_executor/blas.h"
-#include "tensorflow/stream_executor/device_memory.h"
-#include "tensorflow/stream_executor/host_or_device_scalar.h"
+#include "tensorflow/compiler/xla/stream_executor/blas.h"
+#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
+#include "tensorflow/compiler/xla/stream_executor/host_or_device_scalar.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 
 namespace stream_executor {
 
 namespace gpu {
-
-bool GpuBlasLtEnabled();
 
 xla::StatusOr<blas::DataType> AsBlasDataType(xla::PrimitiveType dtype);
 
@@ -43,7 +40,7 @@ xla::StatusOr<xla::PrimitiveType> AsXlaPrimitiveType(blas::DataType dtype);
 
 xla::StatusOr<blas::ComputationType> GetBlasComputationType(
     blas::DataType lhs_dtype, blas::DataType output_dtype, 
-    int64 compute_precision);
+    int64_t compute_precision);
 
 // Returns the type for the alpha and beta scalars.
 blas::DataType GetScaleType(blas::DataType c_type,
@@ -58,10 +55,10 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
 
   MatrixLayout() = default;
 
-  MatrixLayout(blas::DataType dtype_, int64 num_rows_, int64 num_cols_,
-               Order order_, int64 batch_size_ = 1,
-               absl::optional<int64> leading_dim_stride_ = {},
-               absl::optional<int64> batch_stride_ = {},
+  MatrixLayout(blas::DataType dtype_, int64_t num_rows_, int64_t num_cols_,
+               Order order_, int64_t batch_size_ = 1,
+               absl::optional<int64_t> leading_dim_stride_ = {},
+               absl::optional<int64_t> batch_stride_ = {},
                absl::optional<blas::Transpose> transpose_ = {});
 
   void Transpose();
@@ -70,13 +67,13 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
   // `num_rows` / `num_cols` are for the "logical" matrix shape:
   // i.e. the contracting dim has size `num_cols` for LHS operands and
   // `num_rows` for RHS operands.
-  int64 num_rows;
-  int64 num_cols;
+  int64_t num_rows;
+  int64_t num_cols;
   Order order;
-  int64 batch_size;
-  int64 leading_dim_stride;
+  int64_t batch_size;
+  int64_t leading_dim_stride;
   // `batch_stride` is set to `0` when `batch_size == 1`.
-  int64 batch_stride;
+  int64_t batch_stride;
   blas::Transpose transpose;
 };
 
@@ -84,8 +81,8 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
 // to underlying blas API
 struct MatrixDescriptor {
   DeviceMemoryBase data;
-  int64 leading_dim_stride = 0;
-  int64 batch_stride = 0;
+  int64_t leading_dim_stride = 0;
+  int64_t batch_stride = 0;
   blas::DataType type{};
   blas::Transpose transpose{};
 
@@ -98,8 +95,8 @@ struct MatrixDescriptor {
 struct OutputMatrixDescriptor : public MatrixDescriptor {
   OutputMatrixDescriptor(MatrixDescriptor&& parent) noexcept
       : MatrixDescriptor(std::move(parent)) {}
-  int64 batch_size = 0;
-  int64 m = 0, n = 0, k = 0;
+  int64_t batch_size = 0;
+  int64_t m = 0, n = 0, k = 0;
   blas::ComputationType compute_type{};
 };
 
@@ -111,11 +108,11 @@ bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
 struct GemmConfig;
 
 struct GroupedGemmConfig {
-  int64 m, n, k, batch_count;
+  int64_t m, n, k, batch_count;
   blas::Transpose trans_a, trans_b;
   const void *alpha, *beta;
   blas::DataType type_a, type_b, type_c, type_d;
-  int64 lda, ldb, ldc, ldd;
+  int64_t lda, ldb, ldc, ldd;
   blas::ComputationType compute_type;
   const void **a, **b, **c;
   void **d;
@@ -123,7 +120,7 @@ struct GroupedGemmConfig {
 
 struct BlasLt {
   
-  static constexpr int64 kMaxAlgorithms = 128; 
+  static constexpr int64_t kMaxAlgorithms = 128; 
 
   enum class Epilogue {
     kDefault = 1,                   // No special postprocessing
@@ -266,7 +263,7 @@ struct GemmConfig {  // plain GemmConfig which is extended with create functions
   MatrixLayout output_layout;
   xla::complex128 alpha;
   double beta;
-  int64 compute_precision;
+  int64_t compute_precision;
   BlasLt::Epilogue epilogue;
 };
 

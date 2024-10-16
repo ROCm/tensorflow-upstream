@@ -431,52 +431,81 @@ cc_library(
     alwayslink = True,
 )
 
+# cc_library(
+# 	name = "hipblas_lt_kernel",
+# 	hdrs = if_rocm_is_configured([
+# 		"hip_blas_lt.h",
+# 	]),
+# 	srcs = if_rocm_is_configured(["hip_blas_lt.cu.cc"]),
+# 	copts = rocm_copts(),
+# 	deps = if_rocm_is_configured([
+# 		"@local_config_rocm//rocm:rocm_headers",
+# 		#MATH_DEPS
+# 	])
+# )
 
-cc_library(
-    name = "hipblaslt_if_static",
-    deps = if_rocm_hipblaslt([
-        "@local_config_rocm//rocm:hipblaslt",
-    ]),
-)
+        # "//tensorflow/compiler/xla/stream_executor",
+        # "//tensorflow/compiler/xla/stream_executor:event",
+        # "//tensorflow/compiler/xla/stream_executor:host_or_device_scalar",
+        # "//tensorflow/compiler/xla/stream_executor:plugin_registry",
+        # "//tensorflow/compiler/xla/stream_executor:scratch_allocator",
+        # "//tensorflow/compiler/xla/stream_executor:timer",
+        # "//tensorflow/compiler/xla/stream_executor/gpu:gpu_activation",
+        # "//tensorflow/compiler/xla/stream_executor/gpu:gpu_helpers_header",
+        # "//tensorflow/compiler/xla/stream_executor/gpu:gpu_stream_header",
+        # "//tensorflow/compiler/xla/stream_executor/gpu:gpu_timer_header",
+        # "//tensorflow/compiler/xla/stream_executor/platform",
+        # "//tensorflow/compiler/xla/stream_executor:blas",
+        # "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
 
 cc_library(
     name = "amdhipblaslt_plugin",
-    srcs = if_rocm_is_configured(["hip_blas_lt.cc"]),
+    srcs = if_rocm_is_configured([
+            "hip_blas_lt.cc",
+            "hip_blas_utils.cc",
+    ]),
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+        "hipblaslt_wrapper.h",
+        "hip_blas_utils.h",
+        "rocm_blas.h",
+    ]),
+    deps = if_rocm_is_configured([
+        # keep sorted
+        ":hipblas_lt_header",
+	    #":hipblas_lt_kernel",
+	    ":rocm_platform_id",
+        "@com_google_absl//absl/types:any",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_blas_lt",
+        "//tensorflow/compiler/xla:statusor",
+        "//tensorflow/compiler/xla:util",
+        "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_activation",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_helpers_header",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_stream_header",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_timer_header",
+        "//tensorflow/compiler/xla/stream_executor",
+        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
+        "//tensorflow/compiler/xla/stream_executor:scratch_allocator",
+        "//tensorflow/tsl/util:env_var",
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
+    linkopts = ["-lhipblaslt"],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "hipblas_lt_header",
     hdrs = if_rocm_is_configured([
         "hip_blas_lt.h",
         "hipblaslt_wrapper.h",
         "hip_blas_utils.h",
     ]),
+    visibility = ["//visibility:public"],
     deps = if_rocm_is_configured([
         # keep sorted
-        ":hip_blas_utils",
-        ":hipblas_lt_header",
-        ":rocblas_plugin",
-        ":rocm_executor",
-        ":rocm_platform_id",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:types",
-        "//xla:util",
-        "//xla/stream_executor",
-        "//xla/stream_executor:blas",
-        "//xla/stream_executor:event_based_timer",
-        "//xla/stream_executor:host_or_device_scalar",
-        "//xla/stream_executor/gpu:gpu_activation",
-        "//xla/stream_executor/gpu:gpu_blas_lt",
-        "//xla/stream_executor/gpu:gpu_helpers_header",
-        "//xla/stream_executor/gpu:gpu_stream_header",
-        "//xla/stream_executor/platform",
-        "//xla/stream_executor/platform:dso_loader",
-        "@com_google_absl//absl/status",
-        "@local_config_rocm//rocm:rocm_headers",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
-    ]) + if_static([
-        ":hipblaslt_if_static",
     ]),
-    alwayslink = True,
 )
 
 cc_library(

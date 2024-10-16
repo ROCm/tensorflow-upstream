@@ -30,9 +30,9 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/backend_configs.pb.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
-#include "tensorflow/stream_executor/blas.h"
-//#include "tensorflow/stream_executor/device_memory.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_blas_lt.h"
+#include "tensorflow/compiler/xla/stream_executor/blas.h"
+//#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 
 namespace xla {

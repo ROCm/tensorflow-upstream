@@ -21,8 +21,8 @@ limitations under the License.
 
 #define LEGACY_HIPBLAS_DIRECT
 #include "rocm/rocm_config.h"
-#include "tensorflow/stream_executor/lib/env.h"
-#include "tensorflow/stream_executor/platform/dso_loader.h"
+#include "tensorflow/tsl/platform/env.h"
+#include "tensorflow/compiler/xla/stream_executor/platform/dso_loader.h"
 
 //#if TF_ROCM_VERSION >= 50500
 #include "rocm/include/hipblaslt/hipblaslt.h"

@@ -10,7 +10,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/stream_executor/gpu/gpu_blas_lt.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_blas_lt.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -18,10 +18,9 @@ limitations under the License.
 #include <utility>
 
 #include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/stream_executor/stream.h"
-#include "tensorflow/stream_executor/stream_executor.h"
+#include "tensorflow/compiler/xla/stream_executor/stream.h"
+#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
 #include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/core/util/env_var.h"
 
 namespace stream_executor {
 
@@ -31,16 +30,6 @@ using blas::ComputationType;
 using blas::DataType;
 using xla::PrimitiveType;
 
-bool GpuBlasLtEnabled() {
-  static std::atomic_bool result{[] {
-    bool value = false;
-    tensorflow::ReadBoolFromEnvVar("TF_ENABLE_GPU_BLASLT",
-                     /*default_value=*/false, &value);
-    return value;
-  }()};
-  return result;
-}
-
 xla::StatusOr<DataType> AsBlasDataType(PrimitiveType dtype) {
   switch (dtype) {
     case PrimitiveType::S8:
@@ -48,7 +37,7 @@ xla::StatusOr<DataType> AsBlasDataType(PrimitiveType dtype) {
     case PrimitiveType::F16:
       return DataType::kHalf;
     case PrimitiveType::BF16:
-      return DataType::kBFloat16;
+      return DataType::kBF16;
     case PrimitiveType::F32:
       return DataType::kFloat;
     case PrimitiveType::S32:
@@ -72,7 +61,7 @@ xla::StatusOr<PrimitiveType> AsXlaPrimitiveType(DataType dtype) {
       return PrimitiveType::S8;
     case DataType::kHalf:
       return PrimitiveType::F16;
-    case DataType::kBFloat16:
+    case DataType::kBF16:
       return PrimitiveType::BF16;
     case DataType::kFloat:
       return PrimitiveType::F32;
@@ -91,14 +80,14 @@ xla::StatusOr<PrimitiveType> AsXlaPrimitiveType(DataType dtype) {
 
 xla::StatusOr<ComputationType> GetBlasComputationType(
   DataType lhs_dtype,	    	
-  DataType output_dtype, int64 /*compute_precision*/) {
+  DataType output_dtype, int64_t /*compute_precision*/) {
   switch (output_dtype) {
       case DataType::kHalf:   // fall-through
-      case DataType::kBFloat16:
+      case DataType::kBF16:
         return ComputationType::kF16; // use 32F_FAST_F16 compute type
       case DataType::kFloat:  // fall-through
         if(lhs_dtype == DataType::kHalf || 
-           lhs_dtype == DataType::kBFloat16) {
+           lhs_dtype == DataType::kBF16) {
           return ComputationType::kF16; // use 32F_FAST_F16 compute type
         }
         return ComputationType::kF32;
@@ -114,11 +103,11 @@ xla::StatusOr<ComputationType> GetBlasComputationType(
   }
 }
 
-MatrixLayout::MatrixLayout(blas::DataType dtype_, int64 num_rows_,
-                           int64 num_cols_, MatrixLayout::Order order_,
-                           int64 batch_size_,
-                           absl::optional<int64> leading_dim_stride_,
-                           absl::optional<int64> batch_stride_,
+MatrixLayout::MatrixLayout(blas::DataType dtype_, int64_t num_rows_,
+                           int64_t num_cols_, MatrixLayout::Order order_,
+                           int64_t batch_size_,
+                           absl::optional<int64_t> leading_dim_stride_,
+                           absl::optional<int64_t> batch_stride_,
                            absl::optional<blas::Transpose> transpose_)
     : dtype(dtype_),
       num_rows(num_rows_),
@@ -219,14 +208,14 @@ xla::StatusOr<blas::Transpose> String2Transpose(absl::string_view s) {
 }
 
 const std::vector<absl::string_view> TypeNames = {
-    "f32_r", //kFloat = 0,
-    "f64_r", //kDouble = 1,
-    "f16_r", //kHalf = 2,
-    "i8_r", //kInt8 = 3,
-    "i32_r", //kInt32 = 4,
-    "bf16_r", //kBFloat16 = 5,
-    "f32_c", //kComplexFloat = 6,
-    "f64_c", //kComplexDouble = 7,
+    "f32_r",  //kFloat = 0,
+    "f64_r",  //kDouble = 1,
+    "f16_r",  //kHalf = 2,
+    "i8_r",   //kInt8 = 3,
+    "i32_r",  //kInt32 = 4,
+    "f32_c",  //kComplexFloat = 5,
+    "f64_c",  //kComplexDouble = 6,
+    "bf16_r", //kBF16 = 7,
 };
 
 xla::StatusOr<absl::string_view> Type2String(blas::DataType type) {
@@ -245,11 +234,11 @@ std::string ToCSVString(const GemmConfig& cfg) {
   const auto& L = cfg.lhs_layout, &R = cfg.rhs_layout, &O = cfg.output_layout;
 
   std::ostringstream oss;
-  auto type_a = Type2String(L.dtype).ValueOrDie(),
-       type_b = Type2String(R.dtype).ValueOrDie(),
-       type_c = Type2String(O.dtype).ValueOrDie(),
-       trans_a = Transpose2String(L.transpose).ValueOrDie(),
-       trans_b = Transpose2String(R.transpose).ValueOrDie();
+  auto type_a = Type2String(L.dtype).value(),
+       type_b = Type2String(R.dtype).value(),
+       type_c = Type2String(O.dtype).value(),
+       trans_a = Transpose2String(L.transpose).value(),
+       trans_b = Transpose2String(R.transpose).value();
 
 // LHS: k x n
 // RHS: m x k

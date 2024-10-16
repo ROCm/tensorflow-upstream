@@ -10,10 +10,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/stream_executor/rocm/hip_blas_utils.h"
-#include "tensorflow/stream_executor/blas.h"
+#include "tensorflow/compiler/xla/stream_executor/rocm/hip_blas_utils.h"
+#include "tensorflow/compiler/xla/stream_executor/blas.h"
 #include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/core/util/env_var.h"
+#include "tensorflow/tsl/util/env_var.h"
 
 namespace stream_executor {
 namespace rocm {
@@ -23,14 +23,14 @@ xla::Status ToStatus(hipblasStatus_t status, const char* prefix) {
     return xla::InternalError("%s: HipblasLt error %d", 
         prefix, static_cast<int>(status));
   }
-  return xla::Status::OK();
+  return xla::OkStatus();
 }
 
 hipDataType AsHipblasDataType(blas::DataType type) {
   switch (type) {
     case blas::DataType::kHalf:
       return HIP_R_16F;
-    case blas::DataType::kBFloat16:
+    case blas::DataType::kBF16:
       return HIP_R_16BF;
     case blas::DataType::kFloat:
       return HIP_R_32F;
@@ -51,22 +51,22 @@ hipDataType AsHipblasDataType(blas::DataType type) {
 
 static bool TF32_Enabled() {
    static std::atomic_bool result{[] {
-   bool value = false;	          	
-   tensorflow::ReadBoolFromEnvVar("ROCM_XF32",
-				/*default_value=*/false, &value);
-   return value;
-   }()};
-   return result;
+    bool value = false;	          	
+    (void)tsl::ReadBoolFromEnvVar("ROCM_XF32",
+        /*default_value=*/false, &value);
+    return value;
+  }()};
+  return result;
 }
 
 static bool Fast_16F_Enabled() {
-   static std::atomic_bool result{[] {
-   bool value = false;	          	
-   tensorflow::ReadBoolFromEnvVar("ROCM_FAST_16F",
-				/*default_value=*/false, &value);
-   return value;
-   }()};
-   return result;
+  static std::atomic_bool result{[] {
+  bool value = false;	          	
+  (void)tsl::ReadBoolFromEnvVar("ROCM_FAST_16F",
+        /*default_value=*/false, &value);
+    return value;
+  }()};
+  return result;
 }
 
 hipblasComputeType_t AsHipblasComputeType(blas::ComputationType type) {

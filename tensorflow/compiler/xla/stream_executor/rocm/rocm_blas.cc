@@ -105,7 +105,10 @@ bool ROCMBlas::Init() {
     LOG(ERROR) << "failed to create rocBLAS handle: " << ToString(ret);
     return false;
   }
-
+  if (!blas_lt_.Init().ok()) {
+    LOG(ERROR) << "Failed to initialize hipblasLt";
+    return false;
+  }
   return true;
 }
 
