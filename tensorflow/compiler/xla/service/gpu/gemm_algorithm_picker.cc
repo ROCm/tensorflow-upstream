@@ -320,12 +320,12 @@ StatusOr<std::optional<se::blas::AlgorithmType>> DoGemmAutotune(
   if (IsCublasLtMatmul(*gemm)) {
     bool has_matrix_bias = config.beta != 0.;
 
-    TF_ASSIGN_OR_RETURN(bool has_vector_bias, cublas_lt::EpilogueAddsVectorBias(
+    TF_ASSIGN_OR_RETURN(bool has_vector_bias, gpublas_lt::EpilogueAddsVectorBias(
                                                   gemm_config.epilogue()));
 
     TF_ASSIGN_OR_RETURN(
         bool has_aux_output,
-        cublas_lt::EpilogueHasAuxiliaryOutput(gemm_config.epilogue()));
+        gpublas_lt::EpilogueHasAuxiliaryOutput(gemm_config.epilogue()));
 
     TF_ASSIGN_OR_RETURN(auto epilogue,
                         AsBlasLtEpilogue(gemm_config.epilogue()));

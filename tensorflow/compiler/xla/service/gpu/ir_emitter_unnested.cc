@@ -1147,8 +1147,6 @@ Status IrEmitterUnnested::EmitGemmThunk(mlir::Operation* op) {
   return OkStatus();
 }
 
-#if GOOGLE_CUDA
-
 Status IrEmitterUnnested::EmitCublasLtMatmulThunk(mlir::Operation* op) {
   auto matmul = mlir::dyn_cast<mlir::lmhlo_gpu::CublasLtMatmulOp>(op);
   TF_RET_CHECK(matmul != nullptr);
@@ -1168,15 +1166,17 @@ Status IrEmitterUnnested::EmitCublasLtMatmulThunk(mlir::Operation* op) {
     TF_ASSIGN_OR_RETURN(aux, GetAllocationSlice(matmul.getAux()));
   }
 
-  TF_ASSIGN_OR_RETURN(cublas_lt::MatmulPlan plan,
-                      cublas_lt::MatmulPlan::For(matmul));
+  TF_ASSIGN_OR_RETURN(GemmConfig config, GemmConfig::For(matmul));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
-      GetThunkInfo(op), std::move(plan), matmul.getAlgorithm(), a, b, c, d,
-      bias, aux, a_scale, b_scale, c_scale, d_scale, d_amax);
+      GetThunkInfo(op), std::move(config), a, b, c, d,
+      bias, aux, a_scale, b_scale, c_scale, d_scale, d_amax,
+      absl::nullopt); // TODO provide workspace buffer!!!
 
   AddThunkToThunkSequence(std::move(thunk));
   return OkStatus();
 }
+
+#if GOOGLE_CUDA
 
 Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(mlir::Operation* op) {
   auto matmul = mlir::dyn_cast<mlir::lmhlo_gpu::CublasLtMatmulF8Op>(op);

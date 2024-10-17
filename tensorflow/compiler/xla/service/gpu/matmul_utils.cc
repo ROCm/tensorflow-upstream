@@ -38,6 +38,7 @@ namespace xla {
 namespace gpu {
 
 using se::blas::DataType;
+using se::gpu::BlasLt;
 
 StatusOr<std::vector<int64_t>> GetNonContractingDims(
     const Shape& shape, absl::Span<const int64_t> batch_dims,
@@ -284,7 +285,7 @@ StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
     absl::Span<const int64_t> rhs_contracting_dims, const Shape& output_shape,
     double alpha_real, double alpha_imag, double beta,
     int64_t algorithm, int64_t compute_precision, 
-    se::gpu::BlasLt::Epilogue epilogue) {
+    BlasLt::Epilogue epilogue) {
 
   absl::Span<const int64_t> lhs_col_dims = lhs_contracting_dims;
   TF_ASSIGN_OR_RETURN(
@@ -411,6 +412,57 @@ StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
       dot_dims.rhs_contracting_dimensions(),
       output_shape, config.alpha_real(), config.alpha_imag(), config.beta(),
       algorithm, precision, epilogue);
+}
+
+/*static*/ StatusOr<GemmConfig> GemmConfig::For(mlir::lmhlo_gpu::GEMMOp op) {
+  
+  auto dot_dims = op.getDotDimensionNumbers();
+  int64_t algorithm = se::blas::kDefaultAlgorithm;
+  if (op.getAlgorithm()) algorithm = *op.getAlgorithm();
+  
+  int64_t compute_precision = 0;  // Default
+  if (op.getPrecisionConfig().has_value()) {
+    auto precision_config = op.getPrecisionConfig();
+    for (auto attr : precision_config.value()) {
+      int64_t value = static_cast<int64_t>(
+          attr.template cast<mlir::mhlo::PrecisionAttr>().getValue());
+      compute_precision = std::max(value, compute_precision);
+    }
+  }
+  return GemmConfig::For(
+      GetShape(op.getA()), dot_dims.getLhsBatchingDimensions(),
+      dot_dims.getLhsContractingDimensions(), GetShape(op.getB()),
+      dot_dims.getRhsBatchingDimensions(),
+      dot_dims.getRhsContractingDimensions(), GetShape(op.getC()),
+      op.getAlphaReal().convertToDouble(), op.getAlphaImag().convertToDouble(),
+      op.getBeta().convertToDouble(), algorithm, compute_precision,
+      BlasLt::Epilogue::kDefault);
+}
+
+/*static*/ StatusOr<GemmConfig> GemmConfig::For(
+            mlir::lmhlo_gpu::CublasLtMatmulOp op) {
+
+  auto dot_dims = op.getDotDimensionNumbers();
+  int64_t algorithm = op.getAlgorithm();
+  TF_ASSIGN_OR_RETURN(auto epilogue, gpublas_lt::AsBlasLtEpilogue(op.getEpilogue()));
+  
+  int64_t compute_precision = 0;  // Default
+  if (op.getPrecisionConfig().has_value()) {
+    auto precision_config = op.getPrecisionConfig();
+    for (auto attr : precision_config.value()) {
+      int64_t value = static_cast<int64_t>(
+          attr.template cast<mlir::mhlo::PrecisionAttr>().getValue());
+      compute_precision = std::max(value, compute_precision);
+    }
+  }
+  return GemmConfig::For(
+      GetShape(op.getA()), dot_dims.getLhsBatchingDimensions(),
+      dot_dims.getLhsContractingDimensions(), GetShape(op.getB()),
+      dot_dims.getRhsBatchingDimensions(),
+      dot_dims.getRhsContractingDimensions(), GetShape(op.getC()),
+      op.getAlphaReal().convertToDouble(), op.getAlphaImag().convertToDouble(),
+      op.getBeta().convertToDouble(), algorithm, compute_precision,
+      epilogue);
 }
 
 StatusOr<GemmConfig::DescriptorsTuple> GemmConfig::GetMatrixDescriptors(
@@ -666,7 +718,7 @@ StatusOr<bool> EpilogueAddsVectorBias(
     case GemmBackendConfig::BIAS_GELU_AUX:
       return true;
     default:
-      return Internal("Unknown Epilogue.");
+      return Internal("Unknown BlasLt::Epilogue.");
   }
 }
 
@@ -684,32 +736,55 @@ StatusOr<bool> EpilogueHasAuxiliaryOutput(
     case GemmBackendConfig::BIAS_GELU_AUX:
       return true;
     default:
-      return Internal("Unknown Epilogue.");
+      return Internal("Unknown BlasLt::Epilogue.");
   }
 }
 
-StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
+StatusOr<BlasLt::Epilogue> AsBlasLtEpilogue(
     GemmBackendConfig_Epilogue epilogue) {
   switch (epilogue) {
     case GemmBackendConfig::DEFAULT:
-      return se::gpu::BlasLt::Epilogue::kDefault;
+      return BlasLt::Epilogue::kDefault;
     case GemmBackendConfig::RELU:
-      return se::gpu::BlasLt::Epilogue::kReLU;
+      return BlasLt::Epilogue::kReLU;
     case GemmBackendConfig::GELU:
-      return se::gpu::BlasLt::Epilogue::kGELU;
+      return BlasLt::Epilogue::kGELU;
     case GemmBackendConfig::GELU_AUX:
-      return se::gpu::BlasLt::Epilogue::kGELUWithAux;
+      return BlasLt::Epilogue::kGELUWithAux;
     case GemmBackendConfig::BIAS:
-      return se::gpu::BlasLt::Epilogue::kBias;
+      return BlasLt::Epilogue::kBias;
     case GemmBackendConfig::BIAS_RELU:
-      return se::gpu::BlasLt::Epilogue::kBiasThenReLU;
+      return BlasLt::Epilogue::kBiasThenReLU;
     case GemmBackendConfig::BIAS_GELU:
-      return se::gpu::BlasLt::Epilogue::kBiasThenGELU;
+      return BlasLt::Epilogue::kBiasThenGELU;
     case GemmBackendConfig::BIAS_GELU_AUX:
-      return se::gpu::BlasLt::Epilogue::kBiasThenGELUWithAux;
+      return BlasLt::Epilogue::kBiasThenGELUWithAux;
     default:
       return Internal("unexpected epilogue value");
   }
+}
+
+StatusOr<BlasLt::Epilogue> AsBlasLtEpilogue(
+    mlir::lmhlo_gpu::CublasLtMatmulEpilogue epilogue) {
+  switch (epilogue) {
+    case mlir::lmhlo_gpu::CublasLtMatmulEpilogue::Default:
+      return BlasLt::Epilogue::kDefault;
+    case mlir::lmhlo_gpu::CublasLtMatmulEpilogue::Relu:
+      return BlasLt::Epilogue::kReLU;
+    case mlir::lmhlo_gpu::CublasLtMatmulEpilogue::Gelu:
+      return BlasLt::Epilogue::kGELU;
+    case mlir::lmhlo_gpu::CublasLtMatmulEpilogue::GeluAux:
+      return BlasLt::Epilogue::kGELUWithAux;
+    case mlir::lmhlo_gpu::CublasLtMatmulEpilogue::Bias:
+      return BlasLt::Epilogue::kBias;
+    case mlir::lmhlo_gpu::CublasLtMatmulEpilogue::BiasRelu:
+      return BlasLt::Epilogue::kBiasThenReLU;
+    case mlir::lmhlo_gpu::CublasLtMatmulEpilogue::BiasGelu:
+      return BlasLt::Epilogue::kBiasThenGELU;
+    case mlir::lmhlo_gpu::CublasLtMatmulEpilogue::BiasGeluAux:
+      return BlasLt::Epilogue::kBiasThenGELUWithAux;
+  }
+  return InternalError("unexpected epilogue value");
 }
 
 }  // namespace gpublas_lt

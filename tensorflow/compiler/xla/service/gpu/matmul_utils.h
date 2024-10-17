@@ -116,6 +116,8 @@ struct GemmConfig : public se::gpu::GemmConfig {
     se::gpu::GemmConfig(cfg) { }
 
   static StatusOr<GemmConfig> For(const HloInstruction* gemm);
+  static StatusOr<GemmConfig> For(mlir::lmhlo_gpu::GEMMOp op);
+  static StatusOr<GemmConfig> For(mlir::lmhlo_gpu::CublasLtMatmulOp op);
 
   static StatusOr<GemmConfig> For(
       const Shape& lhs_shape, absl::Span<const int64_t> lhs_batch_dims,
@@ -158,6 +160,8 @@ StatusOr<bool> EpilogueHasAuxiliaryOutput(
 
 StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
     GemmBackendConfig_Epilogue epilogue);
+StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
+    mlir::lmhlo_gpu::CublasLtMatmulEpilogue epilogue);
 
 }  // namespace gpublas_lt
 
