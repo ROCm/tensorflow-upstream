@@ -1,7 +1,7 @@
 # A script about how to compute HLO Module FLOPS.
 ## Build
 ```
-bash install_rocm.sh tensorflow/compiler/xla/tools:run_hlo_module tensorflow/compiler/xla/tools:compute_cost
+bazel build --cxxopt="-D_GLIBCXX_USE_CXX11_ABI=0" --config=v1 --config=opt --config=rocm tensorflow/compiler/xla/tools:run_hlo_module tensorflow/compiler/xla/tools:compute_cost --verbose_failures
 ```
 
 ## Usage
