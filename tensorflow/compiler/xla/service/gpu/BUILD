@@ -379,7 +379,6 @@ cc_library(
         ":triangular_solve_thunk",
         ":cholesky_thunk",
     ]) + if_cuda_is_configured([
-        ":cublas_lt_matmul_thunk",
         ":ir_emitter_triton",
     ]),
 )
@@ -823,6 +822,7 @@ cc_library(
         "custom_call_thunk.h",
         "for_thunk.h",
         "gemm_thunk.h",
+        "gpublas_lt_matmul_thunk.h",
         "gpu_executable.h",
         "infeed_thunk.h",
         "kernel_thunk.h",
@@ -839,6 +839,7 @@ cc_library(
         ":custom_call_thunk",
         ":fft_thunk",
         ":gemm_thunk",
+        ":gpublas_lt_matmul_thunk",
         ":gpu_asm_opts_util",
         ":gpu_constants",
         ":gpu_conv_runner",
@@ -1159,19 +1160,18 @@ cc_library(
 )
 
 cc_library(
-    name = "cublas_lt_matmul_thunk",
-    srcs = if_cuda_is_configured(["cublas_lt_matmul_thunk.cc"]),
-    hdrs = if_cuda_is_configured(["cublas_lt_matmul_thunk.h"]),
-    deps = if_cuda_is_configured([
+    name = "gpublas_lt_matmul_thunk",
+    srcs = ["gpublas_lt_matmul_thunk.cc"],
+    hdrs = ["gpublas_lt_matmul_thunk.h"],
+    deps = [
         ":matmul_utils",
         ":thunk",
-        "//tensorflow/compiler/xla/service:buffer_assignment",
         "//tensorflow/compiler/xla:status",
-        "//tensorflow/tsl/platform/default/build_config:cublas_plugin",
+        "//tensorflow/compiler/xla/service:buffer_assignment",
         "//tensorflow/compiler/xla/stream_executor:device_memory",
         "//tensorflow/compiler/xla/stream_executor:stream_executor_headers",
-        "//tensorflow/compiler/xla/stream_executor/cuda:cublas_lt_header",
-    ]) + ["//tensorflow/tsl/platform:logging"],
+        "//tensorflow/tsl/platform:logging",
+    ],
 )
 
 cc_library(
@@ -1195,7 +1195,6 @@ cc_library(
         "//tensorflow/compiler/xla:status_macros",
         "//tensorflow/compiler/xla/stream_executor",
         "//tensorflow/compiler/xla/stream_executor:blas",
-        "//tensorflow/compiler/xla/stream_executor/cuda:cublas_lt_header",
         "//tensorflow/compiler/xla/stream_executor:device_memory",
         "//tensorflow/compiler/xla/stream_executor:device_memory_allocator",
         "//tensorflow/compiler/xla/stream_executor/gpu:redzone_allocator",
@@ -1268,13 +1267,13 @@ cc_library(
         "//tensorflow/compiler/xla/hlo/ir:hlo",
         "//tensorflow/compiler/xla/mlir_hlo",
         "//tensorflow/compiler/xla/mlir_hlo:lhlo_gpu",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_blas_lt",
         "//tensorflow/compiler/xla/stream_executor:stream_executor_headers",
         "//tensorflow/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//absl/types:any",
     ] + if_cuda_is_configured([
-        "//tensorflow/compiler/xla/stream_executor/cuda:cublas_lt_header",
-        "//tensorflow/tsl/platform/default/build_config:cublas_plugin",
         "//tensorflow/tsl/platform:tensor_float_32_hdr_lib",
         "//tensorflow/compiler/xla/stream_executor:host_or_device_scalar",
         "//tensorflow/compiler/xla/stream_executor:scratch_allocator",

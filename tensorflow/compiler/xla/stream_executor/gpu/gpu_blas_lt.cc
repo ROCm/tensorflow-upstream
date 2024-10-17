@@ -79,8 +79,7 @@ xla::StatusOr<PrimitiveType> AsXlaPrimitiveType(DataType dtype) {
 }
 
 xla::StatusOr<ComputationType> GetBlasComputationType(
-  DataType lhs_dtype,	    	
-  DataType output_dtype, int64_t /*compute_precision*/) {
+  DataType lhs_dtype, DataType output_dtype, int64_t /*compute_precision*/) {
   switch (output_dtype) {
       case DataType::kHalf:   // fall-through
       case DataType::kBF16:
@@ -226,7 +225,7 @@ xla::StatusOr<absl::string_view> Type2String(blas::DataType type) {
 
 }  // namespace
 
-std::string ToCSVString(const GemmConfig& cfg) {
+std::string ToCSVString(const GemmConfig& cfg, bool full_string) {
 
   ///constexpr char kCsvComment = '#';
   constexpr char kCsvSep = ',';
@@ -254,6 +253,11 @@ std::string ToCSVString(const GemmConfig& cfg) {
      << kCsvSep << R.leading_dim_stride << kCsvSep
      << O.leading_dim_stride  << kCsvSep << L.batch_stride << kCsvSep
      << R.batch_stride << kCsvSep << O.batch_stride;
+
+  if (full_string) {
+    oss << kCsvSep << cfg.alpha << kCsvSep << cfg.beta << kCsvSep
+        << (int64_t)cfg.epilogue;
+  }
 
   return oss.str();
 }

@@ -263,11 +263,12 @@ struct GemmConfig {  // plain GemmConfig which is extended with create functions
   MatrixLayout output_layout;
   xla::complex128 alpha;
   double beta;
+  blas::AlgorithmType algorithm;
   int64_t compute_precision;
   BlasLt::Epilogue epilogue;
 };
 
-std::string ToCSVString(const GemmConfig& c);
+std::string ToCSVString(const GemmConfig& cfg, bool full_string);
 
 
 }  // namespace gpu
