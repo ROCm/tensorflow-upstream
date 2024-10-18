@@ -18,8 +18,8 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_ROCM_HIPBLASLT_WRAPPER_H_
 
 #include "rocm/rocm_config.h"
-
 #if TF_HIPBLASLT
+#include "rocm/include/hipblas/hipblas.h"
 #if TF_ROCM_VERSION >= 50500
 #include "rocm/include/hipblaslt/hipblaslt.h"
 #else
