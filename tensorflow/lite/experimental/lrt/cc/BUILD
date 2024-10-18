@@ -21,6 +21,7 @@ cc_library(
     name = "lite_rt_cc_api",
     hdrs = [
         "lite_rt_support.h",
+        "//tensorflow/lite/experimental/lrt/vendors/c:lite_rt_compiler_plugin.h",
     ],
     deps = [
         "//tensorflow/compiler/mlir/lite/core:model_builder_base",
@@ -49,6 +50,7 @@ cc_test(
         ":lite_rt_tensor",
         "//tensorflow/lite/experimental/lrt/c:lite_rt_c_api",
         "//tensorflow/lite/experimental/lrt/core:graph_tools",
+        "//tensorflow/lite/experimental/lrt/core:model",
         "//tensorflow/lite/experimental/lrt/test:common",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",

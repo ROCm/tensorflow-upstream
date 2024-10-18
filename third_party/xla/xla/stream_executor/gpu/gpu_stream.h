@@ -19,19 +19,14 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_GPU_GPU_STREAM_H_
 #define XLA_STREAM_EXECUTOR_GPU_GPU_STREAM_H_
 
-#include <cstdint>
 #include <memory>
 #include <optional>
-#include <utility>
 #include <variant>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/event_based_timer.h"
-#include "xla/stream_executor/gpu/gpu_event.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/stream_executor/kernel.h"
@@ -49,13 +44,10 @@ namespace gpu {
 // Thread-safe post-initialization.
 class GpuStream : public StreamCommon {
  public:
-  GpuStream(GpuExecutor* parent, std::unique_ptr<GpuEvent> completed_event,
+  GpuStream(GpuExecutor* parent,
             std::optional<std::variant<StreamPriority, int>> priority,
             GpuStreamHandle gpu_stream)
-      : StreamCommon(parent),
-        parent_(parent),
-        gpu_stream_(gpu_stream),
-        completed_event_(std::move(completed_event)) {
+      : StreamCommon(parent), parent_(parent), gpu_stream_(gpu_stream) {
     if (priority.has_value()) {
       stream_priority_ = priority.value();
     }
@@ -69,11 +61,6 @@ class GpuStream : public StreamCommon {
   }
   PlatformSpecificHandle platform_specific_handle() const override;
 
-  // Retrieves an event which indicates that all work enqueued into the stream
-  // has completed. Ownership of the event is not transferred to the caller, the
-  // event is owned by this stream.
-  GpuEvent* completed_event() { return completed_event_.get(); }
-
   // Returns the GpuStreamHandle value for passing to the CUDA API.
   //
   // Precond: this GpuStream has been allocated (otherwise passing a nullptr
@@ -83,15 +70,6 @@ class GpuStream : public StreamCommon {
     return gpu_stream_;
   }
 
-  absl::Status MemZero(DeviceMemoryBase* location, uint64_t size) override;
-  absl::Status Memset32(DeviceMemoryBase* location, uint32_t pattern,
-                        uint64_t size) override;
-  absl::Status Memcpy(DeviceMemoryBase* gpu_dst, const void* host_src,
-                      uint64_t size) override;
-  absl::Status Memcpy(void* host_dst, const DeviceMemoryBase& gpu_src,
-                      uint64_t size) override;
-  absl::Status Memcpy(DeviceMemoryBase* gpu_dst,
-                      const DeviceMemoryBase& gpu_src, uint64_t size) override;
   absl::Status DoHostCallbackWithStatus(
       absl::AnyInvocable<absl::Status() &&> callback) override;
 
@@ -113,7 +91,6 @@ class GpuStream : public StreamCommon {
   GpuExecutor* parent_;         // Executor that spawned this stream.
   GpuStreamHandle gpu_stream_;  // Wrapped CUDA stream handle.
   std::variant<StreamPriority, int> stream_priority_;
-  std::unique_ptr<GpuEvent> completed_event_;
 };
 
 // Helper functions to simplify extremely common flows.

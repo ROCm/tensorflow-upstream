@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <iterator>
 #include <utility>
+#include <vector>
 
 #if LRT_HAS_AHWB_SUPPORT
 #include <android/hardware_buffer.h>
@@ -36,6 +37,18 @@
 #include "tensorflow/lite/experimental/lrt/core/ion_buffer.h"
 #include "tensorflow/lite/experimental/lrt/core/utils.h"
 
+namespace {
+
+template <typename T>
+void Copy(size_t array_size, const T*& array, std::vector<T>& vec) {
+  vec.clear();
+  vec.reserve(array_size);
+  std::copy(array, array + array_size, std::back_inserter(vec));
+  array = vec.data();
+}
+
+}  // namespace
+
 LrtTensorBufferT::LrtTensorBufferT(const LrtRankedTensorType& tensor_type,
                                    LrtTensorBufferType buffer_type,
                                    size_t buffer_size, size_t buffer_offset)
@@ -44,11 +57,10 @@ LrtTensorBufferT::LrtTensorBufferT(const LrtRankedTensorType& tensor_type,
       buffer_size_(buffer_size),
       buffer_offset_(buffer_offset) {
   // Copy local memory passed by the caller.
-  dimensions_.reserve(tensor_type.layout.rank);
-  std::copy(tensor_type.layout.dimensions,
-            tensor_type.layout.dimensions + tensor_type.layout.rank,
-            std::back_inserter(dimensions_));
-  tensor_type_.layout.dimensions = dimensions_.data();
+  Copy(tensor_type_.layout.rank, tensor_type_.layout.dimensions, dimensions_);
+  if (tensor_type_.layout.strides) {
+    Copy(tensor_type_.layout.rank, tensor_type_.layout.strides, strides_);
+  }
 }
 
 LrtTensorBufferT::~LrtTensorBufferT() {
@@ -178,6 +190,13 @@ absl::StatusOr<LrtTensorBufferT::Ptr> LrtTensorBufferT::CreateFromIonBuffer(
     const LrtRankedTensorType& tensor_type, void* ion_buffer_addr,
     int ion_buffer_fd, size_t ion_buffer_size, size_t ion_buffer_offset,
     LrtFastRpcDeallocator deallocator) {
+  if (!ion_buffer_addr) {
+    return absl::InvalidArgumentError("Invalid ION buffer address");
+  }
+  if (ion_buffer_fd < 0) {
+    return absl::InvalidArgumentError("Invalid ION buffer fd");
+  }
+
   Ptr tensor_buffer(new LrtTensorBufferT(tensor_type, kLrtTensorBufferTypeIon,
                                          ion_buffer_size, ion_buffer_offset));
   tensor_buffer->buffer_ = IonBuffer{
@@ -209,6 +228,13 @@ absl::StatusOr<LrtTensorBufferT::Ptr> LrtTensorBufferT::CreateFromDmaBufBuffer(
     const LrtRankedTensorType& tensor_type, void* dmabuf_buffer_addr,
     int dmabuf_buffer_fd, size_t dmabuf_buffer_size,
     size_t dmabuf_buffer_offset, LrtFastRpcDeallocator deallocator) {
+  if (!dmabuf_buffer_addr) {
+    return absl::InvalidArgumentError("Invalid DMA-BUF buffer address");
+  }
+  if (dmabuf_buffer_fd < 0) {
+    return absl::InvalidArgumentError("Invalid DMA-BUF buffer fd");
+  }
+
   Ptr tensor_buffer(
       new LrtTensorBufferT(tensor_type, kLrtTensorBufferTypeDmaBuf,
                            dmabuf_buffer_size, dmabuf_buffer_offset));
@@ -241,6 +267,13 @@ absl::StatusOr<LrtTensorBufferT::Ptr> LrtTensorBufferT::CreateFromFastRpcBuffer(
     const LrtRankedTensorType& tensor_type, void* fastrpc_buffer_addr,
     int fastrpc_buffer_fd, size_t fastrpc_buffer_size,
     size_t fastrpc_buffer_offset, LrtFastRpcDeallocator deallocator) {
+  if (!fastrpc_buffer_addr) {
+    return absl::InvalidArgumentError("Invalid FastRPC buffer address");
+  }
+  if (fastrpc_buffer_fd < 0) {
+    return absl::InvalidArgumentError("Invalid FastRPC buffer fd");
+  }
+
   Ptr tensor_buffer(
       new LrtTensorBufferT(tensor_type, kLrtTensorBufferTypeFastRpc,
                            fastrpc_buffer_size, fastrpc_buffer_offset));
@@ -297,15 +330,20 @@ absl::Status LrtTensorBufferT::IsValid() const {
     }
   }
 
+  // Check for valid offset.
+  if (buffer_offset() >= buffer_size()) {
+    return absl::InternalError("Invalid buffer offset");
+  }
+
   // Check for sufficient size.
-  if (auto num_bytes = lrt::internal::GetNumBytes(tensor_type_);
+  if (auto num_bytes = lrt::internal::GetNumPackedBytes(tensor_type_);
       !num_bytes.ok()) {
     return num_bytes.status();
   } else if (*num_bytes > buffer_size() - buffer_offset()) {
     return absl::InternalError("Insufficient buffer size");
   }
 
-  // Check for alignment.
+  // Check for proper alignment.
   if (buffer_type() == kLrtTensorBufferTypeHostMemory) {
     auto host_buffer = GetHostBuffer();
     if (!host_buffer.ok()) {

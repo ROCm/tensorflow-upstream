@@ -850,40 +850,6 @@ ENTRY main {
               GmockMatch(m::Reduce(m::Parameter(), m::Constant())));
 }
 
-// Triton emitter doesn't support constants that are not scalars of rank 0.
-TEST_F(PriorityFusionTest,
-       CheckThatSmallConstantIsSupportedByTritonBeforeFusion) {
-  auto module = *ParseAndReturnVerifiedModule(R"(
-HloModule module
-
-add {
-  Arg_0 = f32[] parameter(0)
-  Arg_1 = f32[] parameter(1)
-  ROOT add = f32[] add(Arg_0, Arg_1)
-}
-
-triton_computation {
-  param_0 = f32[32,64] parameter(0)
-  param_1 = f32[1] parameter(1)
-  bitcast = f32[] bitcast(param_1)
-  ROOT reduce = f32[32] reduce(param_0, bitcast), dimensions={1}, to_apply=add
-}
-
-ENTRY main {
-  param_0 = f32[32,64] parameter(0)
-  c_0 = f32[1] constant({0})
-  ROOT triton_softmax = f32[32] fusion(param_0, c_0), kind=kCustom, calls=triton_computation, backend_config={"fusion_backend_config": {"kind":"__triton","block_level_fusion_config":{"output_tile_sizes":["1"],"num_warps":"1"}}}
-})");
-
-  const HloInstruction* constant =
-      module->entry_computation()->root_instruction()->operand(1);
-
-  ASSERT_FALSE(IsTritonSupportedInstruction(
-                   *constant, device_info_.gpu_compute_capability())
-                   .CanFuse());
-  EXPECT_THAT(priority_fusion_.Run(module.get()), IsOkAndHolds(false));
-}
-
 TEST_F(PriorityFusionTest, DoNotFuseProducerConsumerMergedTooLarge) {
   auto module = *ParseAndReturnVerifiedModule(R"(
     HloModule module

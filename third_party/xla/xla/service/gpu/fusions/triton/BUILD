@@ -334,28 +334,28 @@ gentbl_cc_library(
         (
             [
                 "-gen-op-decls",
-                "-dialect=xla_triton",
+                "-dialect=triton_xla",
             ],
             "xla_triton_ops.h.inc",
         ),
         (
             [
                 "-gen-op-defs",
-                "-dialect=xla_triton",
+                "-dialect=triton_xla",
             ],
             "xla_triton_ops.cc.inc",
         ),
         (
             [
                 "-gen-dialect-decls",
-                "-dialect=xla_triton",
+                "-dialect=triton_xla",
             ],
             "xla_triton_dialect.h.inc",
         ),
         (
             [
                 "-gen-dialect-defs",
-                "-dialect=xla_triton",
+                "-dialect=triton_xla",
             ],
             "xla_triton_dialect.cc.inc",
         ),
@@ -392,6 +392,12 @@ cc_library(
 xla_test(
     name = "triton_fusion_emitter_device_legacy_test",
     srcs = if_gpu_is_configured(["triton_fusion_emitter_device_legacy_test.cc"]),
+    backend_args = if_google(
+        {
+            "gpu_h100": ["--heap_check="],
+        },
+        {},
+    ),
     backends = [
         "gpu_a100",
         "gpu_h100",
