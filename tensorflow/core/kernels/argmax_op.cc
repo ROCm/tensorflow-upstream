@@ -42,6 +42,36 @@ namespace tensorflow {
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
 
+
+template <typename Device>
+struct CustomArgOp;
+
+template <>
+struct CustomArgOp<CPUDevice> {
+    template <typename T, typename Tout, typename ArgFunctor>
+    // Determines whether the custom kernel in argmax_op_gpu.cu.cc should be
+    // used, and if so, runs it by calling DoGpuArgOp. If it was run,
+    // returns true. Otherwise, it returns false and the caller must calculate the
+    // arg min or max itself.
+    static bool CustomArgFunc(OpKernelContext* context, const Tensor& input,
+        int axis, Tensor* output) {
+        return false;
+    }
+};
+
+template <>
+struct CustomArgOp<GPUDevice> {
+    template <typename T, typename Tout, typename ArgFunctor>
+    static bool CustomArgFunc(OpKernelContext* context, const Tensor& input,
+    int axis, Tensor* output) {
+        DoGpuArgOp<T, Tout, ArgFunctor::is_argmax>(context, input, axis, output);
+        return true;
+    } 
+};
+
+
+
+
 template <typename Device, typename T, typename Tout, typename ArgFunctor>
 class ArgOp : public OpKernel {
  public:
@@ -81,6 +111,11 @@ class ArgOp : public OpKernel {
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
 
     if (output_shape.num_elements() == 0) {
+      return;
+    }
+
+    if (CustomArgOp<Device>::template CustomArgFunc<T, Tout, ArgFunctor>(
+      context, input, axis, output)) {
       return;
     }
 
@@ -176,49 +211,71 @@ TF_CALL_bool(REGISTER_ARGMAX);
     (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
 
 // Forward declarations of the functor specializations for GPU.
-namespace functor {
+#define DECLARE_GPU_ARG_OPS(T)                                            \
+  extern template void DoGpuArgOp<T, int64, true>(OpKernelContext * context,      \
+                                         const Tensor& input, int axis,  \
+                                         Tensor* output);                \
+  extern template void DoGpuArgOp<T, int64, false>(OpKernelContext * context,     \
+                                          const Tensor& input, int axis, \
+                                          Tensor* output);               \
+  extern template void DoGpuArgOp<T, int32, true>(OpKernelContext * context,      \
+                                          const Tensor& input, int axis, \
+                                          Tensor* output);               \
+  extern template void DoGpuArgOp<T, int32, false>(OpKernelContext * context,     \
+                                          const Tensor& input, int axis, \
+                                          Tensor* output);
 
-#define DECLARE_GPU_SPEC(T, Tout, Dims)                                       \
-  template <>                                                                 \
-  void ArgMax<GPUDevice, T, Tout>::Reduce##Dims(                              \
-      const GPUDevice& d, typename TTypes<T, Dims>::ConstTensor input,        \
-      const int32 dimension, typename TTypes<Tout, Dims - 1>::Tensor output); \
-  template <>                                                                 \
-  void ArgMin<GPUDevice, T, Tout>::Reduce##Dims(                              \
-      const GPUDevice& d, typename TTypes<T, Dims>::ConstTensor input,        \
-      const int32 dimension, typename TTypes<Tout, Dims - 1>::Tensor output);
+TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_ARG_OPS);
 
-#define DECLARE_GPU_SPECS(T)       \
-  DECLARE_GPU_SPEC(T, int64_t, 1); \
-  DECLARE_GPU_SPEC(T, int64_t, 2); \
-  DECLARE_GPU_SPEC(T, int64_t, 3); \
-  DECLARE_GPU_SPEC(T, int64_t, 4); \
-  DECLARE_GPU_SPEC(T, int64_t, 5); \
-  DECLARE_GPU_SPEC(T, int64_t, 6); \
-  DECLARE_GPU_SPEC(T, int64_t, 7); \
-  DECLARE_GPU_SPEC(T, int32, 1);   \
-  DECLARE_GPU_SPEC(T, int32, 2);   \
-  DECLARE_GPU_SPEC(T, int32, 3);   \
-  DECLARE_GPU_SPEC(T, int32, 4);   \
-  DECLARE_GPU_SPEC(T, int32, 5);   \
-  DECLARE_GPU_SPEC(T, int32, 6);   \
-  DECLARE_GPU_SPEC(T, int32, 7);
+#undef DECLARE_GPU_ARG_OPS
 
-#define DECLARE_GPU_CLASS(T)                            \
-  extern template struct ArgMax<GPUDevice, T, int64_t>; \
-  extern template struct ArgMin<GPUDevice, T, int64_t>; \
-  extern template struct ArgMax<GPUDevice, T, int32>;   \
-  extern template struct ArgMin<GPUDevice, T, int32>;
 
-TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_SPECS);
-TF_CALL_bool(DECLARE_GPU_SPECS);
-TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_CLASS);
-TF_CALL_bool(DECLARE_GPU_CLASS);
+//namespace functor {
+//
+//#define DECLARE_GPU_SPEC(T, Tout, Dims)                                       \
+//  template <>                                                                 \
+//  void ArgMax<GPUDevice, T, Tout>::Reduce##Dims(                              \
+//      const GPUDevice& d, typename TTypes<T, Dims>::ConstTensor input,        \
+//      const int32 dimension, typename TTypes<Tout, Dims - 1>::Tensor output); \
+//  template <>                                                                 \
+//  void ArgMin<GPUDevice, T, Tout>::Reduce##Dims(                              \
+//      const GPUDevice& d, typename TTypes<T, Dims>::ConstTensor input,        \
+//      const int32 dimension, typename TTypes<Tout, Dims - 1>::Tensor output);
+//
+//#define DECLARE_GPU_SPECS(T)       \
+//  DECLARE_GPU_SPEC(T, int64_t, 1); \
+//  DECLARE_GPU_SPEC(T, int64_t, 2); \
+//  DECLARE_GPU_SPEC(T, int64_t, 3); \
+//  DECLARE_GPU_SPEC(T, int64_t, 4); \
+//  DECLARE_GPU_SPEC(T, int64_t, 5); \
+//  DECLARE_GPU_SPEC(T, int64_t, 6); \
+//  DECLARE_GPU_SPEC(T, int64_t, 7); \
+//  DECLARE_GPU_SPEC(T, int32, 1);   \
+//  DECLARE_GPU_SPEC(T, int32, 2);   \
+//  DECLARE_GPU_SPEC(T, int32, 3);   \
+//  DECLARE_GPU_SPEC(T, int32, 4);   \
+//  DECLARE_GPU_SPEC(T, int32, 5);   \
+//  DECLARE_GPU_SPEC(T, int32, 6);   \
+//  DECLARE_GPU_SPEC(T, int32, 7);
+//
+//#define DECLARE_GPU_CLASS(T)                            \
+//  extern template struct ArgMax<GPUDevice, T, int64_t>; \
+//  extern template struct ArgMin<GPUDevice, T, int64_t>; \
+//  extern template struct ArgMax<GPUDevice, T, int32>;   \
+//  extern template struct ArgMin<GPUDevice, T, int32>;
+//
+//TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_SPECS);
+//TF_CALL_bool(DECLARE_GPU_SPECS);
+//TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_CLASS);
+//TF_CALL_bool(DECLARE_GPU_CLASS);
+//
+//#undef DECLARE_GPU_SPECS
+//#undef DECLARE_GPU_CLASS
+//
+//}  // namespace functor
 
-#undef DECLARE_GPU_SPECS
-#undef DECLARE_GPU_CLASS
 
-}  // namespace functor
+  
 
 // Registration of the GPU implementations.
 #define REGISTER_ARGMAX_GPU(type)                                     \
