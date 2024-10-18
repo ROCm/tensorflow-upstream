@@ -5,6 +5,7 @@ import json
 import copy
 import os
 import subprocess
+import math
 # Paths to the input and output files
 parser = argparse.ArgumentParser(description="""Generate Tensile config file""")
 
@@ -163,10 +164,9 @@ for i, (k, v) in enumerate(unique_gemms.items()):
         unique_gemms_subgroups[i%args.gpus] = [(k, v)]
 
 
-matmul_instructions = {}
 for gpu_idx, unique_gemms_subgroup in enumerate(unique_gemms_subgroups):
     gemm_group = {}
-    matrix_instructions = {}
+    matmul_instructions = {}
     if unique_gemms_subgroup is None:
         continue
 
@@ -182,33 +182,36 @@ for gpu_idx, unique_gemms_subgroup in enumerate(unique_gemms_subgroups):
             size = extract_problem_size(match)
             dtype = extract_dtype(match)
             mfma_instruction = instruction_map(dtype)
+            dtype_str = json.dumps(dtype)
             if mfma_instruction is None:
                 continue
             for m_tiles in range(1, CU+1):
                 if size[0] // m_tiles > 256:
                     continue
-                wave_tile_m = size[0] // m_tiles // mfma_instruction[0]
-                if wave_tile_m<=0:
+                    
+                wave_tile_m = math.ceil(size[0] // m_tiles / mfma_instruction[0])
+                if wave_tile_m <= 0:
                     continue
                 for n_tiles in range(1, CU+1):
                     if size[1] // n_tiles > 256:
                         continue
-                    wave_tile_n = size[1] // n_tiles // mfma_instruction[1]
-                    if wave_tile_n<=0:
+                    wave_tile_n = math.ceil(size[1] // n_tiles / mfma_instruction[1])
+                    if wave_tile_n <= 0:
                         continue
                     matmul_instruction = mfma_instruction+[1, 1, 1, 1, 1]
                     for k in range(3):
-                        if wave_tile_m//(2**k) > 0:
+                        if wave_tile_m // (2**k) > 0:
                             matmul_instruction[-4] = wave_tile_m//(2**k)
                             matmul_instruction[-2] = 2**k
                         for l in range(3):
-                            if wave_tile_n//(2**l) > 0:
+                            if wave_tile_n // (2**l) > 0:
                                 matmul_instruction[-3] = wave_tile_n//(2**l)
                                 matmul_instruction[-1] = 2**l
-                        matmul_instructions[str(matmul_instruction)] = matmul_instruction
+                        if dtype_str not in matmul_instructions:
+                            matmul_instructions[dtype_str] = dict()
+                        matmul_instructions[dtype_str][str(matmul_instruction)] = matmul_instruction
+
             
-            
-            dtype_str = json.dumps(dtype)
             if dtype_str in gemm_group:
                 gemm_group[dtype_str].append({'Exact': size})
             else:
@@ -239,7 +242,7 @@ for gpu_idx, unique_gemms_subgroup in enumerate(unique_gemms_subgroups):
         data["BenchmarkProblems"][i][1]["BenchmarkFinalParameters"][0]["ProblemSizes"] = gemm_group[dtype_str]
         for item in data["BenchmarkProblems"][i][1]["ForkParameters"]:
             if "MatrixInstruction" in item:
-                item["MatrixInstruction"] = [list(item) for item in matmul_instructions.values()]
+                item["MatrixInstruction"] = [list(item) for item in matmul_instructions[dtype_str].values()]
             if "WorkGroupMappingXCCGroup" in item:
                 item["WorkGroupMappingXCCGroup"] = [CU]
             if "WorkGroupMappingXCC" in item:
