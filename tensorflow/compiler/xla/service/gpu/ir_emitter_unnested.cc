@@ -5691,10 +5691,10 @@ Status IrEmitterUnnested::EmitOp(mlir::Operation* op) {
     return EmitGemmThunk(op);
   }
 
-#if GOOGLE_CUDA
   if (mlir::isa<mlir::lmhlo_gpu::CublasLtMatmulOp>(op)) {
     return EmitCublasLtMatmulThunk(op);
   }
+#if GOOGLE_CUDA
   if (mlir::isa<mlir::lmhlo_gpu::CublasLtMatmulF8Op>(op)) {
     return EmitCublasLtMatmulThunkF8(op);
   }

@@ -72,7 +72,8 @@ cc_library(
         "//tensorflow/compiler/xla:statusor",
         "//tensorflow/compiler/xla:util",
         "//tensorflow/compiler/xla:shape_util",
-        "//tensorflow/core/platform:env",
+        #"//tensorflow/core/platform:env",
+        "//tensorflow/tsl/util:env_var",
         "@com_google_absl//absl/types:any",
     ]),
 )

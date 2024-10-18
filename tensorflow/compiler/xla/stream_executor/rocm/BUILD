@@ -435,18 +435,18 @@ cc_library(
     alwayslink = True,
 )
 
-# cc_library(
-# 	name = "hipblas_lt_kernel",
-# 	hdrs = if_rocm_is_configured([
-# 		"hip_blas_lt.h",
-# 	]),
-# 	srcs = if_rocm_is_configured(["hip_blas_lt.cu.cc"]),
-# 	copts = rocm_copts(),
-# 	deps = if_rocm_is_configured([
-# 		"@local_config_rocm//rocm:rocm_headers",
-# 		#MATH_DEPS
-# 	])
-# )
+cc_library(
+    name = "hipblas_lt_kernel",
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+    ]),
+    srcs = if_rocm_is_configured(["hip_blas_lt.cu.cc"]),
+    copts = rocm_copts(),
+    deps = if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+        #MATH_DEPS
+    ])
+)
 
 cc_library(
     name = "hipblaslt_if_static",
@@ -470,8 +470,8 @@ cc_library(
     deps = if_rocm_is_configured([
         # keep sorted
         ":hipblas_lt_header",
-	    #":hipblas_lt_kernel",
-	    ":rocm_platform_id",
+        ":hipblas_lt_kernel",
+        ":rocm_platform_id",
         "@com_google_absl//absl/types:any",
         "//tensorflow/compiler/xla/stream_executor/gpu:gpu_blas_lt",
         "//tensorflow/compiler/xla:statusor",
@@ -485,7 +485,6 @@ cc_library(
         "//tensorflow/compiler/xla/stream_executor/platform",
         "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
         "//tensorflow/compiler/xla/stream_executor:scratch_allocator",
-        "//tensorflow/tsl/util:env_var",
         "@local_config_rocm//rocm:rocm_headers",
     ]) + if_static([
         ":hipblaslt_if_static",

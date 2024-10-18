@@ -13,7 +13,6 @@ limitations under the License.
 #include "tensorflow/compiler/xla/stream_executor/rocm/hip_blas_utils.h"
 #include "tensorflow/compiler/xla/stream_executor/blas.h"
 #include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/util/env_var.h"
 
 namespace stream_executor {
 namespace rocm {
@@ -49,33 +48,16 @@ hipDataType AsHipblasDataType(blas::DataType type) {
   }
 }
 
-static bool TF32_Enabled() {
-   static std::atomic_bool result{[] {
-    bool value = false;	          	
-    (void)tsl::ReadBoolFromEnvVar("ROCM_XF32",
-        /*default_value=*/false, &value);
-    return value;
-  }()};
-  return result;
-}
-
-static bool Fast_16F_Enabled() {
-  static std::atomic_bool result{[] {
-  bool value = false;	          	
-  (void)tsl::ReadBoolFromEnvVar("ROCM_FAST_16F",
-        /*default_value=*/false, &value);
-    return value;
-  }()};
-  return result;
-}
-
 hipblasComputeType_t AsHipblasComputeType(blas::ComputationType type) {
   switch(type) {
+  case blas::ComputationType::kF16AsF32:
+    return HIPBLAS_COMPUTE_32F_FAST_16F;
+  case blas::ComputationType::kBF16AsF32:
+    return HIPBLAS_COMPUTE_32F_FAST_16BF;
+  case blas::ComputationType::kTF32AsF32:
+    return HIPBLAS_COMPUTE_32F_FAST_TF32;
   case blas::ComputationType::kF32:
-  //case blas::ComputationType::kTF32AsF32:
-    return TF32_Enabled() ? HIPBLAS_COMPUTE_32F_FAST_TF32 : HIPBLAS_COMPUTE_32F;
-  case blas::ComputationType::kF16:
-    return Fast_16F_Enabled() ? HIPBLAS_COMPUTE_32F_FAST_16F : HIPBLAS_COMPUTE_32F;
+    return HIPBLAS_COMPUTE_32F;
   default:;
   }
   LOG(FATAL) << "unsupported hipblaslt computation type";

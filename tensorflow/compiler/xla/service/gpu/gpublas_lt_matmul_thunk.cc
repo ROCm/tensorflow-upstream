@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <utility>
 #include "tensorflow/compiler/xla/service/gpu/gpublas_lt_matmul_thunk.h"
+#include "tensorflow/compiler/xla/debug_options_flags.h"
 //#include "tensorflow/compiler/xla/service/gpu/autotuner_util.h"
 
 namespace xla {
@@ -84,10 +85,9 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
   canonical_hlo_ = se::gpu::ToCSVString(gemm_config_, /*full_string*/true);
   // set algorithm ID explicitly to -1 if tuning is disabled!
 
-  // if (hlo_instruction->GetModule()->config().
-  //         debug_options().xla_gpu_autotune_level() == 0) {
-  //   algorithm_id_ = se::blas::kDefaultAlgorithm;
-  // }
+  if(GetDebugOptionsFromFlags().xla_gpu_autotune_level() == 0) {
+    gemm_config_.algorithm = se::blas::kDefaultAlgorithm;
+  }
 }
 
 Status CublasLtMatmulThunk::Initialize(const GpuExecutable& executable,
@@ -132,8 +132,8 @@ Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
   }
 
   absl::optional<se::DeviceMemoryBase> workspace;
-  if (workspace_buffer_.has_value()) {
-    workspace = allocs.GetDeviceAddress(workspace_buffer_.value());
+  if (workspace_buffer_) {
+    workspace = allocs.GetDeviceAddress(*workspace_buffer_);
   }
 
   return plan->ExecuteOnStream(

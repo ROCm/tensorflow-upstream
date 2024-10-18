@@ -1071,12 +1071,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // This matrix of supported types is taken directly from cublas
     // documentation.
     // https://docs.nvidia.com/cuda/cublas/index.html#cublasgemmex
-    const std::array<
-        std::tuple<ComputationType, DataType /*scale_type*/,
-                   PrimitiveType /*a_dtype*/, PrimitiveType /*b_dtype*/,
-                   DataType /*output_dtype*/>,
-        32>
-        supported_type_combinations = {{
+
+    using TypeCombinations = std::initializer_list<std::tuple<
+        ComputationType, DataType /*scale_type*/, PrimitiveType /*a_dtype*/,
+        PrimitiveType /*b_dtype*/, DataType /*output_dtype*/>>;
+
+    const TypeCombinations supported_type_combinations = {
             {ComputationType::kF16, DataType::kHalf, PrimitiveType::F16,
              PrimitiveType::F16, DataType::kHalf},
 
@@ -1121,7 +1121,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
             {ComputationType::kF64, DataType::kComplexDouble,
              PrimitiveType::C128, PrimitiveType::C128,
              DataType::kComplexDouble},
-        }};
+        };
 
     return absl::c_linear_search(
         supported_type_combinations,
@@ -1169,36 +1169,36 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // https://docs.nvidia.com/cuda/cublas/index.html#cublasLtMatmul
     const TypeCombinations supported_cublas_type_combinations = {
         // FP8 types:
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
-         PrimitiveType::F8E4M3FN, DataType::kBF16},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
-         PrimitiveType::F8E4M3FN, DataType::kF8E4M3FN},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
-         PrimitiveType::F8E4M3FN, DataType::kHalf},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
-         PrimitiveType::F8E4M3FN, DataType::kFloat},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E4M3FN, DataType::kBF16},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E4M3FN, DataType::kF8E4M3FN},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E4M3FN, DataType::kHalf},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E4M3FN, DataType::kFloat},
 
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
-         PrimitiveType::F8E5M2, DataType::kBF16},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
-         PrimitiveType::F8E5M2, DataType::kF8E4M3FN},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
-         PrimitiveType::F8E5M2, DataType::kF8E5M2},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
-         PrimitiveType::F8E5M2, DataType::kHalf},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
-         PrimitiveType::F8E5M2, DataType::kFloat},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E5M2, DataType::kBF16},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E5M2, DataType::kF8E4M3FN},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E5M2, DataType::kF8E5M2},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E5M2, DataType::kHalf},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E5M2, DataType::kFloat},
 
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
-         PrimitiveType::F8E4M3FN, DataType::kBF16},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
-         PrimitiveType::F8E4M3FN, DataType::kF8E4M3FN},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
-         PrimitiveType::F8E4M3FN, DataType::kF8E5M2},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
-         PrimitiveType::F8E4M3FN, DataType::kHalf},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
-         PrimitiveType::F8E4M3FN, DataType::kFloat},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+        //  PrimitiveType::F8E4M3FN, DataType::kBF16},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+        //  PrimitiveType::F8E4M3FN, DataType::kF8E4M3FN},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+        //  PrimitiveType::F8E4M3FN, DataType::kF8E5M2},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+        //  PrimitiveType::F8E4M3FN, DataType::kHalf},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+        //  PrimitiveType::F8E4M3FN, DataType::kFloat},
         // There would be an entry here for A/BType complex int8, but we do
         // not support that type.
         {ComputationType::kF32, DataType::kComplexFloat, PrimitiveType::C64,
@@ -1233,25 +1233,35 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     }
     const TypeCombinations supported_type_combinations = {
         // Other data types:
-        {ComputationType::kF16, DataType::kHalf, PrimitiveType::F16,
-         PrimitiveType::F16, DataType::kHalf},
 
         {ComputationType::kI32, DataType::kInt32, PrimitiveType::S8,
          PrimitiveType::S8, DataType::kInt32},
         {ComputationType::kI32, DataType::kFloat, PrimitiveType::S8,
          PrimitiveType::S8, DataType::kInt8},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::S8,
+         PrimitiveType::S8, DataType::kFloat},
 
         {ComputationType::kF32, DataType::kFloat, PrimitiveType::BF16,
          PrimitiveType::BF16, DataType::kBF16},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F16,
-         PrimitiveType::F16, DataType::kHalf},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::S8,
-         PrimitiveType::S8, DataType::kFloat},
         {ComputationType::kF32, DataType::kFloat, PrimitiveType::BF16,
          PrimitiveType::BF16, DataType::kFloat},
+        {ComputationType::kBF16AsF32, DataType::kFloat, PrimitiveType::BF16,
+         PrimitiveType::BF16, DataType::kBF16},
+        {ComputationType::kBF16AsF32, DataType::kFloat, PrimitiveType::BF16,
+         PrimitiveType::BF16, DataType::kFloat},
+
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F16,
+         PrimitiveType::F16, DataType::kHalf},
         {ComputationType::kF32, DataType::kFloat, PrimitiveType::F16,
          PrimitiveType::F16, DataType::kFloat},
+        {ComputationType::kF16AsF32, DataType::kFloat, PrimitiveType::F16,
+         PrimitiveType::F16, DataType::kHalf},
+        {ComputationType::kF16AsF32, DataType::kFloat, PrimitiveType::F16,
+         PrimitiveType::F16, DataType::kFloat},
+
         {ComputationType::kF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
+        {ComputationType::kTF32AsF32, DataType::kFloat, PrimitiveType::F32,
          PrimitiveType::F32, DataType::kFloat},
     };
 

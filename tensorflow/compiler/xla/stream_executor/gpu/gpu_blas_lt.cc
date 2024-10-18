@@ -21,6 +21,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/stream_executor/stream.h"
 #include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
 #include "tensorflow/compiler/xla/util.h"
+#include "tensorflow/tsl/util/env_var.h"
 
 namespace stream_executor {
 
@@ -29,6 +30,30 @@ namespace gpu {
 using blas::ComputationType;
 using blas::DataType;
 using xla::PrimitiveType;
+
+namespace {
+
+bool TF32_Enabled() {
+   static std::atomic_bool result{[] {
+    bool value = false;	          	
+    (void)tsl::ReadBoolFromEnvVar("ROCM_XF32",
+        /*default_value=*/false, &value);
+    return value;
+  }()};
+  return result;
+}
+
+bool Fast_16F_Enabled() {
+  static std::atomic_bool result{[] {
+  bool value = false;	          	
+  (void)tsl::ReadBoolFromEnvVar("ROCM_FAST_16F",
+        /*default_value=*/false, &value);
+    return value;
+  }()};
+  return result;
+}
+
+} // namespace
 
 xla::StatusOr<DataType> AsBlasDataType(PrimitiveType dtype) {
   switch (dtype) {
@@ -57,25 +82,30 @@ xla::StatusOr<DataType> AsBlasDataType(PrimitiveType dtype) {
 
 xla::StatusOr<ComputationType> GetBlasComputationType(
   DataType lhs_dtype, DataType output_dtype, int64_t /*compute_precision*/) {
+
+  auto f16_comp = Fast_16F_Enabled() ? 
+                   ComputationType::kF16AsF32 : ComputationType::kF32,
+       bf16_comp = Fast_16F_Enabled() ? 
+                   ComputationType::kBF16AsF32 : ComputationType::kF32;
+
   switch (output_dtype) {
-      case DataType::kHalf:   // fall-through
-      case DataType::kBF16:
-        return ComputationType::kF16; // use 32F_FAST_F16 compute type
-      case DataType::kFloat:  // fall-through
-        if(lhs_dtype == DataType::kHalf || 
-           lhs_dtype == DataType::kBF16) {
-          return ComputationType::kF16; // use 32F_FAST_F16 compute type
-        }
-        return ComputationType::kF32;
-      case DataType::kComplexFloat:
-        return ComputationType::kF32;
-      case DataType::kDouble: // fall-through
-      case DataType::kComplexDouble:
-        return ComputationType::kF64;
-      case DataType::kInt32:
-        return ComputationType::kI32;
-      default:
-        return xla::InternalError("GetBlasComputationType: unsupported type");
+    case DataType::kHalf:   // fall-through
+      return f16_comp;
+    case DataType::kBF16:
+      return bf16_comp;
+    case DataType::kFloat:  // fall-through
+      if (lhs_dtype == DataType::kHalf) return f16_comp;
+      if (lhs_dtype == DataType::kBF16) return bf16_comp;
+      return ComputationType::kF32;
+    case DataType::kComplexFloat:
+      return ComputationType::kF32;
+    case DataType::kDouble: // fall-through
+    case DataType::kComplexDouble:
+      return ComputationType::kF64;
+    case DataType::kInt32:
+      return ComputationType::kI32;
+    default:
+      return xla::InternalError("GetBlasComputationType: unsupported type");
   }
 }
 

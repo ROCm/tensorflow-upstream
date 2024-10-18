@@ -38,7 +38,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_llvm_enable_invariant_load_metadata(true);
   opts.set_xla_llvm_disable_expensive_passes(false);
   opts.set_xla_backend_optimization_level(3);
-  opts.set_xla_gpu_autotune_level(4);
+  opts.set_xla_gpu_autotune_level(0);
   opts.set_xla_cpu_multi_thread_eigen(true);
   opts.set_xla_gpu_cuda_data_dir("./cuda_sdk_lib");
   opts.set_xla_gpu_asm_extra_flags("");
@@ -832,6 +832,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 bool_setter_for(&DebugOptions::set_xla_gpu_enable_cublaslt),
                 debug_options->xla_gpu_enable_cublaslt(),
                 "Use cuBLASLt for GEMMs when possible."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_gemm_rewrite_size_threshold",
+      int64_setter_for(&DebugOptions::set_xla_gpu_gemm_rewrite_size_threshold),
+      debug_options->xla_gpu_gemm_rewrite_size_threshold(),
+      "Threshold until which elemental dot emitter is preferred for GEMMs "
+      "(minumum combined number of elements of both matrices "
+      "in non-batch dimensions to be considered for a rewrite)."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_cuda_graph_level",
       int32_setter_for(&DebugOptions::set_xla_gpu_cuda_graph_level),
