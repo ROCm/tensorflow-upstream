@@ -747,10 +747,6 @@ tsl::StatusOr<mlir::Operation*> LhloDialectEmitter::EmitCustomCallOp(
     return EmitCublasLtMatmul(custom_call_instr);
   }
 
-  if (xla::gpu::IsCublasLtMatmulF8(*instr)) {
-    return EmitCublasLtMatmulF8(custom_call_instr);
-  }
-
   if (xla::gpu::IsCustomCallToDnnConvolution(*instr)) {
     return EmitDnnConvolution(custom_call_instr);
   }

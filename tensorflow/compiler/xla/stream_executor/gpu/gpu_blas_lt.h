@@ -36,8 +36,6 @@ namespace gpu {
 
 xla::StatusOr<blas::DataType> AsBlasDataType(xla::PrimitiveType dtype);
 
-xla::StatusOr<xla::PrimitiveType> AsXlaPrimitiveType(blas::DataType dtype);
-
 xla::StatusOr<blas::ComputationType> GetBlasComputationType(
     blas::DataType lhs_dtype, blas::DataType output_dtype, 
     int64_t compute_precision);

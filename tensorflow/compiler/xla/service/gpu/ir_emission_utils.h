@@ -43,6 +43,7 @@ inline constexpr int64_t kMinTotalDimensionsToTransposeTiled = 64 * 128;
 // This function should never return "true" on instructions after
 // GemmRewriter pass has finished.
 bool IsMatrixMultiplication(const HloInstruction& dot);
+bool IsMatrixVectorMultiplication(const HloInstruction& dot);
 
 inline constexpr int64_t WarpSize() { return 32; }
 

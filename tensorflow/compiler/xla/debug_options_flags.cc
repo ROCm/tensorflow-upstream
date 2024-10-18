@@ -74,7 +74,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   // Note: CublasLt will be used for FP8 GEMMs regardless of the value of this
   // flag.
-  opts.set_xla_gpu_enable_cublaslt(false);
+  opts.set_xla_gpu_enable_cublaslt(true);
 
   // TODO(b/258036887): Enable once CUDA Graphs are fully supported.
   opts.set_xla_gpu_cuda_graph_level(0);
@@ -122,7 +122,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_partitioning_algorithm(
       DebugOptions::PARTITIONING_ALGORITHM_NOOP);
 
-  opts.set_xla_gpu_enable_triton_gemm(true);
+  opts.set_xla_gpu_enable_triton_gemm(false);
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(false);
 
@@ -131,6 +131,15 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_while_loop_reduce_scatter_code_motion(false);
 
   opts.set_xla_gpu_collective_inflation_factor(1);
+
+  // Minimum combined size of matrices in matrix multiplication to
+  // be rewritten to cuBLAS or Triton kernel call.
+  // This threshold is a conservative estimate and has been measured
+  // to be always beneficial (up to generally several times faster)
+  // on V100 and H100 GPUs. See openxla/xla #9319 for details.
+  const int64_t kDefaultMinGemmRewriteSize = 100;
+  opts.set_xla_gpu_gemm_rewrite_size_threshold(kDefaultMinGemmRewriteSize);
+
   return opts;
 }
 

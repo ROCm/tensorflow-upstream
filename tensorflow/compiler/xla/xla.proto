@@ -517,7 +517,12 @@ message DebugOptions {
 
   bool xla_gpu_triton_gemm_any = 190;
 
-  // Next id: 210
+  // Threshold to rewrite matmul to cuBLAS or Triton (minumum combined number of
+  // elements of both matrices in non-batch dimensions to be considered for a
+  // rewrite).
+  int64 xla_gpu_gemm_rewrite_size_threshold = 210;
+
+  // Next id: 211
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

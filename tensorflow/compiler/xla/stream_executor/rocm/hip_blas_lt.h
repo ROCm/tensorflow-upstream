@@ -16,8 +16,8 @@ limitations under the License.
 #include "rocm/rocm_config.h"
 #include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
 #include "tensorflow/compiler/xla/stream_executor/gpu/gpu_blas_lt.h"
-#include "tensorflow/compiler/xla/stream_executor/host_or_device_scalar.h"
-#include "tensorflow/compiler/xla/types.h"
+//#include "tensorflow/compiler/xla/stream_executor/host_or_device_scalar.h"
+//#include "tensorflow/compiler/xla/types.h"
 
 #include "tensorflow/compiler/xla/stream_executor/rocm/hip_blas_utils.h"
 

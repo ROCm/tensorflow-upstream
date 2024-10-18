@@ -55,29 +55,6 @@ xla::StatusOr<DataType> AsBlasDataType(PrimitiveType dtype) {
   }
 }
 
-xla::StatusOr<PrimitiveType> AsXlaPrimitiveType(DataType dtype) {
-  switch (dtype) {
-    case DataType::kInt8:
-      return PrimitiveType::S8;
-    case DataType::kHalf:
-      return PrimitiveType::F16;
-    case DataType::kBF16:
-      return PrimitiveType::BF16;
-    case DataType::kFloat:
-      return PrimitiveType::F32;
-    case DataType::kInt32:
-      return PrimitiveType::S32;
-    case DataType::kDouble:
-      return PrimitiveType::F64;
-    case DataType::kComplexFloat:
-      return PrimitiveType::C64;
-    case DataType::kComplexDouble:
-      return PrimitiveType::C128;
-    default:
-      return xla::Internal("AsXlaPrimitiveType: unsupported dtype");
-  }
-}
-
 xla::StatusOr<ComputationType> GetBlasComputationType(
   DataType lhs_dtype, DataType output_dtype, int64_t /*compute_precision*/) {
   switch (output_dtype) {

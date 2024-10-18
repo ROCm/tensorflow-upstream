@@ -7,7 +7,9 @@ load(
     "stream_executor_friends",
 )
 load("//tensorflow/tsl:tsl.bzl", "set_external_visibility", "tsl_copts")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts")
+load("@local_config_rocm//rocm:build_defs.bzl", 
+    "if_rocm_is_configured", "rocm_copts", "if_rocm_hipblaslt"
+)
 load("//tensorflow/tsl/platform:build_config_root.bzl", "if_static")
 
 package(
@@ -184,6 +186,7 @@ cc_library(
     hdrs = if_rocm_is_configured(["rocm_blas.h"]),
     visibility = ["//visibility:public"],
     deps = if_rocm_is_configured([
+        ":hipblas_lt_header",
         ":rocblas_if_static",
         ":rocblas_wrapper",
         ":rocm_gpu_executor",
@@ -200,6 +203,7 @@ cc_library(
         "//tensorflow/compiler/xla/stream_executor/gpu:gpu_helpers_header",
         "//tensorflow/compiler/xla/stream_executor/gpu:gpu_stream_header",
         "//tensorflow/compiler/xla/stream_executor/gpu:gpu_timer_header",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_blas_lt",
         "//tensorflow/compiler/xla/stream_executor/platform",
         "//tensorflow/compiler/xla/stream_executor:blas",
         "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
@@ -444,19 +448,12 @@ cc_library(
 # 	])
 # )
 
-        # "//tensorflow/compiler/xla/stream_executor",
-        # "//tensorflow/compiler/xla/stream_executor:event",
-        # "//tensorflow/compiler/xla/stream_executor:host_or_device_scalar",
-        # "//tensorflow/compiler/xla/stream_executor:plugin_registry",
-        # "//tensorflow/compiler/xla/stream_executor:scratch_allocator",
-        # "//tensorflow/compiler/xla/stream_executor:timer",
-        # "//tensorflow/compiler/xla/stream_executor/gpu:gpu_activation",
-        # "//tensorflow/compiler/xla/stream_executor/gpu:gpu_helpers_header",
-        # "//tensorflow/compiler/xla/stream_executor/gpu:gpu_stream_header",
-        # "//tensorflow/compiler/xla/stream_executor/gpu:gpu_timer_header",
-        # "//tensorflow/compiler/xla/stream_executor/platform",
-        # "//tensorflow/compiler/xla/stream_executor:blas",
-        # "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
+cc_library(
+    name = "hipblaslt_if_static",
+    deps = if_rocm_hipblaslt([
+        "@local_config_rocm//rocm:hipblaslt",
+    ]),
+)
 
 cc_library(
     name = "amdhipblaslt_plugin",
@@ -490,6 +487,8 @@ cc_library(
         "//tensorflow/compiler/xla/stream_executor:scratch_allocator",
         "//tensorflow/tsl/util:env_var",
         "@local_config_rocm//rocm:rocm_headers",
+    ]) + if_static([
+        ":hipblaslt_if_static",
     ]),
     linkopts = ["-lhipblaslt"],
     alwayslink = True,
@@ -560,6 +559,7 @@ cc_library(
         ":rocm_driver",
         ":rocm_platform",
         ":rocm_helpers",
+        ":amdhipblaslt_plugin",
     ]),
     alwayslink = 1,
 )
