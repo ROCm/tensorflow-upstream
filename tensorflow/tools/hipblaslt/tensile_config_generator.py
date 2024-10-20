@@ -50,13 +50,13 @@ if ArchitectureName == 'gfx942':
         XCC = 4
         GSU = [1,2,3,4]
     DeviceNames = ["Device 0049", "Device 0050"]
-    ScheduleName = "aldebaran"
+    ScheduleName = "aquavanjaram"
 elif ArchitectureName == 'gfx90a':
     CU = 104
     XCC = 1
     GSU = [1,2,3,4]
     DeviceNames = ["Device 0050", "Device 0051", "Device 0052", "Device 0054", "Device 0062", "Device 7400", "Device 740c"]
-    ScheduleName = "aquavanjaram"
+    ScheduleName = "aldebaran"
 
 fp16_instruction = [16,16,16,1]
 tf32_instruction = [16,16,8,1]
