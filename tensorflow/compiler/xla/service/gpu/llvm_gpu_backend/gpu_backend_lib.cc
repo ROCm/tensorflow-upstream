@@ -77,6 +77,8 @@ limitations under the License.
 #include "tensorflow/tsl/platform/cuda_libdevice_path.h"
 #endif
 
+#define TENSORFLOW_HSACO_USE_ROCM_LLVM
+
 namespace xla {
 namespace gpu {
 namespace {
@@ -367,10 +369,14 @@ std::unique_ptr<llvm::TargetMachine> NVPTXGetTargetMachine(
   return GetTargetMachine(target_triple, GetSmName(compute_capability),
                           hlo_module_config, ptx_ver);
 }
-
+#ifdef TENSORFLOW_HSACO_USE_ROCM_LLVM
 using TargetModuleLinker = std::function<Status(
     llvm::Module*, GpuVersion, const HloModuleConfig&, const std::string&,
     const std::string&, const std::string&, const std::string&)>;
+#else
+using TargetModuleLinker = std::function<Status(
+    llvm::Module*, GpuVersion, const HloModuleConfig&, const std::string&)>;
+#endif
 
 void DumpModule(const std::string output_filename, const llvm::Module* module) {
   std::error_code ec;
@@ -970,6 +976,7 @@ Status LinkROCDLIfNecessary(llvm::Module* module, std::string gcn_arch_name,
                                ir_path, linked_ir_path, optimized_ir_path);
 }
 
+#ifdef TENSORFLOW_HSACO_USE_ROCM_LLVM
 Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
                                 const HloModuleConfig& hlo_module_config,
                                 const std::string& device_bitcode_dir_path,
@@ -1003,7 +1010,37 @@ Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
 
   return OkStatus();
 }
+#else
+Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
+                                const HloModuleConfig& hlo_module_config,
+                                const std::string& device_bitcode_dir_path) {
+  // Link the input module with ROCDL.
 
+  auto compute_capability =
+      std::get_if<se::RocmComputeCapability>(&gpu_version);
+  if (!compute_capability) {
+    return xla::InternalError("Incompatible compute capability was specified.");
+  }
+
+  std::string gcn_arch_name = compute_capability->gcn_arch_name();
+  TF_RETURN_IF_ERROR(
+      LinkROCDLIfNecessary(module, gcn_arch_name, device_bitcode_dir_path));
+
+  // For rocm, we always enable flush to zero. (for cuda, this is determined
+  // via environemnt variables). This deceision was based on the observation
+  // Eugene had that the AMD GPU llvm backend has not picked up the atomic add
+  // instructions correctly without ftz enabled. We concluded that this should
+  // not has major impact as the hipcc path by default enables flush to zero for
+  // compilation.
+  for (llvm::Function& fn : *module) {
+      // may be necessary for the compiler to generate atomics (confirm!)
+      fn.addFnAttr("denormal-fp-math-f32", "preserve-sign");
+      fn.addFnAttr("amdgpu-unsafe-fp-atomics", "true");
+  }
+
+  return OkStatus();
+}
+#endif
 // The following routine maps a feature token extracted from the
 // hipDeviceProp_t::gcnArchName string, and maps it to a valid feature_str
 // to be used for creating the AMDGPUTarget.
