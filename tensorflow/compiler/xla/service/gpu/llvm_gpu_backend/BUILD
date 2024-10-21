@@ -65,6 +65,7 @@ cc_library(
         "@llvm-project//llvm:Target",
     ] + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_headers",
+        "//tensorflow/tsl/platform:rocm_rocdl_path",
         "@llvm-project//llvm:AMDGPUCodeGen",
     ]),
 )

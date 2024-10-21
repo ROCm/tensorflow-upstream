@@ -703,12 +703,14 @@ def _create_local_rocm_repository(repository_ctx):
     # .d file - given that includes that are prefixed with "../" multiple
     # time quickly grow longer than the root of the tree, this can lead to
     # bazel's header check failing.
-    rocm_defines["%{extra_no_canonical_prefixes_flags}"] = "\"-fno-canonical-system-headers\""
+    rocm_defines["%{extra_no_canonical_prefixes_flags}"] = ""
 
     rocm_defines["%{unfiltered_compile_flags}"] = to_list_of_strings([
         "-DTENSORFLOW_USE_ROCM=1",
         "-D__HIP_PLATFORM_AMD__",
         "-DEIGEN_USE_HIP",
+        "-Wno-unused-but-set-variable",
+        "-Wno-c++11-narrowing",
     ])
 
     rocm_defines["%{host_compiler_path}"] = "clang/bin/crosstool_wrapper_driver_is_not_gcc"

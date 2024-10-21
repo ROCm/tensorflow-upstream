@@ -74,7 +74,9 @@ def GetHostCompilerOptions(argv):
   parser.add_argument('-iquote', nargs='*', action='append')
   parser.add_argument('--sysroot', nargs=1)
   parser.add_argument('-g', nargs='*', action='append')
-  parser.add_argument('-fno-canonical-system-headers', action='store_true')
+  parser.add_argument('-no-canonical-prefixes', action='store_true')
+  parser.add_argument('-Wno-unused-variable', action='store_true')
+  parser.add_argument('-Wno-unused-but-set-variable', action='store_true')
 
   args, _ = parser.parse_known_args(argv)
 
@@ -86,10 +88,16 @@ def GetHostCompilerOptions(argv):
     opts += ' -iquote ' + ' -iquote '.join(sum(args.iquote, []))
   if args.g:
     opts += ' -g' + ' -g'.join(sum(args.g, []))
-  if args.fno_canonical_system_headers:
+  if args.no_canonical_prefixes:
     opts += ' -no-canonical-prefixes'
   if args.sysroot:
     opts += ' --sysroot ' + args.sysroot[0]
+  if args.Wno_unused_variable:
+    opts += ' -Wno-unused-variable'
+
+  if args.Wno_unused_but_set_variable:
+    opts += ' -Wno-unused-but-set-variable'
+
 
   return opts
 
@@ -257,7 +265,13 @@ def main():
                                if not flag.startswith(('--rocm_log'))]
 
     # XXX: SE codes need to be built with gcc, but need this macro defined
-    cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")
+    cpu_compiler_flags.append("-D__HIP_PLATFORM_AMD__")
+    cpu_compiler_flags.append('-L' + HIP_RUNTIME_PATH)
+    cpu_compiler_flags.append('-Wl,-rpath=' + HIP_RUNTIME_PATH)
+    cpu_compiler_flags.append('-l' + HIP_RUNTIME_LIBRARY)
+    cpu_compiler_flags.append("-lrt")
+    cpu_compiler_flags.append("-Wno-unused-command-line-argument")
+    cpu_compiler_flags.append("-Wno-gnu-offsetof-extensions")
     if VERBOSE: print(' '.join([CPU_COMPILER] + cpu_compiler_flags))
     return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
 
