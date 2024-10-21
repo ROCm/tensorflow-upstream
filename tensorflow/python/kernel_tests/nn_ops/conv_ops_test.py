@@ -1007,7 +1007,7 @@ class Conv2DTest(test.TestCase):
   def testConv2D2x2Depth1ValidBackpropInput(self):
     expected_output = [1.0, 4.0, 4.0, 3.0, 10.0, 8.0]
     for (data_format, use_gpu) in GetTestConfigs():
-      self.(
+      self._RunAndVerifyBackpropInput(
           input_sizes=[1, 2, 3, 1],
           filter_sizes=[2, 2, 1, 1],
           output_sizes=[1, 1, 2, 1],
