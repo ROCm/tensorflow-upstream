@@ -21,7 +21,7 @@ limitations under the License.
 
 //#include "tensorflow/compiler/xla/service/gpu/cudnn_conv_runner.h"
 
-#include "tensorflow/core/protobuf/autotuning.pb.h"
+#include "tensorflow/tsl/protobuf/autotuning.pb.h"
 
 #include "tensorflow/compiler/xla/service/gpu/backend_configs.pb.h"
 #include "tensorflow/compiler/xla/service/hlo_module.h"
@@ -31,11 +31,11 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
 #include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/stream_executor/blas.h"
-#include "tensorflow/stream_executor/device_memory.h"
-#include "tensorflow/stream_executor/device_memory_allocator.h"
-#include "tensorflow/stream_executor/gpu/redzone_allocator.h"
-#include "tensorflow/stream_executor/stream_executor.h"
+#include "tensorflow/compiler/xla/stream_executor/blas.h"
+#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
+#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/redzone_allocator.h"
+#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
 
 namespace stream_executor {
 namespace gpu {

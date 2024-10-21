@@ -13,18 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_REDZONE_ALLOCATOR_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_REDZONE_ALLOCATOR_H_
+#ifndef TENSORFLOW_STREAM_EXECUTOR_GPU_REDZONE_ALLOCATOR_H_
+#define TENSORFLOW_STREAM_EXECUTOR_GPU_REDZONE_ALLOCATOR_H_
 
 #include <cstdint>
+#include <string>
+#include <utility>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/asm_compiler.h"
 #include "tensorflow/compiler/xla/stream_executor/gpu/gpu_asm_opts.h"
+#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
 #include "tensorflow/compiler/xla/stream_executor/scratch_allocator.h"
 #include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/lib/math/math_util.h"
+
 
 namespace stream_executor {
 
@@ -43,12 +46,12 @@ class RedzoneAllocator : public ScratchAllocator {
  public:
   static constexpr int64_t kDefaultRedzoneSize =
       1LL << 23;  // 8MiB per side, 16MiB total.
-  static constexpr uint8_t kDefaultRedzonePattern = -1;  // NOLINT
+  static constexpr uint8 kDefaultRedzonePattern = -1;
   RedzoneAllocator(Stream* stream, DeviceMemoryAllocator* memory_allocator,
-                   GpuAsmOpts gpu_compilation_opts_,
-                   int64_t memory_limit = (1LL << 32),  // 4GB
+                   const GpuAsmOpts& gpu_compilation_opts_,
+                   int64_t memory_limit = (1LL << 32),
                    int64_t redzone_size = kDefaultRedzoneSize,
-                   uint8_t redzone_pattern = kDefaultRedzonePattern);
+                   uint8 redzone_pattern = kDefaultRedzonePattern);
 
   // Redzones don't count towards the memory limit.
   int64_t GetMemoryLimitInBytes() override { return memory_limit_; }
@@ -65,8 +68,7 @@ class RedzoneAllocator : public ScratchAllocator {
     RedzoneCheckStatus() = default;
 
     RedzoneCheckStatus(absl::string_view buffer_name, void* user_buffer_address,
-                       int64_t offset, uint64_t expected_value,
-                       uint64_t actual_value)
+                       int64_t offset, uint64 expected_value, uint64 actual_value)
         : buffer_name(buffer_name),
           user_buffer_address(user_buffer_address),
           offset(offset),
@@ -82,14 +84,14 @@ class RedzoneAllocator : public ScratchAllocator {
     std::string buffer_name = {};
     void* user_buffer_address = nullptr;
     int64_t offset = 0;
-    uint64_t expected_value = 0;
-    uint64_t actual_value = 0;
+    uint64 expected_value = 0;
+    uint64 actual_value = 0;
   };
 
   // Determines whether redzones around all allocated buffers are unmodified.
   //
   // Reinitializes redzones to the expected value, so that the same buffer
-  // could be reused for multiple checks.
+  // can be reused for multiple checks.
   //
   // Returns:
   //
@@ -98,7 +100,6 @@ class RedzoneAllocator : public ScratchAllocator {
   //    redzone has been detected.
   //  - A stream error, if loading or launching the kernel has failed.
   tsl::StatusOr<RedzoneCheckStatus> CheckRedzones() const;
-
   Stream* stream() const { return stream_; }
 
  private:
@@ -114,7 +115,7 @@ class RedzoneAllocator : public ScratchAllocator {
   // returned to users will be misaligned.
   const int64_t redzone_size_;
 
-  const uint8_t redzone_pattern_;
+  const uint8 redzone_pattern_;
   DeviceMemoryAllocator* memory_allocator_;
   GpuAsmOpts gpu_compilation_opts_;
 
@@ -132,4 +133,4 @@ class RedzoneAllocator : public ScratchAllocator {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_REDZONE_ALLOCATOR_H_
+#endif  // TENSORFLOW_STREAM_EXECUTOR_GPU_REDZONE_ALLOCATOR_H_
