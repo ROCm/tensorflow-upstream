@@ -115,14 +115,15 @@ RUN dnf --enablerepo=extras,build_system  install -y \
 RUN dnf --enablerepo=extras,epel,elrepo,powertools,build_system  install -y \
     python3.11 \
     python3.11-devel \
-    python3.11-pip
+    python3.11-pip \
+    python3.11-wheel
 
 RUN ln -sf /usr/bin/python3.11 /usr/bin/python3
 RUN ln -sf /usr/bin/python3 /usr/bin/python
 RUN ln -sf /usr/bin/python3.11 /etc/alternatives/python3
 
 RUN python3 -m ensurepip
-RUN pip install joblib numpy
+RUN pip install joblib numpy requests packaging
 
 ENV OPENCL_ROOT=$ROCM_PATH/opencl
 ENV PATH="$ROCM_PATH/bin:${PATH}"
