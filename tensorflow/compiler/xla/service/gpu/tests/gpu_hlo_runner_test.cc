@@ -16,6 +16,7 @@ limitations under the License.
 #include <fstream>
 #include <sstream>
 #include "tensorflow/compiler/xla/error_spec.h"
+#include "tensorflow/compiler/xla/literal_comparison.h"
 #include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
 #include "tensorflow/compiler/xla/service/gpu/tests/gpu_codegen_test.h"
 #include "tensorflow/compiler/xla/tests/hlo_test_base.h"
@@ -49,21 +50,21 @@ TEST_F(HloRunnerTest, RunSingle) {
 #if 1
   //config.set_num_partitions(8); 
 
-TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(buffer.str(), 
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(buffer.str(), 
           config));
-  ErrorSpec error_spec{1e-2, 1e-3};
+  
   auto ref_module = module->Clone();  
   TF_ASSERT_OK_AND_ASSIGN(auto exec, test_runner_.CreateExecutable(std::move(module), true));
 
   VLOG(0) << "Creating fake args..";
   TF_ASSERT_OK_AND_ASSIGN(auto fake_arguments, xla::MakeFakeArguments(ref_module.get(), 
-        false, /*pseudo-random*/
+        true, /*pseudo-random*/
         false /* use large range*/));
   auto arg_ptrs = MakePointerVector<xla::Literal>(fake_arguments);
 
-//   auto& ref_runner = HloTestBase::reference_runner_;
-//   TF_ASSERT_OK_AND_ASSIGN(
-//       auto ref_exec, ref_runner.CreateExecutable(std::move(ref_module), true));
+  auto& ref_runner = HloTestBase::reference_runner_;
+  TF_ASSERT_OK_AND_ASSIGN(
+       auto ref_exec, ref_runner.CreateExecutable(std::move(ref_module), true));
 
   // TF_ASSERT_OK_AND_ASSIGN(auto truth, 
   //       ReadLiteralFromProto("/tf/xla/expected.pb"));
@@ -75,11 +76,19 @@ TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(buffer.str(),
   TF_ASSERT_OK_AND_ASSIGN(
        auto test_res, test_runner_.ExecuteWithExecutable(exec.get(), arg_ptrs));
 
-    // TF_ASSERT_OK_AND_ASSIGN(auto test_res, 
-    //      test_runner_.Execute(std::move(exec), arg_ptrs, nullptr));
+  VLOG(0) << "Running reference exec..";
+  TF_ASSERT_OK_AND_ASSIGN(
+       auto truth, ref_runner.ExecuteWithExecutable(ref_exec.get(), arg_ptrs));
 
-  // EXPECT_TRUE(RunAndCompare(std::move(module), 
-  //     absl::Span< xla::Literal * const>(arg_ptrs.data(), arg_ptrs.size()), error_spec));
+  ErrorSpec error_spec{1e-2, 1e-3};
+  //ErrorSpec error_spec(1e-5 /*abs*/, 1e-5 /*rel*/);
+  ASSERT_EQ(literal_comparison::Near(/*expected=*/truth,
+                                  /*actual=*/test_res,
+                                  /*error=*/error_spec,
+                           /*detailed_message=*/true, {}), OkStatus());
+
+ //    EXPECT_TRUE(RunAndCompare(std::move(module), 
+  // //     absl::Span< xla::Literal * const>(arg_ptrs.data(), arg_ptrs.size()), error_spec));
 #else
   int NumReplicas = 8, NumParts = 1;
   config.set_replica_count(NumReplicas);
