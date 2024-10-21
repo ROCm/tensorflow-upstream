@@ -46,6 +46,8 @@ limitations under the License.
 #include "tensorflow/tsl/util/determinism.h"
 #include "tensorflow/tsl/util/env_var.h"
 #include "rocm/rocm_config.h"
+#include <hip/hip_fp16.h>
+#include <hip/hip_bfloat16.h>
 
 namespace {
 
@@ -3807,6 +3809,28 @@ bool MIOpenSupport::GetRnnAlgorithms(
 }
 
 bool MIOpenSupport::DoBatchNormalizationForward(
+    Stream* stream, const DeviceMemory<Eigen::bfloat16>& x,
+    const DeviceMemory<float>& scale, const DeviceMemory<float>& offset,
+    const DeviceMemory<float>& estimated_mean,
+    const DeviceMemory<float>& estimated_variance,
+    const DeviceMemory<Eigen::bfloat16>& side_input,
+    const dnn::BatchDescriptor& x_desc,
+    const dnn::BatchDescriptor& scale_offset_desc, const double epsilon,
+    const double exponential_average_factor,
+    dnn::ActivationMode activation_mode, DeviceMemory<Eigen::bfloat16>* y,
+    DeviceMemory<float>* batch_mean, DeviceMemory<float>* batch_var,
+    DeviceMemory<float>* saved_mean, DeviceMemory<float>* saved_inv_var,
+    bool is_training, ScratchAllocator* reserve_space_allocator,
+    ScratchAllocator* workspace_allocator) {
+
+  return DoBatchNormalizationForwardImpl<Eigen::bfloat16, float>(
+      stream, dnn::DataType::kBF16, dnn::DataType::kFloat, x, scale, offset,
+      estimated_mean, estimated_variance, side_input, x_desc, scale_offset_desc,
+      epsilon, exponential_average_factor, activation_mode, y, batch_mean,
+      batch_var, saved_mean, saved_inv_var, is_training);
+}
+
+bool MIOpenSupport::DoBatchNormalizationForward(
     Stream* stream, const DeviceMemory<Eigen::half>& x,
     const DeviceMemory<float>& scale, const DeviceMemory<float>& offset,
     const DeviceMemory<float>& estimated_mean,
@@ -3894,6 +3918,26 @@ bool MIOpenSupport::DoBatchNormalizationForwardImpl(
     return false;
   }
   return true;
+}
+
+bool MIOpenSupport::DoBatchNormalizationBackward(
+    Stream* stream, const DeviceMemory<Eigen::bfloat16>& y_backprop,
+    const DeviceMemory<Eigen::bfloat16>& x, const DeviceMemory<float>& scale,
+    const DeviceMemory<float>& offset, const DeviceMemory<float>& mean,
+    const DeviceMemory<float>& inv_var, const DeviceMemory<Eigen::bfloat16>& y,
+    const dnn::BatchDescriptor& x_desc,
+    const dnn::BatchDescriptor& scale_offset_desc, const double epsilon,
+    dnn::ActivationMode activation_mode,
+    DeviceMemory<Eigen::bfloat16>* x_backprop,
+    DeviceMemory<float>* scale_backprop, DeviceMemory<float>* offset_backprop,
+    DeviceMemory<Eigen::bfloat16>* side_input_backprop,
+    DeviceMemory<uint8_t>* reserve_space_data,
+    ScratchAllocator* workspace_allocator) {
+
+return DoBatchNormalizationBackwardImpl<Eigen::bfloat16, float>(
+      stream, miopenBFloat16, miopenFloat, y_backprop, x, scale, mean, inv_var,
+      x_desc, scale_offset_desc, epsilon, x_backprop, scale_backprop,
+      offset_backprop);
 }
 
 bool MIOpenSupport::DoBatchNormalizationBackward(

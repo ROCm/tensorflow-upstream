@@ -38,6 +38,10 @@ class RedzoneAllocator;
 
 namespace tensorflow {
 
+// returns true if bfloat16 is not directly supported in Ops and inputs shall be
+// casted to floats to perform the computations and then back
+bool IsBF16NotSupportedInOps(se::Stream *stream);
+
 class NodeDef;
 class AutotuneResult;
 
