@@ -241,8 +241,7 @@ class MIOpenSupport : public dnn::DnnSupport {
       const dnn::BatchDescriptor& output_descriptor,
       DeviceMemoryBase output_data,
       const dnn::ConvolutionDescriptor& convolution_descriptor,
-      dnn::CallContext call_context, bool use_fallback,
-      ScratchAllocator* scratch_allocator,
+      dnn::CallContext call_context, bool use_fallback, ScratchAllocator* scratch_allocator,
       const NumericOptions& numeric_options,
       std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_runners)
       override;
