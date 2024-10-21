@@ -30,6 +30,10 @@ parser.add_argument(
     "--iters", type=int, default=100,
     help="Max tuning iterations")
 
+parser.add_argument(
+    "--fast", type=bool, default=False,
+    help="If enabled, only tune the matrix instruction with max tile sizes, else, tune full matrix instructions")
+
 args = parser.parse_args()
 
 input_file = args.hipblaslt_log
@@ -163,6 +167,28 @@ for i, (k, v) in enumerate(unique_gemms.items()):
     else:
         unique_gemms_subgroups[i%args.gpus] = [(k, v)]
 
+def find_matmul_instruction(mfma_instruction, size, CU):
+    for m_tiles in reversed(range(1, CU+1)):
+        wave_tile_m = math.ceil(size[0] // m_tiles / mfma_instruction[0])
+        if wave_tile_m <= 0:
+            continue
+        for n_tiles in reversed(range(1, CU+1)):
+            wave_tile_n = math.ceil(size[1] // n_tiles / mfma_instruction[1])
+            if wave_tile_n <= 0:
+                continue
+            matmul_instruction = mfma_instruction + [1, 1, 1, 1, 1]
+            for k in reversed(range(3)):
+                if wave_tile_m // (2**k) > 0:
+                    matmul_instruction[-4] = wave_tile_m // (2**k)
+                    matmul_instruction[-2] = 2**k
+                    
+                    for l in reversed(range(3)):
+                        if wave_tile_n // (2**l) > 0:
+                            matmul_instruction[-3] = wave_tile_n // (2**l)
+                            matmul_instruction[-1] = 2**l
+
+                            return matmul_instruction
+
 
 for gpu_idx, unique_gemms_subgroup in enumerate(unique_gemms_subgroups):
     gemm_group = {}
@@ -185,31 +211,35 @@ for gpu_idx, unique_gemms_subgroup in enumerate(unique_gemms_subgroups):
             dtype_str = json.dumps(dtype)
             if mfma_instruction is None:
                 continue
-            for m_tiles in range(1, CU+1):
-                if size[0] // m_tiles > 256:
-                    continue
-                    
-                wave_tile_m = math.ceil(size[0] // m_tiles / mfma_instruction[0])
-                if wave_tile_m <= 0:
-                    continue
-                for n_tiles in range(1, CU+1):
-                    if size[1] // n_tiles > 256:
+            if args.fast:
+                matmul_instruction = find_matmul_instruction(mfma_instruction, size, CU)
+                if matmul_instruction is not None:
+                    if dtype_str not in matmul_instructions:
+                        matmul_instructions[dtype_str] = dict()
+                    matmul_instructions[dtype_str][str(matmul_instruction)] = matmul_instruction
+            else:
+                for m_tiles in reversed(range(1, CU+1)):
+                    wave_tile_m = math.ceil(size[0] // m_tiles / mfma_instruction[0])
+                    if wave_tile_m <= 0:
                         continue
-                    wave_tile_n = math.ceil(size[1] // n_tiles / mfma_instruction[1])
-                    if wave_tile_n <= 0:
-                        continue
-                    matmul_instruction = mfma_instruction+[1, 1, 1, 1, 1]
-                    for k in range(3):
-                        if wave_tile_m // (2**k) > 0:
-                            matmul_instruction[-4] = wave_tile_m//(2**k)
-                            matmul_instruction[-2] = 2**k
-                        for l in range(3):
-                            if wave_tile_n // (2**l) > 0:
-                                matmul_instruction[-3] = wave_tile_n//(2**l)
-                                matmul_instruction[-1] = 2**l
-                        if dtype_str not in matmul_instructions:
-                            matmul_instructions[dtype_str] = dict()
-                        matmul_instructions[dtype_str][str(matmul_instruction)] = matmul_instruction
+                    for n_tiles in reversed(range(1, CU+1)):
+                        wave_tile_n = math.ceil(size[1] // n_tiles / mfma_instruction[1])
+                        if wave_tile_n <= 0:
+                            continue
+                        matmul_instruction = mfma_instruction+[1, 1, 1, 1, 1]
+                        for k in reversed(range(3)):
+                            if wave_tile_m // (2**k) > 0:
+                                matmul_instruction[-4] = wave_tile_m//(2**k)
+                                matmul_instruction[-2] = 2**k
+                                
+                                for l in reversed(range(3)):
+                                    if wave_tile_n // (2**l) > 0:
+                                        matmul_instruction[-3] = wave_tile_n//(2**l)
+                                        matmul_instruction[-1] = 2**l
+
+                                        if dtype_str not in matmul_instructions:
+                                            matmul_instructions[dtype_str] = dict()
+                                        matmul_instructions[dtype_str][str(matmul_instruction)] = matmul_instruction
 
             
             if dtype_str in gemm_group:
