@@ -32,7 +32,7 @@ parser.add_argument(
 
 parser.add_argument(
     "--fast", type=bool, default=False,
-    help="If enabled, only tune the matrix instruction with max tile sizes, else, tune full matrix instructions")
+    help="If enabled, only tune the matrix instruction with min tile sizes, else, tune full matrix instructions")
 
 args = parser.parse_args()
 
@@ -169,10 +169,14 @@ for i, (k, v) in enumerate(unique_gemms.items()):
 
 def find_matmul_instruction(mfma_instruction, size, CU):
     for m_tiles in reversed(range(1, CU+1)):
+        if size[0] // m_tiles > 256:
+            continue
         wave_tile_m = math.ceil(size[0] // m_tiles / mfma_instruction[0])
         if wave_tile_m <= 0:
             continue
         for n_tiles in reversed(range(1, CU+1)):
+            if size[1] // n_tiles > 256:
+                continue
             wave_tile_n = math.ceil(size[1] // n_tiles / mfma_instruction[1])
             if wave_tile_n <= 0:
                 continue
@@ -219,10 +223,14 @@ for gpu_idx, unique_gemms_subgroup in enumerate(unique_gemms_subgroups):
                     matmul_instructions[dtype_str][str(matmul_instruction)] = matmul_instruction
             else:
                 for m_tiles in reversed(range(1, CU+1)):
+                    if size[0] // m_tiles > 256:
+                        continue
                     wave_tile_m = math.ceil(size[0] // m_tiles / mfma_instruction[0])
                     if wave_tile_m <= 0:
                         continue
                     for n_tiles in reversed(range(1, CU+1)):
+                        if size[1] // n_tiles > 256:
+                            continue
                         wave_tile_n = math.ceil(size[1] // n_tiles / mfma_instruction[1])
                         if wave_tile_n <= 0:
                             continue

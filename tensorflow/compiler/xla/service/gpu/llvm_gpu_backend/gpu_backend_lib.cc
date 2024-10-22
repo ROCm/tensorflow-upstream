@@ -77,7 +77,7 @@ limitations under the License.
 #include "tensorflow/tsl/platform/cuda_libdevice_path.h"
 #endif
 
-// #define TENSORFLOW_HSACO_USE_ROCM_LLVM
+#define TENSORFLOW_HSACO_USE_ROCM_LLVM
 
 namespace xla {
 namespace gpu {
