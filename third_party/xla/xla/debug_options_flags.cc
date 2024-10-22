@@ -91,7 +91,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   // Note: CublasLt will be used for FP8 GEMMs regardless of the value of this
   // flag.
-  opts.set_xla_gpu_enable_cublaslt(false);
+  opts.set_xla_gpu_enable_cublaslt(true);
 
   // TODO(b/258036887): Enable gpu_graph_level=3.
   opts.set_xla_gpu_graph_level(2);
