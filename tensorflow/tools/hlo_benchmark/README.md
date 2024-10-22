@@ -6,7 +6,7 @@ bazel build --cxxopt="-D_GLIBCXX_USE_CXX11_ABI=0" --config=v1 --config=opt --con
 
 ## Usage
 ```
-python tensorflow/tools/hlo_benchmark/hlo_estimate.py --hlo=tensorflow/compiler/xla/tests/*.gfx942_gpu_after_optimizations --output=result.txt
+python tensorflow/tools/hlo_benchmark/hlo_estimate.py --hlo=tensorflow/compiler/xla/tests/*.gfx942_gpu_after_optimizations.txt --output=result.txt
 ```
 
 ## Example Output
