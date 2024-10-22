@@ -77,7 +77,7 @@ limitations under the License.
 #include "tensorflow/tsl/platform/cuda_libdevice_path.h"
 #endif
 
-#define TENSORFLOW_HSACO_USE_ROCM_LLVM
+// #define TENSORFLOW_HSACO_USE_ROCM_LLVM
 
 namespace xla {
 namespace gpu {
@@ -234,6 +234,7 @@ bool CouldNeedDeviceBitcode(const llvm::Module& module) {
 
 // Links the module with a vector of path to bitcode modules.
 // The caller must guarantee that the paths exist.
+#ifdef TENSORFLOW_HSACO_USE_ROCM_LLVM
 Status LinkWithBitcodeVector(
     llvm::Module* module, const std::vector<std::string>& bitcode_path_vector,
     const std::string& ir_path, const std::string& linked_ir_path,
@@ -308,7 +309,41 @@ Status LinkWithBitcodeVector(
   }
   return OkStatus();
 }
+#else
+Status LinkWithBitcodeVector(
+    llvm::Module* module, const std::vector<std::string>& bitcode_path_vector) {
+  llvm::Linker linker(*module);
 
+  for (auto& bitcode_path : bitcode_path_vector) {
+    if (!tsl::Env::Default()->FileExists(bitcode_path).ok()) {
+      LOG(ERROR) << "bitcode module is required by this HLO module but was "
+                    "not found at "
+                 << bitcode_path;
+      return xla::InternalError("bitcode module not found at %s", bitcode_path);
+    }
+
+    std::unique_ptr<llvm::Module> bitcode_module =
+        LoadIRModule(bitcode_path, &module->getContext());
+    // Ignore the data layout of the module we're importing. This avoids a
+    // warning from the linker.
+    bitcode_module->setDataLayout(module->getDataLayout());
+    if (linker.linkInModule(
+            std::move(bitcode_module), llvm::Linker::Flags::LinkOnlyNeeded,
+            [](llvm::Module& M, const llvm::StringSet<>& GVS) {
+              internalizeModule(M, [&GVS](const llvm::GlobalValue& GV) {
+                return !GV.hasName() || (GVS.count(GV.getName()) == 0);
+              });
+            })) {
+      return xla::InternalError("Error linking bitcode module from %s",
+                                bitcode_path);
+    }
+  }
+  return OkStatus();
+}
+
+#endif
+
+#ifdef GOOGLE_CUDA
 // Links libdevice into the given module if the module needs libdevice.
 Status LinkLibdeviceIfNecessary(llvm::Module* module,
                                 const std::string& libdevice_dir_path) {
@@ -328,7 +363,7 @@ Status LinkLibdeviceIfNecessary(llvm::Module* module,
   }
 
   VLOG(1) << "Linking with libdevice from: " << libdevice_path;
-  return LinkWithBitcodeVector(module, {libdevice_path}, "", "", "");
+  return LinkWithBitcodeVector(module, {libdevice_path});
 }
 
 Status NVPTXTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
@@ -369,6 +404,7 @@ std::unique_ptr<llvm::TargetMachine> NVPTXGetTargetMachine(
   return GetTargetMachine(target_triple, GetSmName(compute_capability),
                           hlo_module_config, ptx_ver);
 }
+#endif
 #ifdef TENSORFLOW_HSACO_USE_ROCM_LLVM
 using TargetModuleLinker = std::function<Status(
     llvm::Module*, GpuVersion, const HloModuleConfig&, const std::string&,
@@ -964,7 +1000,7 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
 }
 
 #endif // TENSORFLOW_HSACO_USE_ROCM_LLVM
-
+#ifdef TENSORFLOW_HSACO_USE_ROCM_LLVM
 // Links ROCm-Device-Libs into the given module if the module needs it.
 Status LinkROCDLIfNecessary(llvm::Module* module, std::string gcn_arch_name,
                             const std::string& rocdl_dir_path,
@@ -975,7 +1011,17 @@ Status LinkROCDLIfNecessary(llvm::Module* module, std::string gcn_arch_name,
                                GetROCDLPaths(gcn_arch_name, rocdl_dir_path),
                                ir_path, linked_ir_path, optimized_ir_path);
 }
+#else
+Status LinkROCDLIfNecessary(llvm::Module* module, std::string gcn_arch_name,
+                            const std::string& rocdl_dir_path) {
+  if (!CouldNeedDeviceBitcode(*module)) {
+    return OkStatus();
+  }
 
+  return LinkWithBitcodeVector(module,
+                               GetROCDLPaths(gcn_arch_name, rocdl_dir_path));
+}
+#endif
 #ifdef TENSORFLOW_HSACO_USE_ROCM_LLVM
 Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
                                 const HloModuleConfig& hlo_module_config,
@@ -1220,7 +1266,6 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
         },
         std::vector<std::string>{ir_path, linked_ir_path, optimized_ir_path,
                                  isabin_path});
-  }
 #else
     // Link with ROCm-Device-Libs, and optimize the LLVM module.
     TF_RETURN_IF_ERROR(LinkAndOptimizeModule(
@@ -1231,6 +1276,7 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
     // Lower optimized LLVM module to HSA code object.
     TF_ASSIGN_OR_RETURN(hsaco, EmitModuleToHsaco(module, target_machine.get()));
 #endif // TENSORFLOW_HSACO_USE_ROCM_LLVM
+  }
   return hsaco;
 }
 #endif // TENSORFLOW_USE_ROCM
