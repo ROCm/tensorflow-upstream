@@ -68,7 +68,7 @@ ENV TF_NEED_ROCM=1
 ENV TF_ROCM_GCC=1
 ENV ROCM_TOOLKIT_PATH=${ROCM_PATH}
 
-RUN mkdir -p /etc/sudoers.d 
+RUN mkdir -p /etc/sudoers.d
 RUN touch /etc/sudoers.d/sudo-nopasswd
 RUN echo 'ALL ALL=NOPASSWD:ALL' | tee /etc/sudoers.d/sudo-nopasswd
 
