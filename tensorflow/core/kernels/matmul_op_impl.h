@@ -603,7 +603,7 @@ struct LaunchBatchMatMul<GPUDevice, Scalar> {
     if (!std::is_same_v<Scalar, float>) bCublasLtSupport = false;
     auto cap = stream->GetRocmComputeCapability();
     // as of ROCm 5.5, hipblaslt only supports MI200.
-    if (cap.gcn_arch_name().substr(0, 6) != "gfx90a") bCublasLtSupport = false;
+    // if (cap.gcn_arch_name().substr(0, 6) != "gfx90a") bCublasLtSupport = false;
 #endif
     if (EnableCublasLtGemm() && bCublasLtSupport) {
       static const int64_t max_scratch_size =
