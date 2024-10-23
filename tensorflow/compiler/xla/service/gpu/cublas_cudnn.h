@@ -61,17 +61,11 @@ bool IsLegacyCublasMatmul(const HloInstruction& hlo);
 // Matrix multiplication that calls into cublasLt.
 bool IsCublasLtMatmul(const HloInstruction& hlo);
 
-// Scaled matrix multiplication in FP8. Calls into cublasLt.
-bool IsCublasLtMatmulF8(const HloInstruction& hlo);
-
 // A call to cuBLAS general matrix multiplication API.
 extern const absl::string_view kGemmCallTarget;
 
 // A call to cuBLAS Lt API matrix multiplication.
 extern const absl::string_view kCublasLtMatmulCallTarget;
-
-// A call to cuBLASLt for scaled matrix multiplication in FP8.
-extern const absl::string_view kCublasLtMatmulF8CallTarget;
 
 // A call to cuBLAS for a triangular solve.
 //

@@ -28,7 +28,6 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/gpu_asm_opts_util.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_conv_algorithm_picker.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_conv_runner.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_serializable_autotuner.h"
 #include "tensorflow/compiler/xla/service/gpu/non_atomically_upgradeable_rw_lock.h"
 #include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
 #include "tensorflow/compiler/xla/service/service_executable_run_options.h"
@@ -394,8 +393,12 @@ static absl::Status ConvImpl(
 
     auto stream_exec = run_options->stream()->parent();
     auto allocator = run_options->allocator();
-    DeviceConfig device_config = {stream_exec, allocator};
-    GpuConvAlgorithmPicker conv_algorithm_picker(device_config);
+
+    CHECK(stream_exec != nullptr);
+    AutotuneConfig autotune_config{DeviceConfig{stream_exec, allocator},
+                          *debug_options};
+
+    GpuConvAlgorithmPicker conv_algorithm_picker(autotune_config);
 
     GpuConvConfig gpu_conv_config = conv.value()->config;
     auto autotune_result =

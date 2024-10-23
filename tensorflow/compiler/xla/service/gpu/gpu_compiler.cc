@@ -105,7 +105,6 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/gpu_reduce_scatter_creator.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_sanitize_constant_names.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_scatter_expander.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_serializable_autotuner.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_shape_verifier.h"
 #include "tensorflow/compiler/xla/service/gpu/hlo_fusion_stats.h"
 #include "tensorflow/compiler/xla/service/gpu/horizontal_input_fusion.h"
@@ -168,6 +167,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/while_loop_simplifier.h"
 #include "tensorflow/compiler/xla/service/while_loop_trip_count_annotator.h"
 #include "tensorflow/compiler/xla/service/zero_sized_hlo_elimination.h"
+#include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/stream_executor/cuda/cuda_platform_id.h"
 #include "tensorflow/compiler/xla/stream_executor/device_description.h"
@@ -190,7 +190,6 @@ limitations under the License.
 #include "rocm/rocm_config.h"
 #endif
 #if GOOGLE_CUDA
-#include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
 #include "tensorflow/compiler/xla/service/gpu/triton_autotuner.h"
 #endif  // GOOGLE_CUDA
 
@@ -241,6 +240,16 @@ tsl::thread::ThreadPool* GetThreadPool(
       return &*overriding_thread_pool;
   }
 }
+
+AutotuneConfig GetAutotuneConfig(
+    se::StreamExecutor* stream_exec, const DebugOptions& debug_options,
+    se::DeviceMemoryAllocator* device_allocator) {
+
+  CHECK(stream_exec != nullptr);
+  return AutotuneConfig{DeviceConfig{stream_exec, device_allocator},
+                          debug_options};
+}
+
 }  // end anonymous namespace
 
 StatusOr<std::unique_ptr<Executable>>
@@ -901,17 +910,13 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                      .VerifyReshapeIsBitcast(),
                  /*debug_only=*/true);
 
-  AutotuningConfig autotune_config =
-      stream_exec ? AutotuningConfig{DeviceConfig{stream_exec,
-                                                  options.device_allocator}}
-                  : AutotuningConfig{DevicelessConfig{
-                        gpu_target_config.device_description_str}};
+  auto autotune_config = GetAutotuneConfig(stream_exec, debug_options, 
+                        options.device_allocator);
 
   // Linearize collective schedule under SPMD partitioning if online autotuning
   // of convolutions is enabled.
   const bool enable_collecive_schedule_linearizer_for_spmd =
       hlo_module->config().use_spmd_partitioning() &&
-      autotune_config.is_online() &&
       GpuConvAlgorithmPicker::IsEnabled(hlo_module);
 
   if (enable_collecive_schedule_linearizer_for_spmd) {
@@ -919,23 +924,13 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         RequiresCollectiveScheduleLinearizer);
   }
 
-  if (autotune_config.is_offline()) {
-    GpuConvAlgorithmPicker::ClearAutotuneResults();
-    TF_RETURN_IF_ERROR(
-        GpuConvAlgorithmPicker::LoadAutotuneResults(*autotune_results));
-#if GOOGLE_CUDA
-    GemmAlgorithmPicker::ClearAutotuneResults();
-    TF_RETURN_IF_ERROR(
-        GemmAlgorithmPicker::LoadAutotuneResults(*autotune_results));
-    TritonAutotuner::ClearAutotuneResults();
-    TF_RETURN_IF_ERROR(TritonAutotuner::LoadAutotuneResults(*autotune_results));
-#endif  // GOOGLE_CUDA
-  }
   if (GpuConvAlgorithmPicker::IsEnabled(hlo_module)) {
     pipeline.AddPass<GpuConvAlgorithmPicker>(autotune_config);
   }
+
+  pipeline.AddPass<GemmAlgorithmPicker>(
+        autotune_config);
 #if GOOGLE_CUDA
-  pipeline.AddPass<GemmAlgorithmPicker>(autotune_config);
   const HloModuleConfig& module_config = hlo_module->config();
   std::optional<tsl::thread::ThreadPool> overriding_thread_pool;
   tsl::thread::ThreadPool* thread_pool = GetThreadPool(
@@ -988,6 +983,10 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   tsl::profiler::TraceMe activity(
       [&] { return absl::StrCat("HLO Transforms:", module->name()); },
       tsl::profiler::TraceMeLevel::kInfo);
+
+  const DebugOptions& debug_opts = module->config().debug_options();
+  auto cfg = GetAutotuneConfig(stream_exec, debug_opts, nullptr);
+  TF_RETURN_IF_ERROR(AutotunerUtil::LoadAutotuneResultsFromFileOnce(cfg));
 
   GpuTargetConfig gpu_target_config = GetGpuTargetConfig(stream_exec);
   TF_RETURN_IF_ERROR(OptimizeHloModule(module.get(), stream_exec, options,

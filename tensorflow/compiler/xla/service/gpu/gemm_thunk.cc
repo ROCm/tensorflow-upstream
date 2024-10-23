@@ -39,9 +39,14 @@ GemmThunk::GemmThunk(ThunkInfo thunk_info, GemmConfig config,
 Status GemmThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(3) << "Running GEMM thunk";
   const BufferAllocations& allocs = *params.buffer_allocations;
+
+  se::DeviceMemoryBase workspace_buffer{};
   return RunGemm(config_, allocs.GetDeviceAddress(lhs_buffer_),
                  allocs.GetDeviceAddress(rhs_buffer_),
-                 allocs.GetDeviceAddress(output_buffer_), params.stream);
+                 allocs.GetDeviceAddress(output_buffer_), 
+                 workspace_buffer,
+                 /* deterministic_ops */false,
+                 params.stream);
 }
 
 }  // namespace gpu
