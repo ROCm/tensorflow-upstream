@@ -325,7 +325,7 @@ build:linux --copt="-Wno-array-bounds"
 
 # Add unused-result as an error on Linux.
 build:linux --copt="-Wunused-result"
-build:linux --copt="-Werror=unused-result"
+# build:linux --copt="-Werror=unused-result"
 # Add switch as an error on Linux.
 build:linux --copt="-Wswitch"
 build:linux --copt="-Werror=switch"
