@@ -1868,9 +1868,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
           std::get<se::RocmComputeCapability>(gpu_version_);
 
       // as of ROCm 5.5, hipblaslt only supports MI200.
-      if (rocm_compute_capability_.gcn_arch_name().substr(0, 6) != "gfx90a") {
-        return false;
-      }
+      //if (rocm_compute_capability_.gcn_arch_name().substr(0, 6) != "gfx90a") {
+      //  return false;
+      //}
     }
 
     // 2. cublasLt does not support rhs col dimension size > 4194240 for
