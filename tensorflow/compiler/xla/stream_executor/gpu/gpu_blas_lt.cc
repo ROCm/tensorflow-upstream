@@ -31,6 +31,16 @@ using blas::ComputationType;
 using blas::DataType;
 using xla::PrimitiveType;
 
+bool GpuBlasLtEnabled() {
+  static std::atomic_bool result{[] {
+    bool value = false;
+    tsl::ReadBoolFromEnvVar("TF_ENABLE_GPU_BLASLT",
+                     /*default_value=*/false, &value);
+    return value;
+  }()};
+  return result;
+}
+
 namespace {
 
 bool TF32_Enabled() {
