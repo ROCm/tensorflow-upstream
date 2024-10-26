@@ -17,18 +17,21 @@
 """
 
 from tensorflow.python.util import lazy_loader
+from keras import layers
 
 normalization = lazy_loader.LazyLoader(
     'normalization', globals(),
-    'tf_keras.legacy_tf_layers.normalization')
+    'tensorflow.keras.layers')
 
 
 # pylint: disable=invalid-name
+
 # lazy load all the attributes until they are accessed for the first time
+
 def __getattr__(name):
   if name in ['BatchNormalization', 'BatchNorm']:
-    return normalization.BatchNormalization
+    return layers.BatchNormalization
   elif name in ['batch_normalization', 'batch_norm']:
-    return normalization.batch_normalization
+    return layers.BatchNormalization
   else:
     raise AttributeError(f'module {__name__} doesn\'t have attribute {name}')
