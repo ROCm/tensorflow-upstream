@@ -123,14 +123,13 @@ class RocmComputeCapability {
  public:
   // gcn_arch_name example --  gfx90a:sramecc+:xnack-
   // gfx_version is the "gfx90a" part of the gcn_arch_name
-  explicit RocmComputeCapability(const std::string &gcn_arch_name)
-      : gcn_arch_name_(gcn_arch_name) {}
+  explicit RocmComputeCapability(std::string gcn_arch_name)
+      : gcn_arch_name_(std::move(gcn_arch_name)) {}
 
   explicit RocmComputeCapability(const RocmComputeCapabilityProto &proto)
       : gcn_arch_name_(proto.gcn_arch_name()) {}
 
   RocmComputeCapability() = default;
-  ~RocmComputeCapability() = default;
 
   std::string gcn_arch_name() const { return gcn_arch_name_; }
 
@@ -147,37 +146,56 @@ class RocmComputeCapability {
     return absl::StrJoin(kSupportedGfxVersions, ", ");
   }
 
-  bool has_nhwc_layout_support() const {
+  bool gfx9_mi100() const { return gfx_version() == "gfx908"; }
+
+  bool gfx9_mi200() const { return gfx_version() == "gfx90a"; }
+
+  bool gfx9_mi300() const {
+    static constexpr absl::string_view kList[] = {"gfx940", "gfx941", "gfx942"};
+    return absl::c_count(kList, gfx_version()) != 0;
+  }
+
+  bool gfx9_mi100_or_later() const {
     static constexpr absl::string_view kList[] = {"gfx908", "gfx90a", "gfx940",
                                                   "gfx941", "gfx942"};
     return absl::c_count(kList, gfx_version()) != 0;
   }
 
-  bool has_bf16_dtype_support() const {
-    static constexpr absl::string_view kList[] = {"gfx908", "gfx90a", "gfx940",
-                                                  "gfx941", "gfx942"};
-    return absl::c_count(kList, gfx_version()) != 0;
-  }
-
-  bool has_fast_fp16_support() const {
-    static constexpr absl::string_view kList[] = {"gfx906", "gfx908", "gfx90a",
-                                                  "gfx940", "gfx941", "gfx942",
-                                                  "gfx1030", "gfx1100"};
-    return absl::c_count(kList, gfx_version()) != 0;
-  }
-
-  bool has_mfma_instr_support() const {
-    static constexpr absl::string_view kList[] = {"gfx908", "gfx90a", "gfx940",
-                                                  "gfx941", "gfx942"};
-    return absl::c_count(kList, gfx_version()) != 0;
-  }
-
-  bool has_fp16_atomics_support() const {
-    // TODO(rocm): Check. This should be the same as has_fast_fp16_support().
+  bool gfx9_mi200_or_later() const {
     static constexpr absl::string_view kList[] = {"gfx90a", "gfx940", "gfx941",
                                                   "gfx942"};
     return absl::c_count(kList, gfx_version()) != 0;
   }
+
+  bool gfx10_rx68xx() const { return gfx_version() == "gfx1030"; }
+
+  bool gfx10_rx69xx() const { return gfx_version() == "gfx1030"; }
+
+  bool gfx11_rx7900() const { return gfx_version() == "gfx1100"; }
+
+  bool has_nhwc_layout_support() const { return gfx9_mi100_or_later(); }
+
+  bool has_bf16_dtype_support() const { return gfx9_mi100_or_later(); }
+
+  bool has_fast_fp16_support() const {
+    return gfx9_mi100_or_later() || gfx10_rx68xx() || gfx10_rx69xx() ||
+           gfx11_rx7900();
+  }
+
+  bool has_mfma_instr_support() const { return gfx9_mi100_or_later(); }
+
+  bool has_fp16_atomics_support() const {
+    // TODO(rocm): Check. This should be the same as has_fast_fp16_support().
+    return gfx9_mi200_or_later();
+  }
+
+  bool fence_before_barrier() const {
+    return gfx_version() != "gfx900" && gfx_version() != "gfx906";
+  }
+
+  bool has_hipblaslt() const { return gfx9_mi200_or_later(); }
+
+  bool has_fp8_support() const { return gfx9_mi300(); }
 
   RocmComputeCapabilityProto ToProto() const {
     RocmComputeCapabilityProto proto;
@@ -193,15 +211,13 @@ class RocmComputeCapability {
   std::string gcn_arch_name_ = "gfx000";  // default to invalid arch.
 
   static constexpr absl::string_view kSupportedGfxVersions[]{
-        "gfx900",  // MI25
-        "gfx906",  // MI50 / MI60
-        "gfx908",  // MI100
-        "gfx90a",  // MI200
-        "gfx940",  // MI300
-        "gfx941",  // MI300
-        "gfx942",  // MI300
-        "gfx1030", // RX68xx / RX69xx
-        "gfx1100"  // RX7900
+      "gfx900",                       // MI25
+      "gfx906",                       // MI50 / MI60
+      "gfx908",                       // MI100
+      "gfx90a",                       // MI200
+      "gfx940",  "gfx941", "gfx942",  // MI300
+      "gfx1030",                      // RX68xx / RX69xx
+      "gfx1100"                       // RX7900
   };
 };
 
