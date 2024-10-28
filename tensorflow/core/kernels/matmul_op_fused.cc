@@ -492,8 +492,7 @@ struct LaunchFusedMatMulOp<GPUDevice, T> {
 
 #if TF_HIPBLASLT
     auto cap = stream->GetRocmComputeCapability();
-    // as of ROCm 5.5, hipblaslt only supports MI200.
-    if (cap.gcn_arch_name().substr(0, 6) != "gfx90a") use_cudnn = true;
+    if (!cap.has_hipblaslt()) use_cudnn = true;
 #endif
 
     BlasScratchAllocator scratch_allocator(context);
