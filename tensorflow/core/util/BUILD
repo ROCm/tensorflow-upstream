@@ -641,6 +641,10 @@ cc_library(
         "//tensorflow/core/platform:types",
         "//tensorflow/tsl/util:env_var",
     ],
+    visibility = [
+        "//tensorflow/core:__subpackages__",
+        "//tensorflow/compiler/xla:__subpackages__",
+    ],
 )
 
 cc_library(

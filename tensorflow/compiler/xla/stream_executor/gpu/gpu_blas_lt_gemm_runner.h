@@ -220,11 +220,10 @@ struct BlasLtGemmRunner {
 private:
   explicit BlasLtGemmRunner(StreamExecutor *parent);
   
-  template < class TuneFunc >
-  xla::StatusOr< gpu::BlasLt::MatmulAlgorithm > Autotune(
-    const std::vector< gpu::BlasLt::MatmulAlgorithm >& algorithms,          
-    TuneFunc&& benchmark_func);
-
+  // template < class TuneFunc >
+  // xla::StatusOr< gpu::BlasLt::MatmulAlgorithm > Autotune(
+  //   const std::vector< gpu::BlasLt::MatmulAlgorithm >& algorithms,          
+  //   TuneFunc&& benchmark_func);
     
   xla::Status RunBatchedImpl(Stream& stream, blas::Transpose trans_a,         
       blas::Transpose trans_b, int64 m, int64 n, int64 k,           
@@ -248,7 +247,7 @@ private:
 
   static bool autotune_enabled_;
   std::unique_ptr< absl::Mutex > mutex_;
-  std::unique_ptr< xla::gpu::AutotuneConfig > autotune_config_;
+  // std::unique_ptr< xla::gpu::AutotuneConfig > autotune_config_;
   absl::flat_hash_map<GroupedGemmConfig, BlasLt::GroupedMatmulPlanPtr> grouped_gemm_map_;
   absl::flat_hash_map<StridedGemmConfig, BlasLt::MatmulPlanPtr> strided_gemm_map_;
 };

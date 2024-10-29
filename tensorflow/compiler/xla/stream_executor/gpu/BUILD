@@ -91,8 +91,10 @@ cc_library(
         "//tensorflow/compiler/xla:autotune_results_proto_cc",
         # "//tensorflow/compiler/xla:xla_proto",		 
         "//tensorflow/compiler/xla/stream_executor:scratch_allocator",			        
-        "//tensorflow/compiler/xla/service/gpu:autotuner_util",
+        # "//tensorflow/compiler/xla/service/gpu:autotuner_util",
         "//tensorflow/compiler/xla:debug_options_flags",
+        "//tensorflow/core/lib/gtl:array_slice",
+        "//tensorflow/core/util:env_var",
         ":gpu_blas_lt",
     ]),
 )
