@@ -59,10 +59,10 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/gtl/iterator_range.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/protobuf.h"
@@ -1211,6 +1211,40 @@ bool HloAllToAllInstruction::IdenticalSlowPathIgnoringChannelIdValues(
          split_dimension_ == casted_other.split_dimension();
 }
 
+HloRaggedAllToAllInstruction::HloRaggedAllToAllInstruction(
+    const Shape& shape, absl::Span<HloInstruction* const> operands,
+    const CollectiveDeviceList& device_list,
+    const std::optional<int64_t>& channel_id)
+    : HloCollectiveInstruction(HloOpcode::kRaggedAllToAll, shape, operands,
+                               device_list,
+                               /*constrain_layout=*/false, channel_id) {}
+
+HloRaggedAllToAllInstruction::HloRaggedAllToAllInstruction(
+    HloOpcode opcode, const Shape& shape,
+    absl::Span<HloInstruction* const> operands,
+    absl::Span<const ReplicaGroup> replica_groups,
+    const std::optional<int64_t>& channel_id)
+    : HloRaggedAllToAllInstruction(
+          shape, operands, CollectiveDeviceList(replica_groups), channel_id) {}
+
+std::unique_ptr<HloInstruction>
+HloRaggedAllToAllInstruction::CloneWithNewOperandsImpl(
+    const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+    HloCloneContext* /*context*/) const {
+  return std::make_unique<HloRaggedAllToAllInstruction>(
+      shape, new_operands, device_list(), channel_id());
+}
+
+HloInstructionProto HloRaggedAllToAllInstruction::ToProto() const {
+  HloInstructionProto proto = HloCollectiveInstruction::ToProto();
+  return proto;
+}
+
+void HloRaggedAllToAllInstruction::PrintExtraAttributesImpl(
+    AttributePrinter& printer, const HloPrintOptions& options) const {
+  HloCollectiveInstruction::PrintExtraAttributesImpl(printer, options);
+}
+
 HloCollectiveBroadcastInstruction::HloCollectiveBroadcastInstruction(
     HloOpcode opcode, const Shape& shape,
     absl::Span<HloInstruction* const> operands,
@@ -2038,7 +2072,7 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
       // instruction. Add it as an operand and add a corresponding called
       // computation parameter instruction.
 
-      // No need to create an original_value for an added parameter as the
+      // No need to create an original value for an added parameter as the
       // original value is saved in the corresponding argument.
       called_computation_parameter = AddCallOperand(operand);
     }
@@ -2047,7 +2081,7 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
   }
 
   if (clone != instruction_to_append) {
-    // Copy over original_value attribute to the clone of a fused instruction.
+    // Copy over the original value to the clone of a fused instruction.
     if (auto original_value = instruction_to_append->original_value()) {
       clone->set_original_value(original_value);
     }
@@ -2092,7 +2126,7 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
     HloInstruction* new_root = called_computation()->AddInstruction(
         HloInstruction::CreateTuple(tuple_elements));
 
-    // No need to create an original_value for a new root with added outputs
+    // No need to create an original value for a new root with added outputs
     // as the original value is saved in the get-tuple-element instructions
     // that use it.
     called_computation()->set_root_instruction(new_root,
@@ -2172,14 +2206,20 @@ void HloCallableInstruction::RecursivelySetComputationsThreadName(
 
 HloFusionInstruction::HloFusionInstruction(const Shape& shape,
                                            FusionKind fusion_kind,
-                                           HloInstruction* fused_root)
+                                           HloInstruction* fused_root,
+                                           absl::string_view prefix)
     : HloCallableInstruction(HloOpcode::kFusion, shape),
       fusion_kind_(fusion_kind) {
   CHECK(fused_root != nullptr);
-  SetAndSanitizeName(HloOpcodeString(opcode()));
+  SetAndSanitizeName(absl::StrCat(prefix, HloOpcodeString(opcode())));
+
   set_parent(fused_root->parent());
   set_metadata(fused_root->metadata());
   set_frontend_attributes(fused_root->frontend_attributes());
+  // This simplifies some use cases for the original value that involve fusions.
+  if (auto original_value = fused_root->original_value()) {
+    set_original_value(original_value);
+  }
   CHECK(fused_root->IsFusible()) << fused_root->ToString();
   CloneAndAppendInstructionIntoCalledComputation(fused_root);
 }
@@ -2423,7 +2463,7 @@ void HloFusionInstruction::MergeFusionInstructionIntoMultiOutput(
     auto cloned_instruction =
         parent()->AddInstruction(fused_instruction->CloneWithNewOperands(
             fused_instruction->shape(), new_operands, /*suffix=*/"clone"));
-    // Copy over original_value attribute to the clone of a fused instruction.
+    // Copy over the original value to the clone of a fused instruction.
     // This is necessary as the clone will be cloned again when the clone is
     // fused in FuseInstructionIntoMultiOutput(). This can be skipped if we
     // improve the code to only clone once as stated in the preceding comment.

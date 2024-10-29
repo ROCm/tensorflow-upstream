@@ -34,9 +34,13 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -46,17 +50,22 @@ limitations under the License.
 #include "xla/hlo/ir/ptrvec.h"
 #include "xla/map_util.h"
 #include "xla/printer.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/mapped_ptr_container_sorter.h"
 #include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
+#include "xla/shape_layout.h"
+#include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/gtl/iterator_range.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -680,6 +689,7 @@ HloComputation::ChannelDependencies HloComputation::ComputeChannelDependencies()
       case HloOpcode::kAllToAll:
       case HloOpcode::kCollectiveBroadcast:
       case HloOpcode::kCollectivePermute:
+      case HloOpcode::kRaggedAllToAll:
       case HloOpcode::kReduceScatter: {
         HloInstruction* instruction = inst.inst();
         std::optional<int64_t> channel_id = instruction->channel_id();
@@ -1156,7 +1166,8 @@ absl::StatusOr<HloInstruction*> HloComputation::CreateAsyncInstructions(
     HloInstruction* root = builder.AddInstruction(
         instruction->CloneWithNewOperands(instruction->shape(), parameters));
     if (override_names) {
-      root->SetAndSanitizeName(absl::StrCat(instruction->name(), ".cloned"));
+      parent()->SetAndUniquifyInstrName(
+          root, absl::StrCat(instruction->name(), ".cloned"));
     }
     HloComputation* async_computation =
         parent_->AddEmbeddedComputation(builder.Build(root));
@@ -1171,9 +1182,10 @@ absl::StatusOr<HloInstruction*> HloComputation::CreateAsyncInstructions(
     async_done = AddInstruction(
         HloInstruction::CreateAsyncDone(root->shape(), async_start));
     if (override_names) {
-      async_start->SetAndSanitizeName(
-          absl::StrCat(root->name(), ".call-start"));
-      async_done->SetAndSanitizeName(absl::StrCat(root->name(), ".call-done"));
+      parent()->SetAndUniquifyInstrName(
+          async_start, absl::StrCat(root->name(), ".call-start"));
+      parent()->SetAndUniquifyInstrName(
+          async_done, absl::StrCat(root->name(), ".call-done"));
     }
   }
   async_start->set_metadata(instruction->metadata());
@@ -1430,8 +1442,8 @@ absl::StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
         old_instruction->frontend_attributes());
   }
   if (auto old_original_value = old_instruction->original_value()) {
-    // Fusions are handled separately. The original_value attribute of fused
-    // instructions is copied when they are added into the fused computation.
+    // Fusions are handled separately. The original value of fused instructions
+    // is copied when they are added into the fused computation.
     if (new_instruction->opcode() != HloOpcode::kFusion) {
       if (ShapeUtil::Compatible(old_instruction->shape(),
                                 new_instruction->shape())) {

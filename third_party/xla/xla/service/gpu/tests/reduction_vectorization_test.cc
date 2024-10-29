@@ -19,8 +19,8 @@ limitations under the License.
 
 #include "absl/strings/str_replace.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
-#include "xla/service/hlo_parser.h"
 #include "xla/stream_executor/device_description.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
@@ -33,7 +33,7 @@ namespace {
 class ReductionVectorizationTest : public GpuCodegenTest {};
 
 class ReductionVectorizationNoOptTest : public GpuCodegenTest {
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     // The test MultiOutputStore contain a MOF fusion and XLA optimizer pass
     // doesn't like this.

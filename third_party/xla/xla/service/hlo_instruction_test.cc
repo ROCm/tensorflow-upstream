@@ -2898,6 +2898,30 @@ TEST_F(HloInstructionTest, BackendConfigNotCopiedToDerivedWithDiffOpcode) {
   EXPECT_FALSE(add2->has_backend_config());
 }
 
+TEST_F(HloInstructionTest, BackendConfigNotCopiedToDerivedWithConfig) {
+  HloComputation::Builder b(TestName());
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
+  auto p0 = b.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  auto p1 = b.AddInstruction(HloInstruction::CreateParameter(0, shape, "p1"));
+  auto add = b.AddInstruction(
+      HloInstruction::CreateBinary(shape, HloOpcode::kAdd, p0, p1));
+
+  gpu::GpuBackendConfig gpu_config0;
+  gpu::GpuBackendConfig gpu_config1;
+  gpu_config0.set_operation_queue_id(2);
+  gpu_config1.set_operation_queue_id(3);
+
+  TF_ASSERT_OK(add->set_backend_config(gpu_config0));
+  auto add2 = b.AddInstruction(
+      HloInstruction::CreateBinary(shape, HloOpcode::kAdd, p0, p0));
+  TF_ASSERT_OK(add2->set_backend_config(gpu_config1));
+
+  add->SetupDerivedInstruction(add2);
+  auto backend_config = add2->backend_config<gpu::GpuBackendConfig>();
+  EXPECT_TRUE(backend_config.ok());
+  EXPECT_EQ(backend_config->operation_queue_id(), 3);
+}
+
 TEST_F(HloInstructionTest,
        MergeMultiOutputProducerFusionIntoMultiOutputFusion) {
   const std::string& hlo_string = R"(
@@ -3056,6 +3080,105 @@ TEST_F(HloInstructionTest,
               GmockMatch(m::Tuple(m::Multiply(m::Parameter(0), m::Parameter(1)),
                                   m::Parameter(1),
                                   m::Add(m::Parameter(0), m::Parameter(1)))));
+}
+
+TEST_F(HloInstructionTest, UnfuseInstruction) {
+  const std::string& hlo_string = R"(
+    HloModule mof
+    fusion_comp {
+      param0 = f32[10]{0} parameter(0)
+      param1 = f32[10]{0} parameter(1)
+      add = f32[10]{0} add(param0, param1)
+      ROOT res = (f32[10]{0}, f32[10]{0}) tuple(param1, add)
+    }
+
+    ENTRY main {
+      p0 = f32[10]{0} parameter(0)
+      p1 = f32[10]{0} parameter(1)
+      fusion.1 = (f32[10]{0}, f32[10]{0}) fusion(p0, p1), kind=kLoop, calls=fusion_comp
+      gte0 = f32[10]{0} get-tuple-element(fusion.1), index=0
+      gte1 = f32[10]{0} get-tuple-element(fusion.1), index=1
+      ROOT res = (f32[10]{0}, f32[10]{0}) tuple(gte0, gte1)
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  HloInstruction* fusion = FindInstruction(module.get(), "fusion.1");
+  HloInstruction* add = fusion->fused_instructions_computation()
+                            ->root_instruction()
+                            ->mutable_operand(1);
+  TF_ASSERT_OK_AND_ASSIGN(auto unfused, fusion->UnfuseInstruction(add));
+  EXPECT_THAT(unfused, GmockMatch(m::Add(m::Parameter(0), m::Parameter(1))));
+}
+
+TEST_F(HloInstructionTest, UnfuseInstruction2) {
+  const std::string& hlo_string = R"(
+    HloModule mof
+    fusion_comp {
+      param0 = f32[10]{0} parameter(0)
+      param1 = f32[10]{0} parameter(1)
+      add = f32[10]{0} add(param0, param1)
+      add2 = f32[10]{0} add(add, param1)
+      ROOT res = (f32[10]{0}, f32[10]{0}) tuple(param1, add2)
+    }
+
+    ENTRY main {
+      p0 = f32[10]{0} parameter(0)
+      p1 = f32[10]{0} parameter(1)
+      fusion.1 = (f32[10]{0}, f32[10]{0}) fusion(p0, p1), kind=kLoop, calls=fusion_comp
+      gte0 = f32[10]{0} get-tuple-element(fusion.1), index=0
+      gte1 = f32[10]{0} get-tuple-element(fusion.1), index=1
+      ROOT res = (f32[10]{0}, f32[10]{0}) tuple(gte0, gte1)
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  HloInstruction* fusion = FindInstruction(module.get(), "fusion.1");
+  HloInstruction* add2 = fusion->fused_instructions_computation()
+                             ->root_instruction()
+                             ->mutable_operand(1);
+  HloInstruction* add = add2->mutable_operand(0);
+
+  // add2 is not unfusable since it has non-const non-parameter operands.
+  EXPECT_FALSE(fusion->UnfuseInstruction(add2).ok());
+
+  TF_ASSERT_OK_AND_ASSIGN(auto unfused, fusion->UnfuseInstruction(add));
+  EXPECT_THAT(unfused, GmockMatch(m::Add(m::Parameter(0), m::Parameter(1))));
+}
+
+TEST_F(HloInstructionTest, UnfuseInstructionWithConstantOperand) {
+  const std::string& hlo_string = R"(
+    HloModule mof
+    fusion_comp {
+      param0 = f32[10]{0} parameter(0)
+      param1 = f32[10]{0} parameter(1)
+      const = f32[] constant(1.0)
+      broadcast = f32[10]{0} broadcast(const), dimensions={}
+      add = f32[10]{0} add(param0, broadcast)
+      ROOT res = (f32[10]{0}, f32[10]{0}) tuple(param1, add)
+    }
+
+    ENTRY main {
+      p0 = f32[10]{0} parameter(0)
+      p1 = f32[10]{0} parameter(1)
+      fusion.1 = (f32[10]{0}, f32[10]{0}) fusion(p0, p1), kind=kLoop, calls=fusion_comp
+      gte0 = f32[10]{0} get-tuple-element(fusion.1), index=0
+      gte1 = f32[10]{0} get-tuple-element(fusion.1), index=1
+      ROOT res = (f32[10]{0}, f32[10]{0}) tuple(gte0, gte1)
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  HloInstruction* fusion = FindInstruction(module.get(), "fusion.1");
+  HloInstruction* add = fusion->fused_instructions_computation()
+                            ->root_instruction()
+                            ->mutable_operand(1);
+  TF_ASSERT_OK_AND_ASSIGN(auto unfused, fusion->UnfuseInstruction(add));
+  EXPECT_THAT(unfused,
+              GmockMatch(m::Add(m::Parameter(0), m::Broadcast(m::Constant()))));
 }
 
 }  // namespace

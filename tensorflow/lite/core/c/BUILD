@@ -15,7 +15,6 @@ load(
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//tensorflow/compiler/mlir/lite/experimental/lrt:__subpackages__",
         "//tensorflow/lite:__subpackages__",
     ],
     licenses = ["notice"],
@@ -45,6 +44,7 @@ bzl_library(
 filegroup(
     name = "headers_filegroup",
     srcs = [
+        "builtin_op_data.h",
         "c_api.h",
         "c_api_types.h",
         "common.h",
@@ -55,7 +55,6 @@ filegroup(
 filegroup(
     name = "tflite_internal_cc_3p_api_deps_src",
     srcs = [
-        "builtin_op_data.h",
         "common.cc",
         "common.h",
     ],
@@ -335,10 +334,7 @@ tflite_cc_library_with_c_headers_test(
     ],
     compatible_with = get_compatible_with_portable(),
     copts = tflite_copts(),
-    visibility = [
-        "//tensorflow/lite:__subpackages__",
-        "@org_tensorflow_lite_support//tensorflow_lite_support/custom_ops:__subpackages__",
-    ] + common_header_visibility_allowlist(),
+    visibility = ["//tensorflow/lite:__subpackages__"] + common_header_visibility_allowlist(),
     deps = [
         ":c_api_types",
         "//tensorflow/lite:tflite_kernel_use_xnnpack_optional",

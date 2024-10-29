@@ -52,6 +52,7 @@ limitations under the License.
 #include "Eigen/Core"
 #include "xla/array2d.h"
 #include "xla/comparison_util.h"
+#include "xla/hlo/analysis/tuple_points_to_analysis.h"
 #include "xla/hlo/evaluator/hlo_evaluator_typed_visitor.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -73,7 +74,6 @@ limitations under the License.
 #include "xla/service/logical_buffer.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/shape_inference.h"
-#include "xla/service/tuple_points_to_analysis.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -4767,6 +4767,84 @@ std::unique_ptr<Array2D<uint8_t>> HloEvaluator::MatmulArray2D(
     const Array2D<uint8_t>& lhs, const Array2D<uint8_t>& rhs) {
   return MatmulArray2DImpl<uint8_t>(
       lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulU8);
+}
+
+/* static */ std::unique_ptr<Array2D<float>> Array2DF8E5M2ToF32(
+    const Array2D<tsl::float8_e5m2>& input) {
+  auto result = std::make_unique<Array2D<float>>(input.height(), input.width());
+  for (int64_t rowno = 0; rowno < input.height(); ++rowno) {
+    for (int64_t colno = 0; colno < input.width(); ++colno) {
+      (*result)(rowno, colno) = static_cast<float>(input(rowno, colno));
+    }
+  }
+  return result;
+}
+
+/* static */ std::unique_ptr<Array2D<float>> Array2DF8E4M3FNToF32(
+    const Array2D<tsl::float8_e4m3fn>& input) {
+  auto result = std::make_unique<Array2D<float>>(input.height(), input.width());
+  for (int64_t rowno = 0; rowno < input.height(); ++rowno) {
+    for (int64_t colno = 0; colno < input.width(); ++colno) {
+      (*result)(rowno, colno) = static_cast<float>(input(rowno, colno));
+    }
+  }
+  return result;
+}
+
+/* static */ std::unique_ptr<Array2D<tsl::float8_e5m2>> Array2DF32ToF8E5M2(
+    const Array2D<float>& input) {
+  auto result = std::make_unique<Array2D<tsl::float8_e5m2>>(input.height(),
+                                                            input.width());
+  for (int64_t rowno = 0; rowno < input.height(); ++rowno) {
+    for (int64_t colno = 0; colno < input.width(); ++colno) {
+      (*result)(rowno, colno) =
+          static_cast<tsl::float8_e5m2>(input(rowno, colno));
+    }
+  }
+  return result;
+}
+
+/* static */ std::unique_ptr<Array2D<tsl::float8_e4m3fn>> Array2DF32ToF8E4M3FN(
+    const Array2D<float>& input) {
+  auto result = std::make_unique<Array2D<tsl::float8_e4m3fn>>(input.height(),
+                                                              input.width());
+  for (int64_t rowno = 0; rowno < input.height(); ++rowno) {
+    for (int64_t colno = 0; colno < input.width(); ++colno) {
+      (*result)(rowno, colno) =
+          static_cast<tsl::float8_e4m3fn>(input(rowno, colno));
+    }
+  }
+  return result;
+}
+
+static bool promote_f8_to_f32 = true;
+
+std::unique_ptr<Array2D<tsl::float8_e5m2>> HloEvaluator::MatmulArray2D(
+    const Array2D<tsl::float8_e5m2>& lhs,
+    const Array2D<tsl::float8_e5m2>& rhs) {
+  if (promote_f8_to_f32) {
+    auto lhs_float = Array2DF8E5M2ToF32(lhs);
+    auto rhs_float = Array2DF8E5M2ToF32(rhs);
+    auto result = MatmulArray2D(*lhs_float, *rhs_float);
+    return Array2DF32ToF8E5M2(*result);
+  } else {
+    return MatmulArray2DImpl<tsl::float8_e5m2>(
+        lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulF8E5M2);
+  }
+}
+
+std::unique_ptr<Array2D<tsl::float8_e4m3fn>> HloEvaluator::MatmulArray2D(
+    const Array2D<tsl::float8_e4m3fn>& lhs,
+    const Array2D<tsl::float8_e4m3fn>& rhs) {
+  if (promote_f8_to_f32) {
+    auto lhs_float = Array2DF8E4M3FNToF32(lhs);
+    auto rhs_float = Array2DF8E4M3FNToF32(rhs);
+    auto result = MatmulArray2D(*lhs_float, *rhs_float);
+    return Array2DF32ToF8E4M3FN(*result);
+  } else {
+    return MatmulArray2DImpl<tsl::float8_e4m3fn>(
+        lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulF8E4M3FN);
+  }
 }
 
 }  // namespace xla

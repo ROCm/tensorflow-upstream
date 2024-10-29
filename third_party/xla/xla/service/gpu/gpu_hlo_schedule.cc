@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/collective_ops_utils.h"
@@ -51,7 +52,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/pgle_accuracy_checker.h"
 #include "xla/service/gpu/transforms/schedule_postprocessing.h"
 #include "xla/service/gpu/transforms/scheduling_instruction_annotator.h"
-#include "xla/service/hlo_memory_scheduler.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/service/p2p_schedule_preparation.h"
 #include "xla/service/profile_guided_latency_estimator.h"
@@ -247,20 +247,10 @@ HloInstructionSequence PostprocessorToScheduleSyncCollectives(
   return result;
 }
 
-absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
-    const HloModule* module, int64_t pointer_size) {
-  return ScheduleModule(
-      module,
-      [pointer_size](const BufferValue& buffer) {
-        return ShapeUtil::ByteSizeOf(buffer.shape(), pointer_size);
-      },
-      ComputationSchedulerToModuleScheduler(DefaultMemoryScheduler,
-                                            PostProcessSchedule));
-}
-
 // Latency hiding scheduler support.
 
-SchedulerConfig GetSchedulerConfig(int64_t memory_limit) {
+SchedulerConfig GetSchedulerConfig(int64_t memory_limit,
+                                   int64_t collective_resource) {
   SchedulerConfig config;
   config.all_reduce_overlap_limit = 1;
   config.collective_broadcast_overlap_limit = 1;
@@ -269,6 +259,7 @@ SchedulerConfig GetSchedulerConfig(int64_t memory_limit) {
   config.aggressive_scheduling_policies = true;
   config.schedule_send_recvs = true;
   config.memory_limit = memory_limit;
+  config.parallel_collective_overlap_limit = collective_resource;
   return config;
 }
 
@@ -458,16 +449,47 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   VLOG(1) << "Fingerprint before LHS for module " << module->name() << "("
           << module->unique_id() << ") = " << fingerprint;
 
+  const DebugOptions& options = module->config().debug_options();
   const bool enable_latency_hiding_scheduler =
-      module->config()
-          .debug_options()
-          .xla_gpu_enable_latency_hiding_scheduler();
+      options.xla_gpu_enable_latency_hiding_scheduler();
 
   if (!enable_latency_hiding_scheduler) {
     return ScheduleMetadata{memory_limit};
   }
 
-  SchedulerConfig config = GetSchedulerConfig(memory_limit);
+  if (options.xla_gpu_pgle_profile_file_or_directory_path().empty() &&
+      module->config().fdo_profile().empty() &&
+      options.xla_gpu_pgle_accuracy_checker() ==
+          DebugOptions::PGLE_STRICTNESS_LEVEL_ERROR) {
+    return absl::InvalidArgumentError(
+        "xla_gpu_pgle_accuracy_checker is set to ERROR, but no profile "
+        "path specified in xla_gpu_pgle_profile_file_or_directory_path");
+  }
+
+  if (options.xla_gpu_pgle_profile_file_or_directory_path().empty() &&
+          module->config().fdo_profile().empty() &&
+          options.xla_gpu_pgle_accuracy_checker(),
+      DebugOptions::PGLE_STRICTNESS_LEVEL_WARN) {
+    LOG(WARNING)
+        << "xla_gpu_pgle_accuracy_checker is set to WARN, but no profile path "
+           "specified in xla_gpu_pgle_profile_file_or_directory_path";
+  }
+
+  SchedulerConfig config = GetSchedulerConfig(
+      memory_limit,
+      module->config()
+          .debug_options()
+          .xla_gpu_experimental_parallel_collective_overlap_limit());
+  CHECK((config.collective_broadcast_overlap_limit <=
+         config.parallel_collective_overlap_limit) &&
+        (config.all_to_all_overlap_limit <=
+         config.parallel_collective_overlap_limit) &&
+        (config.all_gather_overlap_limit <=
+         config.parallel_collective_overlap_limit) &&
+        (config.all_reduce_overlap_limit <=
+         config.parallel_collective_overlap_limit) &&
+        (config.reduce_scatter_overlap_limit <=
+         config.parallel_collective_overlap_limit));
   auto gpu_latency_estimator =
       std::make_unique<GpuLatencyEstimator>(pointer_size);
 
@@ -476,9 +498,7 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
       ReadPGLEProfile(module, fingerprint);
 
   const bool enable_analytical_latency_estimator =
-      module->config()
-          .debug_options()
-          .xla_gpu_enable_analytical_latency_estimator();
+      options.xla_gpu_enable_analytical_latency_estimator();
   HloPassPipeline pipeline("latency-hiding-scheduler");
   if (profile.has_value()) {
     auto aggregator = std::make_unique<GPUProfileStatisticsAggregator>();
@@ -487,9 +507,10 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
         std::move(aggregator));
     LOG(INFO) << "Found profile, using profile guided latency estimator";
     VLOG(1) << "Profile:\n" << profile->DebugString();
-    if (module->config()
-            .debug_options()
-            .xla_gpu_enable_pgle_accuracy_checker()) {
+    if (options.xla_gpu_pgle_accuracy_checker() ==
+            DebugOptions::PGLE_STRICTNESS_LEVEL_WARN ||
+        options.xla_gpu_pgle_accuracy_checker() ==
+            DebugOptions::PGLE_STRICTNESS_LEVEL_ERROR) {
       pipeline.AddPass<PGLEAccuracyChecker>(*pg_latency_estimator);
     }
     latency_estimator = std::move(pg_latency_estimator);
@@ -506,9 +527,7 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   }
 
   auto async_tracker = [&]() -> std::unique_ptr<AsyncTracker> {
-    return module->config()
-                   .debug_options()
-                   .xla_gpu_lhs_enable_gpu_async_tracker()
+    return options.xla_gpu_lhs_enable_gpu_async_tracker()
                ? std::make_unique<GpuAsyncTracker>(config)
                : std::make_unique<GpuAsyncTrackerBase>(config);
   }();
@@ -531,6 +550,18 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   TF_RETURN_IF_ERROR(postprocessing_pipeline.Run(module).status());
 
   return ScheduleMetadata{memory_limit};
+}
+
+absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
+    const HloModule* module, int64_t pointer_size, int64_t* peak_memory_bytes) {
+  return ScheduleModule(
+      module,
+      [pointer_size](const BufferValue& buffer) {
+        return ShapeUtil::ByteSizeOf(buffer.shape(), pointer_size);
+      },
+      ComputationSchedulerToModuleScheduler(DefaultMemoryScheduler,
+                                            PostProcessSchedule),
+      /*execution_threads=*/{}, /*peak_memory=*/peak_memory_bytes);
 }
 
 HloInstructionSequence PostProcessSchedule(

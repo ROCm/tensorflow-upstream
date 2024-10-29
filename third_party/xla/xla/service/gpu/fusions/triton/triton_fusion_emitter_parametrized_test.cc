@@ -53,7 +53,22 @@ struct MixTypeParams {
 class MixedTypeTest : public GpuCodegenTest,
                       public ::testing::WithParamInterface<MixTypeParams> {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  se::GpuComputeCapability GetGpuComputeCapability() {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
+  }
+
+  void SetUp() override {
+    if (std::holds_alternative<se::RocmComputeCapability>(
+            GetGpuComputeCapability())) {
+      GTEST_SKIP()
+          << "Related fusions are not performed on ROCm without Triton.";
+    }
+  }
+
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     // We are testing Triton, remove cuBLAS fallback for these tests.
     debug_options.set_xla_gpu_cublas_fallback(false);
@@ -125,9 +140,7 @@ INSTANTIATE_TEST_SUITE_P(RewriteTestSuite, MixedTypeTest,
                              //  TritonRewriteTest2Params{F32, F16},
                              //  TritonRewriteTest2Params{F32, BF16},
                              MixTypeParams{S8, BF16, 24, 40, 8},
-                             // Modify the case below to use k = 32 instead of
-                             // 16 once b/337839570 is fixed.
-                             MixTypeParams{S8, F16, 80, 32, 32, 1e-3, 1e-6},
+                             MixTypeParams{S8, F16, 80, 16, 32, 1e-3, 1e-6},
                              MixTypeParams{F16, F32, 127, 3, 300, 1e-2, 1e-2},
                              MixTypeParams{F16, BF16, 544, 96, 16, 1e-3, 1e-3},
                              MixTypeParams{BF16, F32, 77, 500, 333, 3e-3, 3e-3},
@@ -136,7 +149,7 @@ INSTANTIATE_TEST_SUITE_P(RewriteTestSuite, MixedTypeTest,
 
 class TritonTest : public GpuCodegenTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_triton_gemm_any(true);
     debug_options.set_xla_gpu_cublas_fallback(false);
@@ -787,7 +800,7 @@ INSTANTIATE_TEST_SUITE_P(
 class TritonSoftmaxTest : public GpuCodegenTest,
                           public ::testing::WithParamInterface<PrimitiveType> {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     debug_options
         .set_xla_gpu_experimental_enable_triton_softmax_priority_fusion(true);
@@ -1563,6 +1576,7 @@ ENTRY main {
   }
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec(/*aabs=*/0, /*arel=*/0),
                             /*reference_preprocessor=*/nullptr,
+                            /*test_preprocessor=*/nullptr,
                             max_bits_of_precision));
 }
 

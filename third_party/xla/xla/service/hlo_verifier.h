@@ -149,6 +149,9 @@ struct HloVerifierOpts {
   // cloned (".clone" suffix) or rematted (".remat");
   bool verify_instruction_name_unchanged = false;
 
+  // Check if channel instructions all have unique channel ids.
+  bool verify_unique_channel_ids = true;
+
   HloPredicate instruction_can_change_layout;
 
   // Returns a target-specific shape size.
@@ -191,6 +194,7 @@ class ShapeVerifier : public DfsHloVisitor {
   absl::Status HandleAllReduceStart(HloInstruction* hlo) override;
   absl::Status HandleAllReduceDone(HloInstruction* hlo) override;
   absl::Status HandleAllToAll(HloInstruction* hlo) override;
+  absl::Status HandleRaggedAllToAll(HloInstruction* hlo) override;
   absl::Status HandleCollectiveBroadcast(HloInstruction* hlo) override;
   absl::Status HandleCollectivePermute(HloInstruction* hlo) override;
   absl::Status HandleCollectivePermuteStart(HloInstruction* hlo) override;

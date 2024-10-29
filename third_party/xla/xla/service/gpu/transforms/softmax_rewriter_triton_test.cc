@@ -29,14 +29,13 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/fusions/triton/triton_support.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
+#include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
-#include "xla/shape.h"
-#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status_matchers.h"
 
@@ -47,13 +46,6 @@ namespace {
 namespace m = ::xla::match;
 
 using ::testing::HasSubstr;
-
-GpuHloCostAnalysis::ShapeSizeFunction ShapeSizeBytesFunction() {
-  return [&](const Shape& shape) {
-    constexpr int64_t kPointerSize = 8;
-    return ShapeUtil::ByteSizeOf(shape, kPointerSize);
-  };
-}
 
 bool HasBlockLevelFusionConfig(const HloInstruction* fusion) {
   return fusion->opcode() == HloOpcode::kFusion &&
@@ -70,7 +62,7 @@ class SoftmaxRewriterTritonTest
  protected:
   se::DeviceDescription device_info_{TestGpuDeviceInfo::RTXA6000DeviceInfo()};
   SoftmaxRewriterTriton fusion_rewriter_{device_info_,
-                                         ShapeSizeBytesFunction()};
+                                         HloCostAnalysis::DefaultShapeSize};
 };
 
 TEST_F(SoftmaxRewriterTritonTest, CanFuseExactSoftmaxF32) {
@@ -836,7 +828,7 @@ ENTRY main {
       SoftmaxRewriterTriton(
           TestGpuDeviceInfo::RTXA6000DeviceInfo(
               se::CudaComputeCapability{se::CudaComputeCapability::VOLTA, 0}),
-          ShapeSizeBytesFunction())
+          HloCostAnalysis::DefaultShapeSize)
           .Run(module.get()),
       tsl::testing::StatusIs(
           tsl::error::FAILED_PRECONDITION,
@@ -864,7 +856,7 @@ ENTRY main {
   auto module = ParseAndReturnVerifiedModule(hlo_string).value();
 
   EXPECT_TRUE(SoftmaxRewriterTriton(TestGpuDeviceInfo::AMDMI210DeviceInfo(),
-                                    ShapeSizeBytesFunction())
+                                    HloCostAnalysis::DefaultShapeSize)
                   .Run(module.get())
                   .ok());
 }
@@ -1043,7 +1035,8 @@ ENTRY main {
 }
 )";
   auto module = ParseAndReturnVerifiedModule(hlo_string).value();
-  SoftmaxRewriterTriton fusion_rewriter(device_info_, ShapeSizeBytesFunction());
+  SoftmaxRewriterTriton fusion_rewriter(device_info_,
+                                        HloCostAnalysis::DefaultShapeSize);
   EXPECT_FALSE(fusion_rewriter_.Run(module.get()).value());
 }
 
@@ -1285,8 +1278,8 @@ ENTRY main {
 )";
 
   auto module = ParseAndReturnVerifiedModule(hlo_string).value();
-  SoftmaxRewriterTriton softmax_rewriter_triton(device_info_,
-                                                ShapeSizeBytesFunction());
+  SoftmaxRewriterTriton softmax_rewriter_triton(
+      device_info_, HloCostAnalysis::DefaultShapeSize);
   int unmatched = 0, matched = 0;
   for (HloInstruction* instruction :
        module->entry_computation()->MakeInstructionPostOrder()) {
@@ -1597,7 +1590,7 @@ ENTRY main {
     // Verify that SoftmaxRewriterTriton without Cost Model will fuse the
     // normalization diamond.
     SoftmaxRewriterTriton fusion_rewriter_without_cost_model{
-        device_info_, ShapeSizeBytesFunction(),
+        device_info_, HloCostAnalysis::DefaultShapeSize,
         /*only_fuse_if_profitable=*/false};
 
     auto module = ParseAndReturnVerifiedModule(hlo_string).value();
@@ -1612,12 +1605,40 @@ ENTRY main {
     // SoftmaxRewriterTriton with Cost Model will discard the normalization
     // diamond, because row size is too large.
     SoftmaxRewriterTriton fusion_rewriter_with_cost_model{
-        device_info_, ShapeSizeBytesFunction(),
+        device_info_, HloCostAnalysis::DefaultShapeSize,
         /*only_fuse_if_profitable=*/true};
 
     auto module = ParseAndReturnVerifiedModule(hlo_string).value();
     EXPECT_FALSE(fusion_rewriter_with_cost_model.Run(module.get()).value());
   }
+}
+
+TEST_F(SoftmaxRewriterTritonTest, DoesNotCrashOnScalarBroadcast) {
+  const std::string hlo_string = R"(
+HloModule softmax
+max_computation {
+  arg_0 = f32[] parameter(0)
+  arg_1 = f32[] parameter(1)
+  ROOT maximum = f32[] maximum(arg_0, arg_1)
+}
+ENTRY main {
+  param_0 = f32[127,125]{1,0} parameter(0)
+  param_1 = f32[] parameter(1)
+  broadcast_from_scalar = f32[127] broadcast(param_1), dimensions={}
+  constant_neg_inf = f32[] constant(-inf)
+  reduce = f32[127]{0} reduce(param_0, constant_neg_inf), dimensions={1}, to_apply=max_computation
+  add = f32[127]{0} add(broadcast_from_scalar, reduce)
+  broadcast = f32[127,125]{1,0} broadcast(add), dimensions={0}
+  subtract = f32[127,125]{1,0} subtract(param_0, broadcast)
+  ROOT abs = f32[127,125]{1,0} abs(subtract)
+}
+)";
+  auto module = ParseAndReturnVerifiedModule(hlo_string).value();
+  EXPECT_TRUE(fusion_rewriter_.Run(module.get()).value());
+  EXPECT_TRUE(verifier().Run(module.get()).status().ok());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Fusion(m::Parameter(), m::Parameter())
+                             .WithPredicate(HasBlockLevelFusionConfig)));
 }
 
 }  // anonymous namespace

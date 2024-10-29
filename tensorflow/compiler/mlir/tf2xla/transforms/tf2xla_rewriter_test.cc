@@ -38,8 +38,8 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/compiler/mlir/tf2xla/transforms/test_utils.h"
 #include "tensorflow/compiler/tf2xla/xla_op_registry.h"
-#include "xla/client/xla_builder.h"
-#include "xla/client/xla_computation.h"
+#include "xla/hlo/builder/xla_builder.h"
+#include "xla/hlo/builder/xla_computation.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -313,6 +313,22 @@ TEST_F(Tf2XlaRewriterTest, CreatesDefaultValues) {
       return %0 : tensor<1x2x3x4xf32>
     }
   })";
+
+  TF_ASSERT_OK(LegalizeModule(kModuleWithOpWithoutValuesThatShouldBeDefaulted));
+}
+
+TEST_F(Tf2XlaRewriterTest, OpWithLocationDoesntBreakNodeDefName) {
+  // A named location 'Name(Source)' causes the GetNameFromLoc method to append
+  // all the other locations to the name with a ';' separator. This test ensures
+  // that the name used for the NodeDef does not contain that invalid character.
+  static constexpr char kModuleWithOpWithoutValuesThatShouldBeDefaulted[] =
+      R"mlir(
+  module attributes {tf.versions = {bad_consumers = [], min_consumer = 0 : i32, producer = 1610 : i32}} {
+    func.func @main(%arg0: tensor<2xf32>) -> tensor<2xf32> {
+    %0 = "tf.Exp"(%arg0) : (tensor<2xf32>) -> tensor<2xf32> loc(fused["exp"("exp"), "exp"])
+    func.return %0 : tensor<2xf32>
+  }
+  })mlir";
 
   TF_ASSERT_OK(LegalizeModule(kModuleWithOpWithoutValuesThatShouldBeDefaulted));
 }

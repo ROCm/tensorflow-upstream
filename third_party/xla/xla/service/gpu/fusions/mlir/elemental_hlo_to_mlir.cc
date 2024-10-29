@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
 #include "xla/primitive_util.h"
@@ -77,7 +78,7 @@ limitations under the License.
 #include "xla/service/gpu/model/indexing_map.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/translate/hlo_to_mhlo/hlo_utils.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -611,7 +612,7 @@ SmallVector<Value, 1> MapHloOp(mlir::Type result_type,
   Value result = mhlo::MhloOpToStdScalarOp::mapOpOfType<MhloOp>(
       b.getLoc(), result_type, arg_types,
       typename MhloOp::Adaptor(args, std::forward<ExtraArgs>(extra_args)...),
-      &b);
+      /*attributes=*/std::nullopt, &b);
   if (result.getType().isInteger(1)) {
     result = b.create<mlir::arith::ExtUIOp>(b.getI8Type(), result);
   }
@@ -853,7 +854,7 @@ absl::StatusOr<SmallVector<Value, 1>> EmitConvert(
   }
   auto out = mhlo::MhloOpToStdScalarOp::mapConvertOpToStdScalarOp(
       builder.getLoc(), result_type_with_sign, result_element_type, arg_types,
-      operands, &builder);
+      operands, /*attributes=*/std::nullopt, &builder);
   if (auto int_ty = mlir::dyn_cast<IntegerType>(out.getType())) {
     auto in = operands[0];
     if (auto float_ty = mlir::dyn_cast<FloatType>(in.getType())) {
@@ -918,7 +919,7 @@ absl::StatusOr<SmallVector<Value, 1>> EmitIota(const HloInstruction* instr,
   index = builder.create<arith::IndexCastUIOp>(index_type, index);
   return {{mhlo::MhloOpToStdScalarOp::mapConvertOpToStdScalarOp(
       builder.getLoc(), result_type_with_sign, result_element_type,
-      {index_type}, {index}, &builder)}};
+      {index_type}, {index}, /*attributes=*/std::nullopt, &builder)}};
 }
 
 absl::StatusOr<SmallVector<Value, 1>> EmitCompare(
@@ -933,7 +934,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitCompare(
   auto result_types = llvm::to_vector(mlir::TypeRange{builder.getI1Type()});
   auto i1 = mhlo::MhloOpToStdScalarOp::mapOpOfType<mhlo::CompareOp>(
       builder.getLoc(), result_types, arg_types,
-      mhlo::CompareOp::Adaptor(operands, nullptr, properties), &builder);
+      mhlo::CompareOp::Adaptor(operands, nullptr, properties),
+      /*attributes=*/std::nullopt, &builder);
   return {{builder.create<mlir::arith::ExtUIOp>(builder.getI8Type(), i1)
                .getResult()}};
 }
@@ -1626,9 +1628,9 @@ ValueRange EmitLoopNest(ImplicitLocOpBuilder& b, ValueRange dim_values,
     remainder.GetMutableSymbolBound(sym_index).lower = bound.upper;
     remainder.Simplify();
 
-    VLOG(5) << "Peeled indexing map " << indexing_map.ToString() << "\n into "
-            << peeled_map.ToString() << "\nand remainder\n"
-            << remainder.ToString();
+    VLOG(5) << "Peeled indexing map " << indexing_map << "\n into "
+            << peeled_map << "\nand remainder\n"
+            << remainder;
     return EmitLoopNestImpl(b, dim_values, first_results, remainder,
                             create_body, vectorize);
   }

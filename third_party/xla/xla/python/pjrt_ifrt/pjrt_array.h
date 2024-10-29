@@ -44,12 +44,6 @@ limitations under the License.
 namespace xla {
 namespace ifrt {
 
-// Converts IFRT `DType` into `xla::PrimitiveType`.
-absl::StatusOr<xla::PrimitiveType> ToPrimitiveType(DType dtype);
-
-// Converts `xla::PrimitiveType` into IFRT `DType`.
-absl::StatusOr<DType> ToDType(xla::PrimitiveType primitive_type);
-
 // Creates IFRT `MemoryKind` from an XLA `PjRtBuffer`.
 MemoryKind MakeMemoryKindFromPjRtBuffer(PjRtBuffer* pjrt_buffer);
 
@@ -161,6 +155,10 @@ class PjRtArray final
 
   absl::StatusOr<std::vector<tsl::RCReference<Array>>>
   DisassembleIntoSingleDeviceArrays(ArrayCopySemantics semantics) override;
+  absl::StatusOr<std::vector<tsl::RCReference<Array>>>
+  DisassembleIntoSingleDeviceArrays(
+      ArrayCopySemantics array_copy_semantics,
+      SingleDeviceShardSemantics single_device_shard_semantics) override;
 
   ABSL_MUST_USE_RESULT
   Future<> CopyToHostBuffer(

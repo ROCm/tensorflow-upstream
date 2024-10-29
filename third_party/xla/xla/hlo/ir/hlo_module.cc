@@ -22,6 +22,7 @@ limitations under the License.
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <stack>
 #include <string>
 #include <utility>
 #include <variant>
@@ -56,9 +57,10 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/lib/gtl/map_util.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/gtl/map_util.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
@@ -718,6 +720,10 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromShape(
     module_config.set_auto_spmd_partitioning_mesh_ids(std::vector<int64_t>(
         execution_options->auto_spmd_partitioning_mesh_ids().begin(),
         execution_options->auto_spmd_partitioning_mesh_ids().end()));
+    module_config.set_exec_time_optimization_effort(
+        execution_options->exec_time_optimization_effort());
+    module_config.set_memory_fitting_effort(
+        execution_options->memory_fitting_effort());
     module_config.set_deduplicate_hlo(execution_options->deduplicate_hlo());
     if (!execution_options->allow_spmd_sharding_propagation_to_parameters()
              .empty()) {
@@ -1128,17 +1134,21 @@ std::unique_ptr<HloModule> HloModule::Clone(
 }
 
 absl::Status HloModule::RemoveUnusedComputations() {
-  std::string suffix = "tmp";
-  auto module = std::make_unique<HloModule>(
-      absl::StrCat(name_, "-", suffix), config(),
-      std::make_unique<CompilationEnvironments>(*comp_envs_));
-  HloCloneContext context(module.get(), suffix);
-  entry_computation_->Clone(suffix, &context);
-  std::vector<HloComputation*> to_remove;
-  for (auto computation : computations()) {
-    auto found_computation = context.FindComputation(computation);
-    if (found_computation == nullptr) {
-      to_remove.push_back(computation);
+  absl::flat_hash_set<HloComputation*> to_remove(computations().begin(),
+                                                 computations().end());
+  std::stack<HloComputation*> agenda;
+  agenda.push(entry_computation_);
+  to_remove.erase(entry_computation_);
+  while (!agenda.empty()) {
+    HloComputation* computation = agenda.top();
+    agenda.pop();
+    for (HloInstruction* instruction : computation->instructions()) {
+      for (HloComputation* called_computation :
+           instruction->called_computations()) {
+        if (to_remove.erase(called_computation) > 0) {
+          agenda.push(called_computation);
+        }
+      }
     }
   }
   for (auto computation : to_remove) {

@@ -63,6 +63,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/utils/serialize_mlir_module_utils.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/translate_utils.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.h"
+#include "tensorflow/compiler/mlir/tf2xla/api/v2/graph_to_tf_executor.h"
 #include "tensorflow/compiler/mlir/tf2xla/internal/mlir_pass_instrumentation.h"
 #include "tensorflow/compiler/mlir/tf2xla/internal/passes/lowering_passes.h"
 #include "tensorflow/compiler/mlir/tf2xla/transforms/passes.h"
@@ -70,15 +71,15 @@ limitations under the License.
 #include "tensorflow/compiler/tf2xla/shape_util.h"
 #include "tensorflow/compiler/tf2xla/type_util.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
-#include "xla/client/xla_computation.h"
+#include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/translate/mhlo_to_hlo/layout_util.h"
+#include "xla/hlo/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
+#include "xla/hlo/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/shape.h"
-#include "xla/translate/mhlo_to_hlo/layout_util.h"
-#include "xla/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
-#include "xla/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/xla_data.pb.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/platform/error_payloads.h"
@@ -1070,7 +1071,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> GraphToModule(
   config.unconditionally_use_set_output_shapes =
       unconditionally_use_set_output_shapes;
   GraphDebugInfo debug_info;
-  return ConvertGraphToMlir(graph, debug_info, flib_def, config, context);
+  return tensorflow::tf2xla::v2::ConvertGraphToTfExecutor(
+      graph, debug_info, flib_def, config, context);
 }
 
 Status BuildHloFromGraph(

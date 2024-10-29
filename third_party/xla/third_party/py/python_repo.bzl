@@ -14,7 +14,11 @@ def _python_repository_impl(ctx):
     ctx.file("BUILD", "")
     wheel_name = ctx.os.environ.get("WHEEL_NAME", "tensorflow")
     wheel_collab = ctx.os.environ.get("WHEEL_COLLAB", False)
+<<<<<<< HEAD
     output_path = ctx.os.environ.get("OUTPUT_PATH", None)
+=======
+    macos_deployment_target = ctx.os.environ.get("MACOSX_DEPLOYMENT_TARGET", "")
+>>>>>>> master
 
     requirements = None
     for i in range(0, len(ctx.attr.requirements_locks)):
@@ -35,13 +39,11 @@ Please check python_init_repositories() in your WORKSPACE file.
 
     requirements_with_local_wheels = str(requirements)
 
-    local_wheels_dir = ctx.os.environ.get("LOCAL_WHEELS_DIR", "")
-    if ctx.attr.local_wheel_workspaces or local_wheels_dir:
+    if ctx.attr.local_wheel_workspaces:
         local_wheel_requirements = _get_injected_local_wheels(
             ctx,
             version,
             ctx.attr.local_wheel_workspaces,
-            local_wheels_dir,
         )
         requirements_content = [ctx.read(requirements)] + local_wheel_requirements
         merged_requirements_content = "\n".join(requirements_content)
@@ -56,6 +58,13 @@ Please check python_init_repositories() in your WORKSPACE file.
             merged_requirements_content,
         )
 
+    use_pywrap_rules = bool(
+        ctx.os.environ.get("USE_PYWRAP_RULES", False),
+    )
+
+    if use_pywrap_rules:
+        print("!!!Using pywrap rules instead of directly creating .so objects!!!")  # buildifier: disable=print
+
     ctx.file(
         "py_version.bzl",
         """
@@ -66,6 +75,8 @@ WHEEL_COLLAB = "{wheel_collab}"
 OUTPUT_PATH = "{output_path}"
 REQUIREMENTS = "{requirements}"
 REQUIREMENTS_WITH_LOCAL_WHEELS = "{requirements_with_local_wheels}"
+USE_PYWRAP_RULES = {use_pywrap_rules}
+MACOSX_DEPLOYMENT_TARGET = "{macos_deployment_target}"
 """.format(
             version = version,
             wheel_name = wheel_name,
@@ -73,6 +84,8 @@ REQUIREMENTS_WITH_LOCAL_WHEELS = "{requirements_with_local_wheels}"
             output_path = output_path,
             requirements = str(requirements),
             requirements_with_local_wheels = requirements_with_local_wheels,
+            use_pywrap_rules = use_pywrap_rules,
+            macos_deployment_target = macos_deployment_target,
         ),
     )
 
@@ -121,8 +134,7 @@ def _parse_python_version(version_str):
 def _get_injected_local_wheels(
         ctx,
         py_version,
-        local_wheel_workspaces,
-        local_wheels_dir):
+        local_wheel_workspaces):
     local_wheel_requirements = []
     py_ver_marker = "-cp%s-" % py_version.replace(".", "")
     py_major_ver_marker = "-py%s-" % py_version.split(".")[0]
@@ -143,18 +155,6 @@ def _get_injected_local_wheels(
                     ctx.attr.local_wheel_inclusion_list,
                     ctx.attr.local_wheel_exclusion_list,
                 )
-    if local_wheels_dir:
-        dist_folder_path = ctx.path(local_wheels_dir)
-        if dist_folder_path.exists:
-            dist_wheels = dist_folder_path.readdir()
-            _process_dist_wheels(
-                dist_wheels,
-                wheels,
-                py_ver_marker,
-                py_major_ver_marker,
-                ctx.attr.local_wheel_inclusion_list,
-                ctx.attr.local_wheel_exclusion_list,
-            )
 
     for wheel_name, wheel_path in wheels.items():
         local_wheel_requirements.append(
@@ -203,7 +203,11 @@ python_repository = repository_rule(
         "HERMETIC_PYTHON_VERSION",
         "WHEEL_NAME",
         "WHEEL_COLLAB",
+<<<<<<< HEAD
         "OUTPUT_PATH",
+=======
+        "USE_PYWRAP_RULES",
+>>>>>>> master
     ],
     local = True,
 )

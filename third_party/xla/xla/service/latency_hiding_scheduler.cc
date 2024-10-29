@@ -40,15 +40,15 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/ir/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/map_util.h"
 #include "xla/service/dump.h"
-#include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
@@ -73,12 +73,70 @@ bool IsNopInstruction(const HloInstruction& hlo) {
          (op == HloOpcode::kTuple && hlo.user_count() == 1 &&
           hlo.users().front()->opcode() == HloOpcode::kWhile);
 }
+
+bool InstructionDefinesValue(const HloInstruction* instruction,
+                             const HloValue* value) {
+  if (value->defining_instruction() == instruction) {
+    return true;
+  }
+  if (value->shape().has_layout() &&
+      value->shape().layout().memory_space() != kDefaultMemorySpace) {
+    return false;
+  }
+  // Also check if the instruction is a call to a computation that defines the
+  // value. This is needed in cases, e.g., where we wrap a value-defining
+  // instruction in a async call for offloading, and the async start itself will
+  // effectively define the value in the current scope that the scheduler is
+  // running in.
+  if (instruction->opcode() == HloOpcode::kAsyncStart) {
+    if (instruction->async_wrapped_opcode() == HloOpcode::kCall) {
+      return instruction->async_wrapped_instruction()
+                 ->called_computations()[0]
+                 ->root_instruction() == value->defining_instruction();
+    }
+    return instruction->async_wrapped_instruction() ==
+           value->defining_instruction();
+  }
+  return false;
+}
+
+bool InstructionFirstDefinesBuffer(
+    const HloInstruction* instruction,
+    const BufferInfoTracker::ValueInfo& buffer_value_info) {
+  if (buffer_value_info.first_definition == instruction) {
+    return true;
+  }
+  if (buffer_value_info.value->values()[0]->shape().has_layout() &&
+      buffer_value_info.value->values()[0]->shape().layout().memory_space() !=
+          kDefaultMemorySpace) {
+    return false;
+  }
+  // Similar to logic above, also check if the instruction is a call to a
+  // computation that defines the value.
+  if (instruction->opcode() == HloOpcode::kAsyncStart) {
+    if (instruction->async_wrapped_opcode() == HloOpcode::kCall) {
+      return instruction->async_wrapped_instruction()
+                 ->called_computations()[0]
+                 ->root_instruction() == buffer_value_info.first_definition;
+    }
+    return instruction->async_wrapped_instruction() ==
+           buffer_value_info.first_definition;
+  }
+  return false;
+}
+
 }  // namespace
 
 CanonicalAsyncOp DefaultGetCanonicalAsyncOp(const HloInstruction& hlo) {
   switch (hlo.opcode()) {
     case HloOpcode::kAsyncStart:
     case HloOpcode::kAsyncDone:
+      if (hlo.async_wrapped_opcode() == HloOpcode::kCall) {
+        return {hlo.opcode(), hlo.async_wrapped_instruction()
+                                  ->called_computations()[0]
+                                  ->root_instruction()
+                                  ->opcode()};
+      }
       return {hlo.opcode(), hlo.async_wrapped_opcode()};
     case HloOpcode::kAllReduceStart:
       return {HloOpcode::kAsyncStart, HloOpcode::kAllReduce};
@@ -279,18 +337,44 @@ ResourcesVector AsyncTracker::GetResourcesFromInstructionImpl(
   }
 }
 
-ResourcesVector AsyncTracker::GetResourcesFromInstruction(
+absl::Span<const ResourcePair> AsyncTracker::GetResourcesFromInstruction(
     const HloInstruction& hlo) const {
-  if (!resources_cache_.contains(&hlo)) {
-    resources_cache_.insert({&hlo, GetResourcesFromInstructionImpl(hlo)});
+  auto [it, inserted] = resources_cache_.emplace(&hlo, ResourcesVector{});
+  if (inserted) {
+    it->second = GetResourcesFromInstructionImpl(hlo);
   }
-  return resources_cache_.at(&hlo);
+  return it->second;
 }
 
 int64_t AsyncTracker::GetNumResourcesPerInstruction(
     ResourceType resource_type, const HloInstruction& instr) const {
   return GetNumResourcesPerInstruction(ResourceTypeToIndex(resource_type),
                                        instr);
+}
+
+const absl::flat_hash_map<int64_t, int64_t>&
+AsyncTracker::RecursivelyComputeResourceMap(
+    const HloComputation* computation) const {
+  auto& per_opcode_map = async_in_computation_cache_[computation];
+  if (per_opcode_map != nullptr) {
+    return *per_opcode_map;
+  }
+  per_opcode_map = std::make_unique<absl::flat_hash_map<int64_t, int64_t>>();
+  auto* m = per_opcode_map.get();
+  for (HloInstruction* instr : computation->instructions()) {
+    if (IsSupportedAsyncDone(*instr)) {
+      for (const auto& resource : GetResourcesFromInstruction(*instr)) {
+        ++(*m)[resource.first];
+      }
+    }
+    for (const HloComputation* called_comp : instr->called_computations()) {
+      for (auto& called_per_opcode_pair :
+           RecursivelyComputeResourceMap(called_comp)) {
+        (*m)[called_per_opcode_pair.first] += called_per_opcode_pair.second;
+      }
+    }
+  }
+  return *m;
 }
 
 int64_t AsyncTracker::GetNumResourcesPerInstruction(
@@ -309,45 +393,13 @@ int64_t AsyncTracker::GetNumResourcesPerInstruction(
                ? 1
                : 0;
   }
-  std::function<void(const HloComputation*)> recursively_compute_resource_map =
-      [this,
-       &recursively_compute_resource_map](const HloComputation* computation) {
-        absl::flat_hash_map<int64_t, int64_t> per_opcode_map;
-        for (HloInstruction* instr : computation->instructions()) {
-          if (IsSupportedAsyncDone(*instr)) {
-            for (auto& resource : GetResourcesFromInstruction(*instr)) {
-              ++per_opcode_map[resource.first];
-            }
-          }
-          for (const HloComputation* called_comp :
-               instr->called_computations()) {
-            auto it = async_in_computation_cache_.find(called_comp);
-            if (it == async_in_computation_cache_.end()) {
-              recursively_compute_resource_map(called_comp);
-              it = async_in_computation_cache_.find(called_comp);
-              CHECK(it != async_in_computation_cache_.end());
-            }
-            for (auto& called_per_opcode_pair : it->second) {
-              per_opcode_map[called_per_opcode_pair.first] +=
-                  called_per_opcode_pair.second;
-            }
-          }
-        }
-        async_in_computation_cache_[computation] = std::move(per_opcode_map);
-      };
   int64_t num_resources = 0;
   for (const HloComputation* computation : instr.called_computations()) {
-    auto it = async_in_computation_cache_.find(computation);
-    if (it == async_in_computation_cache_.end()) {
-      recursively_compute_resource_map(computation);
-      it = async_in_computation_cache_.find(computation);
-      CHECK(it != async_in_computation_cache_.end());
+    const auto& map = RecursivelyComputeResourceMap(computation);
+    auto opcode_it = map.find(resource_type);
+    if (opcode_it != map.end()) {
+      num_resources += opcode_it->second;
     }
-    auto opcode_it = it->second.find(resource_type);
-    if (opcode_it == it->second.end()) {
-      continue;
-    }
-    num_resources += opcode_it->second;
   }
   return num_resources;
 }
@@ -596,7 +648,7 @@ void MemoryPressureTracker::Initialize(
             output_values.push_back(std::make_pair(
                 buffer_tracker_.GetBufferInfo(buffer->id()), index));
             if (absl::c_any_of(buffer->values(), [&](const HloValue* value) {
-                  return value->defining_instruction() == instruction;
+                  return InstructionDefinesValue(instruction, value);
                 })) {
               defined_values.push_back(
                   buffer_tracker_.GetBufferInfo(buffer->id()));
@@ -663,7 +715,7 @@ void MemoryPressureTracker::UpdateBuffers(const HloInstruction* instruction) {
         continue;
       }
       if (live_buffers_[b.value->id()] != 0) {
-        if (b.first_definition == instruction) {
+        if (InstructionFirstDefinesBuffer(instruction, b)) {
           live_memory_usage_ -= b.buffer_size;
           live_buffers_set_.erase(b.value->id());
         }
@@ -721,7 +773,7 @@ std::pair<int64_t, int64_t> MemoryPressureTracker::MemoryPressureDifference(
         continue;
       }
       if (live_buffers_[b.value->id()]) {
-        if (b.first_definition == instruction) {
+        if (InstructionFirstDefinesBuffer(instruction, b)) {
           increase -= b.buffer_size;
         }
       }
@@ -1736,8 +1788,9 @@ HloScheduleGraph::HloScheduleGraph(
     new_node_it->second->predecessors_.reserve(instr->operand_count());
     new_node_it->second->successors_.reserve(instr->user_count());
     new_node_it->second->cost_ = latency_estimator->NodeCost(instr);
+    auto resources = async_tracker->GetResourcesFromInstruction(*instr);
     new_node_it->second->resources_ =
-        async_tracker->GetResourcesFromInstruction(*instr);
+        ResourcesVector(resources.begin(), resources.end());
     new_node_it->second->released_shareable_resources_ =
         async_tracker->GetReleasedShareableResourcesFromVector(
             new_node_it->second->GetResources());

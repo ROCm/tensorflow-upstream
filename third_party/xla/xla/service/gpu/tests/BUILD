@@ -83,13 +83,14 @@ xla_test(
             "//xla:shape_util",
             "//xla/ffi",
             "//xla/ffi:ffi_api",
-            "//xla/stream_executor",
             "//xla/tests:hlo_test_base",
             "@com_google_absl//absl/algorithm:container",
             "@com_google_absl//absl/status",
             "@local_tsl//tsl/platform:test",
         ],
     ) + [
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:stream",
         "//xla/tests:xla_internal_test_main",
     ],
 )
@@ -209,7 +210,7 @@ xla_test(
         "swap_conv_operands_test.cc",
     ],
     backends = ["gpu"],
-    tags = ["no_rocm"],
+    tags = ["cuda-only"],
     deps = [
         ":gpu_codegen_test",
         "//xla:error_spec",
@@ -227,7 +228,7 @@ xla_test(
     deps = [
         ":gpu_codegen_test",
         "//xla:error_spec",
-        "//xla/service:hlo_parser",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/strings",
         "@local_tsl//tsl/platform:statusor",
@@ -385,7 +386,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:test_helpers",
         "//xla/client:local_client",
-        "//xla/client:xla_builder",
+        "//xla/hlo/builder:xla_builder",
         "//xla/tests:client_library_test_base",
         "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:test_main",
@@ -583,6 +584,7 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -654,6 +656,7 @@ lit_test_suite(
             "transpose_210.hlo",
             "transpose_210_extra_output.hlo",
             "triton_naming.hlo",
+            "zero_clamp_abs_index.hlo",
         ],
         include = [
             "*.hlo",
@@ -677,6 +680,16 @@ lit_test_suite(
     ],
     default_tags = tf_cuda_tests_tags(),
     hermetic_cuda_data_dir = "%S/../../../../../cuda_nvcc",
+<<<<<<< HEAD
+=======
+    tags_override = {
+        "element_wise_row_vectorization.hlo": ["cuda-only"],
+        "scatter_bf16.hlo": ["cuda-only"],
+        "single_instruction.hlo": ["cuda-only"],
+        "reduce_unnested.hlo": ["cuda-only"],
+        "reduction_vectorization_sm_all.hlo": ["cuda-only"],
+    },
+>>>>>>> master
     tools = [
         "//xla/tools:hlo-opt",
         "@llvm-project//llvm:FileCheck",
@@ -701,6 +714,7 @@ lit_test_suite(
 #     deps = [
 #         "//xla/service/gpu/fusions/transforms:passes",
 #         "//xla/service/gpu/fusions/triton:passes",
+#         "//xla/service/gpu/fusions/triton:xla_triton",
 #         "@llvm-project//mlir:AllExtensions",
 #         "@llvm-project//mlir:MlirOptLib",
 #         "@triton//:AllPassesAndDialects",
@@ -748,7 +762,11 @@ xla_test(
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_proto_cc",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:kernel",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@local_tsl//tsl/platform:status",
@@ -758,7 +776,6 @@ xla_test(
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_asm_compiler",
         "//xla/service/gpu:gpu_asm_opts_util",
-        "//xla/stream_executor",
         "//xla/service/gpu:stream_executor_util",
         "//xla/stream_executor:device_memory",
     ]),
@@ -786,6 +803,10 @@ xla_test(
         "gpu_a100",
         "gpu_h100",
     ],
+<<<<<<< HEAD
+=======
+    tags = ["cuda-only"],
+>>>>>>> master
     deps = if_cuda_is_configured(
         [
             ":gpu_codegen_test",
@@ -837,28 +858,23 @@ xla_test(
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
-        "//xla:reference_util",
         "//xla:shape_util",
         "//xla:test_helpers",
         "//xla:types",
         "//xla:xla_data_proto_cc",
-        "//xla/client:local_client",
-        "//xla/client:xla_builder",
-        "//xla/client:xla_computation",
+        "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
-        "//xla/service/gpu:cublas_cudnn",
         "//xla/service/gpu:stream_executor_util",
-        "//xla/stream_executor",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_platform_id",
-        "//xla/tests:client_library_test_base",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
-        "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status:statusor",

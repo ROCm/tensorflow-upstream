@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
-#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/variant_visitor.h"
 #include "xla/shape.h"
@@ -112,12 +111,14 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
       return config.enabled_commands.contains(DebugOptions::FUSION);
     }
-    if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter) {
+    if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter ||
+        hlo->async_wrapped_opcode() == HloOpcode::kAllToAll) {
       return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
     }
   }
 
-  if (hlo->opcode() == HloOpcode::kReduceScatter) {
+  if (hlo->opcode() == HloOpcode::kReduceScatter ||
+      hlo->opcode() == HloOpcode::kAllToAll) {
     return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
   }
 
@@ -138,7 +139,8 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
       return config.enabled_commands.contains(DebugOptions::FUSION);
     }
-    if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter) {
+    if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter ||
+        hlo->async_wrapped_opcode() == HloOpcode::kAllToAll) {
       return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
     }
   }
@@ -241,7 +243,8 @@ static bool IsCommand(const HloInstruction* hlo,
       return config.enabled_commands.contains(DebugOptions::CUDNN);
     }
     const auto& custom_config = backend_config.custom_fusion_config();
-    if (custom_config.name() == "address_computation") {
+    if ((custom_config.name() == "address_computation") ||
+        (custom_config.name() == "dynamic_address_computation")) {
       auto fusion_analysis =
           HloFusionAnalysis::Create(*hlo, config.device_description);
       const HloFusionAdaptor& adaptor = fusion_analysis.fusion();
@@ -251,10 +254,16 @@ static bool IsCommand(const HloInstruction* hlo,
                    node.opcode() == HloOpcode::kReduceScatter;
           });
       const HloInstruction* hero = &hero_adaptor->instruction();
-      return IsCommand(hero, config) || IsAsyncStartCommand(hero, config);
-    }
-    if (custom_config.name() == "dynamic_address_computation") {
-      return false;
+
+      if (custom_config.name() == "address_computation") {
+        return IsCommand(hero, config) || IsAsyncStartCommand(hero, config);
+      } else {
+        // DynamicSliceFusionRewriter currently only rewrites for dynamic slice
+        // fusion with constant or loop iteration offset values, which are all
+        // supported by command buffer.
+        return (config.enabled_commands.contains(DebugOptions::DYNAMIC_SLICE) &&
+                (IsCommand(hero, config) || IsAsyncStartCommand(hero, config)));
+      }
     }
     return config.enabled_commands.contains(DebugOptions::FUSION);
   }
@@ -334,6 +343,40 @@ CommandBufferScheduling::CollectCommandBufferSequences(
 
   auto& instructions = schedule.instructions();
 
+  // we currently require that when lowering DynamicSliceFusion, the offset
+  // value should not come from the output of operators that are already
+  // captured in command buffer.
+  auto check_dynamic_slice_operand_not_from_seq =
+      [&](const HloInstructionSequence& seq, const HloInstruction* inst) {
+        if (!config.enabled_commands.contains(DebugOptions::DYNAMIC_SLICE))
+          return true;
+        const auto* fusion = DynCast<HloFusionInstruction>(inst);
+        if (!fusion) return true;
+
+        auto gpu_config = fusion->backend_config<GpuBackendConfig>();
+        const FusionBackendConfig& backend_config =
+            gpu_config->fusion_backend_config();
+        const auto& custom_config = backend_config.custom_fusion_config();
+        if (custom_config.name() != "dynamic_address_computation") return true;
+
+        auto* fused_computation = fusion->called_computation();
+        return !absl::c_any_of(
+            fused_computation->instructions(), [&](const HloInstruction* inst) {
+              const auto* dynamic_inst =
+                  DynCast<HloDynamicIndexInstruction>(inst);
+              if (!dynamic_inst) return false;
+              for (auto* operand : dynamic_inst->index_operands()) {
+                const auto* param = DynCast<HloParameterInstruction>(operand);
+                const auto* fusion_operand =
+                    fusion->operand(param->parameter_number());
+                if (seq.contains(fusion_operand)) {
+                  return true;
+                }
+              }
+              return false;
+            });
+      };
+
   // Collect the sequence of instructions that contains the async start and its
   // corresponding done instruction. If there is another start instruction
   // between the original start and done, we may potentially extend the sequence
@@ -370,7 +413,11 @@ CommandBufferScheduling::CollectCommandBufferSequences(
   // we do not capture unmatched async done instruction.
   auto check_async_region = [&](const HloInstructionSequence& seq) {
     if (!absl::c_all_of(seq.instructions(), [&](HloInstruction* inst) {
-          return IsNoOp(inst) || IsCommand(inst, config) ||
+          return IsNoOp(inst) ||
+                 (IsCommand(inst, config) &&
+                  check_dynamic_slice_operand_not_from_seq(seq, inst) &&
+                  check_dynamic_slice_operand_not_from_seq(current_seq,
+                                                           inst)) ||
                  IsAsyncStartCommand(inst, config) ||
                  IsAsyncDoneCommand(inst, config);
         })) {
@@ -404,7 +451,8 @@ CommandBufferScheduling::CollectCommandBufferSequences(
     }
 
     // Synchronous commands always can be added to instruction sequence.
-    if (IsCommand(inst, config)) {
+    if (IsCommand(inst, config) &&
+        check_dynamic_slice_operand_not_from_seq(current_seq, inst)) {
       num_commands_in_current_seq++;
       current_seq.push_back(inst);
       continue;
@@ -438,7 +486,9 @@ CommandBufferScheduling::CollectCommandBufferSequences(
 // the beginning of the computation. This simplifies the construction of command
 // buffer computations because we don't need to deal with parameters and
 // constants that have users outside of a command buffer.
-absl::Status CommandBufferScheduling::MoveParametersAndConstantsToFront(
+// Returns true if there is a change in the order of instructions, false
+// otherwise.
+absl::StatusOr<bool> CommandBufferScheduling::MoveParametersAndConstantsToFront(
     HloComputation* computation) {
   HloInstructionSequence new_sequence;
   HloSchedule& schedule = computation->parent()->schedule();
@@ -468,7 +518,11 @@ absl::Status CommandBufferScheduling::MoveParametersAndConstantsToFront(
   }
 
   schedule.set_sequence(computation, new_sequence);
-  return absl::OkStatus();
+  for (auto [old_i, new_i] :
+       llvm::zip(sequence.instructions(), new_sequence.instructions())) {
+    if (old_i != new_i) return true;
+  }
+  return false;
 }
 
 //===----------------------------------------------------------------------===//
@@ -782,6 +836,7 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
   std::reverse(order.begin(), order.end());
   absl::flat_hash_set<HloComputation*> processed_command_buffers;
 
+  auto changed = false;
   for (HloComputation* comp : order) {
     // Skip special computations that do not have lowering to thunks.
     if (comp->IsFusionComputation() || comp->IsAsyncComputation() ||
@@ -791,7 +846,8 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
     // Skip computations that already part of command buffers.
     if (processed_command_buffers.contains(comp)) continue;
 
-    TF_RETURN_IF_ERROR(MoveParametersAndConstantsToFront(comp));
+    TF_ASSIGN_OR_RETURN(bool changed_, MoveParametersAndConstantsToFront(comp));
+    changed |= changed_;
 
     std::vector<HloInstructionSequence> sequences =
         CollectCommandBufferSequences(
@@ -804,6 +860,7 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
       TF_ASSIGN_OR_RETURN(
           HloComputation * command_buffer_computation,
           RewriteCommandBuffer(comp, seq, std::move(command_buffer)));
+      changed = true;
 
       // All computations reachable from a command buffer computation are nested
       // command buffers (i.e. body computations attached to a while operation).
@@ -815,7 +872,7 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
   }
   TF_RETURN_IF_ERROR(module->schedule().Update());
 
-  return true;
+  return changed;
 }
 
 }  // namespace xla::gpu

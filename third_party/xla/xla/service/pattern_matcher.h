@@ -46,10 +46,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/ptrvec.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
-#include "xla/service/hlo_parser.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
@@ -2690,6 +2690,7 @@ XLA_UNOP_PATTERN(Cos)
 XLA_UNOP_PATTERN(AllReduceStart)
 XLA_UNOP_PATTERN(AllReduceDone)
 XLA_UNOP_PATTERN(AllToAll)
+XLA_UNOP_PATTERN(RaggedAllToAll)
 XLA_UNOP_PATTERN(AsyncDone)
 XLA_UNOP_PATTERN(CollectiveBroadcast)
 XLA_UNOP_PATTERN(CollectivePermute)

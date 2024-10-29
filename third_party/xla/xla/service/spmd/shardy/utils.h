@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_SERVICE_SPMD_SHARDY_UTILS_H_
 
 #include <cstdint>
+#include <optional>
+#include <string>
 
 #include "absl/log/check.h"
 #include "absl/strings/escaping.h"
@@ -59,27 +61,41 @@ void removeFrontendAttribute(mlir::Operation* op,
 void removeFrontendAttribute(mlir::func::FuncOp funcOp,
                              mlir::StringRef attributeName, int64_t argNum);
 
-void loadAllRequiredDialects(mlir::MLIRContext* context);
+// Checks if "frontend_attributes" `DictionaryAttr` from `op` contains `key`.
+bool hasFrontendAttr(mlir::Operation* op, mlir::StringRef key);
 
-// Parses `stringAttr` to an attribute of type `AttrTy`.
-//
-// NOTE: assumes `stringAttr` is of type `StringAttr`.
-template <typename AttrTy>
-AttrTy parseStringAttr(mlir::Attribute stringAttr) {
-  std::string value;
-  std::string error;
-  CHECK(absl::CUnescape(mlir::cast<mlir::StringAttr>(stringAttr).getValue(),
-                        &value, &error))
-      << error;
-  return mlir::cast<AttrTy>(
-      mlir::parseAttribute(value, stringAttr.getContext()));
-}
+// Checks if `dictAttr` exists and contains `key`.
+bool hasKey(mlir::DictionaryAttr dictAttr, mlir::StringRef key);
+
+void loadAllRequiredDialects(mlir::MLIRContext* context);
 
 // Parses `attrName` from `dictAttr` to an attribute of type `AttrTy`.
 template <typename AttrTy>
 AttrTy parseStringAttr(mlir::DictionaryAttr dictAttr,
                        llvm::StringRef attrName) {
-  return parseStringAttr<AttrTy>(dictAttr.get(attrName));
+  if (mlir::Attribute stringAttr = dictAttr.get(attrName)) {
+    std::string value;
+    std::string error;
+    CHECK(absl::CUnescape(mlir::cast<mlir::StringAttr>(stringAttr).getValue(),
+                          &value, &error))
+        << error;
+    return mlir::cast<AttrTy>(
+        mlir::parseAttribute(value, stringAttr.getContext()));
+  }
+  return nullptr;
+}
+
+// Checks if `op`'s "frontend_attributes" `DictionaryAttr` contains `attrName`
+// and parses it to an attribute of type `AttrTy`. If it doesn't exist, then
+// returns std::nullopt.
+template <typename AttrTy>
+std::optional<AttrTy> tryGetFrontendAttr(mlir::Operation* op,
+                                         mlir::StringRef attrName) {
+  mlir::DictionaryAttr dictAttr = getFrontendAttrs(op);
+  if (hasKey(dictAttr, attrName)) {
+    return parseStringAttr<AttrTy>(dictAttr, attrName);
+  }
+  return std::nullopt;
 }
 
 }  // namespace sdy

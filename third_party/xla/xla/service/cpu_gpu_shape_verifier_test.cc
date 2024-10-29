@@ -20,7 +20,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "xla/service/hlo_parser.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -38,7 +38,7 @@ class CpuGpuShapeVerifierTest : public HloTestBase {
     HloVerifierOpts opts;
     std::unique_ptr<TargetVerifierMetadata> metadata =
         std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
-    hlo_verifier_ = std::make_unique<HloVerifier>(std::move(metadata));
+    set_hlo_verifier(std::make_unique<HloVerifier>(std::move(metadata)));
   }
 };
 

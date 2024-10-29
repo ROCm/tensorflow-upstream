@@ -42,23 +42,16 @@ namespace gpu {
 namespace m = ::xla::match;
 
 class MultiOutputFusionTest : public HloTestBase {
-  HloCostAnalysis::ShapeSizeFunction ShapeSizeBytesFunction() const {
-    return [&](const Shape& shape) {
-      constexpr int64_t kPointerSize = 8;
-      return ShapeUtil::ByteSizeOf(shape, kPointerSize);
-    };
-  }
-
  public:
   MultiOutputFusion mof_{TestGpuDeviceInfo::RTXA6000DeviceInfo(),
-                         ShapeSizeBytesFunction()};
+                         HloCostAnalysis::DefaultShapeSize};
 
   void CheckMultiOutputFusion(absl::string_view hlo,
                               std::optional<absl::string_view> expected) {
     RunAndFilecheckHloRewrite(
         hlo,
         MultiOutputFusion{TestGpuDeviceInfo::RTXA6000DeviceInfo(),
-                          ShapeSizeBytesFunction()},
+                          HloCostAnalysis::DefaultShapeSize},
         expected);
   }
 };
@@ -1762,7 +1755,7 @@ TEST_F(MultiOutputFusionTest, OverlappingRead) {
 }
 
 class TransposeMultiOutputFusionTest : public MultiOutputFusionTest {
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options =
         MultiOutputFusionTest::GetDebugOptionsForTest();
     // Only the MLIR transpose emitter supports unpadded 2D transposes.

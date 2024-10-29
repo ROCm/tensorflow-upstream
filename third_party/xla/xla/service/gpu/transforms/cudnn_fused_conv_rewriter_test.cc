@@ -35,18 +35,18 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
-#include "xla/service/algebraic_simplifier.h"
-#include "xla/service/convert_mover.h"
+#include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/convert_mover.h"
+#include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
+#include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/gpu/transforms/conv_rewriter.h"
-#include "xla/service/hlo_constant_folding.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
-#include "xla/service/reshape_mover.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -67,9 +67,9 @@ namespace m = match;
 using ::testing::HasSubstr;
 using ::testing::Not;
 
-constexpr std::initializer_list<absl::string_view> kf16f32f64{"f16", "f32",
-                                                              "f64"};
-constexpr std::initializer_list<absl::string_view> kf16f32{"f16", "f32"};
+static const std::initializer_list<absl::string_view> kf16f32f64{"f16", "f32",
+                                                                 "f64"};
+static const std::initializer_list<absl::string_view> kf16f32{"f16", "f32"};
 
 class CudnnFusedConvRewriterHloTest : public HloTestBase {
  public:

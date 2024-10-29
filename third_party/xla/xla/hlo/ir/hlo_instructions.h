@@ -44,8 +44,8 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/gtl/iterator_range.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/status.h"
 
@@ -903,6 +903,36 @@ class HloAllToAllInstruction : public HloCollectiveInstruction {
   std::optional<int64_t> split_dimension_;
 };
 
+class HloRaggedAllToAllInstruction : public HloCollectiveInstruction {
+ public:
+  explicit HloRaggedAllToAllInstruction(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      const CollectiveDeviceList& device_list,
+      const std::optional<int64_t>& channel_id);
+
+  ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
+  explicit HloRaggedAllToAllInstruction(
+      HloOpcode opcode, const Shape& shape,
+      absl::Span<HloInstruction* const> operands,
+      absl::Span<const ReplicaGroup> replica_groups,
+      const std::optional<int64_t>& channel_id);
+
+  static bool ClassOf(const HloInstruction* hlo) {
+    return hlo->opcode() == HloOpcode::kRaggedAllToAll;
+  }
+
+ protected:
+  void PrintExtraAttributesImpl(AttributePrinter& printer,
+                                const HloPrintOptions& options) const override;
+  HloInstructionProto ToProto() const override;
+
+ private:
+  // Implementation for non-common logic of CloneWithNewOperands.
+  std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
+      const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+      HloCloneContext* context) const override;
+};
+
 class HloCollectiveBroadcastInstruction : public HloCollectiveInstruction {
  public:
   explicit HloCollectiveBroadcastInstruction(
@@ -989,7 +1019,8 @@ inline bool HloCollectiveInstruction::ClassOf(const HloInstruction* hlo) {
   return HloAllReduceInstructionBase::ClassOf(hlo) ||
          HloCollectiveBroadcastInstruction::ClassOf(hlo) ||
          HloAllGatherInstruction::ClassOf(hlo) ||
-         HloAllToAllInstruction::ClassOf(hlo);
+         HloAllToAllInstruction::ClassOf(hlo) ||
+         HloRaggedAllToAllInstruction::ClassOf(hlo);
 }
 
 inline bool HloChannelInstruction::ClassOf(const HloInstruction* hlo) {
@@ -1439,7 +1470,8 @@ class HloCallableInstruction : public HloInstruction {
 class HloFusionInstruction : public HloCallableInstruction {
  public:
   explicit HloFusionInstruction(const Shape& shape, FusionKind fusion_kind,
-                                HloInstruction* fused_root);
+                                HloInstruction* fused_root,
+                                absl::string_view prefix = "");
 
   explicit HloFusionInstruction(const Shape& shape, FusionKind fusion_kind,
                                 absl::Span<HloInstruction* const> operands,

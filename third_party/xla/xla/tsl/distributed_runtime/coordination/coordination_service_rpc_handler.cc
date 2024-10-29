@@ -30,9 +30,9 @@ limitations under the License.
 #include "xla/tsl/distributed_runtime/coordination/coordination_service.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_error_util.h"
+#include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/platform/status.h"
-#include "tsl/protobuf/coordination_service.pb.h"
 
 namespace tsl {
 namespace {
@@ -66,7 +66,7 @@ void CoordinationServiceRpcHandler::RegisterTaskAsync(
   const uint64_t incarnation = request->incarnation();
   const uint64_t leader_incarnation = service_->GetServiceIncarnation();
   response->set_leader_incarnation(leader_incarnation);
-  done(service_->RegisterTask(task, incarnation));
+  service_->RegisterTaskAsync(task, incarnation, done);
 }
 
 void CoordinationServiceRpcHandler::HeartbeatAsync(

@@ -27,14 +27,14 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tests/verified_hlo_module.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/status_matchers.h"
@@ -55,7 +55,7 @@ class GemmFusionTest : public HloTestBase {
       : HloTestBase(/*verifier_layout_sensitive=*/true,
                     /*allow_mixed_precision_in_hlo_verifier=*/false) {}
 
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_triton_gemm_any(false);
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
@@ -440,7 +440,7 @@ ENTRY e {
 
 class GemmFusionLevel2Test : public GemmFusionTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GemmFusionTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_triton_fusion_level(2);
     return debug_options;
@@ -1241,7 +1241,7 @@ ENTRY e {
 // A test fixture class for testing the threshold for small matrices.
 class SmallDotGemmFusionTest : public GemmFusionTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GemmFusionTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(100);
     return debug_options;
@@ -1352,28 +1352,19 @@ ENTRY main {
   EXPECT_FALSE(result.ok());
 }
 
-constexpr auto kInt4Dot = R"(
-ENTRY e {
-  p0 = s8[16,16] parameter(0)
-  p1 = s4[16,16] parameter(1)
-  p1c = bf16[16,16] convert(p1)
-  ROOT dot = bf16[16,16] dot(p0, p1c),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-})";
-
 TEST_F(SmallDotGemmFusionTest, Int4DotIsRewritten) {
+  constexpr auto kInt4Dot = R"(
+    ENTRY e {
+      p0 = s8[16,16] parameter(0)
+      p1 = s4[16,16] parameter(1)
+      p1c = bf16[16,16] convert(p1)
+      ROOT dot = bf16[16,16] dot(p0, p1c),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    }
+  )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(kInt4Dot));
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_enable_triton_gemm_int4(true);
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
-}
-
-TEST_F(SmallDotGemmFusionTest, Int4DotIsNotRewritten) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(kInt4Dot));
-  EXPECT_FALSE(GemmFusion(gpu_version_).Run(module.get()).value());
 }
 
 TEST_F(SmallDotGemmFusionTest, Int4ConcatPlusConvertIsRewritten) {
@@ -1390,9 +1381,6 @@ TEST_F(SmallDotGemmFusionTest, Int4ConcatPlusConvertIsRewritten) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(kInt4Dot));
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_enable_triton_gemm_int4(true);
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
 
   // Check that the fusion is present and that the lhs is not converted.
@@ -1417,9 +1405,6 @@ TEST_F(SmallDotGemmFusionTest, Int4ConvertPlusNegateIsRewritten) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(kInt4Dot));
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_enable_triton_gemm_int4(true);
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
   // Check that the fusion is present and that convert and negation is fused in
   // it.
@@ -1446,9 +1431,6 @@ TEST_F(SmallDotGemmFusionTest, Int4WithMinorBatchDimIsNotRewritten) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(kInt4Dot));
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_enable_triton_gemm_int4(true);
   TF_ASSERT_OK_AND_ASSIGN(auto result,
                           GemmFusion(gpu_version_).Run(module.get()));
   EXPECT_FALSE(result);

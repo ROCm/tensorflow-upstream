@@ -58,6 +58,16 @@ namespace xla {
 namespace gpu {
 namespace {
 
+// Information about an operand read.
+struct OperandReadInfo {
+  // Total number of bytes read from the operand.
+  int64_t total_bytes_read = 0;
+
+  // Factor, between 0 and 1, determining how much of the chip's HBM bandwidth
+  // is actually attained when reading this operand.
+  double read_bandwidth_utilization_rate = 1.0;
+};
+
 // Returns the number of elements in the tile after each dimension is padded to
 // the next power of 2.
 // TODO(b/353484968): Delete this function once we have constraints to only
@@ -77,6 +87,24 @@ int64_t GetPaddedTileSize(absl::Span<int64_t const> tile_sizes) {
 // heuristic tries to be safe and increase recall at the cost of precision.
 bool DoesTileFitsInRegisters(int64_t tile_size,
                              const se::DeviceDescription& device_info) {
+  // This is a conservative estimate to make sure that we don't get a tile that
+  // is too big and results in register spills.
+  //
+  // We had the following reasoning for the value of this constant:
+  //  * Whenever a block needs to use a tile more than once, it needs to
+  //    either (1) load the tile from HBM several times, or (2) store the tile
+  //    in registers at the same time as some of the results. That is the case
+  //    for normalization diamonds for instance, where the input tile is used
+  //    twice.
+  //  * We expect kernels without reuse to benefit from smaller tile sizes
+  //    anyway.
+  //  * We use around 20% of the registers as working memory for indexing
+  //    computations and expensive instructions like exponential or cosine.
+  //
+  // This value was empirically determined in September 2024 and may change in
+  // the future.
+  constexpr double kFractionOfRegistersAvailableToStoreTile = 0.4;
+
   // Register allocation happens at PTX->SASS level, so we can't know the exact
   // number of registers used by a kernel. We make a few assumptions about the
   // kernel we will generate (this may not hold in the future):
@@ -95,18 +123,19 @@ bool DoesTileFitsInRegisters(int64_t tile_size,
   // data type. `registers_per_block_limit()` returns the number of 32-bit
   // registers. Check if 64-bit types need twice as many registers. Check if
   // smaller types can fit into one register.
-  return tile_size <= device_info.registers_per_block_limit();
+  return tile_size <= kFractionOfRegistersAvailableToStoreTile *
+                          device_info.registers_per_block_limit();
 }
 
 // Returns the number of warps to use based on the tile size. The numbers were
 // originally selected from Triton SoftMax reduction row length.
 // TODO(b/332714755): Make it smarter.
 int64_t GetNumWarps(int64_t tile_size) {
-  if (tile_size <= 512) return 1;
-  if (tile_size <= 1024) return 2;
-  if (tile_size <= 16384) return 4;
-  if (tile_size <= 32768) return 8;
-  if (tile_size <= 65536) return 16;
+  if (tile_size <= 256) return 1;
+  if (tile_size <= 512) return 2;
+  if (tile_size <= 1024) return 4;
+  if (tile_size <= 2048) return 8;
+  if (tile_size <= 4096) return 16;
   return 32;
 }
 
@@ -246,7 +275,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
     auto element_type = instr->shape().element_type();
     int64_t n_bytes_total = 0;
     for (const auto& indexing_map : indexing_maps) {
-      VLOG(10) << indexing_map.ToString();
+      VLOG(10) << indexing_map;
 
       int64_t num_iters = GetIterationSpaceSize(indexing_map, instr);
 
@@ -266,9 +295,10 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
 
       VLogOperandRead(instr, n_bytes_total, n_bytes_net, is_coalesced);
 
-      read_time +=
-          ReadTimeWithDRAMHeuristic(*device_info_, num_blocks, n_bytes_net,
-                                    n_bytes_total, element_type, is_coalesced);
+      read_time += ReadTimeWithDRAMHeuristic(
+          *device_info_, num_blocks, n_bytes_net, n_bytes_total, element_type,
+          GetCoalescingUtilizationRate(element_type, *device_info_,
+                                       is_coalesced));
     }
   }
 
@@ -347,7 +377,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledHloComputation(
     const HloFusionAdaptor& fusion_adaptor,
     const TiledHloComputation& tiled_hlo_computation,
     const LaunchDimensions& launch_dimensions) {
-  absl::flat_hash_map<const HloInstruction*, int64_t> n_bytes_total_map;
+  absl::flat_hash_map<const HloInstruction*, OperandReadInfo> n_bytes_total_map;
 
   int64_t flops = 0;
   int64_t bytes_read = 0;
@@ -405,19 +435,39 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledHloComputation(
       int64_t tile_bytes_read = element_type_size * num_elements;
 
       bytes_read += tile_bytes_read;
-      n_bytes_total_map[hlo] += tile_bytes_read;
+
+      double effective_bandwidth_utilization_rate =
+          BandwidthUtilizationRateHeuristicForTiledMemoryAccess(*tiled_hlo,
+                                                                *device_info_);
+
+      OperandReadInfo& operand_read_info = n_bytes_total_map[hlo];
+      operand_read_info.total_bytes_read += tile_bytes_read;
+      // TODO(b/332714755): using std::min is more pessimistic than it needs to
+      // be since it'll end up assuming that if one read is done with lower
+      // bandwidth, all other reads of the same operand will also be done with
+      // lower bandwidth. But it's a start. We should refactor this function to
+      // properly track each read independently later.
+      operand_read_info.read_bandwidth_utilization_rate =
+          std::min(operand_read_info.read_bandwidth_utilization_rate,
+                   effective_bandwidth_utilization_rate);
     }
   }
 
   absl::Duration read_time = absl::ZeroDuration();
-  for (const auto& [hlo, n_bytes_total] : n_bytes_total_map) {
+  for (const auto& [hlo, operand_read_info] : n_bytes_total_map) {
     int64_t operand_size = shape_size_(hlo->shape());
-    int64_t n_bytes_net = std::min(operand_size, n_bytes_total);
+    int64_t n_bytes_net =
+        std::min(operand_size, operand_read_info.total_bytes_read);
 
+    // TODO(b/332714755): use
+    // `BandwidthUtilizationRateHeuristicForTiledMemoryAccess` to compute read
+    // time as well.
     read_time += ReadTimeWithDRAMHeuristic(
-        *device_info_, num_blocks, n_bytes_net, n_bytes_total,
+        *device_info_, num_blocks, n_bytes_net,
+        operand_read_info.total_bytes_read,
         /*element_type=*/hlo->shape().element_type(),
-        /*coalesced=*/true);
+        /*hbm_bandwidth_utilization_rate=*/
+        operand_read_info.read_bandwidth_utilization_rate);
   }
 
   int64_t bytes_written =
@@ -426,7 +476,13 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledHloComputation(
   absl::Duration compute_time =
       ComputeTime(*device_info_, flops, launch_dimensions.num_blocks(),
                   launch_dimensions.num_threads_per_block());
-  absl::Duration write_time = WriteTime(*device_info_, bytes_written);
+
+  int64_t effective_bandwidth =
+      BandwidthUtilizationRateHeuristicForTiledMemoryAccess(
+          *tiled_hlo_computation.GetRoot(), *device_info_) *
+      device_info_->memory_bandwidth();
+  absl::Duration write_time =
+      absl::Seconds(1.0 * bytes_written / effective_bandwidth);
   absl::Duration memory_access_time = read_time + write_time;
   absl::Duration exec_time = CombineComputeAndMemoryAccessTime(
       compute_time, memory_access_time,
@@ -488,9 +544,16 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTriton(
 LaunchDimensions
 GpuPerformanceModelWithIndexingAnalysis::GetLaunchDimensionsForTiledFusion(
     const TiledHloComputation& tiled_hlo_computation) {
-  const auto* tiled_root = tiled_hlo_computation.GetRoot();
   int64_t num_blocks = tiled_hlo_computation.num_output_tiles();
-  int64_t num_warps = GetNumWarps(GetPaddedTileSize(tiled_root->tile_sizes()));
+
+  // Decide on the number of warps to use based on the largest live tile size
+  // at any given point within the computation.
+  int64_t largest_live_tile_size = 1;
+  for (const auto& tiled_hlo : tiled_hlo_computation.instructions()) {
+    largest_live_tile_size = std::max(
+        largest_live_tile_size, GetPaddedTileSize(tiled_hlo->tile_sizes()));
+  }
+  int64_t num_warps = GetNumWarps(largest_live_tile_size);
 
   return {static_cast<uint64_t>(num_blocks),
           static_cast<uint64_t>(num_warps * WarpSize())};
@@ -543,7 +606,7 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
   }
 
   if (!best_tiled_run_time_data.has_value()) {
-    return FusionDecision("No valid tilings found.");
+    return FusionDecision::Forbid("No valid tilings found.");
   }
   return *best_tiled_run_time_data;
 }

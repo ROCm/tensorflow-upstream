@@ -56,14 +56,15 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"
 #include "shardy/dialect/sdy/ir/constants.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
+#include "shardy/dialect/sdy/ir/utils.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"
+#include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/mhlo_round_trip/shard_map_import.h"
 #include "xla/service/spmd/shardy/round_trip_common/pipeline_passes.h"
-#include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -95,7 +96,6 @@ using ::mlir::sdy::MeshAxisAttr;
 using ::mlir::sdy::MeshOp;
 using ::mlir::sdy::SdyDialect;
 using ::mlir::sdy::TensorShardingAttr;
-using ::mlir::sdy::TensorShardingPerValueAttr;
 
 // The information of a sub-dimension in IotaTileAssignment. One tile dimension
 // in tile assignment may correspond to multiple sub-dimensions. See
@@ -441,6 +441,9 @@ TensorShardingAttr convertToSdySharding(
     // break it when we find common mesh axes.
     while (product < localAxisSize) {
       MeshAxisAttr axisAttr = globalMesh.getAxes()[globalAxisIndex++];
+      if (axisAttr.getSize() == 1) {
+        continue;
+      }
       globalAxes.push_back(AxisRefAttr::get(ctx, axisAttr.getName()));
       product *= axisAttr.getSize();
     }
@@ -550,8 +553,7 @@ LogicalResult importShardings(
             mlir::cast<ShapedType>(resType).getRank(),
             /*openDims=*/false));
       }
-      op->setAttr(kShardingAttr, TensorShardingPerValueAttr::get(
-                                     globalMesh.getContext(), newShardings));
+      mlir::sdy::setShardings(op, newShardings);
       op->removeAttr(kXlaShardingAttr);
     }
   });

@@ -64,8 +64,8 @@ limitations under the License.
 #include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/gtl/iterator_range.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/protobuf.h"
@@ -96,6 +96,7 @@ class HloPrintOptions {
         indent_amount_(0),
         print_large_constants_(false),
         print_only_essential_constants_(false),
+        print_original_value_(true),
         print_metadata_(true),
         print_metadata_only_op_name_(false),
         print_backend_config_(true),
@@ -201,6 +202,11 @@ class HloPrintOptions {
     return *this;
   }
 
+  // If true, origin will be printed.
+  HloPrintOptions& set_print_original_value(bool value) {
+    print_original_value_ = value;
+    return *this;
+  }
   // If true, metadata will be printed.
   HloPrintOptions& set_print_metadata(bool value) {
     print_metadata_ = value;
@@ -387,6 +393,7 @@ class HloPrintOptions {
   PrintSubcomputationMode print_subcomputation_mode() const {
     return print_subcomputation_mode_;
   }
+  bool print_original_value() const { return print_original_value_; }
   bool print_metadata() const { return print_metadata_; }
   bool print_metadata_only_op_name() const {
     return print_metadata_only_op_name_;
@@ -430,6 +437,7 @@ class HloPrintOptions {
   int indent_amount_;
   bool print_large_constants_;
   bool print_only_essential_constants_;
+  bool print_original_value_;
   bool print_metadata_;
   bool print_metadata_only_op_name_;
   bool print_backend_config_;
@@ -1009,6 +1017,59 @@ class HloInstruction {
       const std::optional<int64_t>& channel_id,
       const std::optional<int64_t>& split_dimension = std::nullopt);
 
+  // The RaggedAllToAll instruction performs a collective all-to-all operation,
+  // where the input and output are ragged tensors.
+  //
+  // Ragged tensors are defined by a set of three tensors:
+  // *) ‘data’: the ‘data’ tensor is “ragged” along its outermost dimension,
+  //   along which each indexed element has variable size.
+  // *) ‘offsets’: the ‘offsets’ tensor indexes the outermost dimension of the
+  //  ‘data’ tensor, and represents the starting offset of each ragged element
+  //  of the ‘data’ tensor.
+  // *) ‘sizes’: the ‘sizes’ tensor represents the size of each ragged element
+  //  of the ‘data’ tensor, where the size is specified in units of
+  //  sub-elements. A sub-element is defined as the suffix of the ‘data’ tensor
+  //  shape obtained by removing the outermost “ragged” dimension.
+  // *) The ‘offsets’ and ‘sizes’ tensors must have the same size.
+  //
+  // An example ragged tensor
+  // data: [8,3] =
+  //  {{a,b,c},{d,e,f},{g,h,i},{j,k,l},{m,n,o},{p,q,r},{s,t,u},{v,w,x}}
+  // offsets: [3] = {0, 1, 4}
+  // sizes: [3] = {1, 3, 4}
+  //
+  // Index 'data' at 'offsets'[0], 'sizes'[0]'
+  // {a,b,c}
+  //
+  // Index 'data' at 'offsets'[1], 'sizes'[1]'
+  // {d,e,f},{g,h,i},{j,k,l}
+  //
+  // Index 'data' at 'offsets'[2], 'sizes'[2]'
+  // {m,n,o},{p,q,r},{s,t,u},{v,w,x}
+  //
+  // The ragged all-to-all HLO has the following arguments:
+  // input: ragged input data tensor.
+  // input_offsets: ragged input offsets tensor.
+  // input_sizes: ragged input sizes tensor.
+  // output: ragged output data tensor.
+  // output_offsets: ragged output offsets tensor.
+  // output_sizes: ragged output sizes tensor.
+  //
+  // The '*_offsets' and '*_sizes' tensors must have the same shape.
+  // The output buffer is passed in as an input (and aliased in the output),
+  // to support incremental updates to the same buffer.
+  //
+  static std::unique_ptr<HloInstruction> CreateRaggedAllToAll(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      const CollectiveDeviceList& device_list,
+      const std::optional<int64_t>& channel_id);
+
+  ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
+  static std::unique_ptr<HloInstruction> CreateRaggedAllToAll(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      absl::Span<const ReplicaGroup> replica_groups,
+      const std::optional<int64_t>& channel_id);
+
   // Creates a communication instruction that broadcasts data cross replicas.
   // Data is sent from to the first replica id in each group to the other ids in
   // the same group. If a replica id is not a in any replica group, the output
@@ -1347,7 +1408,8 @@ class HloInstruction {
   // "fused_root". Additional instructions can be added to the fusion
   // instruction with the method FuseInstruction.
   static std::unique_ptr<HloInstruction> CreateFusion(
-      const Shape& shape, FusionKind fusion_kind, HloInstruction* fused_root);
+      const Shape& shape, FusionKind fusion_kind, HloInstruction* fused_root,
+      absl::string_view prefix = "");
 
   static std::unique_ptr<HloInstruction> CreateFusion(
       const Shape& shape, FusionKind fusion_kind,
@@ -1493,9 +1555,13 @@ class HloInstruction {
   // within the operand vector.
   InstructionVector unique_operands() const;
 
-  // Returns the index of 'target' in the operands sequence.
+  // Returns the first index of 'target' that occurs in the operands sequence.
   // Precondition: target must be an operand (or a fatal error will occur).
   int64_t operand_index(const HloInstruction* target) const;
+
+  // Returns all indices of 'target' that occur in the operands sequence.
+  // Precondition: target must be an operand (or a fatal error will occur).
+  std::vector<int64_t> operand_indices(const HloInstruction* target) const;
 
   // Returns the number of users of this instruction.
   int64_t user_count() const { return users_.size(); }
@@ -1681,6 +1747,13 @@ class HloInstruction {
   // Decomposes fusion back to individual parts.
   absl::Status Defuse();
 
+  // Unfuses the given instruction from its fusion computation. If the given
+  // instruction is not fused, this is a no-op and returns nullptr. Returns a
+  // pointer to the newly unfused instruction if successful. Currently, fused
+  // instructions with parameter or constant operands are supported.
+  absl::StatusOr<HloInstruction*> UnfuseInstruction(
+      HloInstruction* instruction);
+
   // Replaces all uses of this instruction with the new producer. If
   // new_producer is a user of this instruction then new_producer remains a use
   // of this instruction to avoid introducing cycles into the graph.
@@ -1808,8 +1881,9 @@ class HloInstruction {
   //
   // Precondition: The instruction is a Conditional instruction.
   const PtrVec<HloComputation*>& branch_computations() const;
-  int branch_count() const;
-  HloComputation* branch_computation(int b) const;
+  int32_t branch_count() const;
+  HloComputation* branch_computation(int32_t b) const;
+  int32_t branch_index(HloComputation* computation) const;
   // Sets a branch HloComputation for Conditional.
   // The setter should only be called by HloModule or HloComputation methods.
   //

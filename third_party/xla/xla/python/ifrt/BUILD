@@ -87,6 +87,7 @@ cc_library(
         ":attribute_map",
         ":device_proto_cc",
         ":dtype_proto_cc",
+        ":execute_options_proto_cc",
         ":remap_plan_proto_cc",
         ":serdes",
         ":shape_proto_cc",
@@ -105,8 +106,11 @@ cc_library(
         "//xla/python/ifrt/ir:sharding_param",
         "//xla/service:computation_placer_hdr",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/functional:function_ref",
@@ -120,7 +124,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@local_tsl//tsl/lib/gtl:int_type",
         "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:statusor",
@@ -134,6 +137,7 @@ xla_cc_test(
     deps = [
         ":ifrt",
         ":mock",
+        "//xla/tsl/concurrency:ref_count",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
     ],
@@ -162,6 +166,11 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:statusor",
     ],
+)
+
+tf_proto_library(
+    name = "execute_options_proto",
+    srcs = ["execute_options.proto"],
 )
 
 xla_cc_test(
@@ -336,6 +345,7 @@ cc_library(
     deps = [
         ":ifrt",
         ":test_util",
+        "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/platform:test",
     ],
     alwayslink = True,
@@ -517,15 +527,15 @@ tf_proto_library(
 )
 
 xla_cc_test(
-    name = "device_test",
+    name = "device_list_test",
     size = "small",
-    srcs = ["device_test.cc"],
+    srcs = ["device_list_test.cc"],
     deps = [
         ":device_proto_cc",
         ":device_test_util",
         ":ifrt",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:platform_port",
@@ -650,10 +660,10 @@ xla_cc_test(
         ":serdes",
         ":serdes_proto_cc",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/protobuf:error_codes_proto_impl_cc",
+        "//xla/tsl/protobuf:status_proto_cc",
         "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:statusor",
-        "@local_tsl//tsl/protobuf:error_codes_proto_impl_cc",
-        "@local_tsl//tsl/protobuf:status_proto_cc",
     ],
 )
 
@@ -713,6 +723,7 @@ xla_cc_test(
         ":ifrt",
         ":program_serdes",
         ":serdes",
+        ":serdes_proto_cc",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/functional:bind_front",
