@@ -1212,7 +1212,8 @@ tf_xla_py_strict_test(
     shard_count = 5,
     tags = [
         "no_pip",  # TODO(b/149738646): fix pip install so these tests run on kokoro pip
-        "optonly"
+        "optonly",
+        "no_rocm"  # SWDEV-488411  LLVM in his branch needs to be newer for gfx12
     ],
     deps = [
         ":xla_test",
