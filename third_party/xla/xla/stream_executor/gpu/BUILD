@@ -558,34 +558,18 @@ tsl_gpu_library(
 
 tsl_gpu_library(
     name = "gpu_cudamallocasync_allocator",
-<<<<<<< HEAD
-    srcs = [
-        "gpu_cudamallocasync_allocator.cc",
-    ],
-    hdrs = ["gpu_cudamallocasync_allocator.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
-    cuda_deps = [
-        "//xla/stream_executor/cuda:cuda_executor",
-=======
     srcs = ["gpu_cudamallocasync_allocator.cc"],
     hdrs = ["gpu_cudamallocasync_allocator.h"],
     tags = [
         "cuda-only",
         "gpu",
->>>>>>> master
     ],
     deps = [
         ":gpu_init_impl",
         "//xla/stream_executor:activate_context",
         "//xla/stream_executor:stream_executor_h",
-<<<<<<< HEAD
-        "//xla/stream_executor/gpu:scoped_activate_context",
-=======
         "//xla/stream_executor/cuda:cuda_executor",
         "//xla/stream_executor/cuda:cuda_status",
->>>>>>> master
         "//xla/tsl/framework:allocator",
         "//xla/tsl/framework:device_id",
         "//xla/tsl/util:env_var",

@@ -680,8 +680,6 @@ lit_test_suite(
     ],
     default_tags = tf_cuda_tests_tags(),
     hermetic_cuda_data_dir = "%S/../../../../../cuda_nvcc",
-<<<<<<< HEAD
-=======
     tags_override = {
         "element_wise_row_vectorization.hlo": ["cuda-only"],
         "scatter_bf16.hlo": ["cuda-only"],
@@ -689,7 +687,6 @@ lit_test_suite(
         "reduce_unnested.hlo": ["cuda-only"],
         "reduction_vectorization_sm_all.hlo": ["cuda-only"],
     },
->>>>>>> master
     tools = [
         "//xla/tools:hlo-opt",
         "@llvm-project//llvm:FileCheck",
@@ -803,10 +800,7 @@ xla_test(
         "gpu_a100",
         "gpu_h100",
     ],
-<<<<<<< HEAD
-=======
     tags = ["cuda-only"],
->>>>>>> master
     deps = if_cuda_is_configured(
         [
             ":gpu_codegen_test",
