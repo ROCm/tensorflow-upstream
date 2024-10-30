@@ -4301,10 +4301,15 @@ xla_cc_test(
     ],
 )
 
-cuda_library(
+gpu_kernel_library(
     name = "stream_executor_util_kernel",
-    srcs = if_cuda_is_configured(["stream_executor_util_kernel.cu.cc"]),
-    deps = ["@local_config_cuda//cuda:cuda_headers"],
+    srcs = ["stream_executor_util_kernel.cu.cc"],
+    tags = ["gpu"],
+    deps = if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 cc_library(
@@ -4316,7 +4321,6 @@ cc_library(
     deps = [
         ":cublas_cudnn",
         ":launch_dimensions",
-        ":stream_executor_util_kernel",
         "//xla:autotuning_proto_cc",
         "//xla:shape_util",
         "//xla:util",
@@ -4343,7 +4347,10 @@ cc_library(
         "@local_tsl//tsl/platform:ml_dtypes",
         "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:statusor",
-    ],
+        "@local_tsl//tsl/protobuf:dnn_proto_cc",
+    ] + if_gpu_is_configured([
+        ":stream_executor_util_kernel",
+    ]),
 )
 
 xla_cc_test(
