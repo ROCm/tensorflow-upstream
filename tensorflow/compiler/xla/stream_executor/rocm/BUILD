@@ -7,7 +7,9 @@ load(
     "stream_executor_friends",
 )
 load("//tensorflow/tsl:tsl.bzl", "set_external_visibility", "tsl_copts")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts")
+load("@local_config_rocm//rocm:build_defs.bzl", 
+    "if_rocm_is_configured", "rocm_copts", "if_rocm_hipblaslt"
+)
 load("//tensorflow/tsl/platform:build_config_root.bzl", "if_static")
 
 package(
@@ -184,6 +186,7 @@ cc_library(
     hdrs = if_rocm_is_configured(["rocm_blas.h"]),
     visibility = ["//visibility:public"],
     deps = if_rocm_is_configured([
+        ":hipblas_lt_header",
         ":rocblas_if_static",
         ":rocblas_wrapper",
         ":rocm_gpu_executor",
@@ -200,6 +203,7 @@ cc_library(
         "//tensorflow/compiler/xla/stream_executor/gpu:gpu_helpers_header",
         "//tensorflow/compiler/xla/stream_executor/gpu:gpu_stream_header",
         "//tensorflow/compiler/xla/stream_executor/gpu:gpu_timer_header",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_blas_lt",
         "//tensorflow/compiler/xla/stream_executor/platform",
         "//tensorflow/compiler/xla/stream_executor:blas",
         "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
@@ -432,6 +436,77 @@ cc_library(
 )
 
 cc_library(
+    name = "hipblas_lt_kernel",
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+    ]),
+    srcs = if_rocm_is_configured(["hip_blas_lt.cu.cc"]),
+    copts = rocm_copts(),
+    deps = if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+        #MATH_DEPS
+    ])
+)
+
+cc_library(
+    name = "hipblaslt_if_static",
+    deps = if_rocm_hipblaslt([
+        "@local_config_rocm//rocm:hipblaslt",
+    ]),
+)
+
+cc_library(
+    name = "amdhipblaslt_plugin",
+    srcs = if_rocm_is_configured([
+            "hip_blas_lt.cc",
+            "hip_blas_utils.cc",
+    ]),
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+        "hipblaslt_wrapper.h",
+        "hip_blas_utils.h",
+        "rocm_blas.h",
+    ]),
+    deps = if_rocm_is_configured([
+        # keep sorted
+        ":hipblas_lt_header",
+        ":hipblas_lt_kernel",
+        ":rocm_platform_id",
+        "@com_google_absl//absl/types:any",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_blas_lt",
+        "//tensorflow/compiler/xla:statusor",
+        "//tensorflow/compiler/xla:util",
+        "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_activation",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_helpers_header",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_stream_header",
+        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_timer_header",
+        "//tensorflow/compiler/xla/stream_executor",
+        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
+        "//tensorflow/compiler/xla/stream_executor:scratch_allocator",
+        "@local_config_rocm//rocm:rocm_headers",
+    ]) + if_static([
+        ":hipblaslt_if_static",
+    ]),
+    linkopts = ["-lhipblaslt"],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "hipblas_lt_header",
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+        "hipblaslt_wrapper.h",
+        "hip_blas_utils.h",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = if_rocm_is_configured([
+        # keep sorted
+    ]),
+)
+
+cc_library(
     name = "roctracer_if_static",
     deps = if_static([
         ":roctracer_if_rocm_configured",
@@ -483,6 +558,7 @@ cc_library(
         ":rocm_driver",
         ":rocm_platform",
         ":rocm_helpers",
+        ":amdhipblaslt_plugin",
     ]),
     alwayslink = 1,
 )

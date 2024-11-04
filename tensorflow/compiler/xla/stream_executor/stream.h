@@ -934,8 +934,12 @@ class Stream {
                       detail::is_any_of<ConstantType, float, Eigen::half>(),
                   "If input is Eigen::half, constant has to be either "
                   "Eigen::half or float");
+    static_assert(!std::is_same_v<InputType, Eigen::bfloat16> ||
+                      detail::is_any_of<ConstantType, float, Eigen::bfloat16>(),
+                  "If input is Eigen::bfloat16, constant has to be either "
+                  "Eigen::bfloat16 or float");
     static_assert(
-        detail::is_any_of<InputType, Eigen::half, ConstantType>(),
+        detail::is_any_of<InputType, Eigen::half, Eigen::bfloat16, ConstantType>(),
         "If input is not Eigen::half, constant and input types have to match");
     blas::BlasSupport *blas = parent()->AsBlas();
     if (!blas) {

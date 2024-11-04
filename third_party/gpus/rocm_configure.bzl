@@ -359,6 +359,10 @@ def _find_libs(repository_ctx, rocm_config, hipfft_or_rocfft, miopen_path, rccl_
     if int(rocm_config.rocm_version_number) >= 40500:
         libs_paths.append(("hipsolver", _rocm_lib_paths(repository_ctx, "hipsolver", rocm_config.rocm_toolkit_path)))
         libs_paths.append(("hipblas", _rocm_lib_paths(repository_ctx, "hipblas", rocm_config.rocm_toolkit_path)))
+
+    # hipblaslt may be absent even in versions of ROCm where it exists
+    # (it is not installed by default in some containers). Autodetect.
+    libs_paths.append(("hipblaslt", _rocm_lib_paths(repository_ctx, "hipblaslt", rocm_config.rocm_toolkit_path)))
     return _select_rocm_lib_paths(repository_ctx, libs_paths, bash_bin)
 
 def _exec_find_rocm_config(repository_ctx, script_path):
@@ -469,6 +473,7 @@ def _create_dummy_repository(repository_ctx):
             "%{rocm_extra_copts}": "[]",
             "%{rocm_gpu_architectures}": "[]",
             "%{rocm_version_number}": "0",
+            "%{rocm_hipblaslt}": "False",
         },
     )
     _tpl(
@@ -487,6 +492,7 @@ def _create_dummy_repository(repository_ctx):
             "%{roctracer_lib}": _lib_name("roctracer64"),
             "%{rocsolver_lib}": _lib_name("rocsolver"),
             "%{hipsolver_lib}": _lib_name("hipsolver"),
+            "%{hipblaslt_lib}": _lib_name("hipblaslt"),
             "%{copy_rules}": "",
             "%{rocm_headers}": "",
         },
@@ -503,6 +509,7 @@ def _create_dummy_repository(repository_ctx):
         "rocm:rocm_config.h",
         {
             "%{rocm_toolkit_path}": _DEFAULT_ROCM_TOOLKIT_PATH,
+            "%{hipblaslt_flag}": "0",
         },
         "rocm/rocm/rocm_config.h",
     )
@@ -642,6 +649,7 @@ def _create_local_rocm_repository(repository_ctx):
         ],
     ))
 
+    have_hipblaslt = "1" if rocm_libs["hipblaslt"] != None else "0"
 
     # Set up BUILD file for rocm/
     repository_ctx.template(
@@ -655,6 +663,7 @@ def _create_local_rocm_repository(repository_ctx):
             ),
             "%{rocm_gpu_architectures}": str(rocm_config.amdgpu_targets),
             "%{rocm_version_number}": str(rocm_version_number),
+            "%{rocm_hipblaslt}": "True" if rocm_libs["hipblaslt"] != None else "False",
         },
     )
 
@@ -674,6 +683,9 @@ def _create_local_rocm_repository(repository_ctx):
                             hiprand_include +
                             rocrand_include),
     }
+    if rocm_libs["hipblaslt"] != None:
+        repository_dict["%{hipblaslt_lib}"] = rocm_libs["hipblaslt"].file_name
+
     if rocm_version_number >= 40500:
         repository_dict["%{hipsolver_lib}"] = rocm_libs["hipsolver"].file_name
         repository_dict["%{hipblas_lib}"] = rocm_libs["hipblas"].file_name
@@ -746,6 +758,9 @@ def _create_local_rocm_repository(repository_ctx):
             "%{hip_runtime_library}": "amdhip64",
             "%{crosstool_verbose}": _crosstool_verbose(repository_ctx),
             "%{gcc_host_compiler_path}": str(cc),
+            "%{rocm_amdgpu_targets}": ",".join(
+                ["\"%s\"" % c for c in rocm_config.amdgpu_targets],
+            ),
         },
     )
 
@@ -762,6 +777,7 @@ def _create_local_rocm_repository(repository_ctx):
             "%{rocm_version_number}": rocm_config.rocm_version_number,
             "%{miopen_version_number}": rocm_config.miopen_version_number,
             "%{hipruntime_version_number}": rocm_config.hipruntime_version_number,
+            "%{hipblaslt_flag}": have_hipblaslt,
         },
     )
 

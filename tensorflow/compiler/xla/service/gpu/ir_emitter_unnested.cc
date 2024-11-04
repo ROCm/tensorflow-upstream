@@ -91,6 +91,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/fft_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/for_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/gemm_thunk.h"
+#include "tensorflow/compiler/xla/service/gpu/gpublas_lt_matmul_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_asm_opts_util.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_constants.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_conv_runner.h"
@@ -143,7 +144,6 @@ limitations under the License.
 #include "tensorflow/tsl/protobuf/dnn.pb.h"
 
 #if GOOGLE_CUDA
-#include "tensorflow/compiler/xla/service/gpu/cublas_lt_matmul_thunk.h"
 #include "tensorflow/compiler/xla/service/gpu/ir_emitter_triton.h"
 #endif  // GOOGLE_CUDA
 
@@ -1147,8 +1147,6 @@ Status IrEmitterUnnested::EmitGemmThunk(mlir::Operation* op) {
   return OkStatus();
 }
 
-#if GOOGLE_CUDA
-
 Status IrEmitterUnnested::EmitCublasLtMatmulThunk(mlir::Operation* op) {
   auto matmul = mlir::dyn_cast<mlir::lmhlo_gpu::CublasLtMatmulOp>(op);
   TF_RET_CHECK(matmul != nullptr);
@@ -1163,20 +1161,25 @@ Status IrEmitterUnnested::EmitCublasLtMatmulThunk(mlir::Operation* op) {
     TF_ASSIGN_OR_RETURN(bias, GetAllocationSlice(matmul.getBias()));
   }
 
-  BufferAllocation::Slice aux;
+  BufferAllocation::Slice aux, workspace;
   if (matmul.getAux() != nullptr) {
     TF_ASSIGN_OR_RETURN(aux, GetAllocationSlice(matmul.getAux()));
   }
+  if (matmul.getWorkspace() != nullptr) {
+    TF_ASSIGN_OR_RETURN(workspace, GetAllocationSlice(matmul.getWorkspace()));
+  }
 
-  TF_ASSIGN_OR_RETURN(cublas_lt::MatmulPlan plan,
-                      cublas_lt::MatmulPlan::For(matmul));
+  TF_ASSIGN_OR_RETURN(GemmConfig config, GemmConfig::For(matmul));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
-      GetThunkInfo(op), std::move(plan), matmul.getAlgorithm(), a, b, c, d,
-      bias, aux, a_scale, b_scale, c_scale, d_scale, d_amax);
+      GetThunkInfo(op), std::move(config), a, b, c, d,
+      bias, aux, a_scale, b_scale, c_scale, d_scale, d_amax,
+      workspace); 
 
   AddThunkToThunkSequence(std::move(thunk));
   return OkStatus();
 }
+
+#if GOOGLE_CUDA
 
 Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(mlir::Operation* op) {
   auto matmul = mlir::dyn_cast<mlir::lmhlo_gpu::CublasLtMatmulF8Op>(op);
@@ -5688,10 +5691,10 @@ Status IrEmitterUnnested::EmitOp(mlir::Operation* op) {
     return EmitGemmThunk(op);
   }
 
-#if GOOGLE_CUDA
   if (mlir::isa<mlir::lmhlo_gpu::CublasLtMatmulOp>(op)) {
     return EmitCublasLtMatmulThunk(op);
   }
+#if GOOGLE_CUDA
   if (mlir::isa<mlir::lmhlo_gpu::CublasLtMatmulF8Op>(op)) {
     return EmitCublasLtMatmulThunkF8(op);
   }

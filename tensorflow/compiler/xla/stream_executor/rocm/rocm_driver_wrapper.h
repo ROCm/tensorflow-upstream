@@ -97,6 +97,7 @@ namespace wrap {
   __macro(hipHostUnregister)                        \
   __macro(hipInit)                                  \
   __macro(hipLaunchHostFunc)                        \
+  __macro(hipLaunchKernel)                          \
   __macro(hipMalloc)                                \
   __macro(hipMemGetAddressRange)                    \
   __macro(hipMemGetInfo)                            \
