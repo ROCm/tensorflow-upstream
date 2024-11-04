@@ -1863,12 +1863,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     TF_ASSIGN_OR_RETURN(bool output_is_column_major,
                         MatrixIsColumnMajor(instr, gemm_backend_config));
 
-    if (std::holds_alternative<se::RocmComputeCapability>(gpu_version_)) {
-      auto rocm_compute_capability_ =
-          std::get<se::RocmComputeCapability>(gpu_version_);
-
-      // as of ROCm 5.5, hipblaslt only supports MI200.
-      if (rocm_compute_capability_.gcn_arch_name().substr(0, 6) != "gfx90a") {
+    if (auto *rocm = std::get_if<se::RocmComputeCapability>(&gpu_version_)) {
+      if (!rocm->has_hipblaslt()) {
         return false;
       }
     }
