@@ -71,7 +71,8 @@ if [ -f /usertools/rocm.bazelrc ]; then
              --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
              --action_env=TF_ENABLE_ONEDNN_OPTS=0 \
              --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
-             --test_env=TF_GPU_COUNT=$TF_GPU_COUNT
+             --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
+             --test_env=MIOPEN_DEBUG_CONV_WINOGRAD=0
 else
 	# Legacy style: run configure then build
 	yes "" | $PYTHON_BIN_PATH configure.py
@@ -89,6 +90,7 @@ else
 	      --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
 	      --test_env=HSA_TOOLS_LIB=libroctracer64.so \
 	      --test_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
+        --test_env=MIOPEN_DEBUG_CONV_WINOGRAD=0 \
 	      --action_env=OPENBLAS_CORETYPE=Haswell \
         --action_env=TF_ENABLE_ONEDNN_OPTS=0 \
 	      --test_timeout 920,2400,7200,9600 \
