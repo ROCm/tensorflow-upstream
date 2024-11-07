@@ -135,6 +135,38 @@ xla_cc_test(
     ],
 )
 
+xla_test(
+    name = "gpu_hlo_runner_test",
+    srcs = ["gpu_hlo_runner_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":gpu_codegen_test",
+        "//xla:error_spec",
+        "//xla:test",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
+        "//xla/service:executable",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_pass",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/service/gpu:gemm_rewriter",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_memory_allocator",
+        "//xla/tests:filecheck",
+        "//xla/tests:verified_hlo_module",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@local_tsl//tsl/lib/core:status_test_util",
+        "@local_tsl//tsl/platform:statusor",
+        "@local_tsl//tsl/platform:test_main",
+    ]
+)
+
 xla_cc_test(
     name = "async_command_buffer_test",
     srcs = ["async_command_buffer_test.cc"],
