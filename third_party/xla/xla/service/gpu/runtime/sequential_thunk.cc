@@ -72,14 +72,38 @@ absl::Status SequentialThunk::Initialize(const InitializeParams& params) {
 }
 
 absl::Status SequentialThunk::ExecuteOnStream(const ExecuteParams& params) {
+
+  bool do_profile = VLOG_IS_ON(1);
+  if(do_profile) {
+    VLOG(1) << "------------------------------------------------------------------";
+  }
+  std::unique_ptr<se::EventBasedTimer> execution_timer;
+
   for (const std::unique_ptr<Thunk>& thunk : thunks_) {
+    auto anno = thunk->profile_annotation();
+    // if (!anno.empty()) VLOG(0) << anno;
+
+    if(do_profile) {
+      TF_ASSIGN_OR_RETURN(execution_timer, params.stream->CreateEventBasedTimer(
+        true));
+      VLOG(1) << thunk->KindToString(thunk->kind()) << ": " << thunk->ToString(0);
+    }
+
     std::optional<tsl::profiler::ScopedAnnotation> annotation =
-        GetKernelAnnotation(thunk->profile_annotation());
+        GetKernelAnnotation(anno);
     if (params.mock_collectives && thunk->IsCollective()) {
       continue;
     }
     TF_RETURN_IF_ERROR(thunk->ExecuteOnStream(params));
+
+    if (do_profile) {
+      TF_ASSIGN_OR_RETURN(absl::Duration elapsed,
+                        execution_timer->GetElapsedDuration());
+      auto tm = absl::ToDoubleNanoseconds(elapsed);
+      VLOG(1) << "Time elapsed: " << tm / 1000 << " usec";
+    }
   }
+
   return absl::OkStatus();
 }
 
