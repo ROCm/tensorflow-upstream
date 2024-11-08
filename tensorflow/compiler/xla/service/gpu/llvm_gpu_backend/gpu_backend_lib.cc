@@ -1210,6 +1210,13 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
           "Incompatible compute capability was specified.");
     }
 
+    llvm::Triple default_target_triple("amdgcn--amdhsa-amdgiz");
+    // Construct LLVM TargetMachine for AMDGPU.
+    std::unique_ptr<llvm::TargetMachine> target_machine =
+        AMDGPUGetTargetMachine(default_target_triple, gpu_version,
+                               hlo_module_config);
+#ifdef TENSORFLOW_HSACO_USE_ROCM_LLVM
+
     std::string gcn_arch_name = compute_capability->gcn_arch_name();
 
     std::string hsaco_filename =
@@ -1224,12 +1231,6 @@ StatusOr<std::vector<uint8_t>> CompileToHsaco(
     }
     VLOG(1) << "HSACO cache miss";
 
-    llvm::Triple default_target_triple("amdgcn--amdhsa-amdgiz");
-    // Construct LLVM TargetMachine for AMDGPU.
-    std::unique_ptr<llvm::TargetMachine> target_machine =
-        AMDGPUGetTargetMachine(default_target_triple, gpu_version,
-                               hlo_module_config);
-#ifdef TENSORFLOW_HSACO_USE_ROCM_LLVM
     auto* env = tsl::Env::Default();
     // Prepare filenames for all stages of compilation:
     // IR, binary ISA, and HSACO.
