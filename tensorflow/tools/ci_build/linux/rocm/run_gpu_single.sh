@@ -37,7 +37,7 @@ if [[ -n $1 ]]; then
     ROCM_INSTALL_DIR=$1
 else
     if [[ -z "${ROCM_PATH}" ]]; then
-        ROCM_INSTALL_DIR=/opt/rocm-6.0.0
+        ROCM_INSTALL_DIR=/opt/rocm-6.2.0
     else
         ROCM_INSTALL_DIR=$ROCM_PATH
     fi
@@ -68,24 +68,29 @@ else
 	# Legacy style: run configure then build
 	yes "" | $PYTHON_BIN_PATH configure.py
 
-# Run bazel test command. Double test timeouts to avoid flakes.
-bazel test \
-      --config=rocm \
-      -k \
-      --test_tag_filters=gpu,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-cuda-only,-benchmark-test,-rocm_multi_gpu,-tpu,-v1only \
-      --jobs=${N_BUILD_JOBS} \
-      --local_test_jobs=${N_TEST_JOBS} \
-      --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
-      --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
-      --test_env=MIOPEN_DEBUG_CONV_WINOGRAD=0 \
-      --test_timeout 600,900,2400,7200 \
-      --build_tests_only \
-      --test_output=errors \
-      --test_sharding_strategy=disabled \
-      --test_size_filters=small,medium,large \
-      --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute \
-      -- \
-      //tensorflow/... \
-      -//tensorflow/core/tpu/... \
-      -//tensorflow/lite/... \
-      -//tensorflow/compiler/tf2tensorrt/... \
+  # Run bazel test command. Double test timeouts to avoid flakes.
+	bazel test \
+	      --config=rocm \
+	      -k \
+	      --test_tag_filters=gpu,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-no_rocm,-benchmark-test,-rocm_multi_gpu,-tpu,-v1only \
+	      --jobs=${N_BUILD_JOBS} \
+	      --local_test_jobs=${N_TEST_JOBS} \
+	      --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
+	      --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
+	      --test_env=HSA_TOOLS_LIB=libroctracer64.so \
+        --test_env=MIOPEN_DEBUG_CONV_WINOGRAD=0 \
+	      --test_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
+	      --test_timeout 920,2400,7200,9600 \
+	      --build_tests_only \
+	      --test_output=errors \
+	      --test_sharding_strategy=disabled \
+	      --test_size_filters=small,medium,large \
+	      --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute \
+	      -- \
+	      //tensorflow/... \
+	      -//tensorflow/python/integration_testing/... \
+	      -//tensorflow/core/tpu/... \
+	      -//tensorflow/lite/... \
+	      -//tensorflow/compiler/tf2tensorrt/... \
+	      -//tensorflow/dtensor/python/tests:multi_client_test_nccl_2gpus
+fi
