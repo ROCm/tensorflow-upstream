@@ -78,7 +78,7 @@ class GemmAutotuner {
 
     // Don't run autotuning concurrently on the same GPU.
     absl::MutexLock gpu_lock(&GetGpuMutex(stream_->parent()));
-
+    
     TF_ASSIGN_OR_RETURN(rz_buffers_, RedzoneBuffers::FromShapes(
          std::move(input_shapes), output_shape, autotune_config_, stream_.get(), 
           debug_options, RedzoneBuffers::kAllInputsAllOutputs));
@@ -103,11 +103,10 @@ class GemmAutotuner {
 
     // Don't run autotuning concurrently on the same GPU.
     absl::MutexLock gpu_lock(&GetGpuMutex(stream_->parent()));
-
     TF_ASSIGN_OR_RETURN(rz_buffers_, RedzoneBuffers::FromInstruction(
                         *gemm, autotune_config_, stream_.get(), debug_options,
                         RedzoneBuffers::kAllInputsAllOutputs));
-    
+
     return IsCublasLtMatmul(*gemm)
            ? TuneGpuBlasLt(gemm->shape(), gemm_config)
            : TuneGpuBlas(gemm->shape(), gemm_config);
@@ -120,8 +119,7 @@ class GemmAutotuner {
     return rz_buffers_.output_buffers().at(0);
   }
 
-  StatusOr<tensorflow::AutotuneResult> TuneGpuBlasLt(const Shape& out_shape,
-         const GemmConfig& gemm_config) {
+  StatusOr<tensorflow::AutotuneResult> TuneGpuBlasLt(const Shape& out_shape, const GemmConfig& gemm_config) {
     
     se::DeviceMemoryBase workspace_buffer;
     if(out_shape.IsTuple()) {
@@ -143,7 +141,7 @@ class GemmAutotuner {
     if (has_aux_output) {
       aux_buffer = rz_buffers_.output_buffers().at(1);
     }
-
+    
     TF_ASSIGN_OR_RETURN(auto plan,
               BlasLt::GetMatmulPlan(stream_.get(), gemm_config));
 
@@ -367,7 +365,7 @@ StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
   
   GemmAutotuner autotuner(config);
   TF_ASSIGN_OR_RETURN(auto new_algorithm,
-    AutotunerUtil::Autotune(se::gpu::ToCSVString(gemm_config, false), config, 
+    AutotunerUtil::Autotune(se::gpu::ToCSVString(gemm_config, true), config, 
      [&]() -> StatusOr<AutotunerUtil::CacheValue> {
         TF_ASSIGN_OR_RETURN(auto algo, autotuner(gemm, gemm_config));
         return algo.has_gemm() ? algo.gemm().algorithm() : se::blas::kDefaultAlgorithm;
@@ -410,7 +408,7 @@ StatusOr<AutotunerUtil::CacheValue> GemmAlgorithmPicker::RunStandalone(
   GemmAutotuner autotuner(config_);
   GemmConfig gemm_config{cfg};
 
-  return AutotunerUtil::Autotune(se::gpu::ToCSVString(gemm_config, false), config_, 
+  return AutotunerUtil::Autotune(se::gpu::ToCSVString(gemm_config, true), config_, 
      [&]() -> StatusOr<AutotunerUtil::CacheValue> { 
         TF_ASSIGN_OR_RETURN(auto algo, autotuner(gemm_config, std::move(input_shapes), 
                 output_shape, debug_options)); 
