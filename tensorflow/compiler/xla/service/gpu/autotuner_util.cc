@@ -56,7 +56,7 @@ static auto& autotune_cache ABSL_GUARDED_BY(autotune_cache_mu) =
 
 namespace {
 
-void CSVLegend(std::ostream& os) {
+void CSVLegend(std::ostream& os, bool full_string=false) {
   
   os << kCsvComment << " m" << kCsvSep << "n" << kCsvSep << "k" << kCsvSep
         << "batch_count" << kCsvSep << "trans_a" << kCsvSep 
@@ -64,8 +64,11 @@ void CSVLegend(std::ostream& os) {
         << "type_a" << kCsvSep << "type_b" << kCsvSep 
         << "type_c" << kCsvSep << "lda" << kCsvSep << "ldb" << kCsvSep
         << "ldc" << kCsvSep << "stride_a" << kCsvSep
-        << "stride_b" << kCsvSep << "stride_c" << kCsvSep
-        << "alg_index" << std::endl;
+        << "stride_b" << kCsvSep << "stride_c";
+  if (full_string) {
+    os << kCsvSep << "epilogue";
+  }
+  os << kCsvSep << "alg_index" << std::endl;
 }
 
 }  // namespace
@@ -89,7 +92,7 @@ void CSVLegend(std::ostream& os) {
       if (!s_dump_fs->is_open()) {
         LOG(WARNING) << "Unable to open: " << dump_path << " for writing!";
       } 
-      CSVLegend(*s_dump_fs);
+      CSVLegend(*s_dump_fs, true);
     }
     *s_dump_fs << key.Get() << kCsvSep << it->second << std::endl;
   }
