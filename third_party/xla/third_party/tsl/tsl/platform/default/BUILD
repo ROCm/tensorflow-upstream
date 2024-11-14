@@ -102,6 +102,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocm_config",
         "@local_config_tensorrt//:tensorrt_headers",
     ] + if_oss(["@local_config_nccl//:nccl_config"]),
 )
@@ -406,6 +407,7 @@ cc_library(
         "//tsl/platform:path",
         "//tsl/platform:types",
         "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocm_config",
     ],
 )
 
