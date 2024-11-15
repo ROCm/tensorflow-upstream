@@ -60,13 +60,13 @@ void CSVLegend(std::ostream& os, bool full_string=false) {
   
   os << kCsvComment << " m" << kCsvSep << "n" << kCsvSep << "k" << kCsvSep
         << "batch_count" << kCsvSep << "trans_a" << kCsvSep 
-        << "trans_b" << kCsvSep 
-        << "type_a" << kCsvSep << "type_b" << kCsvSep 
+        << "trans_b" << kCsvSep << "type_a" << kCsvSep << "type_b" << kCsvSep 
         << "type_c" << kCsvSep << "lda" << kCsvSep << "ldb" << kCsvSep
         << "ldc" << kCsvSep << "stride_a" << kCsvSep
         << "stride_b" << kCsvSep << "stride_c";
   if (full_string) {
-    os << kCsvSep << "epilogue";
+    os << kCsvSep << "alpha_re" << kCsvSep << "alpha_im" << kCsvSep
+        << "beta" << kCsvSep << "epilogue";
   }
   os << kCsvSep << "alg_index" << std::endl;
 }
