@@ -173,7 +173,9 @@ auto CublasLtMatmulThunk::GetCachedMatmulPlan(
         return std::move(plan);
       }
     }
-    return InternalError("Wrong algorithm ID: %d", algorithm_id);
+    TF_RETURN_IF_ERROR(plan->SetAlgorithm(algorithms[0]));
+    LOG(WARNING) << "Wrong algorithm ID: " << algorithm_id << " use default instead.";
+    return std::move(plan);
   };
   return cache.GetOrCreate(canonical_hlo_, create);
 }
