@@ -33,6 +33,8 @@ limitations under the License.
 #include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
 #include "tensorflow/compiler/xla/stream_executor/stream_executor_pimpl.h"
 #include "tensorflow/tsl/platform/stacktrace.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_blas_lt.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_blas_lt_gemm_runner.h"
 
 namespace stream_executor {
 
@@ -1590,6 +1592,13 @@ Stream &Stream::ThenBlasGemmBatched(
     uint64_t k, float alpha, DeviceMemorySlice<Eigen::half> a, int lda,
     DeviceMemorySlice<Eigen::half> b, int ldb, float beta,
     DeviceMemorySlice<Eigen::half> c, int ldc, int batch_count, blas::CallContext context) {
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);          
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, 
+      a, lda, b, ldb, beta, c, ldc, batch_count, allocator));
+      return *this;
+  }
+
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
                                         /*scratch_allocator=*/nullptr, context);
@@ -1643,6 +1652,12 @@ Stream &Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     DeviceMemorySlice<float> b, int ldb,
                                     float beta, DeviceMemorySlice<float> c,
                                     int ldc, int batch_count, blas::CallContext context) {
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);          
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, 
+      a, lda, b, ldb, beta, c, ldc, batch_count, allocator));
+      return *this;
+  }
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
                                         /*scratch_allocator=*/nullptr, context);
@@ -1675,6 +1690,12 @@ Stream &Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     DeviceMemorySlice<double> b, int ldb,
                                     double beta, DeviceMemorySlice<double> c,
                                     int ldc, int batch_count, blas::CallContext context) {
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);          
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, 
+      a, lda, b, ldb, beta, c, ldc, batch_count, allocator));
+      return *this;
+  }
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
                                         /*scratch_allocator=*/nullptr, context);
@@ -1706,6 +1727,12 @@ Stream &Stream::ThenBlasGemmBatched(
     DeviceMemorySlice<std::complex<float>> a, int lda,
     DeviceMemorySlice<std::complex<float>> b, int ldb, std::complex<float> beta,
     DeviceMemorySlice<std::complex<float>> c, int ldc, int batch_count, blas::CallContext context) {
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);          
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, 
+      a, lda, b, ldb, beta, c, ldc, batch_count, allocator));
+      return *this;
+  }
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
                                         /*scratch_allocator=*/nullptr, context);
@@ -1740,6 +1767,12 @@ Stream &Stream::ThenBlasGemmBatched(
     DeviceMemorySlice<std::complex<double>> b, int ldb,
     std::complex<double> beta, DeviceMemorySlice<std::complex<double>> c,
     int ldc, int batch_count, blas::CallContext context) {
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);          
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, 
+      a, lda, b, ldb, beta, c, ldc, batch_count, allocator));
+      return *this;
+  }
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
                                         /*scratch_allocator=*/nullptr, context);

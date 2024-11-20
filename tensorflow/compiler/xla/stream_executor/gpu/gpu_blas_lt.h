@@ -34,6 +34,8 @@ namespace stream_executor {
 
 namespace gpu {
 
+bool GpuBlasLtEnabled();
+
 xla::StatusOr<blas::DataType> AsBlasDataType(xla::PrimitiveType dtype);
 
 xla::StatusOr<blas::ComputationType> GetBlasComputationType(
