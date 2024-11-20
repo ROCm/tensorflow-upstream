@@ -21,7 +21,7 @@ TF_PKG_LOC=/tmp/tensorflow_pkg
 rm -f $TF_PKG_LOC/tensorflow*.whl
 
 # First positional argument (if any) specifies the ROCM_INSTALL_DIR
-ROCM_INSTALL_DIR=/opt/rocm-6.3.0.1
+ROCM_INSTALL_DIR=/opt/rocm-6.3
 if [[ -n $1 ]]; then
     ROCM_INSTALL_DIR=$1
 fi
