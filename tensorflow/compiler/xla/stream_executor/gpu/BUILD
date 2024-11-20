@@ -89,7 +89,8 @@ cc_library(
     deps = if_gpu_is_configured([
         "//tensorflow/core/protobuf:autotuning_proto_cc",
         "//tensorflow/compiler/xla:autotune_results_proto_cc",
-        # "//tensorflow/compiler/xla:xla_proto",		 
+        "//tensorflow/compiler/xla:xla_proto_cc",
+        "//tensorflow/compiler/xla:xla_data_proto_cc",		 
         "//tensorflow/compiler/xla/stream_executor:scratch_allocator",			        
         "//tensorflow/compiler/xla/service/gpu:autotuner_util",
         "//tensorflow/compiler/xla:debug_options_flags",
