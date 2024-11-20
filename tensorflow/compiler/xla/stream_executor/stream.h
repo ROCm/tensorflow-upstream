@@ -43,8 +43,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/stream_executor/platform/port.h"
 #include "tensorflow/compiler/xla/stream_executor/stream_executor_pimpl.h"
 #include "tensorflow/compiler/xla/stream_executor/temporary_memory_manager.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_blas_lt.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_blas_lt_gemm_runner.h"
+
 
 namespace stream_executor {
 
