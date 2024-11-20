@@ -936,14 +936,7 @@ class Stream {
       int ldc, blas::ComputationType computation_type,
       blas::AlgorithmType algorithm,
       blas::ProfileResult *output_profile_result,
-      blas::CallContext context) {
-    OutputType alpha{1};
-    OutputType beta{0};
-    return ThenBlasGemmWithAlgorithm(transa, transb, m, n, k, alpha, a, lda, b,
-                                     ldb, beta, c, ldc, computation_type,
-                                     algorithm, blas::kDefaultComputePrecision,
-                                     output_profile_result, context);
-  }
+      blas::CallContext context);
 
   template <typename InputType, typename OutputType, typename ConstantType>
   tsl::Status ThenBlasGemmWithAlgorithm(
@@ -954,36 +947,7 @@ class Stream {
       blas::ComputationType computation_type, blas::AlgorithmType algorithm,
       blas::ComputePrecision precision,
       blas::ProfileResult *output_profile_result,
-      blas::CallContext context) {
-    TF_RETURN_IF_ERROR(
-        CheckTypesForExtendedBlas<InputType, OutputType, ConstantType>(
-            computation_type));
-
-    blas::BlasSupport *blas = parent()->AsBlas();
-    if (!blas) {
-      return tsl::errors::Internal(
-          "Attempting to perform BLAS operation using "
-          "StreamExecutor without BLAS support");
-    }
-
-    void *alpha_ptr = &alpha;
-    void *beta_ptr = &beta;
-    float alpha_storage, beta_storage;
-    UpcastHalfToFloat<ConstantType>(&alpha_ptr, &beta_ptr, &alpha_storage,
-                                    &beta_storage);
-
-    tsl::Status st = blas->DoBlasGemmWithAlgorithm(
-        this, transa, transb, m, n, k, alpha_ptr, a,
-        blas::ToDataType<InputType>::value, lda, b,
-        blas::ToDataType<InputType>::value, ldb, beta_ptr, c,
-        blas::ToDataType<OutputType>::value, ldc, computation_type, algorithm,
-        precision, output_profile_result, context);
-    if (output_profile_result) {
-      // The error is recorded in the profile.
-      return ::tsl::OkStatus();
-    }
-    return st;
-  }
+      blas::CallContext context);
 
   template <typename InputType, typename OutputType, typename ConstantType>
   tsl::Status ThenBlasGemmStridedBatchedWithAlgorithm(
@@ -994,35 +958,7 @@ class Stream {
       int64_t stride_c, int batch_count, blas::ComputationType computation_type,
       blas::AlgorithmType algorithm, blas::ComputePrecision precision,
       blas::ProfileResult *output_profile_result,
-      blas::CallContext context) {
-    TF_RETURN_IF_ERROR(
-        CheckTypesForExtendedBlas<InputType, OutputType, ConstantType>(
-            computation_type));
-
-    blas::BlasSupport *blas = parent()->AsBlas();
-    if (!blas) {
-      return tsl::errors::Internal(
-          "Attempting to perform BLAS operation using "
-          "StreamExecutor without BLAS support");
-    }
-    void *alpha_ptr = &alpha;
-    void *beta_ptr = &beta;
-    float alpha_storage, beta_storage;
-    UpcastHalfToFloat<ConstantType>(&alpha_ptr, &beta_ptr, &alpha_storage,
-                                    &beta_storage);
-    tsl::Status st = blas->DoBlasGemmStridedBatchedWithAlgorithm(
-        this, transa, transb, m, n, k, alpha_ptr, a,
-        blas::ToDataType<InputType>::value, lda, stride_a, b,
-        blas::ToDataType<InputType>::value, ldb, stride_b, beta_ptr, c,
-        blas::ToDataType<OutputType>::value, ldc, stride_c, batch_count,
-        computation_type, algorithm, precision, output_profile_result,
-        context);
-    if (output_profile_result) {
-      // The error is recorded in the profile.
-      return ::tsl::OkStatus();
-    }
-    return st;
-  }
+      blas::CallContext context);
 
   template <typename T>
   using DeviceMemorySlice = absl::Span<DeviceMemory<T> *const>;

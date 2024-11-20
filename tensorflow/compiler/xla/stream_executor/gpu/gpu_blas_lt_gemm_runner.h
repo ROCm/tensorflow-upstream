@@ -187,7 +187,7 @@ struct BlasLtGemmRunner {
         
     auto res = ContiguousStrides(cvt(a), cvt(b), cvt(c), batch_count);
     if (res.ok()) {
-      auto strides = std::move(res.ValueOrDie());
+      auto strides = std::move(res.value());
       return RunStridedBatchedImpl(stream, trans_a, trans_b, m, n, k, 
           Convert(alpha), 
           type, *a[0], lda, strides[0] / sizeof(T), 
