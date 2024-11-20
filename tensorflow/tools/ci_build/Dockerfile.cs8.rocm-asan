@@ -118,7 +118,7 @@ ENV PATH="$OPENCL_ROOT/bin:${PATH}"
 
 # Workaround, explicitly add symbolic link to /opt/rocm
 RUN mkdir -p ${ROCM_PATH}/bin
-RUN mkdir ${ROCM_PATH}/.info
+RUN mkdir -p ${ROCM_PATH}/.info
 RUN touch ${ROCM_PATH}/.info/version
 RUN bash -c 'ln -s ${ROCM_PATH} /opt/rocm'
 
