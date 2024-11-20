@@ -899,12 +899,7 @@ class Stream {
                             const DeviceMemory<InputType> &b, int ldb,
                             DeviceMemory<InputType> *c, int ldc,
                             blas::ComputePrecision precision,
-                            blas::CallContext context) {
-    InputType alpha{1.0};
-    InputType beta{0.0};
-    return ThenBlasGemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c,
-                        ldc, precision, context);
-  }
+                            blas::CallContext context);
 
   // TODO(parkers): Update all callers to pass kDefaultComputePrecision.
   template <typename InputType>
@@ -913,10 +908,7 @@ class Stream {
                             const DeviceMemory<InputType> &a, int lda,
                             const DeviceMemory<InputType> &b, int ldb,
                             DeviceMemory<InputType> *c, int ldc,
-                            blas::CallContext context) {
-    return ThenBlasGemm(transa, transb, m, n, k, a, lda, b, ldb, c, ldc,
-                        blas::kDefaultComputePrecision,context);
-  }
+                            blas::CallContext context);
 
   template <typename InputType, typename ConstantType>
   tsl::Status ThenBlasGemm(blas::Transpose transa, blas::Transpose transb,
@@ -925,41 +917,7 @@ class Stream {
                            const DeviceMemory<InputType> &b, int ldb,
                            ConstantType beta, DeviceMemory<InputType> *c,
                            int ldc, blas::ComputePrecision precision,
-                           blas::CallContext context) {
-    static_assert(
-        detail::is_any_of<InputType, Eigen::half, Eigen::bfloat16, float,
-                          double, std::complex<float>, std::complex<double>>(),
-        "Input can be half, bf16, float, double, std::complex<float> or "
-        "std::complex<double>");
-    static_assert(!std::is_same_v<InputType, Eigen::half> ||
-                      detail::is_any_of<ConstantType, float, Eigen::half>(),
-                  "If input is Eigen::half, constant has to be either "
-                  "Eigen::half or float");
-    static_assert(!std::is_same_v<InputType, Eigen::bfloat16> ||
-                      detail::is_any_of<ConstantType, float, Eigen::bfloat16>(),
-                  "If input is Eigen::bfloat16, constant has to be either "
-                  "Eigen::bfloat16 or float");
-    static_assert(
-        detail::is_any_of<InputType, Eigen::half, Eigen::bfloat16, ConstantType>(),
-        "If input is not Eigen::half, constant and input types have to match");
-    blas::BlasSupport *blas = parent()->AsBlas();
-    if (!blas) {
-      return tsl::errors::Internal(
-          "Attempting to perform BLAS operation using "
-          "StreamExecutor without BLAS support");
-    }
-
-    void *alpha_ptr = &alpha;
-    void *beta_ptr = &beta;
-    float alpha_storage, beta_storage;
-    UpcastHalfToFloat<ConstantType>(&alpha_ptr, &beta_ptr, &alpha_storage,
-                                    &beta_storage);
-
-    return blas->DoBlasGemm(this, transa, transb, m, n, k,
-                            blas::ToDataType<InputType>::value, alpha_ptr, a,
-                            lda, b, ldb, beta_ptr, c, ldc, precision,
-                            context);
-  }
+                           blas::CallContext context);
 
   // TODO(parkers): Update all callers to pass kDefaultComputePrecision.
   template <typename InputType, typename ConstantType>
@@ -968,10 +926,7 @@ class Stream {
                            const DeviceMemory<InputType> &a, int lda,
                            const DeviceMemory<InputType> &b, int ldb,
                            ConstantType beta, DeviceMemory<InputType> *c,
-                           int ldc, blas::CallContext context) {
-    return ThenBlasGemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c,
-                        ldc, blas::kDefaultComputePrecision, context);
-  }
+                           int ldc, blas::CallContext context);
 
   template <typename InputType, typename OutputType>
   tsl::Status ThenBlasGemmWithAlgorithm(

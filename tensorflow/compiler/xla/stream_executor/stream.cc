@@ -1429,6 +1429,117 @@ Stream &Stream::ThenBlasSbmv(blas::UpperLower uplo, uint64_t n, uint64 k,
               x, incx, beta, y, incy);
 }
 
+template <typename InputType>
+tsl::Status Stream::ThenBlasGemm(blas::Transpose transa, blas::Transpose transb,
+                          uint64_t m, uint64 n, uint64 k,
+                          const DeviceMemory<InputType> &a, int lda,
+                          const DeviceMemory<InputType> &b, int ldb,
+                          DeviceMemory<InputType> *c, int ldc,
+                          blas::ComputePrecision precision,
+                          blas::CallContext context) {
+  InputType alpha{1.0};
+  InputType beta{0.0};
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.Run(*this, transa, transb, m, n, k, 
+      alpha, a, lda, b, ldb, beta, c, ldc, 
+      /* allocator */nullptr)); //! NOTE: allocator is not available!!
+    return ::tsl::OkStatus();
+  }
+  return ThenBlasGemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c,
+                      ldc, precision, context);
+}
+
+// TODO(parkers): Update all callers to pass kDefaultComputePrecision.
+template <typename InputType>
+tsl::Status Stream::ThenBlasGemm(blas::Transpose transa, blas::Transpose transb,
+                          uint64_t m, uint64 n, uint64 k,
+                          const DeviceMemory<InputType> &a, int lda,
+                          const DeviceMemory<InputType> &b, int ldb,
+                          DeviceMemory<InputType> *c, int ldc,
+                          blas::CallContext context) {
+  InputType alpha{1.0};
+  InputType beta{0.0};
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.Run(*this, transa, transb, m, n, k, 
+      alpha, a, lda, b, ldb, beta, c, ldc, 
+      /* allocator */nullptr)); //! NOTE: allocator is not available!!
+    return ::tsl::OkStatus();
+  }
+  return ThenBlasGemm(transa, transb, m, n, k, a, lda, b, ldb, c, ldc,
+                      blas::kDefaultComputePrecision,context);
+}
+
+template <typename InputType, typename ConstantType>
+tsl::Status Stream::ThenBlasGemm(blas::Transpose transa, blas::Transpose transb,
+                          uint64_t m, uint64 n, uint64 k, ConstantType alpha,
+                          const DeviceMemory<InputType> &a, int lda,
+                          const DeviceMemory<InputType> &b, int ldb,
+                          ConstantType beta, DeviceMemory<InputType> *c,
+                          int ldc, blas::ComputePrecision precision,
+                          blas::CallContext context) {
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.Run(*this, transa, transb, m, n, k, 
+      alpha, a, lda, b, ldb, beta, c, ldc, 
+      /* allocator */nullptr)); //! NOTE: allocator is not available!!
+    return ::tsl::OkStatus();
+  }
+  static_assert(
+      detail::is_any_of<InputType, Eigen::half, Eigen::bfloat16, float,
+                        double, std::complex<float>, std::complex<double>>(),
+      "Input can be half, bf16, float, double, std::complex<float> or "
+      "std::complex<double>");
+  static_assert(!std::is_same_v<InputType, Eigen::half> ||
+                    detail::is_any_of<ConstantType, float, Eigen::half>(),
+                "If input is Eigen::half, constant has to be either "
+                "Eigen::half or float");
+  static_assert(!std::is_same_v<InputType, Eigen::bfloat16> ||
+                    detail::is_any_of<ConstantType, float, Eigen::bfloat16>(),
+                "If input is Eigen::bfloat16, constant has to be either "
+                "Eigen::bfloat16 or float");
+  static_assert(
+      detail::is_any_of<InputType, Eigen::half, Eigen::bfloat16, ConstantType>(),
+      "If input is not Eigen::half, constant and input types have to match");
+  blas::BlasSupport *blas = parent()->AsBlas();
+  if (!blas) {
+    return tsl::errors::Internal(
+        "Attempting to perform BLAS operation using "
+        "StreamExecutor without BLAS support");
+  }
+
+  void *alpha_ptr = &alpha;
+  void *beta_ptr = &beta;
+  float alpha_storage, beta_storage;
+  UpcastHalfToFloat<ConstantType>(&alpha_ptr, &beta_ptr, &alpha_storage,
+                                  &beta_storage);
+
+  return blas->DoBlasGemm(this, transa, transb, m, n, k,
+                          blas::ToDataType<InputType>::value, alpha_ptr, a,
+                          lda, b, ldb, beta_ptr, c, ldc, precision,
+                          context);
+}
+
+// TODO(parkers): Update all callers to pass kDefaultComputePrecision.
+template <typename InputType, typename ConstantType>
+tsl::Status Stream::ThenBlasGemm(blas::Transpose transa, blas::Transpose transb,
+                          uint64_t m, uint64 n, uint64 k, ConstantType alpha,
+                          const DeviceMemory<InputType> &a, int lda,
+                          const DeviceMemory<InputType> &b, int ldb,
+                          ConstantType beta, DeviceMemory<InputType> *c,
+                          int ldc, blas::CallContext context) {
+  if(gpu::GpuBlasLtEnabled()) {
+    auto& r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.Run(*this, transa, transb, m, n, k, 
+      alpha, a, lda, b, ldb, beta, c, ldc, 
+      /* allocator */nullptr)); //! NOTE: allocator is not available!!
+    return ::tsl::OkStatus();
+  }
+  return ThenBlasGemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c,
+                      ldc, blas::kDefaultComputePrecision, context);
+}
+
 namespace {
 // Like ThenBlasImpl, except this expects the last argument of blas_func to be a
 // blas::ProfileResult*.  This functor doesn't put the stream into an error
@@ -1592,6 +1703,12 @@ Stream &Stream::ThenBlasGemmBatched(
     uint64_t k, float alpha, DeviceMemorySlice<Eigen::half> a, int lda,
     DeviceMemorySlice<Eigen::half> b, int ldb, float beta,
     DeviceMemorySlice<Eigen::half> c, int ldc, int batch_count, blas::CallContext context) {
+  if (gpu::GpuBlasLtEnabled()) {
+    auto &r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, a, lda, b,
+                             ldb, beta, c, ldc, batch_count, /* allocator */nullptr));
+    return *this;
+  }
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
                                         /*scratch_allocator=*/nullptr, context);
@@ -1645,6 +1762,12 @@ Stream &Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     DeviceMemorySlice<float> b, int ldb,
                                     float beta, DeviceMemorySlice<float> c,
                                     int ldc, int batch_count, blas::CallContext context) {
+  if (gpu::GpuBlasLtEnabled()) {
+    auto &r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, a, lda, b,
+                             ldb, beta, c, ldc, batch_count, /* allocator */nullptr));
+    return *this;
+  }
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
                                         /*scratch_allocator=*/nullptr, context);
@@ -1677,6 +1800,12 @@ Stream &Stream::ThenBlasGemmBatched(blas::Transpose transa,
                                     DeviceMemorySlice<double> b, int ldb,
                                     double beta, DeviceMemorySlice<double> c,
                                     int ldc, int batch_count, blas::CallContext context) {
+  if (gpu::GpuBlasLtEnabled()) {
+    auto &r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, a, lda, b,
+                             ldb, beta, c, ldc, batch_count, /* allocator */nullptr));
+    return *this;
+  }
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
                                         /*scratch_allocator=*/nullptr, context);
@@ -1708,6 +1837,12 @@ Stream &Stream::ThenBlasGemmBatched(
     DeviceMemorySlice<std::complex<float>> a, int lda,
     DeviceMemorySlice<std::complex<float>> b, int ldb, std::complex<float> beta,
     DeviceMemorySlice<std::complex<float>> c, int ldc, int batch_count, blas::CallContext context) {
+  if (gpu::GpuBlasLtEnabled()) {
+    auto &r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, a, lda, b,
+                             ldb, beta, c, ldc, batch_count, /* allocator */nullptr));
+    return *this;
+  }
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
                                         /*scratch_allocator=*/nullptr, context);
@@ -1742,6 +1877,12 @@ Stream &Stream::ThenBlasGemmBatched(
     DeviceMemorySlice<std::complex<double>> b, int ldb,
     std::complex<double> beta, DeviceMemorySlice<std::complex<double>> c,
     int ldc, int batch_count, blas::CallContext context) {
+  if (gpu::GpuBlasLtEnabled()) {
+    auto &r = gpu::BlasLtGemmRunner::i(this);
+    CheckStatus(r.RunBatched(*this, transa, transb, m, n, k, alpha, a, lda, b,
+                             ldb, beta, c, ldc, batch_count, /* allocator */nullptr));
+    return *this;
+  }
   return ThenBlasGemmBatchedWithScratch(transa, transb, m, n, k, alpha, a, lda,
                                         b, ldb, beta, c, ldc, batch_count,
                                         /*scratch_allocator=*/nullptr, context);
