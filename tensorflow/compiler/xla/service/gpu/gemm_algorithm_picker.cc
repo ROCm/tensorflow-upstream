@@ -367,7 +367,7 @@ StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
   
   GemmAutotuner autotuner(config);
   TF_ASSIGN_OR_RETURN(auto new_algorithm,
-    AutotunerUtil::Autotune(se::gpu::ToCSVString(gemm_config, false), config, 
+    AutotunerUtil::Autotune(se::gpu::ToCSVString(gemm_config, true), config, 
      [&]() -> StatusOr<AutotunerUtil::CacheValue> {
         TF_ASSIGN_OR_RETURN(auto algo, autotuner(gemm, gemm_config));
         return algo.has_gemm() ? algo.gemm().algorithm() : se::blas::kDefaultAlgorithm;
@@ -410,7 +410,7 @@ StatusOr<AutotunerUtil::CacheValue> GemmAlgorithmPicker::RunStandalone(
   GemmAutotuner autotuner(config_);
   GemmConfig gemm_config{cfg};
 
-  return AutotunerUtil::Autotune(se::gpu::ToCSVString(gemm_config, false), config_, 
+  return AutotunerUtil::Autotune(se::gpu::ToCSVString(gemm_config, true), config_, 
      [&]() -> StatusOr<AutotunerUtil::CacheValue> { 
         TF_ASSIGN_OR_RETURN(auto algo, autotuner(gemm_config, std::move(input_shapes), 
                 output_shape, debug_options)); 
