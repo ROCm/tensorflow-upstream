@@ -22,6 +22,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
 #include "tensorflow/compiler/xla/util.h"
 #include "tensorflow/tsl/util/env_var.h"
+#include "tensorflow/compiler/xla/debug_options_flags.h"
 
 namespace stream_executor {
 
@@ -33,10 +34,7 @@ using xla::PrimitiveType;
 
 bool GpuBlasLtEnabled() {
   static std::atomic_bool result{[] {
-    bool value = false;
-    tsl::ReadBoolFromEnvVar("TF_ENABLE_GPU_BLASLT",
-                     /*default_value=*/false, &value);
-    return value;
+    return xla::GetDebugOptionsFromFlags().xla_gpu_enable_cublaslt();
   }()};
   return result;
 }

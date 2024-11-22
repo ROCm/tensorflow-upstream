@@ -78,6 +78,7 @@ cc_library(
         #"//tensorflow/core/platform:env",
         "//tensorflow/tsl/util:env_var",
         "@com_google_absl//absl/types:any",
+        "//tensorflow/compiler/xla:debug_options_flags",
     ]),
 )
 
