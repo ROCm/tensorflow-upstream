@@ -1093,34 +1093,7 @@ class Stream {
       int64_t stride_a, const DeviceMemory<InputType> &b, int ldb,
       int64_t stride_b, ConstantType beta, DeviceMemory<InputType> *c, int ldc,
       int64_t stride_c, int batch_count, blas::ComputePrecision precision,
-      blas::CallContext context) {
-    static_assert(
-        detail::is_any_of<InputType, float, Eigen::half, Eigen::bfloat16,
-                          double, std::complex<float>, std::complex<double>>(),
-        "Unsupported input type");
-    static_assert(
-        std::is_same_v<ConstantType, InputType> ||
-            (detail::is_any_of<InputType, Eigen::half, Eigen::bfloat16>() &&
-             std::is_same_v<ConstantType, float>),
-        "Mismatched input and alpha/beta types");
-    blas::BlasSupport *blas = parent()->AsBlas();
-    if (!blas) {
-      return tsl::errors::Internal(
-          "Attempting to perform BLAS operation using "
-          "StreamExecutor without BLAS support");
-    }
-
-    void *alpha_ptr = &alpha;
-    void *beta_ptr = &beta;
-    float alpha_storage, beta_storage;
-    UpcastHalfToFloat<ConstantType>(&alpha_ptr, &beta_ptr, &alpha_storage,
-                                    &beta_storage);
-
-    return blas->DoBlasGemmStridedBatched(
-        this, transa, transb, m, n, k, blas::ToDataType<InputType>::value,
-        alpha_ptr, a, lda, stride_a, b, ldb, stride_b, beta_ptr, c, ldc,
-        stride_c, batch_count, precision, context);
-  }
+      blas::CallContext context);
 
   // See BlasSupport::DoBlasTrsm.
   Stream &ThenBlasTrsm(blas::Side side, blas::UpperLower uplo,
