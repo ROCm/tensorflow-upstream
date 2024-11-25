@@ -557,19 +557,11 @@ struct LaunchConvOp<GPUDevice, Eigen::bfloat16> {
                      const std::array<int64, 3>& dilations,
                      const std::array<int64, 3>& strides, const Padding padding,
                      TensorFormat data_format, Tensor* output) {
-    // Performant bfloat16 operations are supported for Ampere+ GPUs. For
-    // pre-Ampere GPUs, we cast inputs to float and outputs back to bfloat16.
     auto* stream = ctx->op_device_context()->stream();
-#if GOOGLE_CUDA
-    const bool cast_to_float = !stream->GetCudaComputeCapability().IsAtLeast(
-        se::CudaComputeCapability::AMPERE);
-#else 
-    const bool cast_to_float = false;
-#endif
+    const bool cast_to_float = IsBF16NotSupportedInOps(stream);
     Tensor casted_input = input_param;
     Tensor casted_filter = filter;
     Tensor casted_out = *output;
-
 
     if (cast_to_float) {
       Tensor casted_input = input_param;

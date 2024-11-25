@@ -91,12 +91,8 @@ void LaunchConv2DOp<GPUDevice, Eigen::bfloat16>::operator()(
     int col_dilation, int row_stride, int col_stride, const Padding& padding,
     const std::vector<int64_t>& explicit_paddings, Tensor* output,
     TensorFormat data_format) {
-  // Performant bfloat16 operations are supported for Ampere+ GPUs. For
-  // pre-Ampere GPUs, we cast inputs to float and outputs back to bfloat16.
   auto* stream = ctx->op_device_context()->stream();
-  const bool cast_to_float = !stream->GetCudaComputeCapability().IsAtLeast(
-      se::CudaComputeCapability::AMPERE);
-
+  const bool cast_to_float = IsBF16NotSupportedInOps(stream);
   if (cast_to_float) {
     Tensor casted_input = input_param;
     Tensor casted_filter = filter;
