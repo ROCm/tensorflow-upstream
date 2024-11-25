@@ -799,6 +799,7 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   std::vector<llvm::StringRef> lld_args{
       llvm_ir::AsStringRef("ld.lld"),    llvm_ir::AsStringRef("-flavor"),
       llvm_ir::AsStringRef("gnu"),       llvm_ir::AsStringRef("-shared"),
+      llvm_ir::AsStringRef("-z"),        llvm_ir::AsStringRef("defs"),
       llvm_ir::AsStringRef(isabin_path), llvm_ir::AsStringRef("-o"),
       llvm_ir::AsStringRef(hsaco_path),
   };
