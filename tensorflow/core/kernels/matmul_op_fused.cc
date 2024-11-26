@@ -622,7 +622,7 @@ struct LaunchFusedMatMulOp<GPUDevice, T> {
     }
 
     OP_REQUIRES_OK(context, launch_func(scratch_allocator, alg_idx, nullptr));
-#endif
+#endif // GOOGLE_CUDA || TF_HIPBLASLT
   }
 };
 
