@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/service/sub_byte_normalization.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
@@ -70,9 +71,12 @@ PrimitiveType GetUniqueOutputTypeOfFusible(const HloInstruction& fusible) {
 
 class HorizontalLoopFusionImpl {
  public:
-  explicit HorizontalLoopFusionImpl(HloComputation* computation,
-                                    absl::string_view prefix)
-      : computation_(computation), prefix_(prefix) {}
+  explicit HorizontalLoopFusionImpl(
+      HloComputation* computation,
+      const se::DeviceDescription& device_description, absl::string_view prefix)
+      : computation_(computation),
+        device_description_(device_description),
+        prefix_(prefix) {}
 
   ~HorizontalLoopFusionImpl() = default;
 
@@ -116,18 +120,20 @@ class HorizontalLoopFusionImpl {
   class FusionCandidates {
    public:
     explicit FusionCandidates(HloInstruction* consumer,
-                              bool sliced_input_fusion)
+                              bool sliced_input_fusion,
+                              const se::DeviceDescription& device_description)
         : fusible_instrs_(),
           pos_(0),
           sliced_input_fusion_(sliced_input_fusion) {
-      Initialize(consumer);
+      Initialize(consumer, device_description);
     }
 
     // Gets a span of fusions to be fused.
     absl::Span<HloInstruction*> GetNextSpanOfFusions();
 
    private:
-    void Initialize(HloInstruction*);
+    void Initialize(HloInstruction* consumer,
+                    const se::DeviceDescription& device_description);
 
     std::vector<HloInstruction*> fusible_instrs_;
     // `pos_` points to the start position of the next span.
@@ -138,17 +144,19 @@ class HorizontalLoopFusionImpl {
   };
 
   HloComputation* computation_;
+  const se::DeviceDescription& device_description_;
   std::string prefix_;
 };  // HorizontalLoopFusionImpl
 
-bool IsFusibleCandidate(const HloInstruction& instr) {
+bool IsFusibleCandidate(const HloInstruction& instr,
+                        const se::DeviceDescription& device_description) {
   // For now, we do not support fusing instruction with control flow.
   if (!instr.control_successors().empty() ||
       !instr.control_predecessors().empty()) {
     return false;
   }
 
-  if (IsNestableVariadicReduction(instr)) {
+  if (IsNestableVariadicReduction(instr, device_description)) {
     return false;
   }
 
@@ -266,7 +274,7 @@ bool AnyOpndIsParamSharedAmongFusions(
 }
 
 void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
-    HloInstruction* consumer) {
+    HloInstruction* consumer, const se::DeviceDescription& device_description) {
   // First, find out all potential target candidates. We will filter out
   // unsupported/non-profitable cases below.
   absl::flat_hash_set<HloInstruction*> fusible_candidates;
@@ -275,7 +283,7 @@ void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
     HloInstruction* predecessor = opnd->LatestNonGteAncestor();
     // We support kLoop fusion and element-wise HLOs now. We may extend the
     // support list if needs arise.
-    if (IsFusibleCandidate(*predecessor)) {
+    if (IsFusibleCandidate(*predecessor, device_description)) {
       if (fusible_candidates.insert(predecessor).second) {
         // Add unseen fusion to ordered list.
         ordered_fusible_candidates.push_back(predecessor);
@@ -423,7 +431,8 @@ absl::StatusOr<bool> HorizontalLoopFusionImpl::FuseConsumerOperands(
     HloInstruction* consumer, bool sliced_input_fusion,
     std::vector<HloInstruction*>& to_fuse_candidates) {
   bool changed = false;
-  FusionCandidates loop_fusion_candidates(consumer, sliced_input_fusion);
+  FusionCandidates loop_fusion_candidates(consumer, sliced_input_fusion,
+                                          device_description_);
   while (true) {
     auto fusibles = loop_fusion_candidates.GetNextSpanOfFusions();
     if (fusibles.empty()) {
@@ -715,7 +724,8 @@ absl::StatusOr<bool> HorizontalLoopFusionImpl::Run() {
 
 absl::StatusOr<bool> HorizontalLoopFusion::RunOnComputation(
     HloComputation* computation) {
-  HorizontalLoopFusionImpl horizontal_fusion_impl(computation, prefix_);
+  HorizontalLoopFusionImpl horizontal_fusion_impl(computation,
+                                                  device_description_, prefix_);
   return horizontal_fusion_impl.Run();
 }
 

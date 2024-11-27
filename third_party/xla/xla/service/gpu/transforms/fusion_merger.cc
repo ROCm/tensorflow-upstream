@@ -58,7 +58,8 @@ class FusionInstructionMerger {
         dump_fusion_visualization_(computation->parent()
                                        ->config()
                                        .debug_options()
-                                       .xla_dump_fusion_visualization()) {}
+                                       .xla_dump_fusion_visualization()),
+        fusion_info_cache_(gpu_device_info) {}
 
   absl::Status Run();
 
@@ -113,7 +114,8 @@ absl::Status FusionInstructionMerger::FuseIntoAllUsers(
     HloInstruction* consumer = user;
     if (consumer->opcode() != HloOpcode::kFusion) {
       consumer = computation_->AddInstruction(HloInstruction::CreateFusion(
-          user->shape(), ChooseFusionKind(*producer, *user), user));
+          user->shape(), ChooseFusionKind(*producer, *user, gpu_device_info_),
+          user));
       TF_CHECK_OK(computation_->ReplaceInstruction(user, consumer));
     }
 
@@ -223,7 +225,8 @@ FusionDecision FusionInstructionMerger::ShouldFuse(HloInstruction* producer) {
     return FusionDecision::Forbid("not a loop fusion");
   }
 
-  auto producer_hero = GetRealHeroForMultiOutputFusion(*producer);
+  auto producer_hero =
+      GetRealHeroForMultiOutputFusion(*producer, gpu_device_info_);
 
   bool has_reduction_user = false;
   for (const HloInstruction* user : producer->users()) {
@@ -235,19 +238,21 @@ FusionDecision FusionInstructionMerger::ShouldFuse(HloInstruction* producer) {
       ++num_fail_merge_all_users_;
       return FusionDecision::Forbid("not fusing custom fusions");
     }
-    auto consumer_hero = GetRealHeroForMultiOutputFusion(*user);
-    if (auto compatible =
-            FusionHeroesAreCompatible(producer_hero, consumer_hero);
+    auto consumer_hero =
+        GetRealHeroForMultiOutputFusion(*user, gpu_device_info_);
+    if (auto compatible = FusionHeroesAreCompatible(
+            producer_hero, consumer_hero, gpu_device_info_);
         !compatible) {
       return compatible;
     }
-    FusionDecision fusible = IsProducerConsumerFusible(*producer, *user);
+    FusionDecision fusible =
+        IsProducerConsumerFusible(*producer, *user, gpu_device_info_);
     if (!fusible) {
       ++num_fail_merge_all_users_;
       VLOG(9) << user->ToString();
       return fusible;
     }
-    if (IsInputFusibleReduction(*user)) {
+    if (IsInputFusibleReduction(*user, gpu_device_info_)) {
       has_reduction_user = true;
     }
   }

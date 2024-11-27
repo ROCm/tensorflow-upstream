@@ -41,10 +41,10 @@ namespace gpu {
 namespace mt = ::mlir::triton;
 
 absl::Status CreateTritonPipeline(
-    mlir::OpPassManager& pm, const se::GpuComputeCapability& cc,
+    mlir::OpPassManager& pm, const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     mt::nvidia_gpu::ClusterInfo& out_cluster_info) {
-  auto ccCuda = std::get<se::CudaComputeCapability>(cc);
+  auto ccCuda = device_info.cuda_compute_capability();
   const int ccAsInt = ccCuda.major * 10 + ccCuda.minor;
   const int threadsPerWarp = 32;
 

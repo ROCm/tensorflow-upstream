@@ -31,6 +31,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/llvm_ir/ir_array.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
@@ -178,7 +179,8 @@ void EmitTile(llvm::IRBuilder<>* builder, const Tiling& tiling,
 // scheme.
 absl::StatusOr<TilingKernelInfo> EmitTilingKernel(
     llvm::IRBuilder<>* builder, const Tiling& tiling, llvm::Type* index_ty,
-    const TileGenerator& tile_element_generator);
+    const TileGenerator& tile_element_generator,
+    const se::DeviceDescription& gpu_device_info);
 
 // Creates an indexing map from thread and block IDs to elements of the tiled
 // shape. Uses the same convention as KernelFusionInterface: dimensions 0 to 2

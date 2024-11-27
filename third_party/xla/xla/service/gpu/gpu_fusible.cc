@@ -101,13 +101,14 @@ bool IfFusedReadsElementsMultipleTimes(const HloInstruction& instr) {
   return false;
 }
 
-bool IsExpensiveToRepeat(const HloInstruction& instr) {
+bool IsExpensiveToRepeat(const HloInstruction& instr,
+                         const se::DeviceDescription& device_info) {
   CHECK_NE(instr.opcode(), HloOpcode::kFusion) << "`instr` has to be unfused.";
   // Reductions which use many input elements to calculate one output element
   // are both memory and computationally heavy.
   constexpr int kMaxInputsPerOutput = 10;
   if (instr.opcode() == HloOpcode::kReduce &&
-      !IsReductionFromOrToContiguousDimensions(instr)) {
+      !IsReductionFromOrToContiguousDimensions(instr, device_info)) {
     int64_t reduction_ratio = ShapeUtil::ElementsIn(instr.operand(0)->shape()) /
                               ShapeUtil::ElementsIn(instr.shape());
     if (reduction_ratio > kMaxInputsPerOutput) return true;
@@ -192,24 +193,27 @@ bool TransposesMinorDimension(const HloInstruction* instr) {
   }
 }
 
-bool IsReduceInputFusion(const HloInstruction& instr) {
+bool IsReduceInputFusion(const HloInstruction& instr,
+                         const se::DeviceDescription& device_info) {
   return instr.opcode() == HloOpcode::kFusion &&
          absl::c_any_of(GetFusionRoots(*instr.called_computations()[0]),
-                        [](const HloInstruction* root) {
-                          return IsRealReductionHero(*root,
-                                                     FindNonTrivialHero(*root));
+                        [&](const HloInstruction* root) {
+                          return IsRealReductionHero(
+                              *root, FindNonTrivialHero(*root), device_info);
                         });
 }
 
-bool IsInputFusibleReduction(const HloInstruction& instr) {
-  return IsReduceInputFusion(instr) ||
-         IsReductionFromOrToContiguousDimensions(instr);
+bool IsInputFusibleReduction(const HloInstruction& instr,
+                             const se::DeviceDescription& device_info) {
+  return IsReduceInputFusion(instr, device_info) ||
+         IsReductionFromOrToContiguousDimensions(instr, device_info);
 }
 
-bool IsNestableVariadicReduction(const HloInstruction& instr) {
+bool IsNestableVariadicReduction(const HloInstruction& instr,
+                                 const se::DeviceDescription& device_info) {
   return instr.shape().IsTuple() &&
          ((instr.opcode() == HloOpcode::kReduce &&
-           !IsReductionFromOrToContiguousDimensions(instr)) ||
+           !IsReductionFromOrToContiguousDimensions(instr, device_info)) ||
           (instr.opcode() == HloOpcode::kFusion &&
            instr.fusion_kind() == HloInstruction::FusionKind::kLoop &&
            instr.fused_expression_root()->opcode() == HloOpcode::kReduce));
@@ -226,14 +230,14 @@ bool IsInputFusibleTranspose(const HloInstruction& instr) {
 }
 
 const HloInstruction* GetRealHeroForMultiOutputFusion(
-    const HloInstruction& instr) {
+    const HloInstruction& instr, const se::DeviceDescription& device_info) {
   if (instr.opcode() != HloOpcode::kFusion) {
     return &instr;
   }
   auto fused_expression_root = instr.fused_expression_root();
   if (!instr.IsMultiOutputFusion()) {
     const auto& hero = FindNonTrivialHero(*fused_expression_root);
-    if (IsRealReductionHero(*fused_expression_root, hero) ||
+    if (IsRealReductionHero(*fused_expression_root, hero, device_info) ||
         GetDescriptionForTiledTransposeEmitter(hero).has_value()) {
       return &hero;
     }
@@ -245,7 +249,7 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
   // we find any, we can immediately return it.
   for (auto* inst : fused_expression_root->mutable_operands()) {
     const auto& hero = FindNonTrivialHero(*inst);
-    if (IsRealReductionHero(*inst, hero) ||
+    if (IsRealReductionHero(*inst, hero, device_info) ||
         GetDescriptionForTiledTransposeEmitter(hero).has_value()) {
       return &hero;
     }
@@ -253,14 +257,15 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
   return fused_expression_root->operands()[0];
 }
 
-FusionDecision FusionHeroesAreCompatible(const HloInstruction* hero1,
-                                         const HloInstruction* hero2) {
+FusionDecision FusionHeroesAreCompatible(
+    const HloInstruction* hero1, const HloInstruction* hero2,
+    const se::DeviceDescription& device_info) {
   auto hero1_is_unnested_reduce =
-      IsReductionFromOrToContiguousDimensions(*hero1);
+      IsReductionFromOrToContiguousDimensions(*hero1, device_info);
   auto tiled_transpose_hero1 = GetDescriptionForTiledTransposeEmitter(*hero1);
   bool hero1_is_unnested_transpose = tiled_transpose_hero1.has_value();
   bool hero2_is_unnested_reduce =
-      IsReductionFromOrToContiguousDimensions(*hero2);
+      IsReductionFromOrToContiguousDimensions(*hero2, device_info);
   auto tiled_transpose_hero2 = GetDescriptionForTiledTransposeEmitter(*hero2);
   bool hero2_is_unnested_transpose = tiled_transpose_hero2.has_value();
 
@@ -318,7 +323,8 @@ FusionDecision FusionHeroesAreCompatible(const HloInstruction* hero1,
 }
 
 FusionDecision ShapesCompatibleForMultiOutputFusion(
-    const HloInstruction& instr1, const HloInstruction& instr2) {
+    const HloInstruction& instr1, const HloInstruction& instr2,
+    const se::DeviceDescription& device_info) {
   // Multi-output fusion kernels share a common parallel loop. The loop
   // dimensions are determined by instruction shapes.
   auto get_loop_shape = [&](const HloInstruction* element_instr) {
@@ -328,7 +334,7 @@ FusionDecision ShapesCompatibleForMultiOutputFusion(
     const auto& hero = element_instr->parent()->IsFusionComputation()
                            ? FindNonTrivialHero(*element_instr)
                            : *element_instr;
-    if (IsReductionFromOrToContiguousDimensions(*element_instr) ||
+    if (IsReductionFromOrToContiguousDimensions(*element_instr, device_info) ||
         GetDescriptionForTiledTransposeEmitter(hero).has_value()) {
       return hero.operand(0)->shape();
     }
@@ -339,10 +345,13 @@ FusionDecision ShapesCompatibleForMultiOutputFusion(
   // root ops should have equal output shapes. An exception are
   // reduction-to-vector ops. Here the input shapes of the reduction (first
   // operand shape) and the reduction dimensions need to match.
-  const HloInstruction* hero1 = GetRealHeroForMultiOutputFusion(instr1);
-  const HloInstruction* hero2 = GetRealHeroForMultiOutputFusion(instr2);
+  const HloInstruction* hero1 =
+      GetRealHeroForMultiOutputFusion(instr1, device_info);
+  const HloInstruction* hero2 =
+      GetRealHeroForMultiOutputFusion(instr2, device_info);
 
-  if (auto compatible = FusionHeroesAreCompatible(hero1, hero2); !compatible) {
+  if (auto compatible = FusionHeroesAreCompatible(hero1, hero2, device_info);
+      !compatible) {
     return compatible;
   }
 
@@ -371,11 +380,12 @@ bool IsInputFusibleScatter(const HloInstruction& instr) {
   return false;
 }
 
-bool IsInputFusible(const HloInstruction& instr) {
+bool IsInputFusible(const HloInstruction& instr,
+                    const se::DeviceDescription& device_info) {
   // Input fusion only handles non-elemental reduction and scatter operations.
   return instr.IsFusible() &&
-         (IsInputFusibleReduction(instr) || IsInputFusibleScatter(instr) ||
-          IsInputFusibleTranspose(instr));
+         (IsInputFusibleReduction(instr, device_info) ||
+          IsInputFusibleScatter(instr) || IsInputFusibleTranspose(instr));
 }
 
 // Returns true if `instr` can be fused as a producer or as a consumer into a
@@ -414,7 +424,8 @@ bool IsUniversallyLoopFusible(const HloInstruction& instr) {
 }
 
 // Returns true if `instr` can be fused as a consumer into a kLoop fusion.
-bool IsLoopFusibleAsConsumer(const HloInstruction& instr) {
+bool IsLoopFusibleAsConsumer(const HloInstruction& instr,
+                             const se::DeviceDescription& device_info) {
   // Instr should be fusible.
   if (!instr.IsFusible()) return false;
 
@@ -429,7 +440,8 @@ bool IsLoopFusibleAsConsumer(const HloInstruction& instr) {
   // We may have input fusions which effectively have turned into loop
   // fusions. Those should still be considered as loop fusible consumers,
   // but they are not universally loop fusible.
-  if (!IsInputFusible(instr) && instr.opcode() == HloOpcode::kFusion &&
+  if (!IsInputFusible(instr, device_info) &&
+      instr.opcode() == HloOpcode::kFusion &&
       instr.fusion_kind() == HloInstruction::FusionKind::kInput) {
     return true;
   }
@@ -495,14 +507,15 @@ FusionDecision CanEmitInputFusedScatter(const HloInstruction& producer,
   return FusionDecision::Allow();
 }
 
-FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
-                                         const HloInstruction& consumer) {
+FusionDecision IsProducerConsumerFusible(
+    const HloInstruction& producer, const HloInstruction& consumer,
+    const se::DeviceDescription& device_info) {
   if (!IsLoopFusibleAsProducer(producer) &&
       !IsInputFusibleTranspose(producer)) {
     return FusionDecision::Forbid("the producer is not loop-fusible");
   }
 
-  if (IsInputFusibleReduction(producer)) {
+  if (IsInputFusibleReduction(producer, device_info)) {
     if (!producer.GetModule()
              ->config()
              .debug_options()
@@ -516,7 +529,8 @@ FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
             : producer;
     if (!ReductionIsRaceFree(
             reduce_hero.GetModule()->config(),
-            GetReductionKindAndContiguousComponents(reduce_hero))) {
+            GetReductionKindAndContiguousComponents(reduce_hero),
+            device_info)) {
       return FusionDecision::Forbid(
           "Reduction output fusion only works for race free reductions");
     }
@@ -537,7 +551,8 @@ FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
     return can_fuse;
   }
 
-  if (!IsInputFusible(consumer) && !IsLoopFusibleAsConsumer(consumer)) {
+  if (!IsInputFusible(consumer, device_info) &&
+      !IsLoopFusibleAsConsumer(consumer, device_info)) {
     return FusionDecision::Forbid(
         "the consumer is not input-fusible and not loop-fusible");
   }
@@ -566,7 +581,8 @@ FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
   return InstructionFusion::ShouldFuseInPlaceOp(&producer, &consumer);
 }
 
-FusionDecision IsProducerMultiOutputFusible(const HloInstruction& producer) {
+FusionDecision IsProducerMultiOutputFusible(
+    const HloInstruction& producer, const se::DeviceDescription& device_info) {
   // Skip multiple output fusion. It's not yet supported.
   if (producer.IsMultiOutputFusion()) {
     return FusionDecision::Forbid("Producer is a multi-output fusion");
@@ -613,16 +629,17 @@ FusionDecision IsProducerMultiOutputFusible(const HloInstruction& producer) {
 
 // Returns an estimate of the shared memory usage for a given instruction in
 // bytes.
-static int64_t SharedMemoryUsageNoCache(const HloInstruction& instr) {
+static int64_t SharedMemoryUsageNoCache(
+    const HloInstruction& instr, const se::DeviceDescription& device_info) {
   if (instr.opcode() == HloOpcode::kFusion) {
     int64_t sum = 0;
     for (const HloInstruction* hlo :
          instr.fused_instructions_computation()->instructions()) {
-      sum += SharedMemoryUsageNoCache(*hlo);
+      sum += SharedMemoryUsageNoCache(*hlo, device_info);
     }
     return sum;
   } else if (instr.opcode() == HloOpcode::kReduce &&
-             IsReductionFromOrToContiguousDimensions(instr)) {
+             IsReductionFromOrToContiguousDimensions(instr, device_info)) {
     ReductionDimensions reduction_info =
         GetReductionKindAndContiguousComponents(instr);
     int64_t primitive_size = ShapeUtil::ByteSizeOfPrimitiveType(
@@ -665,16 +682,17 @@ int64_t FusionInfoCache::GetSharedMemoryUsage(const HloInstruction& instr) {
   // instructions, not instructions inside fusion nodes.  Therefore we can only
   // cache top-level instructions; it would not be valid to pass the cache to
   // SharedMemoryUsageNoCache and use the cache *within* the fusion.
-  int64_t shared_memory_usage = SharedMemoryUsageNoCache(instr);
+  int64_t shared_memory_usage = SharedMemoryUsageNoCache(instr, device_info_);
 
   absl::MutexLock lock(&mutex_);
   shared_memory_usage_.emplace(&instr, shared_memory_usage);
   return shared_memory_usage;
 }
 
-int64_t SharedMemoryUsage(const HloInstruction& instr, FusionInfoCache* cache) {
+int64_t SharedMemoryUsage(const HloInstruction& instr, FusionInfoCache* cache,
+                          const se::DeviceDescription& device_info) {
   if (!cache) {
-    return SharedMemoryUsageNoCache(instr);
+    return SharedMemoryUsageNoCache(instr, device_info);
   }
   return cache->GetSharedMemoryUsage(instr);
 }
@@ -684,16 +702,17 @@ int64_t SharedMemoryUsage(const HloInstruction& instr, FusionInfoCache* cache) {
 constexpr int64_t kMaxUnnestedReductionOutputsPerFusion = 8;
 
 // Returns the number of unnested reductions in the instruction output.
-static int64_t NumUnnestedReductionsNoCache(const HloInstruction& instr) {
+static int64_t NumUnnestedReductionsNoCache(
+    const HloInstruction& instr, const se::DeviceDescription& device_info) {
   if (instr.opcode() == HloOpcode::kReduce &&
-      IsReductionFromOrToContiguousDimensions(instr)) {
+      IsReductionFromOrToContiguousDimensions(instr, device_info)) {
     return 1;
   }
   if (instr.opcode() == HloOpcode::kFusion) {
     int64_t sum = 0;
     for (const HloInstruction* hlo :
          instr.fused_instructions_computation()->instructions()) {
-      sum += NumUnnestedReductionsNoCache(*hlo);
+      sum += NumUnnestedReductionsNoCache(*hlo, device_info);
     }
     return sum;
   }
@@ -713,7 +732,8 @@ int64_t FusionInfoCache::GetNumUnnestedReductions(const HloInstruction& instr) {
   // instructions, not instructions inside fusion nodes.  Therefore we can only
   // cache top-level instructions; it would not be valid to pass the cache to
   // NumUnnestedReductionsNoCache and use the cache *within* the fusion.
-  int64_t num_unnested_reductions = NumUnnestedReductionsNoCache(instr);
+  int64_t num_unnested_reductions =
+      NumUnnestedReductionsNoCache(instr, device_info_);
 
   absl::MutexLock lock(&mutex_);
   num_unnested_reductions_.emplace(&instr, num_unnested_reductions);
@@ -721,9 +741,10 @@ int64_t FusionInfoCache::GetNumUnnestedReductions(const HloInstruction& instr) {
 }
 
 static int64_t NumUnnestedReductions(const HloInstruction& instr,
-                                     FusionInfoCache* cache) {
+                                     FusionInfoCache* cache,
+                                     const se::DeviceDescription& device_info) {
   if (!cache) {
-    return NumUnnestedReductionsNoCache(instr);
+    return NumUnnestedReductionsNoCache(instr, device_info);
   }
 
   return cache->GetNumUnnestedReductions(instr);
@@ -757,15 +778,16 @@ FusionDecision FusionFitsInBudget(const HloInstruction& instr1,
                                   const se::DeviceDescription& device_info,
                                   bool is_consumer_producer_fusion,
                                   FusionInfoCache* cache /*=nullptr*/) {
-  if (SharedMemoryUsage(instr1, cache) + SharedMemoryUsage(instr2, cache) >
+  if (SharedMemoryUsage(instr1, cache, device_info) +
+          SharedMemoryUsage(instr2, cache, device_info) >
       device_info.shared_memory_per_block()) {
     return FusionDecision::Forbid(
                "shared memory usage would be over the budget of ")
            << device_info.shared_memory_per_block() << "B";
   }
 
-  if (NumUnnestedReductions(instr1, cache) +
-          NumUnnestedReductions(instr2, cache) >
+  if (NumUnnestedReductions(instr1, cache, device_info) +
+          NumUnnestedReductions(instr2, cache, device_info) >
       kMaxUnnestedReductionOutputsPerFusion) {
     return FusionDecision::Forbid("over ")
            << kMaxUnnestedReductionOutputsPerFusion
@@ -802,9 +824,10 @@ FusionDecision FusionFitsInBudget(const HloInstruction& instr1,
       MaxOperandsAndOutputsPerFusion()) {
     return FusionDecision::Allow();
   } else {
-    VLOG(5) << "Operand count of " << "(" << instr1.ToString()
-            << " ) = " << instr1.operand_count() << " and ( "
-            << instr2.ToString() << " ) = " << instr2.operand_count()
+    VLOG(5) << "Operand count of "
+            << "(" << instr1.ToString() << " ) = " << instr1.operand_count()
+            << " and ( " << instr2.ToString()
+            << " ) = " << instr2.operand_count()
             << " and num_output_buffers = " << num_output_buffers
             << " is bigger than the bound of "
             << MaxOperandsAndOutputsPerFusion();
@@ -838,15 +861,16 @@ FusionDecision FusionFitsInBudget(const HloInstruction& instr1,
 }
 
 bool CreatesHeavyComputation(const HloInstruction& producer,
-                             const HloInstruction& consumer) {
+                             const HloInstruction& consumer,
+                             const se::DeviceDescription& device_info) {
   // If producer's computation is not expensive to repeat even in the consumer
   // requests the same element multiple times there is nothing to do.
   auto producer_is_heavy = [&](const HloInstruction& instr) {
     if (producer.opcode() != HloOpcode::kFusion) {
-      return IsExpensiveToRepeat(producer);
+      return IsExpensiveToRepeat(producer, device_info);
     }
     for (const auto& instr : producer.fused_instructions()) {
-      if (IsExpensiveToRepeat(*instr)) {
+      if (IsExpensiveToRepeat(*instr, device_info)) {
         return true;
       }
     }
@@ -901,21 +925,25 @@ bool CreatesHeavyComputation(const HloInstruction& producer,
   return false;
 }
 
-bool IsFusibleAsMultiOutputFusionRoot(const HloInstruction& instr) {
+bool IsFusibleAsMultiOutputFusionRoot(
+    const HloInstruction& instr, const se::DeviceDescription& device_info) {
   // We can fuse reduces and loop fusions. Elementwise instructions can be fused
   // with any other instruction.
   // Note that scatter cannot be the root of a multi-output fusion because
   // its emitter doesn't support it.
 
   return instr.IsFusible() &&
-         (IsInputFusibleReduction(instr) || IsInputFusibleTranspose(instr) ||
+         (IsInputFusibleReduction(instr, device_info) ||
+          IsInputFusibleTranspose(instr) ||
           instr.IsLoopFusion() ||  // TODO(b/130013493): Use IsLoopFusible here.
           instr.IsElementwise());
 }
 
-HloInstruction::FusionKind ChooseFusionKind(const HloInstruction& producer,
-                                            const HloInstruction& consumer) {
-  return (IsInputFusible(consumer) || IsInputFusible(producer))
+HloInstruction::FusionKind ChooseFusionKind(
+    const HloInstruction& producer, const HloInstruction& consumer,
+    const se::DeviceDescription& device_info) {
+  return (IsInputFusible(consumer, device_info) ||
+          IsInputFusible(producer, device_info))
              ? HloInstruction::FusionKind::kInput
              : HloInstruction::FusionKind::kLoop;
 }

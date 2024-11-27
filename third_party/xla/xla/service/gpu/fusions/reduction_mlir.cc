@@ -117,10 +117,18 @@ struct MlirReductionFusion::EmitterState {
   PerThreadOutputs EmitPerThreadElements(int group_id, const HloValueMap& inits,
                                          const SmallVector<Value>& outputs);
 
+  mlir::ValueRange ReduceViaSharedMemory(int group_id,
+                                         const PerThreadOutputs& per_thread,
+                                         const HloValueMap& inits,
+                                         std::optional<int> padding,
+                                         int max_dist);
+
   mlir::ValueRange ReduceViaSharedMemory(
       int group_id, const PerThreadOutputs& per_thread,
-      const HloValueMap& inits, std::optional<int> padding = std::nullopt,
-      int max_dist = WarpSize() / 2);
+      const HloValueMap& inits, std::optional<int> padding = std::nullopt) {
+    return ReduceViaSharedMemory(group_id, per_thread, inits, padding,
+                                 owner.WarpSize() / 2);
+  }
 
   mlir::func::FuncOp GetReducer(const HloInstruction* hero) const {
     return call_target(hero->called_computations()[0]->root_instruction());
@@ -133,8 +141,12 @@ struct MlirReductionFusion::EmitterState {
       const HloValueMap& values, std::optional<int> padding = std::nullopt);
 
   HloValueMap ShuffleReduce(absl::Span<const HloInstruction* const> reductions,
-                            const HloValueMap& per_thread_values,
-                            int max_dist = WarpSize() / 2);
+                            const HloValueMap& per_thread_values, int max_dist);
+
+  HloValueMap ShuffleReduce(absl::Span<const HloInstruction* const> reductions,
+                            const HloValueMap& per_thread_values) {
+    return ShuffleReduce(reductions, per_thread_values, owner.WarpSize() / 2);
+  }
 
   SmallVector<Value> FusionParams() {
     return ValueRange(entry_function.getArguments().take_front(
@@ -253,7 +265,7 @@ SmallVector<Value> MlirReductionFusion::EmitterState::WriteToSharedMemory(
   }
   if (padding) {
     shape.back() += *padding;
-  } else if ((shape.back() % WarpSize()) == 0) {
+  } else if ((shape.back() % owner.WarpSize()) == 0) {
     // Avoid bank conflicts.
     ++shape.back();
   }
@@ -325,7 +337,7 @@ mlir::ValueRange MlirReductionFusion::EmitterState::ReduceViaSharedMemory(
   // The constraints may have reduced the upper bound of the dimension. If
   // that's the case, we reset it to a multiple of the warp size.
   auto& bound = loop_indexing.GetMutableDimensionBound(0);
-  bound.upper = RoundUpTo(bound.upper + 1, WarpSize()) - 1;
+  bound.upper = RoundUpTo(bound.upper + 1, owner.WarpSize()) - 1;
 
   auto tiles =
       WriteToSharedMemory(reductions, per_thread.reduction_scalars, padding);
@@ -365,7 +377,7 @@ MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis)
   VLOG(10) << reduction_dimensions_;
 
   CHECK(ReductionIsRaceFree(hero_reduction->GetModule()->config(),
-                            reduction_dimensions_))
+                            reduction_dimensions_, analysis.device_info()))
       << "Non-race-free reductions should have been decomposed. Did "
          "tree_reduction_rewriter run?";
 
@@ -583,9 +595,9 @@ MlirColumnReductionFusion::MlirColumnReductionFusion(
                   reduction_dimensions_.dimensions[1],
                   reduction_dimensions_.dimensions[2]};
   vector_size_ = GetVectorSizeForMlir(
-      analysis, /*minor_dim=*/input_shape_.back(), WarpSize());
-  int64_t num_warps_per_column = WarpSize();
-  num_threads_ = {num_warps_per_column, WarpSize()};
+      analysis, /*minor_dim=*/input_shape_.back(), kTileSize);
+  int64_t num_warps_per_column = kTileSize;
+  num_threads_ = {num_warps_per_column, kTileSize};
   int64_t num_col_elements_per_thread =
       CeilOfRatio(reduction_dimensions_
                       .dimensions[ReductionDimensions::kColReducedDimension],
@@ -599,7 +611,7 @@ MlirColumnReductionFusion::MlirColumnReductionFusion(
       reduction_dimensions_
           .dimensions[ReductionDimensions::kColMinorKeptDimension];
   int64_t num_blocks_per_row =
-      CeilOfRatio(minor_kept_dim, WarpSize() * vector_size_);
+      CeilOfRatio(minor_kept_dim, kTileSize * vector_size_);
   num_blocks_ = {major_kept_dim, num_blocks_per_row};
 }
 
@@ -612,7 +624,7 @@ IndexingMap MlirColumnReductionFusion::ComputeReductionOutputIndexing(
   auto vector_index = getAffineSymbolExpr(0, ctx);
   SmallVector<AffineExpr, 2> results{
       block_id[0],
-      (block_id[1] * WarpSize() + thread_id[0]) * vector_size_ + vector_index};
+      (block_id[1] * kTileSize + thread_id[0]) * vector_size_ + vector_index};
   IndexingMap projected_index =
       GetIndexingMap(results, /*symbol_sizes=*/{vector_size_});
   projected_index.AddConstraint(thread_id[1], {0, 0});
@@ -630,7 +642,7 @@ IndexingMap MlirColumnReductionFusion::ComputeReductionInputIndexing(
 
   SmallVector<AffineExpr, 3> results{
       block_id[0], thread_id[0] + element_index * num_threads_[1],
-      (block_id[1] * WarpSize() + thread_id[1]) * vector_size_ + vector_index};
+      (block_id[1] * kTileSize + thread_id[1]) * vector_size_ + vector_index};
   IndexingMap map = GetIndexingMap(results, tile_sizes_per_thread_);
   for (auto [result, dim_size] :
        llvm::zip(results, reduction_dimensions_.dimensions)) {
@@ -678,20 +690,20 @@ MlirSmallColumnReductionFusion::MlirSmallColumnReductionFusion(
   // We emit a single loop over the dimensions 1 and 2, so we use their total
   // size when computing the vector size.
   vector_size_ = GetVectorSizeForMlir(
-      analysis, /*minor_dim=*/input_shape_[1] * input_shape_[2], WarpSize());
+      analysis, /*minor_dim=*/input_shape_[1] * input_shape_[2], kTileSize);
   num_threads_ = {128};
   shared_rows_ = vector_size_ * num_threads_[0] / input_shape_[kColMinorKept];
 
   // If we have more than 32 shared rows, we'd have to go through shared
   // memory one extra time. We don't currently support that, and it's not been
   // tried, so we have to reduce the vector size/number of threads.
-  while (shared_rows_ > WarpSize() && vector_size_ > 1) {
+  while (shared_rows_ > kTileSize && vector_size_ > 1) {
     vector_size_ /= 2;
     shared_rows_ /= 2;
   }
-  if (shared_rows_ > WarpSize()) {
-    num_threads_[0] /= (shared_rows_ / WarpSize());
-    shared_rows_ = WarpSize();
+  if (shared_rows_ > kTileSize) {
+    num_threads_[0] /= (shared_rows_ / kTileSize);
+    shared_rows_ = kTileSize;
   }
 
   num_blocks_ = {input_shape_[kColMajorKept]};
@@ -776,15 +788,16 @@ std::unique_ptr<MlirReductionFusion> CreateMlirReductionFusion(
   CHECK_NE(hero_reduction, nullptr);
   ReductionDimensions reduction_dimensions =
       GetReductionKindAndContiguousComponents(*hero_reduction);
+  const int64_t warp_size = analysis.device_info().threads_per_warp();
   if (reduction_dimensions.is_row_reduction) {
     if (RowReductionGetRowsPerWarp(
-            reduction_dimensions.dimensions[kRowMinorReduced]) > 1) {
+            reduction_dimensions.dimensions[kRowMinorReduced], warp_size) > 1) {
       return std::make_unique<MlirMultiRowReductionFusion>(analysis);
     }
     return std::make_unique<MlirRowReductionFusion>(analysis);
   }
 
-  if (WarpSize() % reduction_dimensions.dimensions[kColMinorKept] == 0) {
+  if (warp_size % reduction_dimensions.dimensions[kColMinorKept] == 0) {
     return std::make_unique<MlirSmallColumnReductionFusion>(analysis);
   }
   return std::make_unique<MlirColumnReductionFusion>(analysis);
@@ -795,7 +808,7 @@ MlirRowReductionFusion::MlirRowReductionFusion(
     : MlirReductionFusion(analysis) {
   CHECK(reduction_dimensions_.is_row_reduction);
   Vector3 shape = reduction_dimensions_.dimensions;
-  CHECK_EQ(RowReductionGetRowsPerWarp(shape[kRowMinorReduced]), 1);
+  CHECK_EQ(RowReductionGetRowsPerWarp(shape[kRowMinorReduced], WarpSize()), 1);
   constexpr int64_t kMinorReducedElementsPerThread = 16;
 
   int64_t num_threads_kept = 1;
@@ -935,7 +948,8 @@ MlirMultiRowReductionFusion::MlirMultiRowReductionFusion(
     : MlirReductionFusion(analysis) {
   CHECK(reduction_dimensions_.is_row_reduction);
   Vector3 shape = reduction_dimensions_.dimensions;
-  int64_t rows_per_warp = RowReductionGetRowsPerWarp(shape[kRowMinorReduced]);
+  int64_t rows_per_warp =
+      RowReductionGetRowsPerWarp(shape[kRowMinorReduced], WarpSize());
   input_shape_ = {shape[0], shape[1], shape[2]};
   CHECK_GT(rows_per_warp, 1);
 
@@ -1023,7 +1037,8 @@ IndexingMap MlirMultiRowReductionFusion::ComputeReductionOutputIndexing(
 
 int MlirMultiRowReductionFusion::GetRowsPerWarp() const {
   return RowReductionGetRowsPerWarp(
-             input_shape_[ReductionDimensions::kRowMinorReducedDimension]) *
+             input_shape_[ReductionDimensions::kRowMinorReducedDimension],
+             WarpSize()) *
          tile_sizes_per_thread_[1];
 }
 

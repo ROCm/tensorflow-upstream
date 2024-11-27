@@ -167,9 +167,9 @@ llvm::Value* EmitThreadId(llvm::IRBuilder<>* builder, int64_t threads_per_block,
 
 // Emits the LLVM values for thread_id, block_id, coordinates of the current
 // tile and strides of the loops to iterate over the current tile.
-absl::StatusOr<TilingThreadIdInfo> EmitThreadIdInfo(llvm::IRBuilder<>* builder,
-                                                    const Tiling& tiling,
-                                                    llvm::Type* index_ty) {
+absl::StatusOr<TilingThreadIdInfo> EmitThreadIdInfo(
+    llvm::IRBuilder<>* builder, const Tiling& tiling, llvm::Type* index_ty,
+    const se::DeviceDescription& gpu_device_info) {
   auto constant = [&](uint64_t c) -> llvm::Constant* {
     return llvm::ConstantInt::get(index_ty, c);
   };
@@ -202,8 +202,8 @@ absl::StatusOr<TilingThreadIdInfo> EmitThreadIdInfo(llvm::IRBuilder<>* builder,
     }
   }
 
-  info.lane_id =
-      builder->CreateURem(info.thread_id, constant(WarpSize()), "lane_id");
+  info.lane_id = builder->CreateURem(
+      info.thread_id, constant(WarpSize(gpu_device_info)), "lane_id");
   return info;
 }
 
@@ -218,15 +218,17 @@ AffineMap GetTilingAffineMap(llvm::ArrayRef<AffineExpr> exprs,
 
 absl::StatusOr<TilingKernelInfo> EmitTilingKernel(
     llvm::IRBuilder<>* builder, const Tiling& tiling, llvm::Type* index_ty,
-    const TileGenerator& tile_element_generator) {
+    const TileGenerator& tile_element_generator,
+    const se::DeviceDescription& gpu_device_info) {
   absl::Span<const int64_t> dims_in_elems = tiling.GetShape();
   const auto& block_counts = tiling.GetBlockCounts();
   auto constant = [&](uint64_t c) -> llvm::Constant* {
     return llvm::ConstantInt::get(index_ty, c);
   };
 
-  TF_ASSIGN_OR_RETURN(TilingThreadIdInfo thread_id_info,
-                      EmitThreadIdInfo(builder, tiling, index_ty));
+  TF_ASSIGN_OR_RETURN(
+      TilingThreadIdInfo thread_id_info,
+      EmitThreadIdInfo(builder, tiling, index_ty, gpu_device_info));
 
   KernelSupportLibrary ksl(builder, llvm_ir::UnrollMode::kDefaultUnroll);
 

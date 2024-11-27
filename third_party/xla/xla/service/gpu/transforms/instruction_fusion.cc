@@ -50,7 +50,7 @@ class EmptyFusionQueue : public FusionQueue {
   DequeueNextInstructionAndOperandsToFuseInOrder() override {
     return {nullptr, {}};
   }
-  void RemoveInstruction(HloInstruction* instruction) override {};
+  void RemoveInstruction(HloInstruction* instruction) override{};
   const std::vector<bool>* FusionConfiguration() override { return nullptr; };
 };
 
@@ -108,15 +108,16 @@ FusionDecision GpuInstructionFusion::ShouldFuseInexpensiveChecks(
 
   // Do not fuse into fusions if the resulting kernel would suffer from
   // uncoalesced reads due to a transposed memory access pattern.
-  if (IsInputFusibleReduction(*consumer) &&
+  if (IsInputFusibleReduction(*consumer, device_info_) &&
       IsPhysicallyTransposing(*producer)) {
     return FusionDecision::Forbid(
         "fusing the producer would break read coalescing");
   }
 
-  RETURN_IF_NOT_FUSIBLE(IsProducerConsumerFusible(*producer, *consumer));
+  RETURN_IF_NOT_FUSIBLE(
+      IsProducerConsumerFusible(*producer, *consumer, device_info_));
 
-  if (CreatesHeavyComputation(*producer, *consumer)) {
+  if (CreatesHeavyComputation(*producer, *consumer, device_info_)) {
     return FusionDecision::Forbid(
         "the fusion would create a heavy computation");
   }
@@ -160,7 +161,7 @@ FusionDecision GpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
 
 HloInstruction::FusionKind GpuInstructionFusion::ChooseKind(
     const HloInstruction* producer, const HloInstruction* consumer) {
-  return ChooseFusionKind(*producer, *consumer);
+  return ChooseFusionKind(*producer, *consumer, device_info_);
 }
 
 HloInstruction* GpuInstructionFusion::FuseInstruction(

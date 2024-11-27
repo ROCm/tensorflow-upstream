@@ -32,6 +32,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "xla/service/gpu/fusions/ir/xla_gpu_ops.h"
+#include "xla/service/gpu/fusions/transforms/passes.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/model/indexing_map.h"
@@ -48,7 +49,13 @@ namespace {
 class RewriteReductionsPass
     : public impl::RewriteReductionsPassBase<RewriteReductionsPass> {
  public:
+  explicit RewriteReductionsPass(const RewriteReductionsPassOptions& options)
+      : options_(options) {}
+
   void runOnOperation() override;
+
+ private:
+  const RewriteReductionsPassOptions options_;
 };
 
 mlir::ShapedType GetInputType(ReduceOp op) {
@@ -125,7 +132,11 @@ llvm::SmallVector<mlir::Value, 2> ReindexTensors(
 // This also pads the input if the number of threads does not divide the row
 // size.
 struct RewriteRowReduction : mlir::OpRewritePattern<ReduceOp> {
-  using OpRewritePattern::OpRewritePattern;
+  const int64_t warp_size;
+
+  RewriteRowReduction(mlir::MLIRContext* context,
+                      const RewriteReductionsPassOptions& options)
+      : OpRewritePattern(context), warp_size(options.warp_size) {}
 
   mlir::LogicalResult matchAndRewrite(
       ReduceOp op, mlir::PatternRewriter& rewriter) const override {
@@ -136,12 +147,12 @@ struct RewriteRowReduction : mlir::OpRewritePattern<ReduceOp> {
       return rewriter.notifyMatchFailure(op, "not a row reduction");
     }
 
-    if (minor_reduction.size <= WarpSize()) {
+    if (minor_reduction.size <= warp_size) {
       return rewriter.notifyMatchFailure(op, "small minor dimension");
     }
 
     int64_t num_threads = GetNumThreads(op);
-    assert(num_threads % WarpSize() == 0);
+    assert(num_threads % warp_size == 0);
 
     llvm::ArrayRef<int64_t> input_shape = GetInputType(op).getShape();
     auto projected_input_shape = llvm::to_vector(
@@ -165,8 +176,8 @@ struct RewriteRowReduction : mlir::OpRewritePattern<ReduceOp> {
     auto per_thread_reduction_input_shape = llvm::to_vector(
         input_shape.take_front(minor_reduction.first_dimension));
     per_thread_reduction_input_shape.push_back(padded_size / num_threads);
-    per_thread_reduction_input_shape.push_back(num_threads / WarpSize());
-    per_thread_reduction_input_shape.push_back(WarpSize());
+    per_thread_reduction_input_shape.push_back(num_threads / warp_size);
+    per_thread_reduction_input_shape.push_back(warp_size);
 
     int per_thread_input_rank = per_thread_reduction_input_shape.size();
 
@@ -207,7 +218,11 @@ struct RewriteRowReduction : mlir::OpRewritePattern<ReduceOp> {
 
 // Rewrites column reductions to a reduce-transpose-reduce.
 struct RewriteColumnReduction : mlir::OpRewritePattern<ReduceOp> {
-  using OpRewritePattern::OpRewritePattern;
+  const int64_t warp_size;
+
+  RewriteColumnReduction(mlir::MLIRContext* context,
+                         const RewriteReductionsPassOptions& options)
+      : OpRewritePattern(context), warp_size(options.warp_size) {}
 
   mlir::LogicalResult matchAndRewrite(
       ReduceOp op, mlir::PatternRewriter& rewriter) const override {
@@ -256,7 +271,7 @@ struct RewriteColumnReduction : mlir::OpRewritePattern<ReduceOp> {
     // handle is the warp size.
 
     assert(num_threads > minor_reduction.stride);
-    int64_t c = std::min(WarpSize(), num_threads / minor_reduction.stride);
+    int64_t c = std::min(warp_size, num_threads / minor_reduction.stride);
 
     llvm::ArrayRef<int64_t> input_shape = GetInputType(op).getShape();
     auto projected_input_shape = llvm::to_vector(
@@ -328,7 +343,8 @@ struct RewriteColumnReduction : mlir::OpRewritePattern<ReduceOp> {
 
 void RewriteReductionsPass::runOnOperation() {
   mlir::RewritePatternSet patterns(&getContext());
-  patterns.add<RewriteColumnReduction, RewriteRowReduction>(&getContext());
+  patterns.add<RewriteColumnReduction, RewriteRowReduction>(&getContext(),
+                                                            options_);
   if (mlir::failed(mlir::applyPatternsAndFoldGreedily(getOperation(),
                                                       std::move(patterns)))) {
     signalPassFailure();
@@ -337,9 +353,11 @@ void RewriteReductionsPass::runOnOperation() {
 
 }  // namespace
 
-std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
-CreateRewriteReductionsPass() {
-  return std::make_unique<RewriteReductionsPass>();
+std::unique_ptr<mlir::Pass> CreateRewriteReductionsPass(
+    const int64_t warp_size) {
+  RewriteReductionsPassOptions options;
+  options.warp_size = warp_size;
+  return std::make_unique<RewriteReductionsPass>(options);
 }
 
 }  // namespace gpu

@@ -58,7 +58,7 @@ absl::Status EmitGeneric(mlir::OpBuilder b, absl::string_view libdevice_path,
 
 absl::StatusOr<LaunchDimensions> GetMatMulLaunchDimensions(
     const TritonFusionAnalysis& analysis, const HloFusionAdaptor& fusion,
-    const TritonGemmConfig& config) {
+    const TritonGemmConfig& config, const se::DeviceDescription& device_info) {
   return absl::UnimplementedError("not supported for this build configuration");
 }
 
@@ -108,7 +108,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
 }
 
 absl::Status CreateTritonPipeline(
-    mlir::OpPassManager& pm, const se::GpuComputeCapability& cc,
+    mlir::OpPassManager& pm, const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     mt::nvidia_gpu::ClusterInfo& out_cluster_info) {
   return absl::UnimplementedError("not supported for this build configuration");

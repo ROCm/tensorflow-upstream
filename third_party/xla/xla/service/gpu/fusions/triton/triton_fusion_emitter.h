@@ -77,7 +77,7 @@ absl::Status EmitGeneric(mlir::OpBuilder b, absl::string_view libdevice_path,
 // Compute the launch dimensions for the given Triton MatMul.
 absl::StatusOr<LaunchDimensions> GetMatMulLaunchDimensions(
     const TritonFusionAnalysis& analysis, const HloFusionAdaptor& fusion,
-    const TritonGemmConfig& config);
+    const TritonGemmConfig& config, const se::DeviceDescription& device_info);
 
 // Use tiling and execution parameters from 'config'. output_tile_sizes is
 // ignored.
@@ -129,7 +129,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
 // parameter which would give a hint to Triton which cluster dims we prefer to
 // use, but that's not the case currently.
 absl::Status CreateTritonPipeline(
-    mlir::OpPassManager& pm, const se::GpuComputeCapability& cc,
+    mlir::OpPassManager& pm, const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     mt::nvidia_gpu::ClusterInfo& out_cluster_info);
 

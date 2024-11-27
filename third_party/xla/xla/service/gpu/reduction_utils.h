@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -79,11 +80,14 @@ std::ostream& operator<<(std::ostream& os,
 // Returns true if using the reduction emitter is estimated to be faster than
 // using the elemental emitter.
 bool IsUnnestedReductionFasterThanElemental(
-    const ReductionDimensions& reduction_dimensions);
+    const ReductionDimensions& reduction_dimensions,
+    const se::DeviceDescription& device_description);
 
 // Returns true if either the dimensions being reduced or the dimensions being
 // kept are contiguous in the input of the reduce instruction.
-bool IsReductionFromOrToContiguousDimensions(const HloInstruction& reduce);
+bool IsReductionFromOrToContiguousDimensions(
+    const HloInstruction& reduce,
+    const se::DeviceDescription& device_description);
 
 // Given the input shape and dimensions to reduce for a reduction, returns
 // ReductionDimensions.
@@ -100,16 +104,18 @@ Vector3 GetReductionTiling(const ReductionDimensions& reduction_dimensions);
 // How big the reduction dimension can be to be race free.
 int64_t ReductionDimensionRaceFreeBound(
     const HloModuleConfig& hlo_module_config,
-    const ReductionDimensions& reduction_dimensions);
+    const ReductionDimensions& reduction_dimensions,
+    const se::DeviceDescription& device_description);
 
 // Returns whether the given reduction can be safely generated without atomics :
 // that is, at most one block will write to every output element.
 bool ReductionIsRaceFree(const HloModuleConfig& hlo_module_config,
-                         const ReductionDimensions& reduction_dimensions);
+                         const ReductionDimensions& reduction_dimensions,
+                         const se::DeviceDescription& device_description);
 
 // Whether the instruction is a reduction hero for the given root.
-bool IsRealReductionHero(const HloInstruction& root,
-                         const HloInstruction& hero);
+bool IsRealReductionHero(const HloInstruction& root, const HloInstruction& hero,
+                         const se::DeviceDescription& device_description);
 
 // Whether `reduction_hero` is compatible with `first_reduce`.
 bool AreReductionsMultiOutputFusionCompatible(

@@ -731,9 +731,8 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
   TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
                       gpublas_lt::AsBlasLtEpilogue(epilogue));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
-      instr, std::move(gemm_config),
-      blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
-      c_scale, d_scale, d_amax, workspace_buffer);
+      instr, std::move(gemm_config), blas_lt_epilogue, algorithm, a, b, c, d,
+      bias, aux, a_scale, b_scale, c_scale, d_scale, d_amax, workspace_buffer);
   AddThunkToThunkSequence(std::move(thunk));
   return absl::OkStatus();
 }
@@ -822,9 +821,8 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
   TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
                       gpublas_lt::AsBlasLtEpilogue(epilogue));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
-      instr, std::move(gemm_config),
-      blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
-      c_scale, d_scale, d_amax, workspace_buffer);
+      instr, std::move(gemm_config), blas_lt_epilogue, algorithm, a, b, c, d,
+      bias, aux, a_scale, b_scale, c_scale, d_scale, d_amax, workspace_buffer);
   AddThunkToThunkSequence(std::move(thunk));
   return absl::OkStatus();
 }
@@ -1432,9 +1430,11 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
         KernelArguments::Create(ir_emitter_context_->buffer_assignment(), instr,
                                 instr->operands(),
                                 /*dedup=*/false));
-    auto launch_dimensions =
-        LaunchDimensions(se::BlockDim(call.grid_x, call.grid_y, call.grid_z),
-                         se::ThreadDim(call.num_warps * 32));
+    auto launch_dimensions = LaunchDimensions(
+        se::BlockDim(call.grid_x, call.grid_y, call.grid_z),
+        se::ThreadDim(
+            call.num_warps *
+            ir_emitter_context_->gpu_device_info().threads_per_warp()));
 
     std::string sanitized_kernel_name =
         GetSanitizedUniqueName(*ir_emitter_context_, kernel_name);

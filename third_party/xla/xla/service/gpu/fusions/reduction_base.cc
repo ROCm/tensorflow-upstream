@@ -55,12 +55,12 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-int RowReductionGetRowsPerWarp(int reduced_dimension_size) {
-  if (WarpSize() % reduced_dimension_size != 0 ||
-      reduced_dimension_size >= WarpSize()) {
+int RowReductionGetRowsPerWarp(int reduced_dimension_size, int64_t warp_size) {
+  if (warp_size % reduced_dimension_size != 0 ||
+      reduced_dimension_size >= warp_size) {
     return 1;
   }
-  return WarpSize() / reduced_dimension_size;
+  return warp_size / reduced_dimension_size;
 }
 
 int GetVectorSize(const HloFusionAnalysis& analysis,
@@ -168,8 +168,8 @@ ReductionGroups GroupDisjointReductions(const HloFusionAnalysis& analysis,
     auto [it, inserted] = disjoint_sets.try_emplace(root, root);
     CHECK(inserted) << "Duplicate root " << root.ToString();  // Crash OK
     reachable_outputs[root].insert(root);
-    result.is_reduction_root.push_back(
-        IsRealReductionHero(root.instruction(), hero.instruction()));
+    result.is_reduction_root.push_back(IsRealReductionHero(
+        root.instruction(), hero.instruction(), analysis.device_info()));
     if (result.is_reduction_root.back()) {
       roots_with_reduction.insert(root);
     } else if (first_non_reduction_root != nullptr) {

@@ -261,7 +261,8 @@ llvm::Value* EmitAMDGPUShflDownSwizzle(llvm::Value* value, llvm::Value* offset,
 
 // Helper function to emit call to NVPTX shfl_down intrinsic.
 llvm::Value* EmitNVPTXShflDown(llvm::Value* value, llvm::Value* offset,
-                               llvm::IRBuilder<>* b) {
+                               llvm::IRBuilder<>* b,
+                               const se::DeviceDescription& gpu_device_info) {
   llvm::Module* module = b->GetInsertBlock()->getModule();
   llvm::Intrinsic::ID llvm_intrinsic_id;
   CHECK_EQ(value->getType()->getPrimitiveSizeInBits(), 32);
@@ -272,8 +273,8 @@ llvm::Value* EmitNVPTXShflDown(llvm::Value* value, llvm::Value* offset,
   }
   llvm::Function* intrinsic =
       llvm::Intrinsic::getDeclaration(module, llvm_intrinsic_id, {});
-  return b->CreateCall(
-      intrinsic, {b->getInt32(-1), value, offset, b->getInt32(WarpSize() - 1)});
+  return b->CreateCall(intrinsic, {b->getInt32(-1), value, offset,
+                                   b->getInt32(WarpSize(gpu_device_info) - 1)});
 }
 
 // Helper function to emit call to SPIR shfl_down intrinsic.
@@ -309,7 +310,7 @@ llvm::Value* EmitFullWarpShuffleDown(
   // Special case for efficiency
   if (value->getType()->isFloatTy() && bit_width == 32) {
     if (target_triple.isNVPTX()) {
-      return EmitNVPTXShflDown(value, offset, builder);
+      return EmitNVPTXShflDown(value, offset, builder, gpu_device_info);
     } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
       if (gpu_device_info.rocm_compute_capability().gfx9_mi100_or_later()) {
         return EmitAMDGPUShflDownSwizzle(value, offset, builder);
@@ -334,7 +335,7 @@ llvm::Value* EmitFullWarpShuffleDown(
     llvm::Value* insert_val;
     if (target_triple.isNVPTX()) {
       insert_val = EmitNVPTXShflDown(builder->CreateExtractElement(x, i),
-                                     offset, builder);
+                                     offset, builder, gpu_device_info);
     } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
       if (gpu_device_info.rocm_compute_capability().gfx9_mi100_or_later()) {
         insert_val = EmitAMDGPUShflDownSwizzle(

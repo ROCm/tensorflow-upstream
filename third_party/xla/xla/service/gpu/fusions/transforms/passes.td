@@ -178,6 +178,9 @@ def LowerXlaGpuToScfPass :
     "mlir::tensor::TensorDialect", "xla::gpu::XlaGpuDialect", "mlir::vector::VectorDialect",
   ];
 
+  let options = [
+    Option<"warp_size", "warp_size", "int64_t", /*default=*/"32", "Warp size.">,
+  ];
   let constructor = "CreateLowerXlaGpuToScfPass()";
 }
 
@@ -253,6 +256,9 @@ def RewriteReductionsPass : Pass<
     "xla::gpu::XlaGpuDialect",
   ];
 
+  let options = [
+    Option<"warp_size", "warp_size", "int64_t", /*default=*/"32", "Warp size.">,
+  ];
   let constructor = "CreateRewriteReductionsPass()";
 }
 
