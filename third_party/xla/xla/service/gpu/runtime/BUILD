@@ -688,6 +688,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:matmul_utils",
+        "//xla/service/gpu:autotuner_util",
         "//xla/service/gpu/runtime:thunk",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor",
