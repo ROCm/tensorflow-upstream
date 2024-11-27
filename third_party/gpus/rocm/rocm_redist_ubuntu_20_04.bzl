@@ -2,6 +2,10 @@ rocm_redist_ubuntu_20_04 = {
     "6.2.0": {
         "archives": [
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/c/comgr6.2.0/comgr6.2.0_2.8.0.60200-66~20.04_amd64.deb",
+                sha256 = "fabf4a831f21b5248932e08654149bc215da2a816613ad8d05b805d4e226171a",
+            ),
+            struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hip-runtime-amd6.2.0/hip-runtime-amd6.2.0_6.2.41133.60200-66~20.04_amd64.deb",
                 sha256 = "215fae8759742bc048699feaacd6256a3ac2138771b69731dab7779325bb1b41",
             ),
@@ -16,14 +20,6 @@ rocm_redist_ubuntu_20_04 = {
             struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hipblas-dev6.2.0/hipblas-dev6.2.0_2.2.0.60200-66~20.04_amd64.deb",
                 sha256 = "ab3ee54b33eba013fbf3d9aefe64b54e1918b9fb72790ca0b57fb391cb662cf0",
-            ),
-            struct(
-                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hipblaslt6.2.0/hipblaslt6.2.0_0.8.0.60200-66~20.04_amd64.deb",
-                sha256 = "a9fb63b30c3383b37479253c59c85493b75646037e016f68b136d12c5e6a4adb",
-            ),
-            struct(
-                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hipblaslt-dev6.2.0/hipblaslt-dev6.2.0_0.8.0.60200-66~20.04_amd64.deb",
-                sha256 = "5e2ca28ea10ff16eb75bde5c69aef6dbe3566d8fc49c3d2ace0ae7a777c1ffae",
             ),
             struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hipcc6.2.0/hipcc6.2.0_1.1.1.60200-66~20.04_amd64.deb",
@@ -128,6 +124,10 @@ rocm_redist_ubuntu_20_04 = {
             struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocprim-dev6.2.0/rocprim-dev6.2.0_3.2.0.60200-66~20.04_amd64.deb",
                 sha256 = "e74e1907eb90a692344626e881cb88eeed5565ac3b487eb94ad4ac02ffd838ed",
+            ),
+            struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocprofiler-register6.2.0/rocprofiler-register6.2.0_0.4.0.60200-66~20.04_amd64.deb",
+                sha256 = "4be88c5010c2cf0223c1dd7dc9d4a430fc54ee401ca093de2dcca60dabea763a",
             ),
             struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocrand-dev/rocrand-dev_3.1.0.60200-66~20.04_amd64.deb",

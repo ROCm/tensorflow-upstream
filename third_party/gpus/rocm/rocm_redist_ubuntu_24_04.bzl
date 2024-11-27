@@ -2,8 +2,8 @@ rocm_redist_ubuntu_24_04 = {
     "6.2.0": {
         "archives": [
             struct(
-                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hip-runtime-amd6.2.0/hip-runtime-amd6.2.0_6.2.41133.60200-66~24.04_amd64.deb",
-                sha256 = "4831c09058882d531d10ead6a13ada15e7e9cbb182bd56ab62f2404207488f3e",
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/c/comgr6.2.0/comgr6.2.0_2.8.0.60200-66~24.04_amd64.deb",
+                sha256 = "7e1ff2d9f2435f5b9db9aa952bb57d1a878a8aa7d96bda61361c107b7e1428e3",
             ),
             struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hip-dev6.2.0/hip-dev6.2.0_6.2.41133.60200-66~24.04_amd64.deb",
@@ -94,7 +94,6 @@ rocm_redist_ubuntu_24_04 = {
                 sha256 = "00f135ce2ae47c35085ef06248ff7d5ce8c12fd0d5b82e7bd77b1dbc0ce7058e",
             ),
             struct(
-                name = "rocfft-dev",
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocfft-dev6.2.0/rocfft-dev6.2.0_1.0.28.60200-66~24.04_amd64.deb",
                 sha256 = "eb3904263b396d46799eeea1081d8e8d1a551a890432a803364db2d013849f92",
             ),
@@ -129,6 +128,10 @@ rocm_redist_ubuntu_24_04 = {
             struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocprim-dev6.2.0/rocprim-dev6.2.0_3.2.0.60200-66~24.04_amd64.deb",
                 sha256 = "6c832e2feb0885fbe481245825c76a466921b294f530eb0d0da70a44cfe6e608",
+            ),
+            struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocprofiler-register6.2.0/rocprofiler-register6.2.0_0.4.0.60200-66~24.04_amd64.deb",
+                sha256 = "d198d010fedfbe51d3fd19444e2848d430e08f91d19a5b2661b94ac6d1135863",
             ),
             struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocrand-dev/rocrand-dev_3.1.0.60200-66~24.04_amd64.deb",
