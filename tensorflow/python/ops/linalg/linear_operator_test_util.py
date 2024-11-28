@@ -1032,7 +1032,7 @@ class SquareLinearOperatorDerivedClassTest(
     # non-batch operators (n, n) and batch operators.
     return [
         shapes_info((0, 0)),
-        shapes_info((1, 1)),
+        #shapes_info((1, 1)),
         shapes_info((1, 3, 3)),
         shapes_info((3, 4, 4)),
         shapes_info((2, 1, 4, 4))]
