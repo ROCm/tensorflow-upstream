@@ -415,7 +415,11 @@ Status CompileModuleToLlvmIrImpl(
   VLOG(1) << "Buffer Assignment Stats for " << hlo_module->name() << "\n"
           << results->buffer_assignment->GetStats().ToString();
   DumpHloModuleIfEnabled(*hlo_module, *results->buffer_assignment,
+  #if TENSORFLOW_USE_ROCM
+                         absl::StrCat(rocm_compute_capability.gfx_version(),
+  #else
                          absl::StrCat("sm_", cuda_compute_capability.ToString(),
+  #endif
                                       "_gpu_", kAfterOptimizationsDumpName));
 
   VLOG(1) << "After optimization module fingerprint for " << hlo_module->name()

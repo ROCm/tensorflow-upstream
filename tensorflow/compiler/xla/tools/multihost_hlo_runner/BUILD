@@ -1,9 +1,8 @@
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/compiler/xla/tests:build_defs.bzl", "xla_test")
 load("//tensorflow/tsl:tsl.bzl", "if_cuda_or_rocm")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("//tensorflow/compiler/xla:xla.bzl", "xla_cc_binary")
+load("//tensorflow:tensorflow.bzl", "tf_cc_test","tf_cc_binary")
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
@@ -27,7 +26,7 @@ build_test(
     ],
 )
 
-xla_cc_binary(
+tf_cc_binary(
     name = "hlo_runner_main",
     testonly = True,
     srcs = ["hlo_runner_main.cc"],
@@ -93,7 +92,7 @@ cc_library(
     ],
 )
 
-xla_test(
+tf_cc_test(
     name = "functional_hlo_runner_test",
     srcs = ["functional_hlo_runner_test.cc"],
     backend_tags = {
