@@ -444,6 +444,7 @@ cc_library(
     deps = if_gpu_is_configured([
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:matmul_utils",
+        "//xla/service/gpu:autotuner_util",
         "//xla/service/gpu:thunk",
         "//xla:status",
         "//xla/stream_executor:device_memory",

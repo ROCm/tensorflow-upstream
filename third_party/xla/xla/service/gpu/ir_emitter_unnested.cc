@@ -1078,14 +1078,16 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
   TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
                       gpublas_lt::AsBlasLtEpilogue(epilogue));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
+      instr, Thunk::ThunkInfo::WithProfileAnnotation(instr),
+      std::move(gemm_config),
       blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
       c_scale, d_scale, d_amax);
   AddThunkToThunkSequence(std::move(thunk));
   return absl::OkStatus();
 }
 
-absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(mlir::Operation* op) {
+absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
+      mlir::Operation* op) {
   auto matmul = mlir::dyn_cast<mlir::lmhlo_gpu::CublasLtMatmulOp>(op);
   TF_RET_CHECK(matmul != nullptr);
 
@@ -1107,7 +1109,7 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(mlir::Operation* op) {
   TF_ASSIGN_OR_RETURN(GemmConfig gemm_config, GemmConfig::For(matmul));
   TF_ASSIGN_OR_RETURN(auto epilogue,
                       gpublas_lt::AsBlasLtEpilogue(matmul.getEpilogue()));
-  auto thunk = std::make_unique<CublasLtMatmulThunk>(
+  auto thunk = std::make_unique<CublasLtMatmulThunk>(nullptr,  // instruction is not given
       Thunk::ThunkInfo::WithProfileAnnotation(op), std::move(gemm_config),
       epilogue, matmul.getAlgorithm(), a, b, c, d, bias, aux, a_scale, b_scale,
       c_scale, d_scale, d_amax);
@@ -1187,7 +1189,7 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
   TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
                       gpublas_lt::AsBlasLtEpilogue(epilogue));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
+      instr, std::move(gemm_config),
       blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
       c_scale, d_scale, d_amax);
   AddThunkToThunkSequence(std::move(thunk));
