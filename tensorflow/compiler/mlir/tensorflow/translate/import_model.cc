@@ -129,8 +129,6 @@ namespace tensorflow {
 
 constexpr size_t kNumThreadToConvertSignatures = 10;
 
-using ::mlir::NamedAttrList;
-using ::mlir::TensorType;
 using ::mlir::tf_saved_model::AssetOp;
 using ::mlir::tf_saved_model::GlobalTensorOp;
 using ::mlir::tf_saved_model::kTfSavedModelExportedNamesAttr;
@@ -1066,9 +1064,9 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertSavedModelObjectGraph(
   }
 
   specs.convert_all_functions_to_mlir = true;
-  TF_ASSIGN_OR_RETURN(
-      module, ConvertGraphToMlir(graph, debug_info, graph.flib_def(), specs,
-                                 module->getContext()));
+  TF_ASSIGN_OR_RETURN(module, tensorflow::tf2xla::v2::ConvertGraphToTfExecutor(
+                                  graph, debug_info, graph.flib_def(), specs,
+                                  module->getContext()));
 
   if (!saved_model->meta_graph_def().has_object_graph_def()) {
     return errors::InvalidArgument(
@@ -1438,9 +1436,9 @@ SavedModelSignatureDefImporterLite::ConvertGraph(
   TF_ASSIGN_OR_RETURN(const auto* subgraph, input_.GetSubGraph(name, specs));
 
   // Convert sub-graph to MLIR module.
-  return ConvertGraphToMlir(*subgraph, input_.debug_info(),
-                            subgraph->flib_def(), specs, module_->getContext(),
-                            tf_name_to_mlir_name);
+  return tensorflow::tf2xla::v2::ConvertGraphToTfExecutor(
+      *subgraph, input_.debug_info(), subgraph->flib_def(), specs,
+      module_->getContext(), tf_name_to_mlir_name);
 }
 
 Status SavedModelSignatureDefImporterLite::ConvertSignature(
@@ -1759,8 +1757,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertGraphdefToMlir(
   }
   TF_RETURN_IF_ERROR(ConvertGraphDefToGraph(
       options, std::move(preprocessed_graphdef), &graph));
-  return ConvertGraphToMlir(graph, debug_info, graph.flib_def(), specs,
-                            context);
+  return tensorflow::tf2xla::v2::ConvertGraphToTfExecutor(
+      graph, debug_info, graph.flib_def(), specs, context);
 }
 
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertGraphToMlir(

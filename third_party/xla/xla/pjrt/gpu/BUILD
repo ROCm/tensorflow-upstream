@@ -3,15 +3,19 @@ load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("@local_tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/pjrt/gpu:package_groups.bzl", "xla_gpu_internal_packages")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 
+# Integrate with PJRT rather than the GPU client directly.
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = internal_visibility(["//xla:internal"]),
+    default_visibility = ["//visibility:private"],
     licenses = ["notice"],
 )
+
+xla_gpu_internal_packages()
 
 cc_library(
     name = "gpu_helpers",
@@ -24,7 +28,8 @@ cc_library(
         "//xla/client:client_library",
         "//xla/client:local_client",
         "//xla/service:platform_util",
-        "//xla/stream_executor",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/framework:bfc_allocator",
@@ -44,7 +49,7 @@ cc_library(
     srcs = ["se_gpu_pjrt_client.cc"],
     hdrs = ["se_gpu_pjrt_client.h"],
     defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]),
-    visibility = internal_visibility(["//xla/pjrt:friends"]),
+    visibility = internal_visibility(["//xla/pjrt/gpu:legacy_gpu_client_users"]),
     deps = [
         ":gpu_helpers",
         ":gpu_metrics",
@@ -57,7 +62,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/client:client_library",
         "//xla/client:local_client",
-        "//xla/client:xla_computation",
+        "//xla/hlo/builder:xla_computation",
         "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:event_pool",
         "//xla/pjrt:host_memory_spaces",
@@ -85,11 +90,12 @@ cc_library(
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
         "//xla/service/gpu:gpu_executable_run_options",
-        "//xla/stream_executor",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
         "//xla/tsl/framework:allocator",
@@ -174,7 +180,8 @@ xla_cc_test(
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/service:gpu_plugin",
         "//xla/service:platform_util",
-        "//xla/stream_executor",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:stream",
         "//xla/tests:literal_test_util",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/log:check",
@@ -244,6 +251,7 @@ cc_library(
     name = "gpu_topology",
     srcs = ["gpu_topology.cc"],
     hdrs = ["gpu_topology.h"],
+    visibility = internal_visibility(["//xla/pjrt/gpu:legacy_gpu_topology_users"]),
     deps = [
         ":gpu_topology_proto_cc",
         "@com_google_absl//absl/strings:string_view",
@@ -255,11 +263,12 @@ cc_library(
     srcs = ["se_gpu_pjrt_compiler.cc"],
     hdrs = ["se_gpu_pjrt_compiler.h"],
     defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]),
+    visibility = internal_visibility(["//xla/pjrt/gpu:legacy_se_gpu_pjrt_compiler_users"]),
     deps = [
         ":se_gpu_pjrt_client",
         "//xla:status_macros",
         "//xla/client:local_client",
-        "//xla/client:xla_computation",
+        "//xla/hlo/builder:xla_computation",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
@@ -301,6 +310,7 @@ cc_library(
     name = "gpu_metrics",
     srcs = ["gpu_metrics.cc"],
     hdrs = ["gpu_metrics.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//xla/tsl/lib/monitoring:gauge",
         "@com_google_absl//absl/strings",
@@ -321,6 +331,7 @@ xla_test(
         ":se_gpu_pjrt_compiler",
         "//xla:test",
         "//xla/client:xla_computation",
+        "//xla/hlo/builder:xla_computation",
         "//xla/hlo/parser:hlo_parser",
         "//xla/mlir_hlo",
         "//xla/pjrt:pjrt_client",
@@ -349,6 +360,7 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla/client:xla_computation",
+        "//xla/hlo/builder:xla_computation",
         "//xla/hlo/parser:hlo_parser",
         "//xla/mlir_hlo",
         "//xla/pjrt:pjrt_client",

@@ -237,7 +237,6 @@ cc_library(
     compatible_with = [],
     deps = [
         ":platform",
-        "@local_xla//xla/stream_executor/gpu:scoped_activate_context",
     ],
 )
 
@@ -685,7 +684,6 @@ cc_library(
     hdrs = if_rocm_is_configured(["rocm.h"]),
     deps = if_rocm_is_configured([
         ":platform",
-        "@local_xla//xla/stream_executor/gpu:scoped_activate_context",
     ]),
 )
 
@@ -1092,7 +1090,6 @@ tf_cuda_library(
         "@local_xla//xla/stream_executor:dnn",
         "@local_xla//xla/stream_executor:platform_manager",
         "@local_xla//xla/stream_executor/cuda:cuda_platform_id",
-        "@local_xla//xla/stream_executor/gpu:scoped_activate_context",
         "@local_xla//xla/stream_executor/host:host_platform_id",
         "@local_xla//xla/stream_executor/rocm:rocm_platform_id",
     ] + if_rocm_is_configured([
@@ -1271,7 +1268,8 @@ tf_cc_test(
 
 tf_cc_test(
     name = "fake_python_env_test",
-    size = "medium",
+    # Test size is marked as large because it showed a big runtime init overhead in build tests.
+    size = "large",
     srcs = ["fake_python_env_test.cc"],
     args = [
         "/some/path/to/pythontest.runfiles/org_tensorflow/stuff/to/run.py",

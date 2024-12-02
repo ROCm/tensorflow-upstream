@@ -64,6 +64,8 @@
 # Placeholder: load py_proto_library
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_tensorrt//:build_defs.bzl", "if_tensorrt")
+# copybara:uncomment(google-only) load("//tools/build_defs/go:go_library.bzl", "go_library")
+
 load(
     "@local_xla//xla/tsl/mkl:build_defs.bzl",
     "if_mkl",
@@ -1481,6 +1483,7 @@ cc_library(
         "@local_xla//xla:xla_proto_cc_impl",
         "@local_xla//xla:xla_data_proto_cc_impl",
         "@local_xla//xla/service:hlo_proto_cc_impl",
+        "@local_xla//xla/service:metrics_proto_cc_impl",
         "@local_xla//xla/service:buffer_assignment_proto_cc_impl",
         "@local_xla//xla/service/memory_space_assignment:memory_space_assignment_proto_cc_impl",
         "@local_xla//xla/service/gpu:backend_configs_cc_impl",
@@ -1540,11 +1543,13 @@ cc_library(
 alias(
     name = "portable_jpeg_internal",
     actual = "//tensorflow/core/lib/jpeg:portable_jpeg_internal",
+    visibility = ["//visibility:public"],
 )
 
 alias(
     name = "portable_gif_internal",
     actual = "//tensorflow/core/lib/gif:portable_gif_internal",
+    visibility = ["//visibility:public"],
 )
 
 alias(

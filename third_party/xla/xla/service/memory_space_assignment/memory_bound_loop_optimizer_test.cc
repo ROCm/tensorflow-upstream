@@ -34,13 +34,13 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "re2/re2.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/service/buffer_value.h"
-#include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/memory_space_assignment/allocation.h"
@@ -68,14 +68,9 @@ namespace {
 
 using ::testing::ContainerEq;
 using ::testing::HasSubstr;
-constexpr int64_t kPointerSize = 8;
-
-int64_t ShapeSize(const Shape& shape) {
-  return ShapeUtil::ByteSizeOf(shape, kPointerSize);
-}
 
 int64_t SizeFunction(const BufferValue& value) {
-  return ShapeSize(value.shape());
+  return HloCostAnalysis::DefaultShapeSize(value.shape());
 }
 
 int64_t ReservedScopedMemoryFn(
@@ -284,7 +279,6 @@ class MemoryBoundLoopOptimizerTest : public HloTestBase {
     cost_analysis_options_.alternate_mem_bandwidth_bytes_per_second = 128;
     cost_analysis_options_.async_copy_bandwidth_bytes_per_second = 32;
     cost_analysis_options_.pipeline_overhead_window_size_mib = 1;
-    options.shape_size = ShapeSize;
     options.set_flops_per_second(16);
     options.set_bytes_per_second(32);
     options.set_transcendentals_per_second(16);

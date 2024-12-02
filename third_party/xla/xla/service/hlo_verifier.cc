@@ -615,6 +615,24 @@ absl::Status ShapeVerifier::HandleAllToAll(HloInstruction* hlo) {
   }
 }
 
+absl::Status ShapeVerifier::HandleRaggedAllToAll(HloInstruction* hlo) {
+  auto* all_to_all = Cast<HloRaggedAllToAllInstruction>(hlo);
+  TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
+                      GetCollectiveOpGroupMode(
+                          all_to_all->channel_id().has_value(), std::nullopt));
+
+  TF_RETURN_IF_ERROR(CheckReplicaGroups(hlo, group_mode));
+
+  TF_RET_CHECK(all_to_all != nullptr);
+  TF_RET_CHECK(hlo->operand_count() == 6);
+  std::vector<const Shape*> operand_shapes;
+  for (const HloInstruction* operand : hlo->operands()) {
+    operand_shapes.push_back(&operand->shape());
+  }
+  return CheckShape(hlo,
+                    ShapeInference::InferRaggedAllToAllShape(operand_shapes));
+}
+
 absl::Status ShapeVerifier::HandlePartitionId(HloInstruction* hlo) {
   return CheckShape(hlo, ShapeUtil::MakeShape(U32, {}));
 }
@@ -1961,7 +1979,15 @@ absl::Status ShapeVerifier::CheckShape(
             if (instruction_memory_space != operand_memory_space &&
                 (instruction_memory_space == Layout::kHostMemorySpace ||
                  operand_memory_space == Layout::kHostMemorySpace)) {
-              // Is a host->device copy for a device->host copy.
+              if (instruction_memory_space == Layout::kHostMemorySpace) {
+                // Unfortunately it might still be a host->host copy before
+                // memory space is propagated. A transpose is allowed in that
+                // case.
+                return instruction->shape().element_type() ==
+                       inferred_shape.element_type();
+              }
+              // A host->device copy or a device->host copy cannot do a
+              // transpose.
               return Shape::Equal().IgnoreMemorySpaceInLayout()(
                   instruction->shape(), inferred_shape);
             }
@@ -2503,8 +2529,7 @@ absl::Status VerifyChannels(const HloModule& module,
   }
 
   // Iterate over each channel to check invariants.
-  for (auto& pair : channel_instructions) {
-    auto& instructions = pair.second;
+  for (auto& [channel_id, instructions] : channel_instructions) {
     const HloInstruction* first = instructions[0];
     if (const auto* sendrecv = DynCast<HloSendRecvInstruction>(first)) {
       absl::flat_hash_set<HloOpcode> opcodes;
@@ -2512,19 +2537,14 @@ absl::Status VerifyChannels(const HloModule& module,
         opcodes.insert(instr->opcode());
         auto cast = DynCast<HloSendRecvInstruction>(instr);
         TF_RET_CHECK(cast != nullptr)
-            << "channel " << pair.first
+            << "channel " << channel_id
             << " is used for different types of channel instructions";
       }
-      if (sendrecv->is_host_transfer()) {
-        TF_RET_CHECK(instructions.size() == 2)
-            << "channel " << pair.first
-            << " is used for multiple host send/recv instructions";
-      }
     } else {
-      for (const HloInstruction* instr : instructions) {
-        if (opts.verify_unique_channel_ids) {
+      if (opts.verify_unique_channel_ids) {
+        for (const HloInstruction* instr : instructions) {
           TF_RET_CHECK(first->opcode() == instr->opcode())
-              << "channel " << pair.first
+              << "channel " << channel_id
               << " is used for different types of channel instructions";
         }
       }
@@ -3051,7 +3071,11 @@ absl::StatusOr<bool> HloVerifier::Run(
     for (auto* computation : module->computations(execution_threads)) {
       TF_RETURN_IF_ERROR(computation->Accept(shape_verifier.get()));
       TF_RETURN_IF_ERROR(computation->Accept(&instruction_verifier));
-      if (computation->IsAsyncComputation()) {
+      // Verify that async computations contain a single instruction or a
+      // collection of send/recv instructions. This is needed to represent NCCL
+      // groups on GPU.
+      if (computation->IsAsyncComputation() &&
+          !computation->OnlyContainsSendRecv()) {
         TF_RETURN_IF_ERROR(VerifyAsyncComputation(computation));
       }
     }

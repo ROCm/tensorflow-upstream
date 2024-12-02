@@ -346,6 +346,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/numeric:bits",
@@ -374,6 +375,8 @@ xla_cc_test(
         ":test",
         ":types",
         ":util",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/types:span",
         "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:ml_dtypes",
         "@local_tsl//tsl/platform:test_main",
@@ -388,6 +391,7 @@ cc_library(
     deps = [
         ":types",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
         "@local_tsl//tsl/platform:logging",
     ],
@@ -882,7 +886,10 @@ cc_library(
         ":xla_data_proto_cc",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@local_tsl//tsl/platform:env",
+        "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:protobuf",
     ],
@@ -1044,6 +1051,7 @@ xla_cc_test(
     deps = [
         ":test",
         ":window_util",
+        ":xla_data_proto_cc",
         "@local_tsl//tsl/platform:test_main",
     ],
 )
@@ -1105,9 +1113,11 @@ cc_library(
         [
             ":types",
             "//xla/tsl/util:command_line_flags",
+            "@com_google_absl//absl/base:core_headers",
             "@com_google_absl//absl/container:flat_hash_map",
             "@com_google_absl//absl/strings",
             "@com_google_absl//absl/strings:str_format",
+            "@com_google_absl//absl/synchronization",
             "@com_google_absl//absl/types:span",
             "@local_tsl//tsl/platform:logging",
         ],
@@ -1123,6 +1133,7 @@ xla_cc_test(
             "@com_google_absl//absl/strings:str_format",
             "@local_tsl//tsl/platform:env",
             "@local_tsl//tsl/platform:logging",
+            "@local_tsl//tsl/platform:macros",
             "@local_tsl//tsl/platform:subprocess",
             "@local_tsl//tsl/platform:test",
         ],
@@ -1178,8 +1189,6 @@ xla_cc_test(
         "debug_options_parsers.h",
         "debug_options_parsers_test.cc",
     ],
-    # TODO(https://github.com/openxla/xla/issues/17808)
-    tags = ["noasan"],
     deps =
         [
             ":debug_options_flags",

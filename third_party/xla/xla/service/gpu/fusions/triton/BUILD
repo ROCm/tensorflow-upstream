@@ -8,7 +8,7 @@ load(
     "if_gpu_is_configured",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google")
+load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -94,7 +94,7 @@ cc_library(
         "//xla/service/gpu/fusions/ir:xla_gpu",
         "//xla/service/gpu/fusions/mlir:elemental_hlo_to_mlir",
         "//xla/service/gpu/fusions/transforms:passes",
-        "//xla/service/gpu/llvm_gpu_backend",
+        "//xla/service/gpu/fusions/triton:xla_triton",
         "//xla/service/gpu/model:indexing_analysis",
         "//xla/service/gpu/model:symbolic_tile_analysis",
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
@@ -149,9 +149,11 @@ cc_library(
         "@triton//:TritonLLVMIR",
     ]) + if_cuda_is_configured([
         "@triton//third_party/nvidia:NVGPUToLLVM",
+        "//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
     ]) + if_rocm_is_configured([
         "@local_tsl//tsl/platform:rocm_rocdl_path",
+        "//xla/service/gpu/llvm_gpu_backend:llvm_gpu_backend",
         "@triton//third_party/amd:TritonAMDGPUToLLVM",
         "@triton//third_party/amd:TritonAMDGPUTransforms",
     ]),
@@ -166,10 +168,13 @@ cc_library(
     hdrs = ["triton_fusion_emitter_legacy_matmul.h"],
     deps = [
         ":emitter_helpers",
+        ":xla_triton",
         "//xla:comparison_util",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/mlir_hlo",
@@ -179,8 +184,8 @@ cc_library(
         "//xla/service/gpu:hlo_traversal",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
+        "//xla/service/gpu:matmul_indexing_utils",
         "//xla/service/gpu:matmul_utils",
-        "//xla/service/gpu:target_util",
         "//xla/service/gpu:triton_fusion_analysis",
         "//xla/service/gpu:triton_tiling_propagation",
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
@@ -199,7 +204,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MathDialect",
@@ -291,6 +295,7 @@ cc_library(
     hdrs = ["passes.h"],
     deps = [
         ":passes_inc_gen",
+        ":xla_triton",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:GPUCommonTransforms",
@@ -318,13 +323,35 @@ cc_library(
 )
 
 td_library(
-    name = "xla_triton_ops_td_files",
-    srcs = ["xla_triton_ops.td"],
+    name = "xla_triton_td_files",
+    srcs = glob(["*.td"]),
     includes = ["."],
     deps = [
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
     ],
+)
+
+gentbl_cc_library(
+    name = "xla_triton_dialect_inc_gen",
+    strip_include_prefix = ".",
+    tbl_outs = [
+        (
+            [
+                "-gen-dialect-decls",
+            ],
+            "xla_triton_dialect.h.inc",
+        ),
+        (
+            [
+                "-gen-dialect-defs",
+            ],
+            "xla_triton_dialect.cc.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "xla_triton_dialect.td",
+    deps = [":xla_triton_td_files"],
 )
 
 gentbl_cc_library(
@@ -334,35 +361,20 @@ gentbl_cc_library(
         (
             [
                 "-gen-op-decls",
-                "-dialect=triton_xla",
             ],
             "xla_triton_ops.h.inc",
         ),
         (
             [
                 "-gen-op-defs",
-                "-dialect=triton_xla",
             ],
             "xla_triton_ops.cc.inc",
-        ),
-        (
-            [
-                "-gen-dialect-decls",
-                "-dialect=triton_xla",
-            ],
-            "xla_triton_dialect.h.inc",
-        ),
-        (
-            [
-                "-gen-dialect-defs",
-                "-dialect=triton_xla",
-            ],
-            "xla_triton_dialect.cc.inc",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "xla_triton_ops.td",
     deps = [
+        ":xla_triton_td_files",
         "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
@@ -371,10 +383,11 @@ gentbl_cc_library(
 )
 
 cc_library(
-    name = "xla_triton_ops",
+    name = "xla_triton",
     srcs = ["xla_triton_ops.cc"],
     hdrs = ["xla_triton_ops.h"],
     deps = [
+        ":xla_triton_dialect_inc_gen",
         ":xla_triton_ops_inc_gen",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:BytecodeOpInterface",
@@ -392,9 +405,11 @@ cc_library(
 xla_test(
     name = "triton_fusion_emitter_device_legacy_test",
     srcs = if_gpu_is_configured(["triton_fusion_emitter_device_legacy_test.cc"]),
+    # TODO(b/372714955): Fix the memory leak!
     backend_args = if_google(
         {
             "gpu_h100": ["--heap_check="],
+            "gpu_a100": ["--heap_check="],
         },
         {},
     ),
@@ -402,21 +417,20 @@ xla_test(
         "gpu_a100",
         "gpu_h100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     shard_count = 20,
     tags = [
         "no_mac",
     ],
     deps = [
-        ":kernel_name_tracer",
         ":triton_fusion_emitter",
         ":triton_test_utils",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
-        "//xla:literal",
-        "//xla:literal_util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:pattern_matcher",
         "//xla/service:pattern_matcher_gmock",
         "//xla/service/gpu:backend_configs_cc",
@@ -424,10 +438,8 @@ xla_test(
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/stream_executor:device_description",
-        "//xla/tests:filecheck",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/lib/core:status_test_util",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@llvm-project//llvm:ir_headers",
@@ -443,13 +455,57 @@ xla_test(
 )
 
 xla_test(
+    name = "dot_algorithms_test",
+    srcs = if_gpu_is_configured(["dot_algorithms_test.cc"]),
+    backend_args = if_google(
+        {
+            "gpu_h100": ["--heap_check="],
+            "gpu_a100": ["--heap_check="],
+        },
+        {},
+    ),
+    backends = [
+        "gpu_a100",
+        "gpu_h100",
+        "gpu_amd_any",
+    ] + if_oss(["gpu_b100"]),
+    tags = [
+        "no_mac",
+    ],
+    deps = [
+        ":kernel_name_tracer",
+        ":triton_test_utils",
+        "//xla:autotuning_proto_cc",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest",
+        "@local_tsl//tsl/platform:path",
+        "@local_tsl//tsl/platform:statusor",
+        "@local_tsl//tsl/platform:test",
+    ],
+)
+
+xla_test(
     name = "triton_fusion_emitter_device_test",
     srcs = if_gpu_is_configured(["triton_fusion_emitter_device_test.cc"]),
     backends = [
         "gpu_a100",
         "gpu_h100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     tags = [
         "no_mac",
     ],
@@ -526,8 +582,8 @@ cc_library(
         "//xla:status_macros",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/transforms:float_normalization",
         "//xla/hlo/utils:hlo_query",
-        "//xla/service:float_normalization",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:gpu_float_support",
@@ -538,7 +594,6 @@ cc_library(
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "//xla/tests:verified_hlo_module",
-        "//xla/tsl/profiler/utils:time_utils",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -591,7 +646,7 @@ xla_test(
         "gpu_a100",
         "gpu_h100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     tags = [
         "large",
         "no_mac",
@@ -618,7 +673,7 @@ xla_test(
         "gpu_a100",
         "gpu_h100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     shard_count = 10,
     tags = ["no_mac"],
     deps = [
@@ -705,7 +760,7 @@ xla_test(
         "gpu_a100",
         "gpu_h100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     tags = ["no_mac"],
     deps = [
         ":kernel_name_tracer",
