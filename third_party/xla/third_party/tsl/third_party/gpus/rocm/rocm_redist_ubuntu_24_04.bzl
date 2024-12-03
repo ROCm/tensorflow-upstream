@@ -126,6 +126,10 @@ rocm_redist_ubuntu_24_04 = {
                 sha256 = "3e85a859c5dafa82a9a57dda096d566b821217bacfac995f7cc45ed460b68999",
             ),
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocm-smi-lib6.2.0/rocm-smi-lib6.2.0_7.3.0.60200-66~24.04_amd64.deb",
+                sha256 = "c094e3022c73fca2aa6c8bb435f93550109531de37fe8de5fbf6cfe1f047b645",
+            ),
+            struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocprim-dev6.2.0/rocprim-dev6.2.0_3.2.0.60200-66~24.04_amd64.deb",
                 sha256 = "6c832e2feb0885fbe481245825c76a466921b294f530eb0d0da70a44cfe6e608",
             ),
@@ -152,6 +156,22 @@ rocm_redist_ubuntu_24_04 = {
             struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocsolver-dev6.2.0/rocsolver-dev6.2.0_3.26.0.60200-66~24.04_amd64.deb",
                 sha256 = "5bb6ae92a25f33488f2ee5f123ac4f67ad130e18e4949161715451509be3b89d",
+            ),
+            struct(
+                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/rocm-6.2.0/libdrm2_2.4.120-2build1_amd64.deb",
+                sha256 = "f5fb4e7ce17921cc466fb7911abf91495ffb181b36772f68e2e82cb621703112",
+            ),
+            struct(
+                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/rocm-6.2.0/libdrm-amdgpu1_2.4.120-2build1_amd64.deb",
+                sha256 = "e149d4daea33f58853b8013fd6c24888429ce7716a4b26d1a1f45181b5a4e73e",
+            ),
+            struct(
+                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/rocm-6.2.0/libelf1t64_0.190-1.1build4_amd64.deb",
+                sha256 = "b277e52769302778bd052376ac6687b52954b6605dd5f781bff8631e3504d58f",
+            ),
+            struct(
+                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/rocm-6.2.0/libnuma1_2.0.18-1build1_amd64.deb",
+                sha256 = "508daa855e99959acaa945e6a89d218e0be6b5727fd28773580942ff37cf5805",
             ),
         ],
         "rocm_root": "opt/rocm-6.2.0",
