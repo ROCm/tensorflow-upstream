@@ -263,7 +263,7 @@ cc_library(
     deps = [
         "@com_google_absl//absl/status",
     ] + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rocm_path",
+        "@local_config_rocm//rocm:rocm_rpath",
     ]),
 )
 
