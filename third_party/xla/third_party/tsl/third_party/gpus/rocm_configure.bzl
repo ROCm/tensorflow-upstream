@@ -13,7 +13,7 @@
 """
 
 load(
-    "@tsl//third_party/gpus/rocm:rocm_redist.bzl",
+    "//third_party/gpus/rocm:rocm_redist.bzl",
     "rocm_redist",
 )
 load(
@@ -616,7 +616,7 @@ def _setup_rocm_distro_dir(repository_ctx):
         rocm_path = repository_ctx.os.environ.get(_ROCM_TOOLKIT_PATH, _DEFAULT_ROCM_TOOLKIT_PATH)
         repository_ctx.report_progress("Using local rocm installation {}".format(rocm_path))  # buildifier: disable=print
         repository_ctx.symlink(rocm_path, _DISTRIBUTION_PATH)
-        return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, _DISTRIBUTION_PATH)
+        return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, _DEFAULT_ROCM_TOOLKIT_PATH)
 
 def _create_local_rocm_repository(repository_ctx):
     """Creates the repository containing files set up to build with ROCm."""
