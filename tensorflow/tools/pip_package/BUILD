@@ -4,8 +4,8 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_syslibs//:build_defs.bzl", "if_not_system_lib")
 load(
-    "@local_tsl//third_party/py:python_wheel_library.bzl",
-    "wheel_library",
+    "@local_tsl//third_party/py:py_import.bzl",
+    "py_import",
 )
 load("@local_xla//xla/tsl:tsl.bzl", "if_cuda_libs")
 load("@local_xla//xla/tsl/mkl:build_defs.bzl", "if_enable_mkl", "if_mkl", "if_mkl_ml")
@@ -74,7 +74,6 @@ transitive_hdrs(
         "//tensorflow/python/util:kernel_registry",
         "//tensorflow/python/framework:python_op_gen",
         "//tensorflow/python/client:tf_session_helper",
-        "@local_xla//xla/stream_executor",
     ] + if_cuda([
         "@local_config_cuda//cuda:cuda_headers",
     ]),
@@ -274,6 +273,12 @@ tf_wheel(
         ":licenses",
         "//tensorflow/core:protos_all_proto_srcs",
     ],
+    manylinux_compliance_tag = select({
+        "@platforms//cpu:aarch64": "manylinux_2_17_aarch64",
+        "@platforms//cpu:arm64": "manylinux_2_17_aarch64",
+        "@platforms//cpu:x86_64": "manylinux_2_17_x86_64",
+        "//conditions:default": "",
+    }),
     platform_name = select({
         "@platforms//os:osx": "macosx",
         "@platforms//os:macos": "macosx",
@@ -346,14 +351,13 @@ py_test(
         "windows_excluded",
     ],
     deps = [
-        ":tf_wheel_library",
+        ":tf_py_import",
     ],
 )
 
-wheel_library(
-    name = "tf_wheel_library",
-    wheel = ":wheel",
-    wheel_deps = if_cuda_libs([
+py_import(
+    name = "tf_py_import",
+    cc_deps = if_cuda_libs([
         "@cuda_cublas//:cublas",
         "@cuda_cublas//:cublasLt",
         "@cuda_cudart//:cudart",
@@ -367,6 +371,7 @@ wheel_library(
         "@cuda_nvjitlink//:nvjitlink",
         "@cuda_nvrtc//:nvrtc",
     ]),
+    wheel = ":wheel",
     deps = [
         "@pypi_absl_py//:pkg",
         "@pypi_astunparse//:pkg",

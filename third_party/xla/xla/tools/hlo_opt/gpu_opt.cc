@@ -46,6 +46,8 @@ namespace {
 
 class GpuOptProvider : public CompiledOptProvider {
  public:
+  GpuOptProvider() : CompiledOptProvider() {}
+
   absl::StatusOr<std::optional<std::string>> GenerateStage(
       std::unique_ptr<HloModule> module, absl::string_view s) override {
     if (s == "llvm-before-optimizations") {
@@ -88,6 +90,9 @@ class GpuOptProvider : public CompiledOptProvider {
     return supported;
   }
 
+  // Register the GPU provider passes.
+  void RegisterProviderPasses(HloModule& module) override {}
+
  private:
   absl::StatusOr<std::string> LlvmIrBeforeOptimizations(
       HloModule* optimized_module) {
@@ -120,7 +125,8 @@ class GpuOptProvider : public CompiledOptProvider {
         xla::gpu::CompileModuleToLlvmIr(
             optimized_module, &llvm_context, gpu_compiler->GetTargetTriple(),
             gpu_compiler->GetDataLayout(), platform->Name(), platform->id(),
-            target_config.device_description, gpu_compiler->GetCanShareBuffer(),
+            target_config.device_description,
+            gpu_compiler->GetCanShareBuffer(target_config.device_description),
             gpu_compiler->BufferSizeBytesFunction()));
     return llvm_ir::DumpToString(results.llvm_module.get());
   }

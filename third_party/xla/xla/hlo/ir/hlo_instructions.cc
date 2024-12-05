@@ -156,6 +156,14 @@ void SetThreadName(HloComputation* called_computation,
   }
 }
 
+bool IsValidResultAccuracy(const ResultAccuracy& accuracy) {
+  bool valid_mode = ResultAccuracy::Mode_IsValid(accuracy.mode());
+  bool valid_tolerance =
+      (accuracy.tolerance().rtol() >= 0 && accuracy.tolerance().ulps() >= 0 &&
+       accuracy.tolerance().atol() >= 0);
+  return valid_mode && valid_tolerance;
+}
+
 }  // namespace
 
 HloBatchNormInstruction::HloBatchNormInstruction(
@@ -706,8 +714,6 @@ void HloChannelInstruction::set_channel_id(
 HloInstructionProto HloChannelInstruction::ToProto() const {
   HloInstructionProto proto = HloInstruction::ToProto();
   if (channel_id_) {
-    CHECK_GT(channel_id_.value(), 0)
-        << "Non-positive channel id is equivalent to no channel id";
     proto.set_channel_id(*channel_id_);
   }
   return proto;
@@ -769,10 +775,9 @@ bool HloTopKInstruction::IdenticalSlowPath(
   return k() == casted_other.k() && largest() == casted_other.largest();
 }
 
-HloSendRecvInstruction::HloSendRecvInstruction(HloOpcode opcode,
-                                               const Shape& shape,
-                                               int64_t channel_id,
-                                               bool is_host_transfer)
+HloSendRecvInstruction::HloSendRecvInstruction(
+    HloOpcode opcode, const Shape& shape, std::optional<int64_t> channel_id,
+    bool is_host_transfer)
     : HloChannelInstruction(opcode, shape, channel_id),
       is_host_transfer_(is_host_transfer) {}
 
@@ -802,7 +807,7 @@ bool HloSendRecvInstruction::IdenticalSlowPathIgnoringChannelIdValues(
 // Send instruction produces a tuple of {aliased operand, U32 context}.
 HloSendInstruction::HloSendInstruction(HloInstruction* operand,
                                        HloInstruction* token,
-                                       int64_t channel_id,
+                                       std::optional<int64_t> channel_id,
                                        bool is_host_transfer)
     : HloSendRecvInstruction(
           HloOpcode::kSend,
@@ -818,21 +823,20 @@ std::unique_ptr<HloInstruction> HloSendInstruction::CloneWithNewOperandsImpl(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
     HloCloneContext* context) const {
   CHECK_EQ(new_operands.size(), 2);
-  return std::make_unique<HloSendInstruction>(
-      new_operands[0], new_operands[1], *channel_id(), is_host_transfer());
+  return std::make_unique<HloSendInstruction>(new_operands[0], new_operands[1],
+                                              channel_id(), is_host_transfer());
 }
 
 HloSendDoneInstruction::HloSendDoneInstruction(HloSendInstruction* operand,
                                                bool is_host_transfer)
     : HloSendRecvInstruction(HloOpcode::kSendDone, ShapeUtil::MakeTokenShape(),
-                             CHECK_NOTNULL(operand)->channel_id().value(),
-                             is_host_transfer) {
+                             operand->channel_id(), is_host_transfer) {
   AppendOperand(operand);
 }
 
-HloSendDoneInstruction::HloSendDoneInstruction(HloInstruction* operand,
-                                               int64_t channel_id,
-                                               bool is_host_transfer)
+HloSendDoneInstruction::HloSendDoneInstruction(
+    HloInstruction* operand, std::optional<int64_t> channel_id,
+    bool is_host_transfer)
     : HloSendRecvInstruction(HloOpcode::kSendDone, ShapeUtil::MakeTokenShape(),
                              channel_id, is_host_transfer) {
   AppendOperand(operand);
@@ -848,14 +852,14 @@ HloSendDoneInstruction::CloneWithNewOperandsImpl(
     return std::make_unique<HloSendDoneInstruction>(send, is_host_transfer());
   }
 
-  return std::make_unique<HloSendDoneInstruction>(
-      new_operands[0], channel_id().value(), is_host_transfer());
+  return std::make_unique<HloSendDoneInstruction>(new_operands[0], channel_id(),
+                                                  is_host_transfer());
 }
 
 // Recv instruction produces a tuple of {receive buffer, U32 context}.
 HloRecvInstruction::HloRecvInstruction(const Shape& shape,
                                        HloInstruction* token,
-                                       int64_t channel_id,
+                                       std::optional<int64_t> channel_id,
                                        bool is_host_transfer)
     : HloSendRecvInstruction(
           HloOpcode::kRecv,
@@ -870,7 +874,7 @@ std::unique_ptr<HloInstruction> HloRecvInstruction::CloneWithNewOperandsImpl(
     HloCloneContext* context) const {
   CHECK_EQ(new_operands.size(), 1);
   return std::make_unique<HloRecvInstruction>(
-      ShapeUtil::GetTupleElementShape(shape, 0), new_operands[0], *channel_id(),
+      ShapeUtil::GetTupleElementShape(shape, 0), new_operands[0], channel_id(),
       is_host_transfer());
 }
 
@@ -881,13 +885,13 @@ HloRecvDoneInstruction::HloRecvDoneInstruction(HloRecvInstruction* operand,
           ShapeUtil::MakeTupleShape(
               {ShapeUtil::GetTupleElementShape(operand->shape(), 0),
                ShapeUtil::MakeTokenShape()}),
-          CHECK_NOTNULL(operand)->channel_id().value(), is_host_transfer) {
+          operand->channel_id(), is_host_transfer) {
   AppendOperand(operand);
 }
 
-HloRecvDoneInstruction::HloRecvDoneInstruction(HloInstruction* operand,
-                                               int64_t channel_id,
-                                               bool is_host_transfer)
+HloRecvDoneInstruction::HloRecvDoneInstruction(
+    HloInstruction* operand, std::optional<int64_t> channel_id,
+    bool is_host_transfer)
     : HloSendRecvInstruction(
           HloOpcode::kRecvDone,
           ShapeUtil::MakeTupleShape(
@@ -907,8 +911,8 @@ HloRecvDoneInstruction::CloneWithNewOperandsImpl(
     return std::make_unique<HloRecvDoneInstruction>(recv, is_host_transfer());
   }
 
-  return std::make_unique<HloRecvDoneInstruction>(
-      new_operands[0], channel_id().value(), is_host_transfer());
+  return std::make_unique<HloRecvDoneInstruction>(new_operands[0], channel_id(),
+                                                  is_host_transfer());
 }
 
 HloCollectiveInstruction::HloCollectiveInstruction(
@@ -3934,6 +3938,57 @@ std::unique_ptr<HloInstruction> HloDotInstruction::CloneWithNewOperandsImpl(
       precision_config_, sparsity_, new_operands.subspan(kOperands));
 }
 
+HloRaggedDotInstruction::HloRaggedDotInstruction(
+    const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+    HloInstruction* group_sizes,
+    const RaggedDotDimensionNumbers& dimension_numbers,
+    const PrecisionConfig& precision_config)
+    : HloInstruction(HloOpcode::kRaggedDot, shape),
+      ragged_dot_dimension_numbers_(dimension_numbers),
+      precision_config_(precision_config) {
+  AppendOperand(lhs);
+  AppendOperand(rhs);
+  AppendOperand(group_sizes);
+}
+
+HloInstructionProto HloRaggedDotInstruction::ToProto() const {
+  HloInstructionProto proto = HloInstruction::ToProto();
+  *proto.mutable_ragged_dot_dimension_numbers() = ragged_dot_dimension_numbers_;
+  *proto.mutable_precision_config() = precision_config_;
+  return proto;
+}
+
+void HloRaggedDotInstruction::PrintExtraAttributesImpl(
+    AttributePrinter& printer, const HloPrintOptions& options) const {
+  printer.Next([this](Printer* printer) {
+    printer->Append(
+        RaggedDotDimensionNumbersToString(ragged_dot_dimension_numbers_));
+  });
+  PrintPrecisionConfig(printer, precision_config_);
+}
+
+bool HloRaggedDotInstruction::IdenticalSlowPath(
+    const HloInstruction& other,
+    absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
+        eq_computations) const {
+  const auto& casted_other = static_cast<const HloRaggedDotInstruction&>(other);
+  return protobuf_util::ProtobufEquals(
+             ragged_dot_dimension_numbers(),
+             casted_other.ragged_dot_dimension_numbers()) &&
+         protobuf_util::ProtobufEquals(precision_config(),
+                                       casted_other.precision_config());
+}
+
+std::unique_ptr<HloInstruction>
+HloRaggedDotInstruction::CloneWithNewOperandsImpl(
+    const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+    HloCloneContext* context) const {
+  CHECK_EQ(new_operands.size(), kOperands);
+  return std::make_unique<HloRaggedDotInstruction>(
+      shape, new_operands[0], new_operands[1], new_operands[2],
+      ragged_dot_dimension_numbers_, precision_config_);
+}
+
 HloDomainInstruction::HloDomainInstruction(
     const Shape& shape, HloInstruction* operand,
     std::unique_ptr<DomainMetadata> operand_side_metadata,
@@ -4147,6 +4202,34 @@ HloRngBitGeneratorInstruction::CloneWithNewOperandsImpl(
   CHECK_EQ(new_operands.size(), 1);
   return std::make_unique<HloRngBitGeneratorInstruction>(shape, new_operands[0],
                                                          algorithm());
+}
+
+HloUnaryInstruction::HloUnaryInstruction(const Shape& shape, HloOpcode opcode,
+                                         HloInstruction* operand,
+                                         ResultAccuracy result_accuracy)
+    : HloInstruction(opcode, shape), result_accuracy_(result_accuracy) {
+  if (!IsValidResultAccuracy(result_accuracy)) {
+    LOG(FATAL) << "Invalid result accuracy";
+  }
+  AppendOperand(operand);
+}
+
+void HloUnaryInstruction::PrintExtraAttributesImpl(
+    AttributePrinter& printer, const HloPrintOptions& options) const {
+  // Don't print anything if the result accuracy is set to default.
+  if (result_accuracy_.mode() != ResultAccuracy::DEFAULT) {
+    printer.Next([this](Printer* printer) {
+      printer->Append("result_accuracy={mode=");
+      printer->Append(ResultAccuracyToString(result_accuracy_.mode()));
+      printer->Append("}");
+    });
+  } else if (result_accuracy_.has_tolerance()) {
+    printer.Next([this](Printer* printer) {
+      AppendCat(printer, "result_accuracy={",
+                ResultAccuracyToleranceToString(result_accuracy_.tolerance()),
+                "}");
+    });
+  }
 }
 
 }  // namespace xla

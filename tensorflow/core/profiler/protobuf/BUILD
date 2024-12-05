@@ -141,6 +141,7 @@ tf_proto_library(
         ":power_metrics_proto",
         ":steps_db_proto",
         ":tf_function_proto",
+        ":hardware_types_proto",
     ],
     visibility = [
         ":friends",
@@ -254,4 +255,13 @@ tf_proto_library(
     name = "dcn_collective_info_proto",
     srcs = ["dcn_collective_info.proto"],
     visibility = [":friends"],
+)
+
+tf_proto_library(
+    name = "inference_stats_proto",
+    srcs = ["inference_stats.proto"],
+    visibility = [
+        ":friends",
+        "//learning/serving/tools/servo_model_profiler:__subpackages__",
+    ],
 )

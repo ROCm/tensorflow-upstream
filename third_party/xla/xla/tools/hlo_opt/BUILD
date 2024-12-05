@@ -2,22 +2,22 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load(
-    "@local_tsl//tsl/platform:build_config_root.bzl",
-    "tf_cuda_tests_tags",
-)
-
-# hlo-opt tool.
-load(
-    "@local_tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "if_gpu_is_configured",
 )
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load(
+    "//xla/tsl/platform:build_config_root.bzl",
+    "tf_cuda_tests_tags",
+)
+
+# hlo-opt tool.
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -25,18 +25,112 @@ package(
     licenses = ["notice"],
 )
 
+cc_library(
+    name = "opt_main",
+    testonly = True,
+    srcs = ["opt_main.cc"],
+    deps = [
+        ":cpu_opt",
+        ":opt_lib",
+        "//xla:debug_options_flags",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_runner",
+        "//xla/service:platform_util",
+        "//xla/tools:hlo_module_loader",
+        "//xla/tools:run_hlo_module_lib",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@local_tsl//tsl/platform:env",
+        "@local_tsl//tsl/platform:errors",
+        "@local_tsl//tsl/platform:logging",
+        "@local_tsl//tsl/platform:path",
+        "@local_tsl//tsl/platform:platform_port",
+        "@local_tsl//tsl/platform:status",
+        "@local_tsl//tsl/platform:statusor",
+        "@local_tsl//tsl/platform:test",
+    ] + if_gpu_is_configured([
+        ":gpu_opt",
+    ]) + if_cuda_is_configured([
+        "//xla/stream_executor:cuda_platform",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor:rocm_platform",
+    ]),
+)
+
 # Includes a macro to register a provider.
 cc_library(
     name = "opt_lib",
     srcs = ["opt_lib.cc"],
-    hdrs = ["opt_lib.h"],
+    hdrs = [
+        "opt_lib.h",
+        "transforms_example_passes.h",
+    ],
     deps = [
-        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/transforms:all_reduce_folder",
+        "//xla/hlo/transforms:broadcast_canonicalizer",
+        "//xla/hlo/transforms:conditional_canonicalizer",
+        "//xla/hlo/transforms:convert_memory_placement_to_internal_annotations",
+        "//xla/hlo/transforms:convert_mover",
+        "//xla/hlo/transforms:convolution_4d_expander",
+        "//xla/hlo/transforms:convolution_pred_expander",
+        "//xla/hlo/transforms:dot_decomposer",
+        "//xla/hlo/transforms:dynamic_dimension_simplifier",
+        "//xla/hlo/transforms:dynamic_index_splitter",
+        "//xla/hlo/transforms:eigh_expander",
+        "//xla/hlo/transforms:flatten_call_graph",
+        "//xla/hlo/transforms:gather_simplifier",
+        "//xla/hlo/transforms:hlo_constant_folding",
+        "//xla/hlo/transforms:hlo_dce",
+        "//xla/hlo/transforms:logistic_expander",
+        "//xla/hlo/transforms:optimization_barrier_expander",
+        "//xla/hlo/transforms:qr_expander",
+        "//xla/hlo/transforms:real_imag_expander",
+        "//xla/hlo/transforms:reshape_decomposer",
+        "//xla/hlo/transforms:rng_expander",
+        "//xla/hlo/transforms:simplify_fp_conversions",
+        "//xla/hlo/transforms:slice_sinker",
+        "//xla/hlo/transforms:sort_simplifier",
+        "//xla/hlo/transforms:stable_sort_expander",
+        "//xla/hlo/transforms:stochastic_convert_decomposer",
+        "//xla/hlo/transforms:tuple_simplifier",
+        "//xla/hlo/transforms:while_loop_trip_count_annotator",
+        "//xla/hlo/transforms:zero_sized_hlo_elimination",
+        "//xla/hlo/transforms/collectives:all_gather_broadcast_reorder",
+        "//xla/hlo/transforms/collectives:all_reduce_contiguous",
+        "//xla/hlo/transforms/collectives:collective_quantizer",
+        "//xla/service:all_reduce_simplifier",
+        "//xla/service:batched_gather_scatter_normalizer",
+        "//xla/service:bitcast_dtypes_expander",
+        "//xla/service:call_inliner",
+        "//xla/service:conditional_simplifier",
+        "//xla/service:gather_expander",
         "//xla/service:hlo_graph_dumper",
+        "//xla/service:hlo_module_config",
         "//xla/service:platform_util",
+        "//xla/service:reduce_scatter_reassociate",
+        "//xla/service:scatter_determinism_expander",
+        "//xla/service:scatter_simplifier",
+        "//xla/service:select_and_scatter_expander",
+        "//xla/service:sharding_remover",
+        "//xla/service:topk_rewriter",
+        "//xla/service:while_loop_constant_sinking",
+        "//xla/service:while_loop_simplifier",
+        "//xla/service/gpu/transforms:all_gather_dynamic_slice_simplifier",
+        "//xla/service/gpu/transforms:all_reduce_splitter",
+        "//xla/service/gpu/transforms:collective_permute_valid_iteration_annotator",
+        "//xla/service/gpu/transforms:scatter_expander",
+        "//xla/service/gpu/transforms:scatter_slice_simplifier",
+        "//xla/stream_executor/platform:initialize",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -129,57 +223,25 @@ cc_library(
     alwayslink = True,  # Initializer needs to run.
 )
 
-cc_library(
-    name = "opt_main",
-    testonly = True,
-    srcs = ["opt_main.cc"],
-    deps = [
-        ":cpu_opt",
-        ":opt_lib",
-        "//xla:debug_options_flags",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_runner",
-        "//xla/service:platform_util",
-        "//xla/tools:hlo_module_loader",
-        "//xla/tools:run_hlo_module_lib",
-        "//xla/tsl/util:command_line_flags",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:env",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:logging",
-        "@local_tsl//tsl/platform:path",
-        "@local_tsl//tsl/platform:platform_port",
-        "@local_tsl//tsl/platform:status",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_tsl//tsl/platform:test",
-    ] + if_gpu_is_configured([
-        ":gpu_opt",
-    ]) + if_cuda_is_configured([
-        "//xla/stream_executor:cuda_platform",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor:rocm_platform",
-    ]),
-)
-
 lit_test_suite(
     name = "hlo_opt_tests",
     srcs = enforce_glob(
         [
-            "cpu_hlo.hlo",
-            "cpu_llvm.hlo",
-            "gpu_hlo.hlo",
-            "gpu_hlo_backend.hlo",
-            "gpu_hlo_buffers.hlo",
-            "gpu_hlo_llvm.hlo",
-            "gpu_hlo_ptx.hlo",
-            "gpu_hlo_unoptimized_llvm.hlo",
-            "gpu_hlo_html.hlo",
+            "tests/cpu_hlo.hlo",
+            "tests/cpu_llvm.hlo",
+            "tests/gpu_hlo.hlo",
+            "tests/gpu_hlo_backend.hlo",
+            "tests/gpu_hlo_buffers.hlo",
+            "tests/gpu_hlo_llvm.hlo",
+            "tests/gpu_hlo_ptx.hlo",
+            "tests/gpu_hlo_unoptimized_llvm.hlo",
+            "tests/transforms_hlo_single_pass.hlo",
+            "tests/transforms_hlo_multiple_passes.hlo",
+            "tests/transforms_hlo_pass_with_input.hlo",
+            "tests/gpu_hlo_html.hlo",
         ],
         include = [
-            "*.hlo",
+            "tests/*.hlo",
         ],
     ),
     args = if_cuda_is_configured([

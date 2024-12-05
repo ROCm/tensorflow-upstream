@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <memory>
 #include <ostream>
@@ -28,21 +27,23 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "mlir/IR/Operation.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/nccl_clique.h"
-#include "xla/service/gpu/runtime/nccl_clique_key.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -200,7 +201,7 @@ class Thunk {
   class ResourceRequests {
    public:
     virtual ~ResourceRequests() = default;
-    virtual absl::Status AddClique(const NcclCliqueKey& clique_key,
+    virtual absl::Status AddClique(const GpuCliqueKey& clique_key,
                                    int32_t num_local_participants) = 0;
   };
 
@@ -215,16 +216,16 @@ class Thunk {
     CollectiveCliques() = default;
     explicit CollectiveCliques(NcclClique::AcquiredCliquesMap cliques_map);
 
-    absl::StatusOr<NcclApi::NcclCommHandle> GetComm(
-        const NcclCliqueKey& clique_key, int32_t rank) const;
+    absl::StatusOr<Communicator*> GetComm(const GpuCliqueKey& clique_key,
+                                          RankId rank) const;
 
     // Returns the number of communicators in a collective clique. Returns error
     // if we do not have an acquired clique for a given key.
     absl::StatusOr<size_t> num_communicators(
-        const NcclCliqueKey& clique_key) const;
+        const GpuCliqueKey& clique_key) const;
 
     // Returns whether the clique is a local clique.
-    absl::StatusOr<bool> is_local_clique(const NcclCliqueKey& clique_key) const;
+    absl::StatusOr<bool> is_local_clique(const GpuCliqueKey& clique_key) const;
 
     bool empty() const { return cliques_map_.empty(); }
 
@@ -265,7 +266,7 @@ class Thunk {
 
     const DeviceAssignment* device_assn;
     const GlobalDeviceIdMap* global_device_id_map;
-    const NcclCliqueIdCallback* nccl_clique_id_callback;
+    const CliqueIdCallback* nccl_clique_id_callback;
 
     int64_t collective_max_nchannels;
     int64_t p2p_max_nchannels;
@@ -277,7 +278,7 @@ class Thunk {
                             GlobalDeviceId global_device_id,
                             const DeviceAssignment* device_assn,
                             const GlobalDeviceIdMap* global_device_id_map,
-                            const NcclCliqueIdCallback* nccl_clique_id_callback,
+                            const CliqueIdCallback* nccl_clique_id_callback,
                             int64_t collective_max_nchannels,
                             int64_t p2p_max_nchannels);
   };
@@ -329,6 +330,8 @@ class Thunk {
 
     // Total local device count.
     int local_device_count = 0;
+
+    bool requires_exclusive_lock_on_gpu = false;
   };
 
   //===--------------------------------------------------------------------===//
@@ -386,6 +389,8 @@ class Thunk {
 
     bool mock_collectives = false;
 
+    bool requires_exclusive_lock_on_gpu = false;
+
    private:
     friend class CommandBufferThunk;
 
@@ -399,7 +404,8 @@ class Thunk {
                   RecvDeviceMemoryFunction* recv_device_memory_function,
                   const ffi::ExecutionContext* ffi_execution_context,
                   ExecutionStreamIdMap additional_compute_streams = {},
-                  bool mock_collectives = false);
+                  bool mock_collectives = false,
+                  bool requires_exclusive_lock_on_gpu = false);
   };
 
   //===--------------------------------------------------------------------===//
@@ -421,9 +427,6 @@ class Thunk {
 
   //===--------------------------------------------------------------------===//
 
-  // The hlo_instruction argument is meant to be the instruction this thunk was
-  // generated from, but Thunk never uses this argument other than to save it
-  // to Thunk::hlo_instruction, so it can be null.
   Thunk(Kind kind, ThunkInfo thunk_info)
       : kind_(kind),
         profile_annotation_(thunk_info.profile_annotation),
@@ -483,6 +486,9 @@ class Thunk {
 
   // Returns `true` if this thunk requires inter-GPU communication.
   bool IsCollective() const;
+
+  // Invokes `fn` with this thunk and all nested thunks.
+  virtual void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const;
 
  private:
   Kind kind_;

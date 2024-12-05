@@ -35,7 +35,7 @@ class TreeReductionRewriterTest : public HloTestBase {
         hlo,
 #if TENSORFLOW_USE_ROCM
         gpu::TreeReductionRewriter{se::RocmComputeCapability {
-          "908"
+          "908"  // why is this hardcoded for MI100?
         }},
 #else
         gpu::TreeReductionRewriter{se::CudaComputeCapability{8, 1}},
@@ -46,6 +46,11 @@ class TreeReductionRewriterTest : public HloTestBase {
         hlo, gpu::GpuTreeReductionRewriter{se::RocmComputeCapability{"908"}},
         expected);   
 #endif        
+    stream_executor::DeviceDescription device_description{
+        stream_executor::GpuDeviceInfoProto{}};
+    device_description.set_threads_per_warp(32); // why is this hardcoded with 32, is it updated with device properties?
+    RunAndFilecheckHloRewrite(
+        hlo, gpu::TreeReductionRewriter{device_description}, expected);
   }
 };
 

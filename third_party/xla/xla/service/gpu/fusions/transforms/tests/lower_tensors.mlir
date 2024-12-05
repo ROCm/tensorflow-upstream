@@ -1,25 +1,25 @@
 // RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
-// RUN: -xla-gpu-lower-tensors="is_amd_gpu=false gpu_arch=6.0" \
+// RUN: -xla-gpu-lower-tensors="gpu_device_info='cuda_compute_capability {major: 6}'" \
 // RUN: | FileCheck %s
 
 // RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
-// RUN: -xla-gpu-lower-tensors="is_amd_gpu=false gpu_arch=7.0" \
+// RUN: -xla-gpu-lower-tensors="gpu_device_info='cuda_compute_capability {major: 7}'" \
 // RUN: | FileCheck %s --check-prefix=CHECK-VOLTA
 
 // RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
-// RUN: -xla-gpu-lower-tensors="is_amd_gpu=false gpu_arch=8.0" \
+// RUN: -xla-gpu-lower-tensors="gpu_device_info='cuda_compute_capability {major: 8}'" \
 // RUN: | FileCheck %s --check-prefix=CHECK-AMPERE
 
 // RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
-// RUN: -xla-gpu-lower-tensors="is_amd_gpu=false gpu_arch=9.0" \
+// RUN: -xla-gpu-lower-tensors="gpu_device_info='cuda_compute_capability {major: 9}'" \
 // RUN: | FileCheck %s --check-prefix=CHECK-HOPPER
 
 // RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
-// RUN: -xla-gpu-lower-tensors="is_amd_gpu=true gpu_arch=gfx908:sramecc+:xnack" \
+// RUN: -xla-gpu-lower-tensors="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx908:sramecc+:xnack\"}'" \
 // RUN: | FileCheck %s --check-prefix=CHECK-GFX908-MI100
 
 // RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
-// RUN: -xla-gpu-lower-tensors="is_amd_gpu=true gpu_arch=gfx90a:sramecc+:xnack" \
+// RUN: -xla-gpu-lower-tensors="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx90a:sramecc+:xnack\"}'" \
 // RUN: | FileCheck %s --check-prefix=CHECK-GFX90A-MI200
 
 module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
@@ -732,15 +732,3 @@ func.func @int4_constant(%arg0: tensor<3xi4>, %arg1: index) -> i4 {
 // CHECK: llvm.mlir.global private constant
 // CHECK-SAME: dense<[18, 48]>
 // CHECK-LABEL: @int4_constant
-
-// -----
-
-func.func @complex_expm1_approx(%arg0: tensor<3xcomplex<f32>>, %i: index)
-    -> complex<f32> {
-  %extracted = tensor.extract %arg0[%i] : tensor<3xcomplex<f32>>
-  %expm1 = complex.expm1 %extracted : complex<f32>
-  return %expm1 : complex<f32>
-}
-// CHECK-LABEL: @complex_expm1_approx
-// CHECK: math.expm1
-// CHECK-COUNT-6: math.fma

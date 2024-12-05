@@ -306,7 +306,7 @@ MlirFusionEmitterBase::CreateLLVMModule(
 
   mlir::PassManager pm(&mlir_context);
   AddXlaGpuOpsOptimizationPasses(pm);
-  AddLoopTransformationPasses(pm);
+  AddLoopTransformationPasses(pm, device);
   AddLoweringPasses(pm, device);
   auto pipeline_status = RunPassPipeline(module.get(), pm, trace.get());
   if (trace) {
@@ -584,8 +584,10 @@ void AddXlaGpuOpsOptimizationPasses(mlir::OpPassManager& pm) {
   pm.addPass(mlir::createCSEPass());
 }
 
-void AddLoopTransformationPasses(mlir::OpPassManager& pm) {
-  pm.addNestedPass<FuncOp>(CreateLowerXlaGpuToScfPass());
+void AddLoopTransformationPasses(mlir::OpPassManager& pm,
+                                 const se::DeviceDescription& device) {
+  pm.addNestedPass<FuncOp>(
+      CreateLowerXlaGpuToScfPass(device.threads_per_warp()));
   pm.addNestedPass<FuncOp>(CreateFuseLoopsPass());
   pm.addPass(mlir::createInlinerPass({}, [&](mlir::OpPassManager& pm) {
     // CSE after inlining because inlining can introduce duplicates.
@@ -608,16 +610,14 @@ void AddLoopTransformationPasses(mlir::OpPassManager& pm) {
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
   pm.addNestedPass<FuncOp>(CreateVectorizeLoadsAndStoresPass());
   pm.addNestedPass<FuncOp>(CreateOptimizeLoopsPass());
+  pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(mlir::createCSEPass());
 }
 
 void AddLoweringPasses(mlir::OpPassManager& pm,
                        const se::DeviceDescription& device) {
-  bool is_amd = std::holds_alternative<se::RocmComputeCapability>(
-      device.gpu_compute_capability());
   pm.addNestedPass<FuncOp>(CreateConvertPureCallOpsPass());
-  pm.addPass(CreateLowerTensorsPass(
-      is_amd, is_amd ? device.rocm_compute_capability().gcn_arch_name()
-                     : device.cuda_compute_capability().ToString()));
+  pm.addPass(CreateLowerTensorsPass(device));
   pm.addPass(mlir::createConvertComplexToStandardPass());
   pm.addPass(CreateMergePointersToSameSlicePass());
 
@@ -645,7 +645,7 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
   pm.addPass(CreateExpandFloatOpsPass());
   pm.addPass(mlir::createLowerAffinePass());
   pm.addPass(mlir::createConvertSCFToCFPass());
-  pm.addPass(CreateLowerToLLVMPass(is_amd));
+  pm.addPass(CreateLowerToLLVMPass(device));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 }
 

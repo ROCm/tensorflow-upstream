@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Operation.h"
+#include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
@@ -44,7 +45,7 @@ namespace gpu {
 
 absl::Status RunAllReduce(NcclApi* nccl_api, ReductionKind reduction_kind,
                           std::vector<DeviceBufferPair>& buffers,
-                          se::Stream& stream, NcclApi::NcclCommHandle comm) {
+                          se::Stream& stream, Communicator* comm) {
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing all-reduce from device ordinal: " << device_ordinal;
   TF_RETURN_IF_ERROR(
@@ -178,14 +179,13 @@ CollectiveOpGroupMode NcclAllReduceStartThunk::GetGroupMode(
 
 absl::Status NcclAllReduceStartThunk::RunNcclCollective(
     const ExecuteParams& params, se::Stream& stream,
-    NcclCommHandleWrapper comm_wrapper) {
+    CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, buffers_,
                              config_.config.operand_element_type));
   return ::xla::gpu::RunAllReduce(nccl_api(), config_.reduction_kind,
-                                  device_buffers, stream,
-                                  comm_wrapper.comm_handle);
+                                  device_buffers, stream, comm_handle.comm);
 }
 
 NcclReduceScatterStartThunk::NcclReduceScatterStartThunk(
@@ -214,41 +214,38 @@ NcclReduceScatterStartThunk::NcclReduceScatterStartThunk(
 
 absl::Status NcclReduceScatterStartThunk::RunNcclCollective(
     const ExecuteParams& params, se::Stream& stream,
-    NcclCommHandleWrapper comm_wrapper) {
+    CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, buffers_,
                              config_.config.operand_element_type));
   return ::xla::gpu::RunReduceScatter(nccl_api(), config_.reduction_kind,
-                                      device_buffers, stream,
-                                      comm_wrapper.comm_handle);
+                                      device_buffers, stream, comm_handle.comm);
 }
 
 absl::Status RunReduceScatter(NcclApi* nccl_api, ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
-                              se::Stream& stream,
-                              NcclApi::NcclCommHandle comm) {
+                              se::Stream& stream, Communicator* comm) {
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing reduce-scatter from device ordinal: "
           << device_ordinal;
   TF_RETURN_IF_ERROR(
       MaybeRegisterBuffers(nccl_api, stream.parent(), buffers, comm));
 
-  TF_ASSIGN_OR_RETURN(int32_t num_participants, nccl_api->CommCount(comm));
+  TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
 
   TF_RETURN_IF_ERROR(nccl_api->GroupStart());
 
   for (DeviceBufferPair& buffer : buffers) {
     // buffer.element_count is the source buffers element count. For
     // ncclReduceScatter, we need the destination buffers element count.
-    TF_RET_CHECK(buffer.element_count % num_participants == 0)
+    TF_RET_CHECK(buffer.element_count % num_ranks == 0)
         << "Source buffer was not an exact multiple of the number of "
            "participants.";
 
     TF_RETURN_IF_ERROR(nccl_api->ReduceScatter(
         buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
-        buffer.element_count / num_participants, reduction_kind, comm,
-        &stream));
+        buffer.element_count / num_ranks, reduction_kind, comm, &stream));
   }
 
   return nccl_api->GroupEnd();

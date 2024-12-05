@@ -1,11 +1,11 @@
-// RUN: xla-opt %s -split-input-file -tritongpu-pipeline=num-stages=3 | FileCheck %s
+// RUN: xla-opt %s -split-input-file -tritongpu-loop-scheduling=num-stages=3 -tritongpu-pipeline=num-stages=3 | FileCheck %s
 
 #blocked = #triton_gpu.blocked<{sizePerThread = [1, 4], threadsPerWarp = [8, 4], warpsPerCTA = [4, 1], order = [1, 0]}>
 #sliced = #triton_gpu.slice<{parent=#blocked, dim=0}>
 #mma = #triton_gpu.nvidia_mma<{versionMajor = 2, warpsPerCTA = [4, 1]}>
 #dot_operand_a = #triton_gpu.dot_op<{opIdx = 0, parent = #mma, kWidth=2}>
 #dot_operand_b = #triton_gpu.dot_op<{opIdx = 1, parent = #mma, kWidth=2}>
-#dot_meta_enc = #triton_gpu.sparse_dot_meta<{parent=#mma}>
+#dot_meta_enc = #triton_xla.sparse_dot_meta<{parent=#mma}>
 
 module attributes {"triton_gpu.num-warps" = 4 : i32} {
   tt.func @sparse_dot_loop(%lb : index, %ub : index, %step : index,

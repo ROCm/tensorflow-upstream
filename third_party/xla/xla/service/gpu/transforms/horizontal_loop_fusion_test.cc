@@ -50,11 +50,19 @@ namespace {
 
 namespace m = ::xla::match;
 
+auto MakeDeviceDescription() {
+  stream_executor::DeviceDescription device_description{
+      stream_executor::GpuDeviceInfoProto{}};
+  device_description.set_threads_per_warp(32);
+  return device_description;
+}
+
 class HorizontalLoopFusionTest : public HloTestBase {
  public:
   static bool IsFusion(const HloInstruction* instr) {
     return instr->opcode() == HloOpcode::kFusion;
   }
+  const se::DeviceDescription device_description_{MakeDeviceDescription()};
 };
 
 TEST_F(HorizontalLoopFusionTest, BasicTest) {
@@ -88,7 +96,8 @@ TEST_F(HorizontalLoopFusionTest, BasicTest) {
 )")
                     .value();
 
-  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_FALSE(HloDCE().Run(module.get()).value());
 
@@ -139,7 +148,8 @@ TEST_F(HorizontalLoopFusionTest, NegativeTestForCycle) {
 )")
                     .value();
 
-  EXPECT_FALSE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_FALSE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
 }
 
 TEST_F(HorizontalLoopFusionTest, NegativeTestForIncompatibleTypes) {
@@ -175,7 +185,8 @@ TEST_F(HorizontalLoopFusionTest, NegativeTestForIncompatibleTypes) {
 )")
                     .value();
 
-  EXPECT_FALSE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_FALSE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
 }
 
 TEST_F(HorizontalLoopFusionTest, FusingIntoKLoopAndKInputTogether) {
@@ -262,7 +273,8 @@ TEST_F(HorizontalLoopFusionTest, FusingIntoKLoopAndKInputTogether) {
 )")
                     .value();
 
-  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
 
   int input_fusion_count = 0;
   int loop_fusion_count = 0;
@@ -314,7 +326,8 @@ TEST_F(HorizontalLoopFusionTest, HorizontalLoopFusionAfterVerticalFusion) {
   fusion.AddPass<xla::gpu::PriorityFusion>(/*thread_pool=*/nullptr, device_info,
                                            cost_analysis_options);
   EXPECT_TRUE(fusion.Run(module.get()).value());
-  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 
   VLOG(2) << "Dump after horizontal fusion:";
@@ -421,7 +434,8 @@ TEST_F(HorizontalLoopFusionTest, FusingDifferentOutputs) {
 )")
                     .value();
 
-  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_FALSE(HloDCE().Run(module.get()).value());
 
@@ -517,7 +531,7 @@ TEST_F(HorizontalLoopFusionTest, RMSPropLike) {
 
 TEST_F(HorizontalLoopFusionTest, DynamicUpdateSlice) {
   auto module = ParseAndReturnVerifiedModule(R"(
-  HloModule NegativeTestForDynamicUpdateSlice
+  HloModule DynamicUpdateSlice
 
   fusion.1 {
     p.0 = f16[5,9,10]{2,1,0} parameter(0)
@@ -551,7 +565,8 @@ TEST_F(HorizontalLoopFusionTest, DynamicUpdateSlice) {
   })")
                     .value();
 
-  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_FALSE(HloDCE().Run(module.get()).value());
 
@@ -559,6 +574,39 @@ TEST_F(HorizontalLoopFusionTest, DynamicUpdateSlice) {
   VLOG(2) << module->ToString();
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), ErrorSpec{0, 0}));
+}
+
+TEST_F(HorizontalLoopFusionTest, DontFuseDynamicUpdateSlice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule DynamicUpdateSliceFusionsShareParameter
+
+fused_dynamic_update_slice {
+  p0 = s32[3,3]{1,0} parameter(0)
+  p1 = pred[3,2]{1,0} parameter(1)
+  convert = s32[3,2]{1,0} convert(p1)
+  zero = s32[] constant(0)
+  ROOT dynamic-update-slice = s32[3,3]{1,0} dynamic-update-slice(p0, convert, zero, zero)
+}
+
+fused_dynamic_update_slice.1 {
+  p0 = s32[3,3]{1,0} parameter(0)
+  p1 = pred[2,3]{1,0} parameter(1)
+  convert = s32[2,3]{1,0} convert(p1)
+  zero = s32[] constant(0)
+  ROOT dynamic-update-slice = s32[3,3]{1,0} dynamic-update-slice(p0, convert, zero, zero)
+}
+
+ENTRY main {
+  param_0 = s32[3,3]{1,0} parameter(0)
+  param_1 = pred[2,3]{1,0} parameter(1)
+  param_2 = pred[3,2]{1,0} parameter(2)
+  loop_dynamic_update_slice_fusion = s32[3,3]{1,0} fusion(param_0, param_2), kind=kLoop, calls=fused_dynamic_update_slice
+  loop_dynamic_update_slice_fusion.1 = s32[3,3]{1,0} fusion(param_0, param_1), kind=kLoop, calls=fused_dynamic_update_slice.1
+  ROOT tuple.11.0 = (s32[3,3]{1,0}, s32[3,3]{1,0}) tuple(loop_dynamic_update_slice_fusion.1, loop_dynamic_update_slice_fusion)
+}
+)"));
+  EXPECT_FALSE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
 }
 
 TEST_F(HorizontalLoopFusionTest,
@@ -590,7 +638,8 @@ TEST_F(HorizontalLoopFusionTest,
  })")
                     .value();
 
-  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
   EXPECT_THAT(module->entry_computation()
                   ->parameter_instruction(0)
                   ->users()[0]
@@ -621,7 +670,64 @@ e {
   // algorithm would only consider merging them using concatenation/slicing.
   // The horizontal fusion is not supposed to happen in this
   // example though because f and g share an input parameter.
-  EXPECT_FALSE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_FALSE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
+}
+
+TEST_F(HorizontalLoopFusionTest, FuseSmallConcatenationInputFusions) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+a {
+  p = s4[1] parameter(0)
+  q = s4[2] parameter(1)
+  c = s4[3] concatenate(p, q), dimensions={0}
+}
+
+b {
+  p = s4[4] parameter(0)
+  q = s4[5] parameter(1)
+  c = s4[9] concatenate(p, q), dimensions={0}
+}
+
+e {
+  p = s4[1] constant({...})
+  q = s4[2] constant({...})
+  x = s4[3] fusion(p, q), kind=kInput, calls=a
+  r = s4[4] constant({...})
+  s = s4[5] constant({...})
+  y = s4[9] fusion(r, s), kind=kInput, calls=b
+  t = tuple(x, y)
+})"));
+
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
+}
+
+TEST_F(HorizontalLoopFusionTest, DoNotFuseLargerConcatenationInputFusions) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+a {
+  p = s4[100000] parameter(0)
+  q = s4[200000] parameter(1)
+  c = s4[300000] concatenate(p, q), dimensions={0}
+}
+
+b {
+  p = s4[200000] parameter(0)
+  q = s4[100000] parameter(1)
+  c = s4[300000] concatenate(p, q), dimensions={0}
+}
+
+e {
+  p = s4[100000] constant({...})
+  q = s4[200000] constant({...})
+  x = s4[300000] fusion(p, q), kind=kInput, calls=a
+  r = s4[200000] constant({...})
+  s = s4[100000] constant({...})
+  y = s4[300000] fusion(r, s), kind=kInput, calls=b
+  t = tuple(x, y)
+})"));
+
+  EXPECT_FALSE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
 }
 
 TEST_F(HorizontalLoopFusionTest, IterativeHorizontalFusion) {
@@ -662,7 +768,7 @@ TEST_F(HorizontalLoopFusionTest, IterativeHorizontalFusion) {
                     .value();
 
   HloPassFix<HloPassPipeline> iterative_h_fusion("iterative_h_fusion");
-  iterative_h_fusion.AddPass<HorizontalLoopFusion>();
+  iterative_h_fusion.AddPass<HorizontalLoopFusion>(device_description_);
   iterative_h_fusion.AddPass<HloDCE>();
   EXPECT_TRUE(iterative_h_fusion.Run(module.get()).value());
 
@@ -734,7 +840,7 @@ TEST_F(HorizontalLoopFusionTest, TraversalOrder) {
                     .value();
 
   HloPassFix<HloPassPipeline> iterative_h_fusion("iterative_h_fusion");
-  iterative_h_fusion.AddPass<HorizontalLoopFusion>();
+  iterative_h_fusion.AddPass<HorizontalLoopFusion>(device_description_);
   EXPECT_TRUE(iterative_h_fusion.Run(module.get()).value());
 
   // Verify that the total number of fusion instructions is 2 so that we
@@ -808,7 +914,8 @@ ENTRY main {
 )";
 
   auto module = ParseAndReturnUnverifiedModule(hlo_text).value();
-  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
 
   VLOG(2) << module->ToString();
 
@@ -878,31 +985,31 @@ TEST_F(HorizontalLoopFusionTest, DoNotMergeVariadicReductions) {
   })")
                     .value();
 
-  EXPECT_FALSE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_FALSE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
 }
 
-TEST_F(HorizontalLoopFusionTest, DoFusionInsideWhileLoop) {
+TEST_F(HorizontalLoopFusionTest, FuseDifferentInstructionCounts) {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
-b {
-  a = (s8[]) parameter(0)
-  b = s8[] get-tuple-element(a), index=0
-  c = s8[] add(b, b)
-  d = s8[] multiply(b, b)
-  e = s8[] subtract(c, d)
-  t = tuple(e)
-}
+f {
+  p = s8[] parameter(0)
+  b = s8[1] bitcast(p)
+ }
 
-c {
-  p = (s8[]) parameter(0)
-  r = pred[] constant(true)
+g {
+  p = s8[] parameter(0)
 }
 
 e {
-  p = (s8[]) parameter(0)
-  r = (s8[]) while(p), condition=c, body=b
+  p0 = s8[] parameter(0)
+  p1 = s8[] parameter(1)
+  a = s8[1] fusion(p0), kind=kLoop, calls=f
+  b = s8[] fusion(p1), kind=kLoop, calls=g
+  t = tuple(a, b)
 })"));
 
-  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
 }
 
 TEST_F(HorizontalLoopFusionTest, FuseNonDefaultLayoutsUsingTuple) {
@@ -927,7 +1034,8 @@ e {
   t = tuple(a, b)
 })"));
 
-  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
   EXPECT_THAT(module->entry_computation()
                   ->parameter_instruction(0)
                   ->users()[0]
@@ -961,6 +1069,31 @@ CHECK: s32[12]{0} concatenate(%[[r0]], %[[r1]]), dimensions={0}
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{0}));
 }
+
+TEST_F(HorizontalLoopFusionTest, PassBitcastsLookingForFusionCandidates) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+a {
+  p = s4[1] parameter(0)
+}
+
+b {
+  p = s4[2] parameter(0)
+}
+
+e {
+  p = s4[1] constant({...})
+  x = s4[1] fusion(p), kind=kLoop, calls=a
+  xb = s4[1,3] bitcast(x)
+  q = s4[2] constant({...})
+  y = s4[2] fusion(q), kind=kLoop, calls=b
+  yb = s4[9,1] bitcast(y)
+  t = tuple(xb, yb)
+})"));
+
+  EXPECT_TRUE(
+      HorizontalLoopFusion{device_description_}.Run(module.get()).value());
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

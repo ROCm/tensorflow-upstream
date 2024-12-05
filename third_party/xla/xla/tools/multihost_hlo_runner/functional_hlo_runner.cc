@@ -332,7 +332,6 @@ absl::StatusOr<CompileOptions> FunctionalHloRunner::CreateCompileOptions(
     debug_options.set_xla_dump_hlo_as_proto(raw_options.xla_proto_dump_mode ==
                                             XlaProtoDumpMode::kDumpAsProto);
   }
-
   switch (raw_options.hlo_passes_mode) {
     case HloPassesMode::kRunXLABackendOnly:
       build_options.set_run_backend_only(true);
@@ -464,7 +463,6 @@ FunctionalHloRunner::LoadHloModuleAndArguments(absl::string_view hlo_file,
   HloModuleAndArguments hlo_module_and_arguments;
   switch (input_format) {
     case InputFormat::kText: {
-      std::string hlo_text;
       TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
                           ReadModuleFromHloTextFile(hlo_file));
     } break;
@@ -546,7 +544,8 @@ absl::Status FunctionalHloRunner::LoadAndCompile(
     const PreprocessingOptions& preproc_options,
     const RawCompileOptions& raw_compile_options, std::string_view hlo_file,
     InputFormat input_format, int task_id, int num_nodes,
-    std::shared_ptr<xla::KeyValueStoreInterface> kv_store) {
+    std::shared_ptr<xla::KeyValueStoreInterface> kv_store,
+    bool use_gpu_count_workaround) {
   TF_ASSIGN_OR_RETURN(
       CompileOptions compile_options,
       FunctionalHloRunner::CreateCompileOptions(client, raw_compile_options,
@@ -556,7 +555,8 @@ absl::Status FunctionalHloRunner::LoadAndCompile(
   int num_partitions =
       compile_options.executable_build_options.num_partitions();
   int needed_devices = num_replicas * num_partitions;
-  if (client.addressable_device_count() < needed_devices) {
+  if (client.addressable_device_count() < needed_devices &&
+      use_gpu_count_workaround) {
     LOG(INFO) << "Applying a workaround to allow compiling multi-device HLOs "
                  "on machines with fewer devices.";
     DeviceAssignment assignment(num_replicas, num_partitions);
@@ -1026,7 +1026,7 @@ FunctionalHloRunner::RunInternal(
         running_options.profiler->CreateSession();
       }
     }
-    execute_options.launch_id = repeat;
+    execute_options.launch_id = repeat + 1;
     futures->clear();
     TF_ASSIGN_OR_RETURN(
         output_buffers,

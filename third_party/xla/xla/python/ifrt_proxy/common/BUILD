@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@local_tsl//tsl/platform:build_config.bzl", "tf_proto_library")
-# copybara:uncomment load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-
 load("//xla/python/ifrt_proxy/common:ifrt_proxy.bzl", "default_ifrt_proxy_visibility", "ifrt_proxy_cc_test")
 load("//xla/tsl:tsl.bzl", "if_google")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
+# copybara:uncomment load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -200,6 +199,24 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
     ],
+)
+
+cc_library(
+    name = "prof_util",
+    hdrs = ["prof_util.h"],
+    deps = [
+        ":ifrt_service_proto_cc",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "@com_google_absl//absl/strings:string_view",
+        "@local_tsl//tsl/platform:random",
+        "@local_tsl//tsl/profiler/lib:traceme",
+        "@local_tsl//tsl/profiler/lib:traceme_encode",
+    ],
+)
+
+cc_library(
+    name = "versions",
+    hdrs = ["versions.h"],
 )
 
 # copybara:uncomment_begin

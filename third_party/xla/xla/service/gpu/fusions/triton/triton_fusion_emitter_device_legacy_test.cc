@@ -93,20 +93,6 @@ class TritonTest : public GpuCodegenTest {
 
 class TritonGemmTest : public TritonTest {
  public:
-  se::GpuComputeCapability GetGpuComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .gpu_compute_capability();
-  }
-
-  void SetUp() override {
-    if (std::holds_alternative<se::RocmComputeCapability>(
-            GetGpuComputeCapability())) {
-      GTEST_SKIP() << "Not supported on ROCm until Triton is re-enabled.";
-    }
-  }
-
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = TritonTest::GetDebugOptionsForTest();
     // Do not fall back to cuBLAS, we are testing Triton.
@@ -144,25 +130,38 @@ class TritonGemmTestWithoutTritonGemmAny : public TritonGemmTest {
   }
 };
 
-TEST_F(TritonGemmTest, RejectDotInt4HLO) {
-  constexpr std::string_view kHloText = R"(
-    HloModule t
+TEST_F(TritonGemmTest, FP8DotSmallTileDoesNotCrash) {
+  GTEST_SKIP() << "TODO(b/337839570): Re-enable once the bug is fixed. "
+                  "Currently the test is not representative of the issue. "
+                  "While the test passes, the end-to-end model fails.";
 
-    ENTRY main {
-      lhs = s4[16,32,64]{2,1,0} parameter(0)
-      rhs = s4[16,64,16]{2,1,0} parameter(1)
-      ROOT dot = s4[16,32,16]{2,1,0} dot(lhs, rhs),
-          lhs_contracting_dims={2},
-          rhs_contracting_dims={1},
-          lhs_batch_dims={0},
-          rhs_batch_dims={0}
-    }
-  )";
-  EXPECT_THAT(GetOptimizedModule(kHloText).status(),
-              StatusIs(tsl::error::INVALID_ARGUMENT));
+  if (!GetCudaComputeCapability().IsAtLeastHopper()) {
+    GTEST_SKIP() << "Doesn't pass on pre-Hopper GPUs.";
+  }
+
+  constexpr std::string_view kHloText = R"(
+HloModule m
+
+triton_dot {
+  %parameter_0 = f8e4m3fn[32,32]{1,0} parameter(0)
+  %parameter_1 = f8e4m3fn[32,32]{1,0} parameter(1)
+  ROOT %dot.1643 = bf16[32,32]{1,0} dot(f8e4m3fn[32,32]{1,0} %parameter_0, f8e4m3fn[32,32]{0,1} %parameter_1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
 
-TEST_F(TritonGemmTest, RejectInt4NegatePlusConvertHLO) {
+ENTRY e {
+  p0 = f8e4m3fn[32,32]{1,0} parameter(0)
+  p1 = f8e4m3fn[32,32]{1,0} parameter(1)
+  ROOT _ = bf16[32,32] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":16,"block_n":16,"block_k":16,
+                         "split_k":1,"num_stages":2,"num_warps":2,
+                         "num_ctas":1}}}
+})";
+
+  EXPECT_TRUE(Run(kHloText, /*run_hlo_passes=*/false));
+}
+
+TEST_F(TritonGemmTest, Int4NegatePlusConvertHLO) {
   constexpr std::string_view kHloText = R"(
     HloModule t
 
@@ -178,8 +177,8 @@ TEST_F(TritonGemmTest, RejectInt4NegatePlusConvertHLO) {
           rhs_batch_dims={0}
     }
   )";
-  EXPECT_THAT(GetOptimizedModule(kHloText).status(),
-              StatusIs(tsl::error::INVALID_ARGUMENT));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonGemmTest, RejectTritonFusionForInt4WithMinorBatchDim) {
@@ -1782,6 +1781,53 @@ ENTRY e {
                     R"(
 ; CHECK: block_m
 )");
+}
+
+TEST_F(TritonGemmTest,
+       BroadcastsOfTriviallySizedNonContractingDimensionsAreSupported) {
+  EXPECT_TRUE(RunAndCompare(R"(
+f {
+  p0 = f32[64,6464] parameter(0)
+  p1 = f32[16,6464] parameter(1)
+  dot = f32[16,64] dot(p1, p0),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  bc0 = f32[1,16,64] bitcast(dot)
+  p2 = f32[64] parameter(2)
+  bc1 = f32[1,64] bitcast(p2)
+  br = f32[1,16,64] broadcast(bc1), dimensions={0,2}
+  m = f32[1,16,64] multiply(bc0, br)
+}
+
+e {
+  p0 = f32[64,6464] parameter(0)
+  p1 = f32[16,6464] parameter(1)
+  p2 = f32[64] parameter(2)
+  f = f32[1,16,64] fusion(p0, p1, p2),
+    kind=kCustom, calls=f, backend_config={"fusion_backend_config": {"kind":"__triton_gemm"}}
+})",
+                            ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+TEST_F(TritonGemmTest,
+       BroadcastsOfTriviallySizedContractingDimensionsAreSupported) {
+  EXPECT_TRUE(RunAndCompare(R"(
+f {
+  a = f16[2] parameter(0)
+  bc0 = f16[1,2] bitcast(a)
+  br = f16[1,4000,2] broadcast(bc0), dimensions={0,2}
+  bc1 = f16[4000,2] bitcast(br)
+  b = f16[3,4000] parameter(1)
+  d = f16[2,3] dot(bc1, b),
+    lhs_contracting_dims={0}, rhs_contracting_dims={1}
+}
+
+e {
+  a = f16[2] parameter(0)
+  b = f16[3,4000] parameter(1)
+  f = f16[2,3] fusion(a, b),
+    kind=kCustom, calls=f, backend_config={"fusion_backend_config": {"kind":"__triton_gemm"}}
+})",
+                            ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 class TritonGemmTestAny : public TritonGemmTest {

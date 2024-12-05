@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
@@ -169,7 +170,7 @@ absl::Status NcclCollectivePermuteStartThunk::Initialize(
 
 absl::Status NcclCollectivePermuteStartThunk::RunNcclCollective(
     const ExecuteParams& params, se::Stream& stream,
-    NcclCommHandleWrapper comm_wrapper) {
+    CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, {buffer_},
@@ -189,14 +190,13 @@ absl::Status NcclCollectivePermuteStartThunk::RunNcclCollective(
                     p2p_memcpy_enabled_;
 
   return ::xla::gpu::RunCollectivePermute(
-      nccl_api(), source_target, device_buffers[0], stream,
-      comm_wrapper.comm_handle, device_string, current_id, use_memcpy,
-      recv_ptr_map_);
+      nccl_api(), source_target, device_buffers[0], stream, comm_handle.comm,
+      device_string, current_id, use_memcpy, recv_ptr_map_);
 }
 
 absl::Status RunCollectivePermute(
     NcclApi* nccl_api, NcclP2PConfig::SourceTargetMapEntry source_target,
-    DeviceBufferPair& buffer, se::Stream& stream, NcclApi::NcclCommHandle comm,
+    DeviceBufferPair& buffer, se::Stream& stream, Communicator* comm,
     absl::string_view device_string, int64_t current_id, bool use_memcpy,
     NcclCollectivePermuteStartThunk::RecvPtrMap& recv_ptr_map) {
   // Determine the source and target IDs for this instance. The source ID is the

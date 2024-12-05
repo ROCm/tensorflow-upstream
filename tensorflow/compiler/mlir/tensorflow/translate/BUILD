@@ -154,28 +154,14 @@ cc_library(
 )
 
 cc_library(
-    name = "translate_cl_options",
-    srcs = [
-        "tf_mlir_translate_cl.cc",
-    ],
-    hdrs = [
-        "tf_mlir_translate_cl.h",
-    ],
-    deps = [
-        "@llvm-project//llvm:Support",
-    ],
-    alwayslink = 1,
-)
-
-cc_library(
     name = "translate_registration",
     srcs = [
         "tf_mlir_translate_registration.cc",
     ],
     deps = [
         ":mlir_roundtrip_flags",
-        ":translate_cl_options",
         ":translate_lib",
+        "//tensorflow/compiler/mlir/lite/tools:translate_cl_options",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tf2xla/api/v2:tf_executor_to_graph",
         "//tensorflow/compiler/tf2xla:xla_compiler",
@@ -191,31 +177,10 @@ cc_library(
         "@local_xla//xla/client:compile_only_client",
         "@local_xla//xla/service/cpu:cpu_compiler",
         "@local_xla//xla/service/cpu:cpu_transfer_manager",
-        "@local_xla//xla/stream_executor",
         "@local_xla//xla/stream_executor/host:host_platform",
         "@local_xla//xla/stream_executor/host:host_platform_id",
     ],
     alwayslink = 1,
-)
-
-cc_library(
-    name = "split_into_island_per_op_pass",
-    srcs = ["split_into_island_per_op_pass.cc"],
-    hdrs = [
-        "split_into_island_per_op_pass.h",
-    ],
-    deps = [
-        "//tensorflow/compiler/mlir/tensorflow",
-        "//tensorflow/compiler/mlir/tensorflow:tensorflow_executor_inc_gen",
-        "//tensorflow/compiler/mlir/tensorflow:tensorflow_types",
-        "//tensorflow/compiler/mlir/tensorflow/transforms:tf_pass_inc_gen",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:Dialect",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:InferTypeOpInterface",
-        "@llvm-project//mlir:Pass",
-    ],
 )
 
 cc_library(

@@ -35,6 +35,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -45,7 +46,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/scatter_simplifier.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
@@ -74,18 +74,6 @@ MlirScatterFusion::MlirScatterFusion(const HloFusionAnalysis& analysis)
   const auto& scatter = analysis_.fusion_hero(0).instruction();
   auto& scatter_update_shape = scatter.operands().back()->shape();
   config_ = ComputeLoopFusionConfig(analysis, scatter_update_shape);
-}
-
-bool MlirScatterFusion::IsSupported(const HloFusionAnalysis& analysis) {
-  const auto* scatter =
-      Cast<HloScatterInstruction>(&analysis.fusion_hero(0).instruction());
-  if (scatter->scatter_operand_count() != 1) {
-    LOG(ERROR) << "Variadic scatter is not supported like in the legacy "
-                  "emitter, although it is possible to make it work when the "
-                  "indices are unique.";
-    return false;
-  }
-  return true;
 }
 
 std::optional<IndexingMap> MlirScatterFusion::ComputeThreadIdToOutputIndexing(
