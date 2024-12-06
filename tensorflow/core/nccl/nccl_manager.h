@@ -43,6 +43,12 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/stream_executor.h"
+#include "xla/pjrt/event_pool.h"
+
+#define NCCL_COMM_ID_LEN 13
+#define ALLTOALL_BACKWARD_PREFIX_LEN 4
+#define SOCKET_NAME_MAXLEN (NI_MAXHOST + NI_MAXSERV)
+#define NCCL_COMM_ID_MAXLEN (NCCL_COMM_ID_LEN + SOCKET_NAME_MAXLEN)
 
 namespace tensorflow {
 
@@ -59,36 +65,64 @@ class NcclManager {
 
   static NcclManager* instance();
 
-#if TENSORFLOW_USE_ROCM
+#if USE_ROCM
   static int instance_count;
 #endif
 
   // Calls `ncclGetUniqueId` and returns the id as a string.  The returned value
   // may be shared with other participants on different nodes and passed in to
   // multi-node collective invocations.
-  string GenerateCommunicatorKey();
+  string GenerateCommunicatorKey(char* nccl_comm_id, int rank, bool init_step);
+
+  int LocalRanks();
+  int WorkerIndex();
+  int WorkerCount();
+  int GlobalRanks();
 
   // A participant in a Collective.
   struct Participant {
-    Participant(se::StreamExecutor* executor, se::Stream* tensor_stream,
-                const DeviceBase::AcceleratorDeviceInfo* info,
-                const Tensor* input, Tensor* output, int global_rank,
+    Participant(tensorflow::se::StreamExecutor* executor,
+                tensorflow::se::Stream* tensor_stream,
+#ifdef USE_TF215
+                const tensorflow::DeviceBase::AcceleratorDeviceInfo* info,
+#else
+                const tensorflow::DeviceBase::GpuDeviceInfo* info,
+#endif
+                std::vector<const tensorflow::Tensor*> input_tensors,
+                std::unique_ptr<tensorflow::se::Event> input_evt,
+                std::vector<tensorflow::Tensor*> outputs,
+                std::vector<int32_t> send_offsets,
+                std::vector<int32_t> recv_offsets,
+                std::vector<int32_t> send_counts,
+                std::vector<int32_t> recv_counts, int global_rank,
                 DoneCallback done_callback)
         : executor(executor),
           tensor_stream(tensor_stream),
           event_mgr(info->event_mgr),
           gpu_device_id(info->gpu_id),
-#if TENSORFLOW_USE_ROCM
+#if USE_ROCM
           context(static_cast<GPUDeviceContext*>(info->default_context)),
 #endif
-          input(input),
-          output(output),
+          inputs(std::move(input_tensors)),
+          input_event(std::move(input_evt)),
+          outputs(std::move(outputs)),
+          send_offsets(std::move(send_offsets)),
+          recv_offsets(std::move(recv_offsets)),
+          send_counts(std::move(send_counts)),
+          recv_counts(std::move(recv_counts)),
           global_rank(global_rank),
           done_callback(std::move(done_callback)),
+          event_pool(false),
           root(false) {
       DCHECK(executor != nullptr);
       DCHECK(event_mgr != nullptr);
       DCHECK(tensor_stream != nullptr);
+      if (inputs.size() > 0 && inputs[0] != nullptr && !input_event) {
+        absl::StatusOr<xla::EventPool::Handle> handel_event =
+            event_pool.ThenAllocateAndRecordEvent(tensor_stream);
+        input_event = std::unique_ptr<tensorflow::se::Event>(
+            handel_event.value().event());
+      }
     }
 
     // StreamExecutor for the device. Expected to be live for process lifetime.
@@ -109,17 +143,27 @@ class NcclManager {
 
     const int gpu_device_id;
 
-#if TENSORFLOW_USE_ROCM
+#if USE_ROCM
     GPUDeviceContext* const context;
 #endif
 
     // Owned by the caller, who must keep it live until `done_callback` is
     // called. Is NULL for participants that only receive data.
-    const Tensor* input;
+    std::vector<const tensorflow::Tensor*> inputs;
+
+    // Wait on this event rather than synchronizing on the entire stream.
+    // This allows greater concurrency between compute and nccl streams.
+    std::unique_ptr<tensorflow::se::Event> input_event;
 
     // Owned by the caller, who must keep it live until `done_callback` is
     // called. Is NULL for participants that only send data.
-    Tensor* output;
+    std::vector<tensorflow::Tensor*> outputs;
+
+    // Split vector for alltoall, only for all2all
+    std::vector<int32_t> send_offsets;
+    std::vector<int32_t> recv_offsets;
+    std::vector<int32_t> send_counts;
+    std::vector<int32_t> recv_counts;
 
     // Rank across all devices and all nodes.
     // `global_rank` is not required for single-node collectives.
@@ -132,6 +176,8 @@ class NcclManager {
 
     // True if this is the root of the collective, e.g. source of broadcast.
     bool root;
+
+    xla::EventPool event_pool;
   };
 
   // Data that provides context for the collective operation, including the
@@ -181,10 +227,8 @@ class NcclManager {
 
   // AddBroadcastSend and AddBroadcastRecv combine to send data from one sender
   // to all receivers.
-  void AddBroadcastSend(std::unique_ptr<Participant> participant,
-                        const Context& context);
-  void AddBroadcastRecv(std::unique_ptr<Participant> participant,
-                        const Context& context);
+  void AddBroadcast(std::unique_ptr<Participant> participant,
+                    const Context& context);
 
   // AddReduceSend and AddReduceRecv combine to send data from all senders
   // to one receiver.
@@ -226,6 +270,7 @@ class NcclManager {
   struct Communicator;
   struct CommunicatorMember;
   struct NcclStream;
+  struct NcclProfiler;
 
   // Gets the `Communicator` object that will be used to enqueue NCCL kernels
   // for `collective`, and returns it via `communicator`.
@@ -268,9 +313,18 @@ class NcclManager {
   absl::flat_hash_map<se::StreamExecutor*, std::vector<NcclStream*>>
       device_to_comm_streams_ TF_GUARDED_BY(mu_);
 
+#ifdef USE_TF215
   std::vector<std::unique_ptr<Communicator>> communicators_ TF_GUARDED_BY(mu_);
-
+#else
+  std::vector<std::unique_ptr<Communicator>> communicators_;
+#endif
+  std::unique_ptr<Communicator> mgr_comm_;
   Status status_ TF_GUARDED_BY(mu_);
+
+  int local_ranks_ = -1;
+  int global_ranks_ = -1;
+  int worker_index_ = -1;
+  int worker_count_ = -1;
 
   NcclManager(const NcclManager&) = delete;
   void operator=(const NcclManager&) = delete;

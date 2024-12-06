@@ -165,6 +165,8 @@ class DeviceBase {
     int gpu_id = -1;
   };
 
+  using GpuDeviceInfo = AcceleratorDeviceInfo;
+
   // Does not take ownership.
   void set_tensorflow_accelerator_device_info(
       AcceleratorDeviceInfo* device_info) {
