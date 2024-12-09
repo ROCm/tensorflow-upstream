@@ -18,7 +18,7 @@ limitations under the License.
 #include "tensorflow/core/framework/collective.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 
-#if TENSORFLOW_USE_NCCL && (GOOGLE_CUDA || TENSORFLOW_USE_ROCM)
+#if 0  // TENSORFLOW_USE_NCCL && (GOOGLE_CUDA || TENSORFLOW_USE_ROCM)
 
 #include "absl/memory/memory.h"
 #include "tensorflow/core/nccl/nccl_manager.h"

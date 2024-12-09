@@ -12,34 +12,23 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/core/nccl/nccl_manager.h"
+#include "nccl_manager.h"
 
+#include <iostream>
+#include <string>
 #include <utility>
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-
-#include <arpa/inet.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <netdb.h>
-#include <netinet/tcp.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#include "tensorflow/core/framework/types.h"
-#include "tensorflow/core/lib/core/refcount.h"
-#include "tensorflow/core/lib/core/threadpool.h"
-#include "tensorflow/core/platform/blocking_counter.h"
-#include "tensorflow/core/platform/env.h"
-#include "tensorflow/core/platform/unbounded_work_queue.h"
-#include "tensorflow/core/profiler/lib/annotated_traceme.h"
-#include "tensorflow/core/profiler/lib/connected_traceme.h"
-#include "tensorflow/core/profiler/lib/traceme.h"
-#if GOOGLE_CUDA
-#include "xla/stream_executor/gpu/scoped_activate_context.h"
-#elif TENSORFLOW_USE_ROCM
+#if defined(USE_ROCM)
+#include "absl/base/call_once.h"
+#include "hip/hip_runtime.h"
 #include "tensorflow/core/platform/rocm.h"
+#else
+#include "cuda_runtime.h"
+#include "tensorflow/core/platform/cuda.h"
 #endif
+
+#include "tensorflow/core/lib/core/refcount.h"
+#include "tensorflow/core/platform/env.h"
 
 namespace jaguar {
 
@@ -48,55 +37,40 @@ const auto STATUS_OK = absl::Status();
 }
 
 #if defined(USE_ROCM)
-#elif TENSORFLOW_USE_ROCM
-using se::rocm::ScopedActivateExecutorContext;
 using stream_executor::gpu::ScopedActivateContext;
 #define cudaError_t hipError_t
-// Local hipify of cuda symbols
 #define cudaStream_t hipStream_t
-#define cudaError_t hipError_t
 #define cudaGetErrorString hipGetErrorString
-#define cudaStream_t hipStream_t
 #define cudaGetDevice hipGetDevice
-#define cudaGetErrorString hipGetErrorString
 #define cudaSetDevice hipSetDevice
-#define cudaGetDevice hipGetDevice
 #define cudaSuccess hipSuccess
-#define cudaSetDevice hipSetDevice
 int NcclManager::instance_count = 0;
-#define cudaSuccess hipSuccess
 #else
-int NcclManager::instance_count = 0;
 using tensorflow::se::cuda::ScopedActivateExecutorContext;
 #endif
 
-using stream_executor::gpu::ScopedActivateContext;
-#if TENSORFLOW_USE_ROCM
-// Local hipify of cuda symbols
-#define cudaError_t hipError_t
-#define cudaStream_t hipStream_t
-#define cudaGetErrorString hipGetErrorString
-#define cudaGetDevice hipGetDevice
-#define cudaSetDevice hipSetDevice
-#define cudaSuccess hipSuccess
-int NcclManager::instance_count = 0;
-#endif
-
-#define NCCL_RETURN_IF_ERROR(...)                                        \
-  do {                                                                   \
-    ncclResult_t nccl_status = (__VA_ARGS__);                            \
-    if (nccl_status != ncclSuccess) {                                    \
-      return errors::Internal("NCCL: ", ncclGetErrorString(nccl_status), \
-                              ". Set NCCL_DEBUG=WARN for detail.");      \
-    }                                                                    \
+#define NCCL_RETURN_IF_ERROR(...)                                           \
+  do {                                                                      \
+    ncclResult_t nccl_status = (__VA_ARGS__);                               \
+    if (nccl_status != ncclSuccess) {                                       \
+      return tensorflow::errors::Internal(ncclGetErrorString(nccl_status)); \
+    }                                                                       \
   } while (0)
 
-#define CUDA_RETURN_IF_ERROR(...)                                         \
-  do {                                                                    \
-    cudaError_t cuda_status = (__VA_ARGS__);                              \
-    if (cuda_status != cudaSuccess) {                                     \
-      return errors::Internal("CUDA: ", cudaGetErrorString(cuda_status)); \
-    }                                                                     \
+#define CUDA_RETURN_IF_ERROR(...)                                           \
+  do {                                                                      \
+    cudaError_t cuda_status = (__VA_ARGS__);                                \
+    if (cuda_status != cudaSuccess) {                                       \
+      return tensorflow::errors::Internal(cudaGetErrorString(cuda_status)); \
+    }                                                                       \
+  } while (0)
+
+#define CUDA_VLOG_IF_ERROR(...)                   \
+  do {                                            \
+    cudaError_t cuda_status = (__VA_ARGS__);      \
+    if (cuda_status != cudaSuccess) {             \
+      VLOG(0) << cudaGetErrorString(cuda_status); \
+    }                                             \
   } while (0)
 
 // Contains data for a single stream used for nccl communication; this includes
@@ -110,11 +84,11 @@ struct NcclManager::NcclStream : public tensorflow::core::RefCounted {
 
   // The stream on which to run the nccl collective.
   // This is a different stream than the tensorflow compute stream.
-#if TENSORFLOW_USE_ROCM
+#if defined(USE_ROCM)
   // On ROCm, we borrow the nccl stream from the device context.
   tensorflow::se::Stream* stream = nullptr;
 #else
-  std::unique_ptr<se::Stream> stream;
+  std::unique_ptr<tensorflow::se::Stream> stream;
 #endif
 
   // `mu` protects access to `pending_launches_`, which is the list of
@@ -124,8 +98,13 @@ struct NcclManager::NcclStream : public tensorflow::core::RefCounted {
   tensorflow::mutex mu;
   tensorflow::condition_variable cv;
   // Has (collective, participant_idx) pairs.
+#ifdef USE_TF215
   std::deque<std::pair<Collective*, int>> pending_launches_ TF_GUARDED_BY(mu);
   bool shutdown_requested TF_GUARDED_BY(mu) = false;
+#else
+  std::deque<std::pair<Collective*, int>> pending_launches_ TF_GUARDED_BY(mu);
+  bool shutdown_requested TF_GUARDED_BY(mu) = false;
+#endif
 };
 
 struct NcclManager::CommunicatorMember {
@@ -147,21 +126,20 @@ struct NcclManager::Communicator {
       : num_devices(members.size()), members(std::move(members)), key(key) {}
 
   const int num_devices;
-  std::vector<CommunicatorMember> members;
+  const std::vector<CommunicatorMember> members;
   const tensorflow::string key;
 };
 
 namespace {
 
-static constexpr tensorflow::DataTypeSet kValidDataTypes =
-    ToSet(tensorflow::DT_HALF) | ToSet(tensorflow::DT_FLOAT) |
-    ToSet(tensorflow::DT_DOUBLE) | ToSet(tensorflow::DT_INT32) |
-    ToSet(tensorflow::DT_INT64);
-
 ncclDataType_t ToNcclType(tensorflow::DataType t) {
   switch (t) {
     case tensorflow::DT_HALF:
       return ncclHalf;
+#ifndef DISABLE_BFLOAT16
+    case tensorflow::DT_BFLOAT16:
+      return ncclBfloat16;
+#endif
     case tensorflow::DT_FLOAT:
       return ncclFloat;
     case tensorflow::DT_DOUBLE:
@@ -183,6 +161,7 @@ std::size_t NcclTypeSize(ncclDataType_t t) {
     case ncclBfloat16:
       return 2;
 #endif
+
     case ncclFloat:
       return sizeof(float);
     case ncclDouble:
@@ -191,7 +170,6 @@ std::size_t NcclTypeSize(ncclDataType_t t) {
       return sizeof(int32_t);
     case ncclInt64:
       return sizeof(int64_t);
-
     default:
       return sizeof(float);
   }
@@ -280,6 +258,7 @@ ncclResult_t GetNcclUniqueIdFromString(ncclUniqueId* id, const char* comm_id) {
     if (parseStringList(ip_port_pair, &ni, 1) != 1) {
       std::cout << "Net : No valid <IPv4_or_hostname>:<port> pair found"
                 << std::endl;
+
       return ncclInvalidArgument;
     }
     struct addrinfo hints, *p;
@@ -323,6 +302,7 @@ ncclResult_t GetNcclUniqueIdFromString(ncclUniqueId* id, const char* comm_id) {
       if (ptr[i] == '%') j = i;
       if (ptr[i] == ']') break;
     }
+
     if (i == len) {
       std::cout << "Net : No valid [IPv6]:port pair found" << std::endl;
       return ncclInvalidArgument;
@@ -444,6 +424,7 @@ struct NcclManager::Collective : public tensorflow::core::RefCounted {
              int num_global_devices_in,
              const tensorflow::string& communicator_key_in,
              int seq_launch_len = 0, int seq_launch_idx = 0)
+
       : collective_key(collective_key_in),
         data_type(data_type_in),
         type(type_in),
@@ -455,7 +436,7 @@ struct NcclManager::Collective : public tensorflow::core::RefCounted {
         seq_launch_len(seq_launch_len),
         seq_launch_idx(seq_launch_idx) {
     participants.reserve(num_local_devices_in);
-#if TENSORFLOW_USE_ROCM
+#if USE_ROCM
     // On ROCm platform, this allows caller to either use the singleton instance
     // or to manage one non-singleton NcclManager instance.
     // For example, the nccl_manager_test will use both paradigms in the same
@@ -487,7 +468,6 @@ struct NcclManager::Collective : public tensorflow::core::RefCounted {
   // For collective types that have a root (e.g. the root of broadcast is the
   // sender), this is the rank of the root.
   int root_rank = -1;
-
   // How many participants have been registered so far. The Collective is
   // eligible for running with <available_participants> == num_local_devices.
   //
@@ -499,10 +479,6 @@ struct NcclManager::Collective : public tensorflow::core::RefCounted {
   // Guarded by the mutex of the containing Communicator.
   int available_participants = 0;
   bool multi_node_ready = false;
-  // trace_context is used by tracing system to associate collective
-  // scheduling and execution (cooperative kernel launch), which happen
-  // on different threads.
-  tensorflow::uint64 trace_context = 0;
 
   tensorflow::Status status;
 
@@ -517,12 +493,6 @@ NcclManager::NcclManager() {
 #if USE_ROCM
   ++instance_count;
 #endif
-}
-NcclManager::~NcclManager() {
-  VLOG(2) << "~NcclManager " << this;
-#if USE_ROCM
-  --instance_count;
-#endif
   char* env = getenv("JAGUAR_LOCAL_RANKS");
   if (env) {
     local_ranks_ = atoi(env);
@@ -536,6 +506,13 @@ NcclManager::~NcclManager() {
     worker_count_ = atoi(env);
   }
   global_ranks_ = local_ranks_ * worker_count_;
+}
+
+NcclManager::~NcclManager() {
+  VLOG(2) << "~NcclManager " << this;
+#if USE_ROCM
+  --instance_count;
+#endif
   for (auto& it : device_to_comm_streams_) {
     for (NcclStream* nccl_stream : it.second) {
       {
@@ -547,6 +524,7 @@ NcclManager::~NcclManager() {
     }
   }
 }
+
 NcclManager* NcclManager::instance() {
   static NcclManager* instance = new NcclManager();
 #if USE_ROCM
@@ -558,9 +536,19 @@ NcclManager* NcclManager::instance() {
   return instance;
 }
 
-tensorflow::string NcclManager::GenerateCommunicatorKey() {
+tensorflow::string NcclManager::GenerateCommunicatorKey(char* nccl_comm_id,
+                                                        int rank,
+                                                        bool init_step) {
+  tensorflow::mutex_lock l(mu_);
   ncclUniqueId nccl_id;
-  ncclGetUniqueId(&nccl_id);
+  if (init_step && rank == -1) {
+    VLOG(0) << "ERROR: NcclManager::GenerateCommunicatorKey ncclGetUniqueId "
+               "should never got called";
+    putenv(nccl_comm_id);
+    ncclGetUniqueId(&nccl_id);
+  } else {
+    GetNcclUniqueIdFromString(&nccl_id, nccl_comm_id);
+  }
   return tensorflow::string(nccl_id.internal, NCCL_UNIQUE_ID_BYTES);
 }
 
@@ -574,7 +562,11 @@ int NcclManager::GlobalRanks() { return global_ranks_; }
 
 tensorflow::Status NcclManager::CreateCommunicator(
     tensorflow::se::StreamExecutor* executor,
+#ifdef USE_TF215
     const tensorflow::DeviceBase::AcceleratorDeviceInfo* info,
+#else
+    const tensorflow::DeviceBase::GpuDeviceInfo* info,
+#endif
     const tensorflow::string& communicator_key, int global_rank) {
   if (LocalRanks() != 1) {
     return tensorflow::errors::Internal(
@@ -611,7 +603,7 @@ tensorflow::Status NcclManager::CreateCommunicator(
   VLOG(2) << "Create new stream";
 #if USE_ROCM
   auto stream_or_status = executor->CreateStream();
-  nccl_stream->stream = stream_or_status->get();
+  nccl_stream->stream = stream_or_status->release();
 #else
   nccl_stream->stream.reset(new tensorflow::se::Stream(executor));
   nccl_stream->stream->Init();
@@ -630,6 +622,7 @@ tensorflow::Status NcclManager::CreateCommunicator(
 
   ncclComm_t nccl_comm;
   VLOG(2) << "Create new communicator";
+
   // For NCCL 2, we always initialize using ncclCommInitRank guarded by NCCL
   // group primitives.
   ncclUniqueId nccl_id;
@@ -640,13 +633,13 @@ tensorflow::Status NcclManager::CreateCommunicator(
           << socketToString(&(addr.sa), line_a);
   VLOG(2) << "NCCL_COMM_ID " << getenv("NCCL_COMM_ID");
   int saved_device = 0;
-  using namespace tensorflow;
   CUDA_RETURN_IF_ERROR(cudaGetDevice(&saved_device));
   NCCL_RETURN_IF_ERROR(ncclGroupStart());
   CUDA_RETURN_IF_ERROR(cudaSetDevice(device_id));
   NCCL_RETURN_IF_ERROR(
       ncclCommInitRank(&nccl_comm, GlobalRanks(), nccl_id, global_rank));
   NCCL_RETURN_IF_ERROR(ncclGroupEnd());
+
   CUDA_RETURN_IF_ERROR(cudaSetDevice(saved_device));
 
   members[0].nccl_comm = nccl_comm;
@@ -659,9 +652,7 @@ tensorflow::Status NcclManager::CreateCommunicator(
 tensorflow::Status NcclManager::GetCommunicator(
     NcclManager::Collective* collective,
     NcclManager::Communicator** communicator) {
-  // Sort by device ID, executor, and global rank to make ordering of
-  // participants deterministic.
-  using namespace tensorflow;
+  // Sort by global rank to make ordering of participants deterministic.
   std::sort(collective->participants.begin(), collective->participants.end(),
             [](const std::unique_ptr<Participant>& a,
                const std::unique_ptr<Participant>& b) {
@@ -675,9 +666,6 @@ tensorflow::Status NcclManager::GetCommunicator(
             });
 
   tensorflow::mutex_lock l(mu_);
-  // if (!status_.ok()) { // Removed?
-  // return status_;
-  //}
 
   if (collective->communicator_key.empty()) {
     // For single-node collectives, when the caller does not specify a
@@ -698,7 +686,7 @@ tensorflow::Status NcclManager::GetCommunicator(
     // Launching of kernels must be serialized so that, given collectives A and
     // B, and an order of them (e.g., A before B), then for each comm_stream
     // involved, the kernel for A is launched before the kernel for B. This is
-    // guaranteed currently by a global mutex controlling additions of the
+    // guaranteed currently be a global mutex controlling additions of the
     // kernels to per-stream launch queues.  The launch queues are processed by
     // LoopKernelLaunches.
     for (auto& comm : communicators_) {
@@ -718,7 +706,7 @@ tensorflow::Status NcclManager::GetCommunicator(
     }
   } else {
 #if NCCL_MAJOR < 2
-    return errors::Internal(
+    return tensorflow::errors::Internal(
         "Cannot use multi-node NCCL collectives with NCCL 1.x");
 #endif
     if (collective->communicator_key.size() != NCCL_UNIQUE_ID_BYTES) {
@@ -732,15 +720,13 @@ tensorflow::Status NcclManager::GetCommunicator(
     for (auto& comm : communicators_) {
       if (comm->key == collective->communicator_key) {
         *communicator = comm.get();
-        return OkStatus();
+        return STATUS_OK;
       }
     }
   }
-
   VLOG(0) << "ERROR: NcclManager lazy ncclInitRank should never got called";
-  auto* env = Env::Default();
+  auto* env = tensorflow::Env::Default();
   std::set<NcclStream*> used_streams;
-
   // Create and initialize a new communicator.
   // Note that this is done under the lock; performance is not expected to
   // matter as this happens a very small number of times.
@@ -753,25 +739,27 @@ tensorflow::Status NcclManager::GetCommunicator(
     auto& streams = device_to_comm_streams_[executor];
     NcclStream* nccl_stream = nullptr;
     // for (const auto& s : streams) {
-    // if (used_streams.insert(s).second) {
-    // nccl_stream = s;
-    // break;
-    //}
+    //  if (used_streams.insert(s).second) {
+    //    nccl_stream = s;
+    //    break;
+    //  }
     //}
     if (nccl_stream == nullptr) {
       nccl_stream = new NcclStream();
       nccl_stream->executor = executor;
+      VLOG(2) << "Create new stream";
 #if USE_ROCM
       nccl_stream->stream = collective->participants[i]->context->nccl_stream();
 #else
-      TF_ASSIGN_OR_RETURN(auto stream, executor->CreateStream());
-      nccl_stream->stream = std::move(stream);
+      nccl_stream->stream.reset(new tensorflow::se::Stream(executor));
+      nccl_stream->stream->Init();
 #endif
 
       streams.emplace_back(nccl_stream);
       // used_streams.insert(nccl_stream);
 
       nccl_stream->Ref();
+
       env->SchedClosure([this, nccl_stream]() {
         LoopKernelLaunches(nccl_stream);
         nccl_stream->Unref();
@@ -784,8 +772,6 @@ tensorflow::Status NcclManager::GetCommunicator(
 
   std::vector<ncclComm_t> nccl_comms(collective->num_local_devices);
   VLOG(2) << "Create new communicator";
-
-#if NCCL_MAJOR >= 2
   // For NCCL 2, we always initialize using ncclCommInitRank guarded by NCCL
   // group primitives.
   ncclUniqueId nccl_id;
@@ -793,7 +779,6 @@ tensorflow::Status NcclManager::GetCommunicator(
   char line_a[SOCKET_NAME_MAXLEN + 1];
   union socketAddress& addr = ((struct ncclBootstrapHandle*)(&nccl_id))->addr;
   VLOG(2) << "Try to init rank " << socketToString(&(addr.sa), line_a);
-
   int saved_device = 0;
   CUDA_RETURN_IF_ERROR(cudaGetDevice(&saved_device));
   NCCL_RETURN_IF_ERROR(ncclGroupStart());
@@ -808,14 +793,6 @@ tensorflow::Status NcclManager::GetCommunicator(
   }
   NCCL_RETURN_IF_ERROR(ncclGroupEnd());
   CUDA_RETURN_IF_ERROR(cudaSetDevice(saved_device));
-#else
-  // Since NCCL 1 is single node only, we use ncclCommInitAll.  We could have
-  // used ncclCommInitRank with NCCL 1 as well, but then we would have to
-  // issue each init call from a different thread
-  // (https://docs.nvidia.com/deeplearning/sdk/nccl-developer-guide/docs/nccl1.html).
-  NCCL_RETURN_IF_ERROR(ncclCommInitAll(
-      nccl_comms.data(), collective->num_local_devices, devices.data()));
-#endif
 
   for (int i = 0; i < collective->num_local_devices; ++i) {
     members[i].nccl_comm = nccl_comms[i];
@@ -823,7 +800,7 @@ tensorflow::Status NcclManager::GetCommunicator(
   communicators_.emplace_back(
       new Communicator(std::move(members), collective->communicator_key));
   *communicator = communicators_.back().get();
-  return OkStatus();
+  return STATUS_OK;
 }
 
 void NcclManager::AddToAllReduce(std::unique_ptr<Participant> participant,
@@ -838,20 +815,14 @@ void NcclManager::AddToAllGather(std::unique_ptr<Participant> participant,
                  ncclSum /* unused */);
 }
 
-void NcclManager::AddToReduceScatter(std::unique_ptr<Participant> participant,
-                                     const Context& context,
-                                     ncclRedOp_t reduction_op) {
-  AddParticipant(std::move(participant), context, kReduceScatter, reduction_op);
-}
-
 void NcclManager::AddToAllToAll(std::unique_ptr<Participant> participant,
                                 const Context& context) {
   AddParticipant(std::move(participant), context, kAllToAll,
                  ncclSum /* unused */);
 }
 
-void NcclManager::AddBroadcast(std::unique_ptr<Participant> participant,
-                               const Context& context) {
+void NcclManager::AddToBroadcast(std::unique_ptr<Participant> participant,
+                                 const Context& context) {
   AddParticipant(std::move(participant), context, kBroadcast,
                  ncclSum /* unused */);
 }
@@ -881,6 +852,7 @@ void NcclManager::AddParticipant(std::unique_ptr<Participant> participant,
     } else {
       collective = collective_it->second;
     }
+
     // Check `collective` is correct and consistent.
     if (collective->status.ok() && !collective->single_node &&
         collective->communicator_key.empty()) {
@@ -925,7 +897,9 @@ void NcclManager::AddParticipant(std::unique_ptr<Participant> participant,
       collective->status = tensorflow::errors::Internal(
           "Collective ", reduction_op, " expected ",
           collective->num_local_devices, " participants but now has ",
+
           collective->participants.size(),
+
           " with one more participant being added");
     }
     if (collective->status.ok() && collective->root_rank >= 0 &&
@@ -952,7 +926,6 @@ void NcclManager::AddParticipant(std::unique_ptr<Participant> participant,
 
 bool NcclManager::CheckReady(const tensorflow::string& collective_key,
                              Collective* collective) {
-  using namespace tensorflow;
   if (collective->available_participants == collective->num_local_devices) {
     if (collective->num_global_devices == collective->num_local_devices ||
         collective->multi_node_ready) {
@@ -965,14 +938,9 @@ bool NcclManager::CheckReady(const tensorflow::string& collective_key,
 }
 
 void NcclManager::RunCollective(Collective* collective) {
-  using namespace tensorflow;
-  // For TraceMeConsumer in Connection::RPCDone().
-  tensorflow::profiler::TraceMeProducer traceme("Schedule Collective");
-  collective->trace_context = traceme.GetContextId();
+  static tensorflow::mutex collective_mu(tensorflow::LINKER_INITIALIZED);
 
-  static mutex collective_mu(LINKER_INITIALIZED);
-
-  Status status = collective->status;
+  tensorflow::Status status = collective->status;
   if (status.ok()) {
     status = GetCommunicator(collective, &collective->communicator);
   }
@@ -993,7 +961,7 @@ void NcclManager::RunCollective(Collective* collective) {
       if (collective->root_rank == -1) {
         collective->root_rank = rank;
       } else if (collective->root_rank != rank) {
-        status = errors::Internal(
+        status = tensorflow::errors::Internal(
             "Inconsistent root rank ", collective->root_rank, " and GPU id ",
             p->gpu_device_id, " rank ", rank, " also marked as root.");
       }
@@ -1004,8 +972,8 @@ void NcclManager::RunCollective(Collective* collective) {
 
   if (status.ok() && collective->type == kBroadcast &&
       collective->root_rank < 0) {
-    status = errors::Internal("Root rank not indicated for collective ",
-                              collective->collective_key);
+    status = tensorflow::errors::Internal(
+        "Root rank not indicated for collective ", collective->collective_key);
   }
 
   if (!status.ok()) {
@@ -1021,11 +989,12 @@ void NcclManager::RunCollective(Collective* collective) {
     // is to prevent collectives from deadlocking each other.
     // Note that it would be possible to run multiple collectives at once, if
     // they have non-intersecting sets of devices.
-    mutex_lock l(collective_mu);
+    tensorflow::mutex_lock l(collective_mu);
     for (int i = 0; i < collective->num_local_devices; ++i) {
       NcclStream* nccl_stream =
           collective->communicator->members[i].nccl_stream;
-      mutex_lock l(nccl_stream->mu);
+      tensorflow::mutex_lock l(nccl_stream->mu);
+
       nccl_stream->pending_launches_.push_front(std::make_pair(collective, i));
       // Ownership is shared between LoopKernelLaunches for each stream in this
       // collective.
@@ -1036,37 +1005,24 @@ void NcclManager::RunCollective(Collective* collective) {
   collective->Unref();
 }
 
-namespace {
-// For tracing purpose.
-size_t ComputeBufferSize(const NcclManager::Participant* p,
-                         tensorflow::DataType data_type) {
-  size_t num_elements = 0;
-  if (!p->outputs.empty()) {
-    num_elements += p->outputs.front()->NumElements();
-  } else if (!p->inputs.empty()) {
-    num_elements += p->inputs.front()->NumElements();
-  }
-  return num_elements * DataTypeSize(data_type);
-}
-}  // namespace
-
 void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
-  using namespace tensorflow;
 #if USE_ROCM
-  se::Stream* comm_stream = nccl_stream->stream;
-#else
-  se::Stream* comm_stream = nccl_stream->stream.get();
-#endif
+  tensorflow::se::Stream* comm_stream = nccl_stream->stream;
   ScopedActivateContext scoped_context(nccl_stream->executor);
-  cudaStream_t cu_stream = reinterpret_cast<cudaStream_t>(
+#else
+  tensorflow::se::Stream* comm_stream = nccl_stream->stream.get();
+  ScopedActivateExecutorContext scoped_context(nccl_stream->executor);
+#endif
+  const cudaStream_t* cu_stream = reinterpret_cast<const cudaStream_t*>(
       comm_stream->platform_specific_handle().stream);
+  ThreadSetNameOnce("nccl_loop");
 
   while (true) {
     // Find collective to run.
     std::pair<Collective*, int> next_launch;
     {
       VLOG(3) << "Locking mutex nccl_stream " << nccl_stream;
-      mutex_lock l(nccl_stream->mu);
+      tensorflow::mutex_lock l(nccl_stream->mu);
       while (nccl_stream->pending_launches_.empty()) {
         if (nccl_stream->shutdown_requested) {
           // No work and shutdown requested, exit.
@@ -1080,9 +1036,6 @@ void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
 
     // Launch the nccl kernel.
     Collective* collective = next_launch.first;
-    tensorflow::profiler::TraceMeConsumer traceme("Run Collective",
-                                                  collective->trace_context);
-
     ncclDataType_t data_type = ToNcclType(collective->data_type);
     int p_idx = next_launch.second;
     Participant* p = collective->participants[p_idx].get();
@@ -1103,28 +1056,20 @@ void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
     }
 #ifdef COMPILING_JAGUAR
     GlobalCudaTimerManager()->StartCudaTimer(metric_key, *cu_stream,
+                                             jaguar::COMM);
 #endif
-
     switch (collective->type) {
       case kAllReduce: {
         const void* sendbuff = p->inputs[0]->tensor_data().data();
         void* recvbuff = const_cast<char*>(p->outputs[0]->tensor_data().data());
-
         VLOG(2) << "call NcclAllReduce collective_key "
                 << collective->collective_key << " participant " << p_idx
-                << " num_participants " << collective->participants.size()
                 << " sendbuff " << sendbuff << " recvbuff " << recvbuff
                 << " nccl_comm " << nccl_comm << " comm_stream " << comm_stream
                 << " cuda_stream " << cu_stream;
-        profiler::AnnotatedTraceMe traceme([&] {
-          return profiler::TraceMeEncode(
-              "ncclAllReduce",
-              {{"buffer_size", ComputeBufferSize(p, collective->data_type)},
-               {"collective_type", "all_reduce"}});
-        });
         nccl_result = ncclAllReduce(
-            sendbuff, recvbuff, p->inputs.front()->NumElements(), data_type,
-            collective->reduction_op, nccl_comm, cu_stream);
+            sendbuff, recvbuff, p->inputs[0]->NumElements(), data_type,
+            collective->reduction_op, nccl_comm, *cu_stream);
         break;
       }
       case kBroadcast: {
@@ -1135,16 +1080,12 @@ void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
           sendbuff = p->inputs[0]->tensor_data().data();
           num_elements = p->inputs[0]->NumElements();
         }
-        if (p->outputs.size()) {
-          recvbuff =
-              const_cast<char*>(p->outputs.front()->tensor_data().data());
-          num_elements = p->outputs.front()->NumElements();
-        } else {
-          // Operate in-place if no output (for the src node).
-          recvbuff = const_cast<void*>(sendbuff);
+        if (p->outputs.size() > 0) {
+          recvbuff = const_cast<char*>(p->outputs[0]->tensor_data().data());
+          num_elements = p->outputs[0]->NumElements();
         }
         if (num_elements < 0) {
-          p->done_callback(errors::Internal(
+          p->done_callback(tensorflow::errors::Internal(
               "Both input and output are null in ncclBroadcast"));
           collective->Unref();
           continue;
@@ -1156,33 +1097,22 @@ void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
                   << " collective root_rank " << collective->root_rank
                   << " nccl_comm " << nccl_comm << " comm_stream "
                   << comm_stream << " cuda_stream " << cu_stream;
-        profiler::AnnotatedTraceMe traceme([&] {
-          return profiler::TraceMeEncode(
-              "ncclBroadcast",
-              {{"buffer_size", ComputeBufferSize(p, collective->data_type)},
-               {"collective_type", "broadcast"}});
-        });
         nccl_result =
             ncclBroadcast(sendbuff, recvbuff, num_elements, data_type,
-                          collective->root_rank, nccl_comm, cu_stream);
+                          collective->root_rank, nccl_comm, *cu_stream);
         break;
       }
       case kReduce: {
         const void* sendbuff = p->inputs[0]->tensor_data().data();
+
         void* recvbuff =
-            p->outputs.empty()
-                ? const_cast<char*>(p->outputs.front()->tensor_data().data())
+            p->outputs.size() > 0
+                ? const_cast<char*>(p->outputs[0]->tensor_data().data())
                 : nullptr;
-        profiler::AnnotatedTraceMe traceme([&] {
-          return profiler::TraceMeEncode(
-              "buffer_size",
-              {{"output_size", ComputeBufferSize(p, collective->data_type)},
-               {"collective_type", "reduce"}});
-        });
         nccl_result =
-            ncclReduce(sendbuff, recvbuff, p->inputs.front()->NumElements(),
+            ncclReduce(sendbuff, recvbuff, p->inputs[0]->NumElements(),
                        data_type, collective->reduction_op,
-                       collective->root_rank, nccl_comm, cu_stream);
+                       collective->root_rank, nccl_comm, *cu_stream);
         break;
       }
       case kAllGather: {
@@ -1206,44 +1136,16 @@ void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
                 << " recvcount " << recv_num_elements << " nccl_comm "
                 << nccl_comm << " comm_stream " << comm_stream
                 << " cuda_stream " << cu_stream;
-        profiler::AnnotatedTraceMe traceme([&] {
-          return profiler::TraceMeEncode(
-              "ncclAllGather",
-              {{"buffer_size", ComputeBufferSize(p, collective->data_type)},
-               {"collective_type", "all_gather"}});
-        });
-        nccl_result =
-            ncclAllGather(sendbuff, recvbuff, p->inputs.front()->NumElements(),
-                          data_type, nccl_comm, cu_stream);
-        break;
-      }
-      case kReduceScatter: {
-        const void* sendbuff = p->inputs.front()->tensor_data().data();
-        void* recvbuff =
-            const_cast<char*>(p->outputs.front()->tensor_data().data());
-
-        VLOG(2) << "call NcclReduceScatter collective_key "
-                << collective->collective_key << " participant " << p_idx
-                << " num_participants " << collective->participants.size()
-                << " sendbuff " << sendbuff << " recvbuff " << recvbuff
-                << " nccl_comm " << nccl_comm << " comm_stream " << comm_stream
-                << " cuda_stream " << cu_stream;
-        profiler::AnnotatedTraceMe traceme([&] {
-          return profiler::TraceMeEncode(
-              "ncclReduceScatter",
-              {{"buffer_size", ComputeBufferSize(p, collective->data_type)},
-               {"collective_type", "reduce_scatter"}});
-        });
-        nccl_result = ncclReduceScatter(
-            sendbuff, recvbuff, p->outputs.front()->NumElements(), data_type,
-            collective->reduction_op, nccl_comm, cu_stream);
+        nccl_result = ncclAllGather(sendbuff, recvbuff, send_num_elements,
+                                    data_type, nccl_comm, *cu_stream);
         break;
       }
       case kAllToAll: {
         VLOG(2) << "call NcclAlltoAll collective_key "
                 << collective->collective_key << " participant " << p_idx
-                << nccl_comm << " comm_stream " << comm_stream
+                << " nccl_comm " << nccl_comm << " comm_stream " << comm_stream
                 << " cuda_stream " << cu_stream;
+
         int32_t total_sendcount = 0;
         int32_t total_recvcount = 0;
         ncclResult_t tmp_nccl_result = ncclSuccess;
@@ -1255,31 +1157,31 @@ void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
               sendptr + p->send_offsets[r] * NcclTypeSize(data_type);
           int32_t sendcount = p->send_counts[r];
           total_sendcount += sendcount;
-          tmp_nccl_result =
-              ncclSend(sendbuff, sendcount, data_type, r, nccl_comm, cu_stream);
+          tmp_nccl_result = ncclSend(sendbuff, sendcount, data_type, r,
+                                     nccl_comm, *cu_stream);
           if (tmp_nccl_result != ncclSuccess) nccl_result = tmp_nccl_result;
           void* recvbuff =
               recvptr + p->recv_offsets[r] * NcclTypeSize(data_type);
           int32_t recvcount = p->recv_counts[r];
           total_recvcount += recvcount;
-          tmp_nccl_result =
-              ncclRecv(recvbuff, recvcount, data_type, r, nccl_comm, cu_stream);
+          tmp_nccl_result = ncclRecv(recvbuff, recvcount, data_type, r,
+                                     nccl_comm, *cu_stream);
           if (tmp_nccl_result != ncclSuccess) nccl_result = tmp_nccl_result;
         }
         nccl_result = tmp_nccl_result;
         ncclGroupEnd();
+        if (collective->collective_key.substr(
+                0, ALLTOALL_BACKWARD_PREFIX_LEN) == "Grad") {
+        }
         break;
       }
     }
-
 #ifdef COMPILING_JAGUAR
     GlobalCudaTimerManager()->StopCudaTimer(metric_key, *cu_stream);
     GlobalSessionStatus()->worker_status()->nccl_status.push(metric_key);
 #endif
-
     // Run the done_callback when the nccl kernel finishes running.
-     auto done_callback = [collective, p_idx, nccl_result,
-                          metric_key]() {
+    auto done_callback = [collective, p_idx, nccl_result, metric_key]() {
       VLOG(2) << "done Nccl kernel collective_key "
               << collective->collective_key << " participant " << p_idx
               << " ncclResult " << nccl_result;
@@ -1298,64 +1200,4 @@ void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
   }
 }
 
-void NcclManager::StartAbort(const tensorflow::Status& s) {
-  using namespace tensorflow;
-  absl::flat_hash_map<string, Collective*> collectives;
-  std::vector<std::unique_ptr<Communicator>> communicators;
-  {
-    mutex_lock l(mu_);
-    if (!status_.ok()) {
-      LOG(WARNING)
-          << "NcclManager already aborted, ignoring subsequent StartAbort with "
-          << s;
-      return;
-    }
-    status_ = s;
-    collectives.swap(collectives_);
-    communicators.swap(communicators_);
-  }
-  VLOG(2) << "Aborted NcclManager " << this << " with " << collectives.size()
-          << " collectives and " << communicators.size()
-          << " comms with status " << s;
-  // collectives_ contains pending launches that haven't been dispatched to
-  // kernel launch threads, so we can simply invoke the done callbacks of them.
-  for (const auto& item : collectives) {
-    for (const std::unique_ptr<Participant>& p : item.second->participants) {
-      p->done_callback(s);
-    }
-    item.second->Unref();
-  }
-  // Abort ncclComm. Note that there could be multiple ncclComm per device,
-  // and ncclCommAbort contains cuda calls that requires device
-  // synchronization. That is a collective on nccl_comm_0 can block
-  // ncclCommAbort(nccl_comm_1), so we need to abort all ncclComm in a
-  // concurrent fashion. This assumes that there's only one active NcclManager
-  // at a time.
-  UnboundedWorkQueue queue(Env::Default(), "nccl_abort");
-  int num_comms = 0;
-  for (std::unique_ptr<Communicator>& communicator : communicators) {
-    num_comms += communicator->members.size();
-  }
-  BlockingCounter pending(num_comms);
-  for (std::unique_ptr<Communicator>& communicator : communicators) {
-    for (CommunicatorMember& member : communicator->members) {
-      queue.Schedule([&member, &pending]() {
-        ncclCommAbort(member.nccl_comm);
-        member.nccl_comm = nullptr;
-        pending.DecrementCount();
-      });
-    }
-  }
-  pending.Wait();
-}
-
-void NcclManager::Reset() {
-  using namespace tensorflow;
-  mutex_lock l(mu_);
-  status_ = Status();
-  VLOG(2) << "Reset NcclManager " << this;
-}
-
 }  // namespace jaguar
-
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM

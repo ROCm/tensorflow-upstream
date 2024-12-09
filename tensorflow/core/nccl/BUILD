@@ -23,6 +23,7 @@ cc_library(
     srcs = if_cuda_or_rocm([
         "nccl_manager.cc",
         "nccl_rewrite.cc",
+        "nccl_ops.cc"
     ]),
     hdrs = if_cuda_or_rocm([
         "nccl_manager.h",

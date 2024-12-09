@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if 0  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #include <vector>
 
@@ -32,6 +32,7 @@ limitations under the License.
 
 namespace tensorflow {
 namespace {
+using NcclManager = jaguar::NcclManager;
 
 // Base class for all communicator ops that use nccl.
 //

@@ -12,10 +12,16 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_CORE_NCCL_NCCL_MANAGER_H_
-#define TENSORFLOW_CORE_NCCL_NCCL_MANAGER_H_
+#ifndef JAGUAR_TENSORFLOW_OP_COMM_NCCL_MANAGER_H_
+#define JAGUAR_TENSORFLOW_OP_COMM_NCCL_MANAGER_H_
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netdb.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include <vector>
 
@@ -23,27 +29,23 @@ limitations under the License.
 // setting EIGEN_USE_THREADS. But when defining EIGEN_USE_THREADS here,
 // incAtomic and other CUDA specific symbols are no longer recognized.
 #ifndef gpu_assert
+
 #define gpu_assert(x)
 #endif
 
 #include "absl/container/flat_hash_map.h"
-#if GOOGLE_CUDA
-#include "third_party/nccl/nccl.h"
-#elif TENSORFLOW_USE_ROCM
-#include "rocm/rocm_config.h"
-#if (TF_ROCM_VERSION >= 50200)
-#include "rocm/include/rccl/rccl.h"
-#else
-#include "rocm/include/rccl.h"
-#endif
-#endif
-#include "tensorflow/core/common_runtime/gpu/gpu_event_mgr.h"
+#include "absl/memory/memory.h"
+#ifdef USE_ROCM
 #include "tensorflow/core/common_runtime/gpu_device_context.h"
+#else
+#include "cpp3rdlib/nccl/include/nccl.h"
+#endif
+#include "rocm/include/rccl/rccl.h"
+#include "tensorflow/core/common_runtime/gpu/gpu_event_mgr.h"
 #include "tensorflow/core/framework/device_base.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/stream_executor.h"
-#include "xla/pjrt/event_pool.h"
 
 #define NCCL_COMM_ID_LEN 13
 #define ALLTOALL_BACKWARD_PREFIX_LEN 4
@@ -68,15 +70,19 @@ class NcclManager {
 #if USE_ROCM
   static int instance_count;
 #endif
-
   // Calls `ncclGetUniqueId` and returns the id as a string.  The returned value
   // may be shared with other participants on different nodes and passed in to
   // multi-node collective invocations.
-  tensorflow::string GenerateCommunicatorKey();
+  tensorflow::string GenerateCommunicatorKey(char* nccl_comm_id, int rank,
+                                             bool init_step);
 
   tensorflow::Status CreateCommunicator(
       tensorflow::se::StreamExecutor* executor,
+#ifdef USE_TF215
       const tensorflow::DeviceBase::AcceleratorDeviceInfo* info,
+#else
+      const tensorflow::DeviceBase::GpuDeviceInfo* info,
+#endif
       const tensorflow::string& communicator_key, int global_rank);
 
   int LocalRanks();
@@ -88,7 +94,11 @@ class NcclManager {
   struct Participant {
     Participant(tensorflow::se::StreamExecutor* executor,
                 tensorflow::se::Stream* tensor_stream,
+#ifdef USE_TF215
+                const tensorflow::DeviceBase::AcceleratorDeviceInfo* info,
+#else
                 const tensorflow::DeviceBase::GpuDeviceInfo* info,
+#endif
                 std::vector<const tensorflow::Tensor*> input_tensors,
                 std::unique_ptr<tensorflow::se::Event> input_evt,
                 std::vector<tensorflow::Tensor*> outputs,
@@ -114,16 +124,17 @@ class NcclManager {
           recv_counts(std::move(recv_counts)),
           global_rank(global_rank),
           done_callback(std::move(done_callback)),
-          event_pool(false),
           root(false) {
       DCHECK(executor != nullptr);
       DCHECK(event_mgr != nullptr);
       DCHECK(tensor_stream != nullptr);
       if (inputs.size() > 0 && inputs[0] != nullptr && !input_event) {
-        absl::StatusOr<xla::EventPool::Handle> handel_event =
-            event_pool.ThenAllocateAndRecordEvent(tensor_stream);
-        input_event = std::unique_ptr<tensorflow::se::Event>(
-            handel_event.value().event());
+        auto event_or_status = executor->CreateEvent();
+        input_event.reset(event_or_status->release());
+        auto status_or = tensor_stream->RecordEvent(input_event.get());
+        if (!status_or.ok()) {
+          LOG(ERROR) << status_or.message();
+        }
       }
     }
 
@@ -178,8 +189,6 @@ class NcclManager {
 
     // True if this is the root of the collective, e.g. source of broadcast.
     bool root;
-
-    xla::EventPool event_pool;
   };
 
   // Data that provides context for the collective operation, including the
@@ -187,14 +196,15 @@ class NcclManager {
   struct Context {
     Context(const tensorflow::string& collective_key, int num_local_devices,
             int num_global_devices, const tensorflow::string& communicator_key,
-            int source_rank, int seq_launch_len, int seq_launch_idx)
+            int source_rank, int seq_launch_len = 0, int seq_launch_idx = 0)
+
         : collective_key(collective_key),
           num_local_devices(num_local_devices),
           num_global_devices(num_global_devices),
           communicator_key(communicator_key),
           source_rank(source_rank),
-          seq_launch_len{seq_launch_len},
-          seq_launch_idx{seq_launch_idx} {}
+          seq_launch_len(seq_launch_len),
+          seq_launch_idx(seq_launch_idx) {}
 
     // Unique key for this collective instance
     const tensorflow::string& collective_key;
@@ -215,8 +225,11 @@ class NcclManager {
 
     // Rank of broadcast source.
     int source_rank;
-    int seq_launch_len;
-    int seq_launch_idx;
+
+    // if greater than zero, collective from all streams will be launched one by
+    // one according to launch idx
+    int32_t seq_launch_len = 0;
+    int32_t seq_launch_idx = 0;
   };
 
   // Adds one participant to an all-reduce.
@@ -227,41 +240,14 @@ class NcclManager {
   void AddToAllGather(std::unique_ptr<Participant> participant,
                       const Context& context);
 
-  // Adds one participant to a reduce-scatter.
-  void AddToReduceScatter(std::unique_ptr<Participant> participant,
-                          const Context& context, ncclRedOp_t reduction_op);
-
-  // AddBroadcastSend and AddBroadcastRecv combine to send data from one sender
-  // to all receivers.
-  void AddBroadcast(std::unique_ptr<Participant> participant,
-                    const Context& context);
-
-  // AddReduceSend and AddReduceRecv combine to send data from all senders
-  // to one receiver.
-  void AddReduceSend(std::unique_ptr<Participant> participant,
-                     const Context& context, ncclRedOp_t reduction_op);
-  void AddReduceRecv(std::unique_ptr<Participant> participant,
-                     const Context& context, ncclRedOp_t reduction_op);
-
-  // Adds one participant to an all-to-all.
+  // Adds one participant to an all-to-all
   void AddToAllToAll(std::unique_ptr<Participant> participant,
                      const Context& context);
 
-  // Signals that the `Collective` corresponding to `key` is ready to launch
-  // across all nodes participating in this multi-node collective operation.
-  //
-  // This should only be called for multi-node collectives; single-node
-  // collectives are implicitly ready when all participants have called Add*
-  // function.
-  void SignalMultiNodeReady(const tensorflow::string& collective_key);
-
-  // Aborts all collectives. After abortion, no further collectives can be
-  // launched with this NcclManager.
-  void StartAbort(const tensorflow::Status& s);
-
-  // Resets a previously aborted NcclManager, making it available for future
-  // collectives.
-  void Reset();
+  // AddBroadcastSend and AddBroadcastRecv combine to send data from one sender
+  // to all receivers.
+  void AddToBroadcast(std::unique_ptr<Participant> participant,
+                      const Context& context);
 
  private:
   enum CollectiveType {
@@ -269,8 +255,7 @@ class NcclManager {
     kBroadcast = 2,
     kReduce = 3,
     kAllGather = 4,
-    kReduceScatter = 5,
-    kAllToAll = 6,
+    kAllToAll = 5,
   };
   struct Collective;
   struct Communicator;
@@ -295,6 +280,9 @@ class NcclManager {
                       const Context& context, CollectiveType collective_type,
                       ncclRedOp_t reduction_op);
 
+  // void AlltoAllGetRecvSplits(const int* inputs_split, std::vector<int>&
+  // recv_inputs_split);
+
   // If `collective` is ready to run, removes it from the `collectives_` map and
   // returns true.  Otherwise returns false.
   // Assumes `collective_key` corresponds to `collective`.
@@ -302,9 +290,13 @@ class NcclManager {
   // A collective is ready to run when all local participants have called Add*
   // function, and the collective is signalled globally ready via
   // `SetMultiNodeReady`.
+#ifdef USE_TF215
   bool CheckReady(const tensorflow::string& collective_key,
                   Collective* collective) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-
+#else
+  bool CheckReady(const tensorflow::string& collective_key,
+                  Collective* collective) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+#endif
   // Run <collective>.  This calls takes ownership of <collective>.
   void RunCollective(Collective* collective);
   void LoopKernelLaunches(NcclStream* stream);
@@ -312,35 +304,39 @@ class NcclManager {
   tensorflow::mutex mu_;
 
   // Maps key to collectives currently being assembled or run.
+#ifdef USE_TF215
   absl::flat_hash_map<tensorflow::string, Collective*> collectives_
       TF_GUARDED_BY(mu_);
-
+#else
+  absl::flat_hash_map<tensorflow::string, Collective*> collectives_
+      TF_GUARDED_BY(mu_);
+#endif
   // Maps a device to the communication streams that make up its collective.
   // This is used to share the stream across different communicators that
   // include the same device.
-  absl::flat_hash_map<tensorflow::se::StreamExecutor*,
-                      std::vector<NcclStream*> >
+#ifdef USE_TF215
+  absl::flat_hash_map<tensorflow::se::StreamExecutor*, std::vector<NcclStream*>>
       device_to_comm_streams_ TF_GUARDED_BY(mu_);
+#else
+  absl::flat_hash_map<tensorflow::se::StreamExecutor*, std::vector<NcclStream*>>
+      device_to_comm_streams_ TF_GUARDED_BY(mu_);
+#endif
 
 #ifdef USE_TF215
-  std::vector<std::unique_ptr<Communicator> > communicators_ TF_GUARDED_BY(mu_);
+  std::vector<std::unique_ptr<Communicator>> communicators_ TF_GUARDED_BY(mu_);
 #else
-  std::vector<std::unique_ptr<Communicator> > communicators_;
+  std::vector<std::unique_ptr<Communicator>> communicators_;
 #endif
   std::unique_ptr<Communicator> mgr_comm_;
-  tensorflow::Status status_ TF_GUARDED_BY(mu_);
 
   int local_ranks_ = -1;
   int global_ranks_ = -1;
   int worker_index_ = -1;
   int worker_count_ = -1;
 
-  NcclManager(const NcclManager&) = delete;
-  void operator=(const NcclManager&) = delete;
+  TF_DISALLOW_COPY_AND_ASSIGN(NcclManager);
 };
 
 }  // namespace jaguar
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-
-#endif  // TENSORFLOW_CORE_NCCL_NCCL_MANAGER_H_
+#endif  // JAGUAR_TENSORFLOW_OP_COMM_NCCL_MANAGER_H_
