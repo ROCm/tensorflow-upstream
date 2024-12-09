@@ -132,18 +132,13 @@ ROCMBlas::~ROCMBlas() {
 }
 
 bool ROCMBlas::SetStream(Stream *stream) {
-  CHECK(stream != nullptr);
-  CHECK(AsGpuStreamValue(stream) != nullptr);
-  CHECK(blas_ != nullptr);
-  gpu::ScopedActivateExecutorContext sac{parent_};
-
   rocblas_status ret =
-      wrap::rocblas_set_stream(blas_, AsGpuStreamValue(stream));
+      wrap::rocblas_set_stream(blas_, 
+          stream != nullptr ? AsGpuStreamValue(stream) : 0);
   if (ret != rocblas_status_success) {
     LOG(ERROR) << "failed to set stream for rocBLAS calls: " << ToString(ret);
     return false;
   }
-
   return true;
 }
 
@@ -212,12 +207,12 @@ bool ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
                                   Args... args) {
   absl::MutexLock lock{&mu_};
 
+  gpu::ScopedActivateExecutorContext sac{parent_};
+
   CHECK(blas_ != nullptr);
   if (!SetStream(stream)) {
     return false;
   }
-
-  gpu::ScopedActivateExecutorContext sac{parent_};
 
   // set the atomics mode, leaving default to library
   bool allow_atomics = !OpDeterminismRequired();
@@ -231,6 +226,7 @@ bool ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
   }
 
   ret = rocblas_func(blas_, args...);
+  SetStream(nullptr);
   if (err_on_failure && ret != rocblas_status_success) {
     LOG(ERROR) << "failed to run ROCBLAS routine " << rocblas_func.kName << ": "
                << ToString(ret);

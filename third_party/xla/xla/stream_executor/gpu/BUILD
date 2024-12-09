@@ -1,13 +1,16 @@
 # Description:
 #   GPU-platform specific StreamExecutor support code.
-
+load(
+    "//tensorflow:tensorflow.bzl",
+    "tf_gpu_kernel_library",
+)
 load(
     "//xla/stream_executor:build_defs.bzl",
     "if_gpu_is_configured",
 )
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
-    "if_rocm_is_configured",
+    "if_rocm_is_configured", "rocm_copts"
 )
 load(
     "@local_tsl//tsl:tsl.bzl",
@@ -53,6 +56,39 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor/platform",
+    ]),
+)
+
+cc_library(
+    name = "gpu_blas_lt",
+    srcs = if_gpu_is_configured(["gpu_blas_lt.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_blas_lt.h"]),
+    deps = if_gpu_is_configured([
+        "//xla/stream_executor",
+        "//xla:xla_data_proto_cc",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:shape_util",
+        #"//tensorflow/core/platform:env",
+        "@local_tsl//tsl/util:env_var",
+        "@com_google_absl//absl/types:any",
+    ]),
+)
+
+
+cc_library(
+    name = "gpu_blas_lt_gemm_runner",
+    srcs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.h"]),
+    deps = if_gpu_is_configured([
+        "//tensorflow/core/protobuf:autotuning_proto_cc",
+        "//xla:autotune_results_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor:scratch_allocator",
+        "//xla/service/gpu:autotuner_util",
+        "//xla:debug_options_flags",
+        ":gpu_blas_lt",
     ]),
 )
 

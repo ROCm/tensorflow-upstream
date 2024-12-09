@@ -53,6 +53,11 @@ bool IsRank2(const Shape& shape, int64_t batch_dimensions_size) {
   return shape.rank() == batch_dimensions_size + 2;
 }
 
+// Return whether the given shape is rank 1 excluding the batch dimensions.
+bool IsRank1(const Shape& shape, int64_t batch_dimensions_size) {
+ return shape.rank() == batch_dimensions_size + 1;
+}
+
 Shape GetShapeFromTensorType(mlir::Value value) {
   constexpr char kDefaultLayoutAttrName[] = "xla_shape";
 
@@ -71,6 +76,7 @@ Shape GetShapeFromTensorType(mlir::Value value) {
 
 }  // namespace
 
+
 bool IsMatrixMultiplication(const HloInstruction& dot) {
   if (dot.opcode() != HloOpcode::kDot) {
     return false;
@@ -82,9 +88,10 @@ bool IsMatrixMultiplication(const HloInstruction& dot) {
   PrimitiveType output_primitive_type = dot.shape().element_type();
   bool type_is_allowed =
       (output_primitive_type == F8E4M3FN || output_primitive_type == F8E5M2 ||
-       output_primitive_type == F16 || output_primitive_type == BF16 ||
-       output_primitive_type == F32 || output_primitive_type == F64 ||
-       output_primitive_type == C64 || output_primitive_type == C128) ||
+       output_primitive_type == F16 ||
+       output_primitive_type == BF16 || output_primitive_type == F32 ||
+       output_primitive_type == F64 || output_primitive_type == C64 ||
+       output_primitive_type == C128) ||
       (output_primitive_type == S32 && lhs_shape.element_type() == S8 &&
        rhs_shape.element_type() == S8);
   bool shapes_are_valid =
@@ -106,6 +113,36 @@ bool IsMatrixMultiplication(const HloInstruction& dot) {
            rhs_shape.dimensions(dim_numbers.rhs_contracting_dimensions(0)));
 
   return true;
+}
+
+bool IsMatrixVectorMultiplication(const HloInstruction& dot) {
+  if (dot.opcode() != HloOpcode::kDot) {
+    return false;
+  }
+  const Shape& lhs_shape = dot.operand(0)->shape();
+  const Shape& rhs_shape = dot.operand(1)->shape();
+  const DotDimensionNumbers& dim_numbers = dot.dot_dimension_numbers();
+
+  PrimitiveType output_primitive_type = dot.shape().element_type();
+  bool type_is_allowed =
+      (output_primitive_type == F8E4M3FN || output_primitive_type == F8E5M2 ||
+       output_primitive_type == F16 || output_primitive_type == BF16 ||
+       output_primitive_type == F32 || output_primitive_type == F64 ||
+       output_primitive_type == C64 || output_primitive_type == C128) ||
+      (output_primitive_type == S32 && lhs_shape.element_type() == S8 &&
+       rhs_shape.element_type() == S8);
+
+  bool shapes_are_valid =
+      type_is_allowed &&
+      ((IsRank2(lhs_shape, dim_numbers.lhs_batch_dimensions_size()) &&
+        IsRank1(rhs_shape, dim_numbers.lhs_batch_dimensions_size())) ||
+       (IsRank1(lhs_shape, dim_numbers.lhs_batch_dimensions_size()) &&
+        IsRank2(rhs_shape, dim_numbers.lhs_batch_dimensions_size()))) &&
+      IsRank1(dot.shape(), dim_numbers.lhs_batch_dimensions_size()) &&
+      !ShapeUtil::IsZeroElementArray(lhs_shape) &&
+      !ShapeUtil::IsZeroElementArray(rhs_shape);
+
+  return shapes_are_valid;
 }
 
 const char* const kCusolverCholeskyCallTarget = "__cusolver$cholesky";

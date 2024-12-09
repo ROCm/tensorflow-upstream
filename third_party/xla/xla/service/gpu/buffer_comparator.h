@@ -13,15 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
-#define XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
+#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
+#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
 
-#include "xla/service/hlo_module_config.h"
-#include "xla/shape.h"
-#include "xla/stream_executor/stream_executor.h"
+#include "tensorflow/compiler/xla/service/hlo_module_config.h"
+#include "tensorflow/compiler/xla/shape.h"
 
-namespace xla {
-namespace gpu {
+#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
+#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+
+
+#if TENSORFLOW_USE_ROCM
+#include "rocm/rocm_config.h"
+#endif
+
+namespace xla::gpu {
 
 // A device-side comparator that compares buffers.
 class BufferComparator {
@@ -29,7 +35,8 @@ class BufferComparator {
   BufferComparator(const BufferComparator&) = delete;
   BufferComparator(BufferComparator&&) = default;
 
-  BufferComparator(const Shape& shape, const HloModuleConfig& config);
+  BufferComparator(const Shape& shape, double tolerance = 0.1,
+                    bool verbose = true);
 
   // Returns true if the two buffers compare equal. The definition of "equal"
   // is:
@@ -40,15 +47,28 @@ class BufferComparator {
   //     abs(a - b) / (max(abs(a), abs(b)) + 1) < tolerance
   //
   // See the implementation for the tolerance value.
-  StatusOr<bool> CompareEqual(se::Stream* stream, se::DeviceMemoryBase current,
-                              se::DeviceMemoryBase expected) const;
+  StatusOr<bool> CompareEqual(se::Stream* stream, 
+                             se::DeviceMemoryBase current,
+                             se::DeviceMemoryBase expected) const;
 
  private:
   Shape shape_;
-  HloModuleConfig config_;
+  double relative_tol_; // relative tolerance for comparison
+  bool verbose_;        // whether to print out error message on mismatch
 };
+namespace buffer_comparator {
 
-}  // namespace gpu
-}  // namespace xla
+// Returns a pointer to CUDA C++ device function implementing comparison.
+void* fp16_comparison();
+void* bf16_comparison();
+void* fp32_comparison();
+void* fp64_comparison();
+void* int8_comparison();
+void* int32_comparison();
 
-#endif  // XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
+}  // namespace buffer_comparator
+}  // namespace xla::gpu
+
+
+
+#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_

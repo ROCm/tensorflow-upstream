@@ -167,6 +167,22 @@ xla_cc_test(
 )
 
 xla_cc_test(
+   name = "gpu_hlo_runner_test",
+   srcs = ["gpu_hlo_runner_test.cc"],
+   tags = tf_cuda_tests_tags(),
+   deps = [
+       ":gpu_codegen_test",
+       "//xla/service:gpu_plugin",
+       "//xla/service:hlo_parser",
+       "//xla/tests:filecheck",
+       "//xla:error_spec",
+       "//xla/tests:hlo_test_base",
+       "//xla/tests:xla_internal_test_main",
+   ],
+)
+
+
+xla_cc_test(
     name = "gemm_broadcast_folding_rewrite_test",
     srcs = [
         "gemm_broadcast_folding_rewrite_test.cc",

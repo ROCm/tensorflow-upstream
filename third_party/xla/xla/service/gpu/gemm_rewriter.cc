@@ -65,18 +65,18 @@ namespace m = match;
 Status SetName(HloModule *module, HloInstruction *gemm) {
   if (IsCublasLtMatmul(*gemm)) {
     module->SetAndUniquifyInstrName(gemm, "cublas-lt-matmul");
-    return OkStatus();
+    return absl::OkStatus();
   }
 
-  GemmBackendConfig config;
-  TF_ASSIGN_OR_RETURN(config, gemm->backend_config<GemmBackendConfig>());
+  TF_ASSIGN_OR_RETURN(auto config,
+                      gemm->backend_config<GemmBackendConfig>());
   const DotDimensionNumbers &dot_dims = config.dot_dimension_numbers();
   bool is_batch_dot = !dot_dims.lhs_batch_dimensions().empty() ||
                       !dot_dims.rhs_batch_dimensions().empty();
 
   module->SetAndUniquifyInstrName(
       gemm, is_batch_dot ? "cublas-batch-gemm" : "cublas-gemm");
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Returns whether a given PrimitiveType is supported by cuBLASLt Epilogue
@@ -366,16 +366,6 @@ auto GemmOrCublasLtMatmul(HloInstruction **instr) {
   return m::CustomCall(instr, {kGemmCallTarget, kCublasLtMatmulCallTarget});
 }
 
-auto CublasLtMatmulMaybeF8(HloInstruction **instr) {
-  return m::CustomCall(
-      instr, {kCublasLtMatmulCallTarget, kCublasLtMatmulF8CallTarget});
-}
-
-auto GemmOrCublasLtMatmulMaybeF8(HloInstruction **instr) {
-  return m::CustomCall(instr, {kGemmCallTarget, kCublasLtMatmulCallTarget,
-                               kCublasLtMatmulF8CallTarget});
-}
-
 auto BcastConstScalar(HloInstruction **instr, double value) {
   return m::Broadcast(instr, m::ConstantScalar(value));
 }
@@ -422,6 +412,12 @@ auto OptionalSlice(HloInstruction **optional_slice, Pattern pattern) {
 template <typename Pattern>
 auto OptionalConvert(HloInstruction **optional_convert, Pattern pattern) {
   return m::AnyOf<HloInstruction>(m::Convert(optional_convert, pattern),
+                                  std::move(pattern));
+}
+
+template <typename Pattern>
+auto OptionalBitcast(HloInstruction **optional_bitcast, Pattern pattern) {
+  return m::AnyOf<HloInstruction>(m::Bitcast(optional_bitcast, pattern),
                                   std::move(pattern));
 }
 
@@ -1359,8 +1355,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     HloInstruction *bias = broadcast->mutable_operand(0);
 
-    TF_ASSIGN_OR_RETURN(auto config, gemm->backend_config<GemmBackendConfig>());
-
+    TF_ASSIGN_OR_RETURN(auto config,
+                        gemm->backend_config<GemmBackendConfig>());
     // # output column dims == # non-contracting rhs operand dims.
     const DotDimensionNumbers &dot_dims = config.dot_dimension_numbers();
     size_t num_col_dims = gemm->operand(1)->shape().rank() -
@@ -1518,7 +1514,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       config.set_epilogue(has_aux ? GemmBackendConfig::BIAS_GELU_AUX
                                   : GemmBackendConfig::BIAS_GELU);
     } else {
-      return OkStatus();
+      return absl::OkStatus();
     }
 
     std::unique_ptr<HloInstruction> output = gemm->CloneWithNewShape(
@@ -1661,7 +1657,149 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
             {ComputationType::kF64, DataType::kComplexDouble,
              PrimitiveType::C128, PrimitiveType::C128,
              DataType::kComplexDouble},
-        }};
+        };
+
+    return absl::c_linear_search(
+        supported_type_combinations,
+        std::make_tuple(compute_type, scale_type, a_dtype, b_dtype,
+                        output_dtype));
+  }
+
+  StatusOr<bool> TypesAreSupportedByCublasLt(
+      const HloInstruction &instr, const GemmBackendConfig &backend_config,
+      const HloInstruction *bias = nullptr) const {
+    // Figure out the Atype/Btype.
+    const PrimitiveType a_dtype = instr.operand(0)->shape().element_type();
+    const PrimitiveType b_dtype = instr.operand(1)->shape().element_type();
+    const PrimitiveType output_type =
+        bias ? bias->shape().element_type() : instr.shape().element_type();
+    const std::array<PrimitiveType, 12> supported_type = {
+        PrimitiveType::F8E5M2,     PrimitiveType::F8E4M3FN,
+        PrimitiveType::S8,         PrimitiveType::F16,
+        PrimitiveType::BF16,       PrimitiveType::F32,
+        PrimitiveType::S32,        PrimitiveType::F64,
+        PrimitiveType::C64,        PrimitiveType::C128};
+    if (!absl::c_linear_search(supported_type, output_type)) return false;
+    // cublasLt has a defined set of combinations of types that it supports.
+    // Figure out the computeType and scaleType.
+    TF_ASSIGN_OR_RETURN(auto output_dtype, se::gpu::AsBlasDataType(output_type));
+    TF_ASSIGN_OR_RETURN(auto blas_a_dtype, se::gpu::AsBlasDataType(a_dtype));
+
+    const int max_precision = *absl::c_max_element(
+        backend_config.precision_config().operand_precision());
+
+    TF_ASSIGN_OR_RETURN(
+        auto compute_type,
+        se::gpu::GetBlasComputationType(
+            blas_a_dtype, output_dtype, max_precision));
+    se::blas::DataType scale_type =
+        se::gpu::GetScaleType(output_dtype, compute_type);
+
+    using se::blas::ComputationType;
+    using se::blas::DataType;
+    using TypeCombinations = std::initializer_list<std::tuple<
+        ComputationType, DataType /*scale_type*/, PrimitiveType /*a_dtype*/,
+        PrimitiveType /*b_dtype*/, DataType /*output_dtype*/>>;
+    // This matrix of supported types is taken directly from cublasLt
+    // documentation.
+    // https://docs.nvidia.com/cuda/cublas/index.html#cublasLtMatmul
+    const TypeCombinations supported_cublas_type_combinations = {
+        // FP8 types:
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E4M3FN, DataType::kBF16},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E4M3FN, DataType::kF8E4M3FN},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E4M3FN, DataType::kHalf},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E4M3FN, DataType::kFloat},
+
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E5M2, DataType::kBF16},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E5M2, DataType::kF8E4M3FN},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E5M2, DataType::kF8E5M2},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E5M2, DataType::kHalf},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+        //  PrimitiveType::F8E5M2, DataType::kFloat},
+
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+        //  PrimitiveType::F8E4M3FN, DataType::kBF16},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+        //  PrimitiveType::F8E4M3FN, DataType::kF8E4M3FN},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+        //  PrimitiveType::F8E4M3FN, DataType::kF8E5M2},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+        //  PrimitiveType::F8E4M3FN, DataType::kHalf},
+        // {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+        //  PrimitiveType::F8E4M3FN, DataType::kFloat},
+        // There would be an entry here for A/BType complex int8, but we do
+        // not support that type.
+        {ComputationType::kF32, DataType::kComplexFloat, PrimitiveType::C64,
+         PrimitiveType::C64, DataType::kComplexFloat},
+
+        {ComputationType::kF16AsF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
+        {ComputationType::kF16AsF32, DataType::kComplexFloat,
+         PrimitiveType::C64, PrimitiveType::C64, DataType::kComplexFloat},
+        // The next 4 may be supported by hipblaslt, but they are not
+        // covered by any unit tests
+        {ComputationType::kBF16AsF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
+        {ComputationType::kBF16AsF32, DataType::kComplexFloat,
+         PrimitiveType::C64, PrimitiveType::C64, DataType::kComplexFloat},
+
+        {ComputationType::kTF32AsF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
+        {ComputationType::kTF32AsF32, DataType::kComplexFloat,
+         PrimitiveType::C64, PrimitiveType::C64, DataType::kComplexFloat},
+
+        {ComputationType::kF64, DataType::kDouble, PrimitiveType::F64,
+         PrimitiveType::F64, DataType::kDouble},
+        {ComputationType::kF64, DataType::kComplexDouble, PrimitiveType::C128,
+         PrimitiveType::C128, DataType::kComplexDouble},
+    };
+    if (IsCuda(gpu_version_) &&
+        absl::c_linear_search(supported_cublas_type_combinations,
+                              std::tuple{compute_type, scale_type, a_dtype,
+                                         b_dtype, output_dtype})) {
+      return true;
+    }
+    const TypeCombinations supported_type_combinations = {
+        // Other data types:
+
+        {ComputationType::kI32, DataType::kInt32, PrimitiveType::S8,
+         PrimitiveType::S8, DataType::kInt32},
+        {ComputationType::kI32, DataType::kFloat, PrimitiveType::S8,
+         PrimitiveType::S8, DataType::kInt8},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::S8,
+         PrimitiveType::S8, DataType::kFloat},
+
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::BF16,
+         PrimitiveType::BF16, DataType::kBF16},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::BF16,
+         PrimitiveType::BF16, DataType::kFloat},
+        {ComputationType::kBF16AsF32, DataType::kFloat, PrimitiveType::BF16,
+         PrimitiveType::BF16, DataType::kBF16},
+        {ComputationType::kBF16AsF32, DataType::kFloat, PrimitiveType::BF16,
+         PrimitiveType::BF16, DataType::kFloat},
+
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F16,
+         PrimitiveType::F16, DataType::kHalf},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F16,
+         PrimitiveType::F16, DataType::kFloat},
+        {ComputationType::kF16AsF32, DataType::kFloat, PrimitiveType::F16,
+         PrimitiveType::F16, DataType::kHalf},
+        {ComputationType::kF16AsF32, DataType::kFloat, PrimitiveType::F16,
+         PrimitiveType::F16, DataType::kFloat},
+
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
+        {ComputationType::kTF32AsF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
+    };
 
     return absl::c_linear_search(
         supported_type_combinations,
@@ -1805,6 +1943,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     const DotDimensionNumbers &dot_dims =
         gemm_backend_config.dot_dimension_numbers();
+    // We use ALG_UNSET and kDefaultComputePrecision because we don't care about
+    // the precision, just the layout, since we're just checking if the matrix
+    // is column-major.
     TF_ASSIGN_OR_RETURN(
         GemmConfig gemm_config,
         GemmConfig::For(

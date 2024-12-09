@@ -98,7 +98,107 @@ StatusOr<Layout> DataLayoutToXlaLayout(
   return LayoutUtil::MakeLayoutFromMajorToMinor(layout);
 }
 
-}  // anonymous namespace
+std::vector<AutotuneResult> KeepNonFailures(
+    absl::Span<AutotuneResult const> profile_results) {
+  // Filter out all failures except WRONG_RESULT, because false-positives are
+  // possible (e.g. perhaps the reference algorithm is the one that's
+  // incorrect!). Other failures can be detected with high accuracy. E.g.
+  // REDZONE_MODIFIED which is also quite severe.
+  std::vector<AutotuneResult> filtered_results;
+  absl::c_copy_if(profile_results, std::back_inserter(filtered_results),
+                  [](const AutotuneResult& r) {
+                    return !r.has_failure() ||
+                           r.failure().kind() == AutotuneResult::WRONG_RESULT;
+                  });
+  return filtered_results;
+}
+
+Status AllAlgorithmsFailedInternalError(
+    absl::optional<absl::string_view> instr_str,
+    absl::Span<AutotuneResult const> profile_results) {
+  std::ostringstream msg;
+  if (instr_str.has_value()) {
+    msg << "All algorithms tried for " << instr_str.value()
+        << " failed. Falling back to default algorithm.  Per-algorithm "
+           "errors:";
+  } else {
+    msg << "All algorithms failed. Falling back to the default algorithm. "
+        << "Per-algorithm errors:";
+  }
+  for (const auto& result : profile_results) {
+    msg << "\n  " << result.failure().msg();
+  }
+  return Internal("%s", msg.str());
+}
+
+Status NoAlgorithmSuppliedInternalError(
+    absl::optional<absl::string_view> instr_str) {
+  std::ostringstream msg;
+  if (instr_str.has_value()) {
+    msg << "There are no algorithm candidates for computing: \n  "
+        << instr_str.value()
+        << "\nThis likely means that the instruction shape is not supported by "
+           "the target GPU library.";
+  } else {
+    msg << "There are no algorithm candidates for computing the instruction.\n"
+           "This likely means that the instruction shape is not supported by "
+           "the target GPU library.";
+  }
+  return Internal("%s", msg.str());
+}
+
+void SortAutotuningResultsByRunTime(std::vector<AutotuneResult>& results) {
+  absl::c_sort(results,
+               [](const AutotuneResult& lhs, const AutotuneResult& rhs) {
+                 return tsl::proto_utils::FromDurationProto(lhs.run_time()) <
+                        tsl::proto_utils::FromDurationProto(rhs.run_time());
+               });
+}
+
+absl::Span<AutotuneResult const> TopResultsWithinMeasurementError(
+    std::vector<AutotuneResult>& results_sorted_by_runtime) {
+  // This value was picked by repeatedly running a few kernels that run for a
+  // short time and observing the run-time variance. A more rigorous analysis
+  // of the measurement error might yield a better error threshold.
+  constexpr absl::Duration kMeasurementError = absl::Microseconds(4);
+
+  absl::Duration min_time = tsl::proto_utils::FromDurationProto(
+      results_sorted_by_runtime.front().run_time());
+  absl::Duration limit_time = min_time + kMeasurementError;
+
+  auto limit_time_it = absl::c_find_if(
+      results_sorted_by_runtime, [limit_time](const AutotuneResult& x) {
+        return tsl::proto_utils::FromDurationProto(x.run_time()) > limit_time;
+      });
+  return absl::MakeSpan(&*results_sorted_by_runtime.begin(), &*limit_time_it);
+}
+} // anonymous namespace
+
+StatusOr<AutotuneResult> PickBestResult(
+    absl::Span<AutotuneResult const> profile_results,
+    absl::optional<absl::string_view> instr_str) {
+  if (profile_results.empty()) {
+    return NoAlgorithmSuppliedInternalError(instr_str);
+  }
+
+  std::vector<AutotuneResult> filtered_results =
+      KeepNonFailures(profile_results);
+
+  if (filtered_results.empty()) {
+    return AllAlgorithmsFailedInternalError(instr_str, profile_results);
+  }
+
+  // Kernel run-time measurements within kMeasurementError are not precise.
+  // Consider the lowest measurements within the error margin as equivalent and
+  // within them prefer algorithms that use the least amount of scratch memory.
+  SortAutotuningResultsByRunTime(filtered_results);
+  auto top_within_error = TopResultsWithinMeasurementError(filtered_results);
+  return *absl::c_min_element(top_within_error, [](const AutotuneResult& lhs,
+                                                   const AutotuneResult& rhs) {
+    return lhs.scratch_bytes() < rhs.scratch_bytes();
+  });
+}
+
 
 StatusOr<std::tuple<Layout, Layout, Layout>>
 StreamExecutorConvLayoutsToXlaLayouts(const ConvolutionDimensionNumbers& dnums,
@@ -365,7 +465,6 @@ Status ExecuteKernelOnStream(const se::KernelBase& kernel,
       se::BlockDim(block_counts.x, block_counts.y, block_counts.z), kernel,
       *kernel_args);
 }
-
 // Unimplemented for integers yet.
 template <typename T, typename Generator>
 typename std::enable_if<std::is_integral<T>::value,
@@ -545,51 +644,6 @@ bool RequireDeterminism(const HloModuleConfig& config) {
   }();
   return require_cudnn_determinism ||
          config.debug_options().xla_gpu_deterministic_ops();
-}
-
-StatusOr<AutotuneResult> PickBestResult(
-    absl::Span<AutotuneResult const> profile_results,
-    std::optional<std::string_view> instr_str,
-    HloModuleConfig hlo_module_config) {
-  std::vector<AutotuneResult> filtered_results;
-
-  // For now, we ignore WRONG_RESULT failures because false-positives are
-  // possible (e.g. perhaps the reference algorithm is the one that's
-  // incorrect!).  But we don't ignore REDZONE_MODIFIED failures because they're
-  // quite severe and can be detected with high accuracy.
-  absl::c_copy_if(
-      profile_results, std::back_inserter(filtered_results),
-      [](const AutotuneResult& r) {
-        return !(r.has_failure() &&
-                 r.failure().kind() != AutotuneResult::WRONG_RESULT);
-      });
-
-  if (filtered_results.empty()) {
-    std::ostringstream msg;
-    if (instr_str.has_value()) {
-      msg << "All algorithms tried for " << instr_str.value()
-          << " failed. Falling back to default algorithm.  Per-algorithm "
-             "errors:";
-    } else {
-      msg << "All algorithms failed. Falling back to the default algorithm. "
-          << "Per-algorithm errors:";
-    }
-    for (const auto& result : profile_results) {
-      msg << "\n  " << result.failure().msg();
-    }
-    return InternalError("%s", msg.str());
-  }
-
-  auto selected_result = filtered_results.begin();
-  if (!RequireDeterminism(hlo_module_config)) {
-    selected_result = absl::c_min_element(
-        filtered_results,
-        [](const AutotuneResult& lhs, const AutotuneResult& rhs) {
-          return tsl::proto_utils::FromDurationProto(lhs.run_time()) <
-                 tsl::proto_utils::FromDurationProto(rhs.run_time());
-        });
-  }
-  return *selected_result;
 }
 
 }  // namespace gpu

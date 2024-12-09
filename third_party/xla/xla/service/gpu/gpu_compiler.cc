@@ -1071,6 +1071,10 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
       [&] { return absl::StrCat("HLO Transforms:", module->name()); },
       tsl::profiler::TraceMeLevel::kInfo);
 
+  const DebugOptions& debug_opts = module->config().debug_options();
+  auto cfg = GetAutotuneConfig(stream_exec, debug_opts, nullptr);
+  TF_RETURN_IF_ERROR(AutotunerUtil::LoadAutotuneResultsFromFileOnce(cfg));
+
   GpuTargetConfig gpu_target_config = GetGpuTargetConfig(stream_exec);
   TF_RETURN_IF_ERROR(OptimizeHloModule(module.get(), stream_exec, options,
                                        gpu_target_config,

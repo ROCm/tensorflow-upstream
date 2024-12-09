@@ -906,18 +906,19 @@ Status IrEmitterUnnested::EmitCublasLtMatmulThunk(mlir::Operation* op) {
     TF_ASSIGN_OR_RETURN(bias, GetAllocationSlice(matmul.getBias()));
   }
 
-  BufferAllocation::Slice aux;
+  BufferAllocation::Slice aux, workspace;
   if (matmul.getAux() != nullptr) {
     TF_ASSIGN_OR_RETURN(aux, GetAllocationSlice(matmul.getAux()));
   }
+  if (matmul.getWorkspace() != nullptr) {
+    TF_ASSIGN_OR_RETURN(workspace, GetAllocationSlice(matmul.getWorkspace()));
+  }
 
-  TF_ASSIGN_OR_RETURN(GemmConfig gemm_config, GemmConfig::For(matmul));
-  TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue epilogue,
-                      cublas_lt::AsBlasLtEpilogue(matmul.getEpilogue()));
+  TF_ASSIGN_OR_RETURN(GemmConfig config, GemmConfig::For(matmul));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(op), std::move(gemm_config),
-      epilogue, matmul.getAlgorithm(), a, b, c, d, bias, aux, a_scale, b_scale,
-      c_scale, d_scale, d_amax);
+      GetThunkInfo(op), std::move(config), a, b, c, d,
+      bias, aux, a_scale, b_scale, c_scale, d_scale, d_amax,
+      workspace); 
 
   AddThunkToThunkSequence(std::move(thunk));
   return OkStatus();

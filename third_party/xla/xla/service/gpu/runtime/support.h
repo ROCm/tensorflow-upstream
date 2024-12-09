@@ -112,7 +112,7 @@ inline StatusOr<GemmConfig> GetGemmConfig(
   return GemmConfig::For(ToShape(lhs), lhs_batch, lhs_contract, ToShape(rhs),
                          rhs_batch, rhs_contract, c_shape, bias_shape_ptr,
                          ToShape(out), alpha_real, alpha_imag, beta, algorithm,
-                         compute_precision, grad_x, grad_y);
+                         compute_precision, se::gpu::BlasLt::Epilogue::kDefault);
 }
 
 // adds Dot Dimension Attribute encodings for calls to Gemm and cuBLASLt
