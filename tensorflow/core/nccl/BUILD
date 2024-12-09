@@ -48,6 +48,7 @@ cc_library(
         "//tensorflow/core/profiler/lib:traceme",
         "//tensorflow/core/profiler/lib:connected_traceme",
         "//tensorflow/core/profiler/lib:annotated_traceme",
+        "@local_xla//xla/pjrt:event_pool",
     ]),
     alwayslink = 1,
 )
