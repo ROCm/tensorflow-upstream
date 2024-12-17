@@ -60,39 +60,39 @@ struct GpuBlasLtAdaptor final : TBlasSupport {
   template <typename... TArgs>
   explicit GpuBlasLtAdaptor(TArgs... args) : TBlasSupport{args...} {}
 
-  // absl::Status DoBlasGemm(Stream *stream, blas::Transpose transa,
-  // blas::Transpose transb, uint64_t m, uint64 n,
-  // uint64_t k, blas::DataType dtype, const void *alpha,
-  // const DeviceMemoryBase &a, int lda,
-  // const DeviceMemoryBase &b, int ldb, const void *beta,
-  // DeviceMemoryBase *c, int ldc,
-  // const NumericOptions &numeric_options,
-  // blas::CallContext context) override {
-  // if (IsGpuBlasLtEnabled()) {
-  // auto &runner = gpu::BlasLtGemmRunner::i(stream);
-  // auto allocator = CreateAllocator(TBlasSupport::GetWorkspace());
-  // switch (dtype) {
-  // case blas::DataType::kFloat:
-  // return DoBlasGemmImpl<float>(stream, transa, transb, m, n, k, dtype,
-  // alpha, a, lda, b, ldb, beta, c, ldc,
-  // numeric_options, context, allocator);
-  // case blas::DataType::kBF16:
-  // return DoBlasGemmImpl<Eigen::bfloat16>(
-  // stream, transa, transb, m, n, k, dtype, alpha, a, lda, b, ldb,
-  // beta, c, ldc, numeric_options, context, allocator);
-  // default:
-  // LOG(ERROR) << "Not supported type by blaslt "
-  //<< blas::DataTypeString(dtype) << " fall back to blas";
-  // return TBlasSupport::DoBlasGemm(stream, transa, transb, m, n, k,
-  // dtype, alpha, a, lda, b, ldb, beta, c,
-  // ldc, numeric_options, context);
-  //};
-  //} else {
-  // return TBlasSupport::DoBlasGemm(stream, transa, transb, m, n, k, dtype,
-  // alpha, a, lda, b, ldb, beta, c, ldc,
-  // numeric_options, context);
-  //}
-  //}
+  absl::Status DoBlasGemm(Stream *stream, blas::Transpose transa,
+                          blas::Transpose transb, uint64_t m, uint64 n,
+                          uint64_t k, blas::DataType dtype, const void *alpha,
+                          const DeviceMemoryBase &a, int lda,
+                          const DeviceMemoryBase &b, int ldb, const void *beta,
+                          DeviceMemoryBase *c, int ldc,
+                          const NumericOptions &numeric_options,
+                          blas::CallContext context) override {
+    if (false) {
+      auto &runner = gpu::BlasLtGemmRunner::i(stream);
+      auto allocator = CreateAllocator(TBlasSupport::GetWorkspace());
+      switch (dtype) {
+        case blas::DataType::kFloat:
+          return DoBlasGemmImpl<float>(stream, transa, transb, m, n, k, dtype,
+                                       alpha, a, lda, b, ldb, beta, c, ldc,
+                                       numeric_options, context, allocator);
+        case blas::DataType::kBF16:
+          return DoBlasGemmImpl<Eigen::bfloat16>(
+              stream, transa, transb, m, n, k, dtype, alpha, a, lda, b, ldb,
+              beta, c, ldc, numeric_options, context, allocator);
+        default:
+          LOG(ERROR) << "Not supported type by blaslt "
+                     << blas::DataTypeString(dtype) << " fall back to blas";
+          return TBlasSupport::DoBlasGemm(stream, transa, transb, m, n, k,
+                                          dtype, alpha, a, lda, b, ldb, beta, c,
+                                          ldc, numeric_options, context);
+      };
+    } else {
+      return TBlasSupport::DoBlasGemm(stream, transa, transb, m, n, k, dtype,
+                                      alpha, a, lda, b, ldb, beta, c, ldc,
+                                      numeric_options, context);
+    }
+  }
 
   bool DoBlasGemmBatched(Stream *stream, blas::Transpose transa,
                          blas::Transpose transb, uint64_t m, uint64_t n,
