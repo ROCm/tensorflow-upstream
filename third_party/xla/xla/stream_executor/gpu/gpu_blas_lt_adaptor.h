@@ -286,7 +286,7 @@ struct GpuBlasLtAdaptor final : TBlasSupport {
   bool IsGpuBlasLtEnabled() {
     static const std::atomic_bool result =
         xla::GetDebugOptionsFromFlags().xla_gpu_enable_cublaslt();
-    return result;
+    return false;
   }
 
   std::optional<WorkspaceScratchAllocator> CreateAllocator(
