@@ -148,7 +148,6 @@ ENV TF_NEED_ROCM 1
 # By default, HIP runtime "hides" 256MB from the TF Runtime, but with recent changes (update to ROCm2.3, dynamic loading of roc* libs, et al)
 # it seems that we need to up the threshold slightly to 320MB
 ENV HIP_HIDDEN_FREE_MEM=320
-ENV LD_LIBRARY_PATH=${ROCM_PATH}/lib/asan/:${ROCM_PATH}/lib/llvm/lib/clang/18/lib/linux/
 ENV HSA_XNACK=1
 ENV ROCM_PATH=$ROCM_PATH
 RUN echo "ROCM_PATH=$ROCM_PATH"
