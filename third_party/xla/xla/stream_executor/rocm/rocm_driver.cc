@@ -685,6 +685,8 @@ GpuDriver::GraphNodeGetType(hipGraphNode_t node) {
       return GraphNodeType::kMemAlloc;
     case hipGraphNodeTypeMemFree:
       return GraphNodeType::kMemFree;
+    default:
+      return absl::InternalError("Invalid HIP graph node type");
   }
 
   return absl::InternalError("Invalid HIP graph node type");
