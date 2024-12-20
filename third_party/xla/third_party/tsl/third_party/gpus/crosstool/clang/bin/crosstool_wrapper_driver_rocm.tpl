@@ -185,6 +185,7 @@ def InvokeHipcc(argv, log=False):
   hipccopts += defines
   hipccopts += std_options
   hipccopts += m_options
+  hipccopts += ' --rocm-path="%{rocm_path}" '
 
   if depfiles:
     # Generate the dependency file

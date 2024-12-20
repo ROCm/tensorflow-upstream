@@ -212,7 +212,8 @@ def execute(
         cmdline,
         error_msg = None,
         error_details = None,
-        allow_failure = False):
+        allow_failure = False,
+        env_vars = {}):
     """Executes an arbitrary shell command.
 
     Args:
@@ -225,7 +226,7 @@ def execute(
     Returns:
       The result of repository_ctx.execute(cmdline)
     """
-    result = raw_exec(repository_ctx, cmdline)
+    result = raw_exec(repository_ctx, cmdline, env_vars)
     if (result.stderr or not result.stdout) and not allow_failure:
         fail(
             "\n".join([
@@ -236,7 +237,7 @@ def execute(
         )
     return result
 
-def raw_exec(repository_ctx, cmdline):
+def raw_exec(repository_ctx, cmdline, env_vars = {}):
     """Executes a command via repository_ctx.execute() and returns the result.
 
     This method is useful for debugging purposes. For example, to print all
@@ -249,7 +250,7 @@ def raw_exec(repository_ctx, cmdline):
     Returns:
       The 'exec_result' of repository_ctx.execute().
     """
-    return repository_ctx.execute(cmdline)
+    return repository_ctx.execute(cmdline, environment = env_vars)
 
 def files_exist(repository_ctx, paths, bash_bin = None):
     """Checks which files in paths exists.
