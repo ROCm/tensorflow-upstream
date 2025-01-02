@@ -78,6 +78,7 @@ cc_library(
         #"//tensorflow/core/platform:env",
         "//tensorflow/tsl/util:env_var",
         "@com_google_absl//absl/types:any",
+        "//tensorflow/compiler/xla:debug_options_flags",
     ]),
 )
 
@@ -87,13 +88,14 @@ cc_library(
     srcs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.cc"]),
     hdrs = if_gpu_is_configured(["gpu_blas_lt_gemm_runner.h"]),
     deps = if_gpu_is_configured([
-        "//tensorflow/core:autotuning_proto_cc",
-	"//tensorflow/core:autotune_results_proto_cc",	        
-	"//tensorflow/compiler/xla:xla_proto",		 
-	"//tensorflow/compiler/xla/stream_executor:scratch_allocator",			        
-	"//tensorflow/compiler/xla/service/gpu:autotuner_util",
-    "//tensorflow/compiler/xla:debug_options_flags",
-	":gpu_blas_lt",
+        "//tensorflow/core/protobuf:autotuning_proto_cc",
+        "//tensorflow/compiler/xla:autotune_results_proto_cc",
+        "//tensorflow/compiler/xla:xla_proto_cc",
+        "//tensorflow/compiler/xla:xla_data_proto_cc",		 
+        "//tensorflow/compiler/xla/stream_executor:scratch_allocator",			        
+        "//tensorflow/compiler/xla/service/gpu:autotuner_util",
+        "//tensorflow/compiler/xla:debug_options_flags",
+        ":gpu_blas_lt",
     ]),
 )
 
