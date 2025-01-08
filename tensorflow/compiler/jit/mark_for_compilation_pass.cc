@@ -990,8 +990,7 @@ Status MarkForCompilationPassImpl::CreateClusters() {
     // trouble.
 
     if (cluster->effective_cluster_size() >= debug_options_.min_cluster_size ||
-        cluster->has_functional_control_flow() ||
-        cluster->is_xla_compile_attr_true()) {
+        cluster->has_functional_control_flow()) {
       string& name = cluster_names[cluster->cycles_graph_node_id()];
 
       if (name.empty()) {
