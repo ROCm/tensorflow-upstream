@@ -1048,6 +1048,10 @@ std::string GetROCDLDir(const DebugOptions& debug_options) {
 
 void AMDGPUBackendInit(const DebugOptions& debug_options,
                        std::string& rocdl_dir_path) {
+  FeedLLVMWithFlags({
+      "-amdgpu-kernarg-preload-count=16",
+  });
+
   llvm_ir::InitializeLLVMCommandLineOptions(
       debug_options.xla_backend_extra_options());
 
