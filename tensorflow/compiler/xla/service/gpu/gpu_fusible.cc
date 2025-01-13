@@ -267,7 +267,7 @@ bool IsUniversallyLoopFusible(const HloInstruction& instr) {
       instr.opcode() == HloOpcode::kReduceWindow ||
       instr.opcode() == HloOpcode::kReshape ||
       instr.opcode() == HloOpcode::kReverse ||
-      instr.opcode() == HloOpcode::kSlice ||
+      instr.opcode() == HloOpcode::kSlice
       // instr.opcode() == HloOpcode::kTranspose
       );
 }
