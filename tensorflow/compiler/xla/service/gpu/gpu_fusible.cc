@@ -256,7 +256,7 @@ bool IsUniversallyLoopFusible(const HloInstruction& instr) {
        instr.opcode() != HloOpcode::kCopy) ||
       (instr.opcode() == HloOpcode::kCopy && !FindAnyTiledTranspose(instr)) ||
       instr.opcode() == HloOpcode::kBitcast ||
-      // instr.opcode() == HloOpcode::kBroadcast
+      instr.opcode() == HloOpcode::kBroadcast ||
       instr.opcode() == HloOpcode::kConcatenate ||
       instr.opcode() == HloOpcode::kDynamicSlice ||
       instr.opcode() == HloOpcode::kDynamicUpdateSlice ||
