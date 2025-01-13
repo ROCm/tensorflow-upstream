@@ -3607,7 +3607,7 @@ bool HloInstruction::IsFusible() const {
     case HloOpcode::kFusion:
     // Side effecting reduce and reduce window would be invalid HLO.
     case HloOpcode::kMap:
-    case HloOpcode::kReduce:
+    // case HloOpcode::kReduce:
     case HloOpcode::kReduceWindow:
       return true;
     case HloOpcode::kRng:
