@@ -2052,9 +2052,9 @@ Status IrEmitterUnnested::EmitFusion(mlir::Operation* op) {
     return EmitUnnestedReduction(fusion_op, fused_computation);
   }
 
-  if (HasAnyTiledTransposeRoot(fused_computation)) {
-    return EmitUnnestedTranspose(fusion_op, fused_computation);
-  }
+  // if (HasAnyTiledTransposeRoot(fused_computation)) {
+  //   return EmitUnnestedTranspose(fusion_op, fused_computation);
+  // }
 
 #if GOOGLE_CUDA
   if (auto backend_config = fusion_op.getBackendConfig()
