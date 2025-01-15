@@ -17,7 +17,8 @@ export USE_BAZEL_VERSION=0.26.1
 
 yes "" | TF_NEED_CUDA=1 TF_CUDA_VERSION=11.7 CUDA_TOOLKIT_PATH=/usr/local/cuda-11.7 PYTHON_BIN_PATH=/usr/bin/python3 ./configure
 pip3 uninstall -y tensorflow || true
-bazel build -c opt --copt -g --strip=never --copt=-mavx --copt=-mavx2 --config=cuda \
+#--copt -g --strip=never
+bazel build -c opt --copt=-mavx --copt=-mavx2 --config=cuda \
         --copt -Wno-sign-compare \
         --copt -DCUB_NS_QUALIFIER=::cub \
         //tensorflow:libtensorflow_cc.so \
