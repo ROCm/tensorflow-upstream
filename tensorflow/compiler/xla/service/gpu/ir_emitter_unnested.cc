@@ -300,7 +300,7 @@ bool MayPreventVectorization(mlir::Operation* op) {
 // Computes the maximum valid unroll factor for a given instruction.
 int ComputeMaxUnrollFactor(mlir::Type type,
                            const HloModuleConfig& hlo_module_config) {
-  constexpr int kMaxUnrollFactor = 4;
+  constexpr int kMaxUnrollFactor = 1;
 
   // Find the largest possible power of two to unroll by.
   // TODO(kramerb): Make this smarter.
