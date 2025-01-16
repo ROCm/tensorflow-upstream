@@ -373,6 +373,33 @@ llvm::Value* EmitAMDGPUShflDown(llvm::Value* value, llvm::Value* offset,
   return b->CreateBitCast(result, value->getType());
 }
 
+llvm::Value* EmitAMDGPUShflDownSwizzle(llvm::Value* value, llvm::Value* offset,
+                                llvm::IRBuilder<>* b) {
+  llvm::Module* module = b->GetInsertBlock()->getModule();
+  CHECK_EQ(value->getType()->getPrimitiveSizeInBits(), 32);
+  auto* i32_ty = b->getInt32Ty();
+
+  llvm::Function* intrinsic = llvm::cast<llvm::Function>(
+      module->getOrInsertFunction(
+        "llvm.amdgcn.ds.swizzle",
+        llvm::FunctionType::get(/*Result=*/i32_ty, {i32_ty, i32_ty},
+                              /*isVarArg=*/false)
+      ).getCallee()
+  );
+
+  // Ensure that the first argument to the AMDGPU intrinsic is i32.
+  llvm::Value* bitcast_value = b->CreateBitCast(value, i32_ty);
+
+  // Calculate the control value for the swizzle operation.
+  llvm::Value* control_value = b->CreateAdd(b->CreateMul(offset, b->getInt32(0x20)), b->getInt32(0x1f));
+
+  // Create the call to the intrinsic function.
+  llvm::Value* result = b->CreateCall(intrinsic, {bitcast_value, control_value});
+
+  // Bitcast the result back to the original type of the input value.
+  return b->CreateBitCast(result, value->getType());
+}
+
 // Helper function to emit call to NVPTX shfl_down intrinsic.
 llvm::Value* EmitNVPTXShflDown(llvm::Value* value, llvm::Value* offset,
                                llvm::IRBuilder<>* b) {
@@ -401,7 +428,7 @@ llvm::Value* EmitFullWarpShuffleDown(llvm::Value* value, llvm::Value* offset,
     if (target_triple.isNVPTX()) {
       return EmitNVPTXShflDown(value, offset, builder);
     } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
-      return EmitAMDGPUShflDown(value, offset, builder);
+      return EmitAMDGPUShflDownSwizzle(value, offset, builder);
     } else {
       LOG(FATAL) << "Invalid triple " << target_triple.str();
     }
@@ -421,8 +448,8 @@ llvm::Value* EmitFullWarpShuffleDown(llvm::Value* value, llvm::Value* offset,
       insert_val = EmitNVPTXShflDown(builder->CreateExtractElement(x, i),
                                      offset, builder);
     } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
-      insert_val = EmitAMDGPUShflDown(builder->CreateExtractElement(x, i),
-                                      offset, builder);
+      insert_val = EmitAMDGPUShflDownSwizzle(builder->CreateExtractElement(x, i),
+                                              offset, builder);
     } else {
       LOG(FATAL) << "Invalid triple " << target_triple.str();
     }
