@@ -185,6 +185,7 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
 
   pre_pipeline.AddPass<DotDimensionMerger>();
 
+  // This is CUDA-specific optimization pass which we don't need on ROCM
   // for (const auto& req : HipblasPaddingRequirements) {
   //   pre_pipeline.AddPass<CublasPadForGemms>(rocm_compute_capability,
   //                                           req.data_type, req.multiple_of);
