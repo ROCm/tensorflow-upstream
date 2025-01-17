@@ -37,6 +37,7 @@ static constexpr float kL1CacheSpeedup = 8;
 // much smaller than the cache size will likely stay in it.
 // For reference, it can be up to 256 kB per SM on RTX A6000.
 static constexpr float kL1CacheSizePerSM = 2 * 1024;
+static constexpr float kL1CacheSizePerSM_MI300 = 32 * 1024;
 
 // Returns whether a fusion uses the parameter at the given index elementwise
 // from its root.
@@ -56,7 +57,7 @@ absl::Duration ReadTime(const GpuDeviceInfo& gpu_device_info,
   float bw = gpu_device_info.memory_bandwidth;
   if (n_bytes_net < gpu_device_info.l2_cache_size) {
     bw *= kL2CacheSpeedup;
-    if (n_bytes_net < kL1CacheSizePerSM * gpu_device_info.core_count) {
+    if (n_bytes_net < kL1CacheSizePerSM_MI300 * gpu_device_info.core_count) {
       bw *= kL1CacheSpeedup;
     }
   }

@@ -135,6 +135,7 @@ cc_library(
         "//tensorflow/tsl/platform:numbers",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/algorithm:container",
     ],
 )
 

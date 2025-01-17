@@ -27,6 +27,7 @@ limitations under the License.
 
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
+#include "absl/algorithm/container.h"
 #include "tensorflow/compiler/xla/stream_executor/device_description.pb.h"
 #include "tensorflow/compiler/xla/stream_executor/launch_dim.h"
 
@@ -129,9 +130,29 @@ class RocmComputeCapability {
 
   std::string gcn_arch_name() { return gcn_arch_name_; }
 
-  std::string gfx_version() {
+  std::string gfx_version() const {
     std::vector<std::string> tokens = absl::StrSplit(gcn_arch_name_, ':');
     return tokens[0];
+  }
+
+  bool gfx9_mi100() const { return gfx_version() == "gfx908"; }
+
+  bool gfx9_mi200() const { return gfx_version() == "gfx90a"; }
+
+  bool gfx9_mi300() const {
+    static constexpr absl::string_view kList[] = {"gfx940", "gfx941", "gfx942"};
+    return absl::c_count(kList, gfx_version()) != 0;
+  }
+
+  bool gfx9_mi100_or_later() const {
+    static constexpr absl::string_view kList[] = {"gfx908", "gfx90a", "gfx940",
+                                                  "gfx941", "gfx942"};
+    return absl::c_count(kList, gfx_version()) != 0;
+  }
+  bool gfx9_mi200_or_later() const {
+    static constexpr absl::string_view kList[] = {"gfx90a", "gfx940", "gfx941",
+                                                  "gfx942"};
+    return absl::c_count(kList, gfx_version()) != 0;
   }
 
   bool is_supported_gfx_version() {
