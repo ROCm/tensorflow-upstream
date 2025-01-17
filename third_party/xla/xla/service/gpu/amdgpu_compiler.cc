@@ -99,10 +99,10 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
 
   pre_pipeline.AddPass<DotDimensionMerger>();
 
-  for (const auto& req : HipblasPaddingRequirements) {
-    pre_pipeline.AddPass<CublasPadForGemms>(rocm_compute_capability,
-                                            req.data_type, req.multiple_of);
-  }
+  // for (const auto& req : HipblasPaddingRequirements) {
+  //   pre_pipeline.AddPass<CublasPadForGemms>(rocm_compute_capability,
+  //                                           req.data_type, req.multiple_of);
+  // }
   // Padding a gemm operand that's a constant results in pad(constant).  Run
   // constant-folding to simplify this into a new constant.
   pre_pipeline.AddPass<HloConstantFolding>();
