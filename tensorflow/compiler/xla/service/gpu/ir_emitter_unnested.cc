@@ -2008,9 +2008,9 @@ Status IrEmitterUnnested::EmitUnnestedTranspose(
   CHECK_NE(order[2], 2);
   Vector3 permuted_dims = {dims[order[0]], dims[order[1]], dims[order[2]]};
   Vector3 tile_sizes{1, 1, 1};
-  tile_sizes[order[2]] = WarpSize() / kNumRows;
+  tile_sizes[order[2]] = WarpSize() / 8;
   Vector3 num_threads{1, 1, WarpSize()};
-  num_threads[order[2]] = kNumRows;
+  num_threads[order[2]] = 8;
 
   TilingScheme tiling_scheme(
       /*permuted_dims*/ permuted_dims,
