@@ -226,7 +226,7 @@ Status ExecuteThunks(const std::string& module_name, ModuleIdentifier module_id,
                            module_id_str);
   });
 
-  LOG(INFO) << "Thunk Sequence " << thunk_sequence.ToString();
+  LOG(INFO) << "Thunk Sequence: \n" << thunk_sequence.ToString();
 
   for (const std::unique_ptr<Thunk>& thunk : thunk_sequence) {
     // Annotate execution of this op if tracing was enabled when we started
