@@ -22,7 +22,6 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
-#include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/device_id.h"
@@ -70,7 +69,7 @@ std::unique_ptr<SubAllocator> CreateGPUMemAllocator(size_t) {
   PlatformDeviceId gpu_id(0);
   return absl::WrapUnique(new DeviceMemAllocator(
       GPUMachineManager()->ExecutorForDevice(gpu_id.value()).value(), gpu_id,
-      stream_executor::MemoryType::kDevice, {}, {}));
+      stream_executor::MemoryType::kDevice, {}));
 }
 
 std::unique_ptr<SubAllocator> CreateSubAllocator(

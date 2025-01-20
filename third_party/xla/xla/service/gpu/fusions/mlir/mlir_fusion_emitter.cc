@@ -21,7 +21,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -77,6 +76,12 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
+#include "xla/backends/gpu/codegen/ir/xla_gpu_ops.h"
+#include "xla/backends/gpu/codegen/transforms/passes.h"
+#include "xla/codegen/emitters/computation_partitioner.h"
+#include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
+#include "xla/codegen/emitters/type_util.h"
+#include "xla/codegen/ir/xla_ops.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -87,11 +92,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
-#include "xla/service/gpu/fusions/ir/xla_gpu_ops.h"
-#include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
-#include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
-#include "xla/service/gpu/fusions/mlir/type_util.h"
-#include "xla/service/gpu/fusions/transforms/passes.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/kernel_arguments.h"
@@ -306,7 +306,7 @@ MlirFusionEmitterBase::CreateLLVMModule(
 
   mlir::PassManager pm(&mlir_context);
   AddXlaGpuOpsOptimizationPasses(pm);
-  AddLoopTransformationPasses(pm);
+  AddLoopTransformationPasses(pm, device);
   AddLoweringPasses(pm, device);
   auto pipeline_status = RunPassPipeline(module.get(), pm, trace.get());
   if (trace) {
@@ -329,13 +329,13 @@ MlirFusionEmitterBase::CreateMLIRModule(
     const std::string& entry_function_name,
     const BufferAssignment* buffer_assignment,
     mlir::interpreter::MlirCompilationTrace* trace) const {
-  context.loadDialect<mlir::DLTIDialect, mlir::NVVM::NVVMDialect,
-                      mlir::ROCDL::ROCDLDialect, mlir::affine::AffineDialect,
-                      mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                      mlir::func::FuncDialect, mlir::gpu::GPUDialect,
-                      mlir::math::MathDialect, mlir::mhlo::MhloDialect,
-                      mlir::scf::SCFDialect, mlir::tensor::TensorDialect,
-                      mlir::vector::VectorDialect, xla::gpu::XlaGpuDialect>();
+  context.loadDialect<
+      mlir::DLTIDialect, mlir::NVVM::NVVMDialect, mlir::ROCDL::ROCDLDialect,
+      mlir::affine::AffineDialect, mlir::arith::ArithDialect,
+      mlir::cf::ControlFlowDialect, mlir::func::FuncDialect,
+      mlir::gpu::GPUDialect, mlir::math::MathDialect, mlir::mhlo::MhloDialect,
+      mlir::scf::SCFDialect, mlir::tensor::TensorDialect,
+      mlir::vector::VectorDialect, xla::XlaDialect, xla::gpu::XlaGpuDialect>();
   mlir::DialectRegistry registry;
   mlir::LLVM::registerInlinerInterface(registry);
   mlir::func::registerInlinerExtension(registry);
@@ -388,11 +388,11 @@ MlirFusionEmitterBase::CreateMLIRModule(
   int arg_index = 0;
   for (auto* param : fusion.operands()) {
     param_types.push_back(
-        mlir_converter::TensorShapeToMlirType(param->shape(), builder));
+        emitters::TensorShapeToMlirType(param->shape(), builder));
     TF_ASSIGN_OR_RETURN(arg_attrs.emplace_back(), get_arg_attrs(arg_index++));
   }
 
-  auto result_types = mlir_converter::ShapeToMlirTypes(fusion.shape(), builder);
+  auto result_types = emitters::ShapeToMlirTypes(fusion.shape(), builder);
   param_types.append(result_types.begin(), result_types.end());
   TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
       fusion.shape(), [&](const auto& shape, const ShapeIndex& index) {
@@ -416,13 +416,13 @@ MlirFusionEmitterBase::CreateMLIRModule(
   return module;
 }
 
-mlir_converter::EpilogueSpecification
+emitters::EpilogueSpecification
 MlirFusionEmitterBase::GetEpilogueForOutputIndexing(
     const HloFusionAnalysis& analysis,
     const std::vector<const HloInstruction*>& heroes,
     const std::vector<const HloInstruction*>& roots,
     mlir::MLIRContext* mlir_context) const {
-  mlir_converter::EpilogueSpecification result;
+  emitters::EpilogueSpecification result;
 
   absl::flat_hash_map<const HloInstruction*, const HloInstruction*>
       root_to_hero;
@@ -463,9 +463,9 @@ MlirFusionEmitterBase::GetEpilogueForOutputIndexing(
 absl::Status MlirFusionEmitterBase::EmitMlir(
     mlir::ModuleOp module, FuncOp entry_function,
     const HloFusionInstruction& fusion) const {
-  std::vector<mlir_converter::EpilogueSpecification> epilogues =
+  std::vector<emitters::EpilogueSpecification> epilogues =
       GetEpilogues(fusion, module->getContext());
-  mlir_converter::PartitionedComputations computations(
+  emitters::PartitionedComputations computations(
       fusion.fused_instructions_computation(), module->getContext(), epilogues);
   auto subgraph_to_mlir_fn = computations.DeclareFunctions(module);
 
@@ -495,14 +495,14 @@ absl::Status MlirFusionEmitterBase::EmitMlir(
   for (const auto& comp : computations.partitioned_computations()) {
     for (const auto& subgraph : comp.subgraphs()) {
       if (subgraph_to_mlir_fn.contains(&subgraph)) {
-        TF_RETURN_IF_ERROR(mlir_converter::SubgraphToMlirFunction(
+        TF_RETURN_IF_ERROR(emitters::SubgraphToMlirFunction(
             comp, subgraph, subgraph_to_mlir_fn[&subgraph], call_targets));
       }
     }
   }
   for (const auto& epilogue : computations.epilogues()) {
     if (epilogue.roots.empty()) continue;
-    TF_RETURN_IF_ERROR(mlir_converter::SubgraphToMlirFunction(
+    TF_RETURN_IF_ERROR(emitters::SubgraphToMlirFunction(
         computations.FindPartitionedComputation(
             fusion.fused_instructions_computation()),
         epilogue, subgraph_to_mlir_fn[&epilogue], call_targets));
@@ -522,8 +522,7 @@ absl::Status MlirFusionEmitterBase::EmitMlir(
 
 absl::flat_hash_map<const HloInstruction*, ValueRange>
 MlirFusionEmitterBase::EmitEpilogue(
-    int epilogue_index,
-    const mlir_converter::PartitionedComputations& computations,
+    int epilogue_index, const emitters::PartitionedComputations& computations,
     FuncOp entry_fn,
     const absl::flat_hash_map<const HloInstruction*, llvm::SmallVector<Value>>&
         injected,
@@ -584,8 +583,10 @@ void AddXlaGpuOpsOptimizationPasses(mlir::OpPassManager& pm) {
   pm.addPass(mlir::createCSEPass());
 }
 
-void AddLoopTransformationPasses(mlir::OpPassManager& pm) {
-  pm.addNestedPass<FuncOp>(CreateLowerXlaGpuToScfPass());
+void AddLoopTransformationPasses(mlir::OpPassManager& pm,
+                                 const se::DeviceDescription& device) {
+  pm.addNestedPass<FuncOp>(
+      CreateLowerXlaGpuToScfPass(device.threads_per_warp()));
   pm.addNestedPass<FuncOp>(CreateFuseLoopsPass());
   pm.addPass(mlir::createInlinerPass({}, [&](mlir::OpPassManager& pm) {
     // CSE after inlining because inlining can introduce duplicates.
@@ -606,18 +607,16 @@ void AddLoopTransformationPasses(mlir::OpPassManager& pm) {
   // opportunities for LICM. This would not be necessary if LICM also moved
   // instructions over ifs.
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
-  pm.addNestedPass<FuncOp>(CreateVectorizeLoadsAndStoresPass());
+  pm.addNestedPass<FuncOp>(CreateVectorizeLoadsAndStoresPass(device));
   pm.addNestedPass<FuncOp>(CreateOptimizeLoopsPass());
+  pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(mlir::createCSEPass());
 }
 
 void AddLoweringPasses(mlir::OpPassManager& pm,
                        const se::DeviceDescription& device) {
-  bool is_amd = std::holds_alternative<se::RocmComputeCapability>(
-      device.gpu_compute_capability());
   pm.addNestedPass<FuncOp>(CreateConvertPureCallOpsPass());
-  pm.addPass(CreateLowerTensorsPass(
-      is_amd, is_amd ? device.rocm_compute_capability().gcn_arch_name()
-                     : device.cuda_compute_capability().ToString()));
+  pm.addPass(CreateLowerTensorsPass(device));
   pm.addPass(mlir::createConvertComplexToStandardPass());
   pm.addPass(CreateMergePointersToSameSlicePass());
 
@@ -645,7 +644,7 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
   pm.addPass(CreateExpandFloatOpsPass());
   pm.addPass(mlir::createLowerAffinePass());
   pm.addPass(mlir::createConvertSCFToCFPass());
-  pm.addPass(CreateLowerToLLVMPass(is_amd));
+  pm.addPass(CreateLowerToLLVMPass(device));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 }
 

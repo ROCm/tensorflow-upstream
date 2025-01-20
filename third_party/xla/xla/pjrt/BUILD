@@ -1,12 +1,11 @@
-load(
-    "@local_tsl//tsl/platform:build_config.bzl",
-    "tf_proto_library",
-)
-load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_library")
-
 # copybara:uncomment load("@rules_python//python:proto.bzl", "py_proto_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
+load(
+    "//xla/tsl/platform:build_config.bzl",
+    "tf_proto_library",
+)
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -74,7 +73,7 @@ xla_cc_test(
     srcs = ["semaphore_test.cc"],
     deps = [
         ":semaphore",
-        "//xla:test",
+        "//xla/hlo/testlib:test",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:env",
@@ -124,10 +123,10 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:test",
         "//xla:util",
         "//xla/client:client_library",
         "//xla/client:local_client",
+        "//xla/hlo/testlib:test",
         "//xla/service:cpu_plugin",
         "//xla/stream_executor:device_memory_allocator",
         "@com_google_absl//absl/log",
@@ -248,11 +247,11 @@ cc_library(
         ":pjrt_compiler",
         "//xla:cpu_function_runtime",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:test",
         "//xla/tests:literal_test_util",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
@@ -414,11 +413,9 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla/hlo/parser:hlo_parser",
-        "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:casts",
         "@local_tsl//tsl/platform:statusor",
     ],
 )
@@ -506,6 +503,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/client:executable_build_options",
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_computation",
@@ -514,9 +512,11 @@ cc_library(
         "//xla/service:compiler",
         "//xla/service:computation_layout",
         "//xla/service:computation_placer",
+        "//xla/service:dump",
         "//xla/service:executable",
         "//xla/service:generic_transfer_manager",
         "//xla/service:hlo_cost_analysis",
+        "//xla/service:hlo_proto_cc",
         "//xla/service:maybe_owning_device_memory",
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
@@ -566,10 +566,10 @@ xla_cc_test(
         "//xla:literal_comparison",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:xla_data_proto_cc",
         "//xla/client:client_library",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/testlib:test",
         "//xla/service:cpu_plugin",
         "//xla/service:platform_util",
         "//xla/tsl/concurrency:async_value",
@@ -645,7 +645,7 @@ xla_cc_test(
     srcs = ["mlir_to_hlo_test.cc"],
     deps = [
         ":mlir_to_hlo",
-        "//xla:test",
+        "//xla/hlo/testlib:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
@@ -697,7 +697,7 @@ cc_library(
     ],
 )
 
-# Transitional forwarding target. Use cpu:cpu_client instead.
+# Transitional forwarding target. Use pjrt/plugin/xla_cpu:xla_cpu_pjrt_client instead.
 cc_library(
     name = "tfrt_cpu_pjrt_client",
     hdrs = ["tfrt_cpu_pjrt_client.h"],
@@ -705,7 +705,7 @@ cc_library(
         "//xla:friends",
     ]),
     deps = [
-        "//xla/pjrt/cpu:cpu_client",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
     ],
 )
 
@@ -723,7 +723,7 @@ xla_cc_test(
     srcs = ["lru_cache_test.cc"],
     deps = [
         ":lru_cache",
-        "//xla:test",
+        "//xla/hlo/testlib:test",
         "@local_tsl//tsl/platform:test_main",
     ],
 )
@@ -767,8 +767,8 @@ xla_cc_test(
         "//xla:array",
         "//xla:permutation_util",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:util",
+        "//xla/hlo/testlib:test",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/numeric:int128",
@@ -807,14 +807,15 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
         "//xla/pjrt/c:pjrt_c_api_layouts_extension_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_memory_descriptions_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_profiler_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_stream_extension_hdrs",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",
-        "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/framework:allocator",
+        "//xla/tsl/platform:status",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
@@ -851,6 +852,7 @@ xla_cc_test(
         ":pjrt_c_api_client",
         ":pjrt_client",
         ":pjrt_compiler",
+        ":pjrt_device_description",
         ":pjrt_executable",
         "//xla:cpu_function_runtime",
         "//xla:literal_util",
@@ -862,6 +864,7 @@ xla_cc_test(
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
         "@local_tsl//tsl/platform:statusor",
@@ -910,7 +913,8 @@ xla_cc_test(
         ":tf_pjrt_client",
         "//xla:literal_util",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/pjrt/cpu:cpu_client",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:test",

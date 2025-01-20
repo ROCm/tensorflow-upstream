@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_MLIR_LITE_QUANTIZATION_QUANTIZATION_CONTEXT_H_
 #define TENSORFLOW_COMPILER_MLIR_LITE_QUANTIZATION_QUANTIZATION_CONTEXT_H_
 
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "llvm/ADT/DenseMap.h"
@@ -128,7 +130,7 @@ class QuantizeContext {
   // ops, which have the parameters propagated to, are collected by `new_items`,
   // so they can be added to the working queue. `changed` is set to true if
   // there are any new elements being added to `new_items`.
-  LogicalResult PropagateQuantParams(Operation *op, const QuantParams params,
+  LogicalResult PropagateQuantParams(Operation *op, QuantParams params,
                                      AdjacentOperations *new_items,
                                      bool *changed);
 

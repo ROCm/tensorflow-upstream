@@ -30,14 +30,14 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/codegen/emitters/computation_partitioner.h"
+#include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/mlir_fusion_emitter.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/indexing_map.h"
 #include "xla/shape.h"
 
 namespace xla {
@@ -65,12 +65,12 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
 
  protected:
   absl::Status EmitEntryFunction(
-      const mlir_converter::PartitionedComputations& computations,
-      const mlir_converter::CallTargetProvider& call_targets,
+      const emitters::PartitionedComputations& computations,
+      const emitters::CallTargetProvider& call_targets,
       mlir::func::FuncOp entry_function,
       const HloFusionInstruction& fusion) const override;
 
-  std::vector<mlir_converter::EpilogueSpecification> GetEpilogues(
+  std::vector<emitters::EpilogueSpecification> GetEpilogues(
       const HloFusionInstruction& fusion,
       mlir::MLIRContext* mlir_context) const override;
 
@@ -84,14 +84,14 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
   WriteResult EmitWriteToShMemMlir(
       mlir::ImplicitLocOpBuilder& builder, mlir::func::FuncOp entry_function,
       const HloFusionInstruction& fusion,
-      const mlir_converter::PartitionedComputation& root_computation,
-      const mlir_converter::CallTargetProvider& call_target_provider,
+      const emitters::PartitionedComputation& root_computation,
+      const emitters::CallTargetProvider& call_target_provider,
       mlir::ValueRange output_args,
       mlir::ValueRange thread_and_block_ids) const;
   void EmitReadFromShMemMlir(
       mlir::ImplicitLocOpBuilder& builder, mlir::func::FuncOp entry_function,
       const HloFusionInstruction& fusion,
-      const mlir_converter::PartitionedComputations& computations,
+      const emitters::PartitionedComputations& computations,
       const WriteResult& written, mlir::ValueRange thread_and_block_ids) const;
 
  private:
@@ -112,6 +112,7 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
   std::vector<int64_t> block_counts_;
   int vector_size_;
   int block_size_;
+  int64_t base_block_size_;
 
   std::vector<const HloInstruction*> shmem_transposes_;
   std::vector<const HloInstruction*> shmem_transpose_roots_;

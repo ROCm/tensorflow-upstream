@@ -27,15 +27,15 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/test.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/service/computation_layout.h"
-#include "xla/service/cpu/target_machine_features_fake.h"
+#include "xla/service/cpu/target_machine_features_stub.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
-#include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
 #include "xla/util.h"
@@ -51,7 +51,7 @@ class CpuLayoutAssignmentTest : public HloTestBase {
  protected:
   void AssignLayouts(HloModule* module,
                      ComputationLayout* entry_computation_layout) {
-    cpu::TargetMachineFeaturesWithFakeAlignmentLogic target_machine_features(
+    cpu::TargetMachineFeaturesStub target_machine_features(
         [](int64_t shape_size) {
           return cpu::TargetMachineFeatures::kEigenExpectedTensorAlignment;
         });
@@ -329,7 +329,7 @@ static absl::StatusOr<DotOutputFusionLayoutAssignmentResult> RunDotOutputFusion(
   result.addend_fusion_param = fusion_instruction->operand(
       fused_add->operand(1 - dot_operand_idx_in_add)->parameter_number());
 
-  cpu::TargetMachineFeaturesWithFakeAlignmentLogic target_machine_features(
+  cpu::TargetMachineFeaturesStub target_machine_features(
       [](int64_t shape_size) {
         return cpu::TargetMachineFeatures::kEigenExpectedTensorAlignment;
       });

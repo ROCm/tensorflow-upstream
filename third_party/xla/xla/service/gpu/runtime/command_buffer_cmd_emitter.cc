@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/gpu/runtime/command_buffer_cmd.h"
 #include "xla/service/gpu/runtime/conditional_thunk.h"
 #include "xla/service/gpu/runtime/copy_thunk.h"
@@ -62,13 +63,14 @@ static absl::Status AppendCommands(
 //===----------------------------------------------------------------------===//
 
 using Command = std::unique_ptr<CommandBufferCmd>;
+using xla::BufferUse;
 
 static auto ArgsAccess(const std::vector<bool>& written) {
-  absl::InlinedVector<CommandBufferCmd::MemoryAccess, 4> args_access;
+  absl::InlinedVector<BufferUse::MemoryAccess, 4> args_access;
   args_access.reserve(written.size());
   for (bool w : written) {
-    args_access.push_back(w ? CommandBufferCmd::MemoryAccess::kWrite
-                            : CommandBufferCmd::MemoryAccess::kRead);
+    args_access.push_back(w ? BufferUse::MemoryAccess::kWrite
+                            : BufferUse::MemoryAccess::kRead);
   }
   return args_access;
 }
@@ -161,29 +163,26 @@ static absl::StatusOr<Command> Convert(
 static absl::StatusOr<Command> Convert(const NcclAllReduceStartThunk& thunk) {
   return std::make_unique<AllReduceCmd>(
       thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
-      thunk.nccl_api(), thunk.config(), thunk.reduction_kind(),
-      thunk.buffers());
+      thunk.config(), thunk.reduction_kind(), thunk.buffers());
 }
 
 static absl::StatusOr<Command> Convert(
     const NcclReduceScatterStartThunk& thunk) {
   return std::make_unique<ReduceScatterCmd>(
       thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
-      thunk.nccl_api(), thunk.config(), thunk.reduction_kind(),
-      thunk.buffers());
+      thunk.config(), thunk.reduction_kind(), thunk.buffers());
 }
 
 static absl::StatusOr<Command> Convert(const NcclAllToAllStartThunk& thunk) {
   return std::make_unique<AllToAllCmd>(
       thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
-      thunk.nccl_api(), thunk.config(), thunk.has_split_dimension(),
-      thunk.buffers());
+      thunk.config(), thunk.has_split_dimension(), thunk.buffers());
 }
 
 static absl::StatusOr<Command> Convert(const NcclAllGatherStartThunk& thunk) {
-  return std::make_unique<AllGatherCmd>(
-      thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
-      thunk.nccl_api(), thunk.config(), thunk.buffers());
+  return std::make_unique<AllGatherCmd>(thunk.nccl_execution_stream_id(),
+                                        thunk.execution_stream_id(),
+                                        thunk.config(), thunk.buffers());
 }
 
 static absl::StatusOr<Command> Convert(const NcclCollectiveDoneThunk& thunk) {

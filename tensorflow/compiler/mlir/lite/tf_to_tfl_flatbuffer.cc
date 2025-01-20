@@ -487,7 +487,8 @@ absl::Status ConvertTFExecutorToTFLOrFlatbuffer(
 
   pass_manager->clear();
 
-  AddVariableFreezingFromGlobalTensorsPasses(pass_config, pass_manager.get());
+  AddVariableFreezingFromGlobalTensorsPasses(converter_flags, pass_config,
+                                             pass_manager.get());
   if (failed(pass_manager->run(module.get()))) {
     return status_handler->ConsumeStatus();
   }
@@ -607,7 +608,7 @@ absl::Status ConvertTFExecutorToTFLOrFlatbuffer(
       return status_handler->Combine(status);
     }
   } else {
-    *result = translated_result;
+    *result = std::move(translated_result);
   }
 
   if (mlir::failed(module->verifyInvariants())) {
