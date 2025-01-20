@@ -456,6 +456,6 @@ class UniqueOpGPU : public AsyncOpKernel {
 
 }  // end namespace tensorflow
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #endif  // TENSORFLOW_CORE_KERNELS_UNIQUE_OP_GPU_CU_H_
