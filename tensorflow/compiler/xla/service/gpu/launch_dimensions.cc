@@ -134,7 +134,7 @@ StatusOr<LaunchDimensions> CalculateLaunchDimensions(
     int64_t capped_threads_per_block_x =
         std::min<int64_t>(threads_per_block_x, 128);
     int64_t capped_block_count =
-        64 * gpu_device_info.core_count *
+        gpu_device_info.core_count *
         (gpu_device_info.threads_per_core_limit /
          (capped_threads_per_block_x * threads_per_block_y));
     if (capped_block_count < block_count) {
