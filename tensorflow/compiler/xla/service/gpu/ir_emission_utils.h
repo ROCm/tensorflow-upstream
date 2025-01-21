@@ -45,7 +45,7 @@ inline constexpr int64_t kMinTotalDimensionsToTransposeTiled = 64 * 128;
 bool IsMatrixMultiplication(const HloInstruction& dot);
 bool IsMatrixVectorMultiplication(const HloInstruction& dot);
 
-inline constexpr int64_t WarpSize() { return 64; }
+inline constexpr int64_t WarpSize() { return 32; }
 
 // Need at least 1024 threads/block for reasonable tree reduction
 // performance (assuming all data fits).
