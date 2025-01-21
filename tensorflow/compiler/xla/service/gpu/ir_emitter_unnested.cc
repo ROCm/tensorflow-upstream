@@ -4678,7 +4678,7 @@ Status IrEmitterUnnested::EmitTransposeTile(
 
   llvm::Type* index_type = GetIndexTypeForKernel(
       fusion.getOperation(), launch_dimensions.launch_bound(), &b_);
-  return EmitTilingKernel(tiling_scheme, index_type, tile_generator, 32).status();
+  return EmitTilingKernel(tiling_scheme, index_type, tile_generator, 64).status();
 }
 
 namespace {
@@ -5159,7 +5159,7 @@ Status IrEmitterUnnested::EmitIRForReduction(
               ValueVector2 tile_dimensions) {
             EmitTile(codegen_state.GetTilingScheme(), index, thread_id_info,
                      tile_dimensions, emit_reduction_element);
-          }, 64));
+          }, 32));
 
   KernelSupportLibrary ksl(&b_);
   for (const HloReduceInstruction* reduce : reductions) {
