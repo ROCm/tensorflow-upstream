@@ -5309,9 +5309,7 @@ Status IrEmitterUnnested::EmitUnnestedReduction(
       {/*x=*/tiling_scheme.GetNumberOfBlocksPhysical(),
        /*y=*/static_cast<int64_t>(instr_index_groups.size()),
        /*z=*/1},
-      {/*x=*/std::min(tiling_scheme.GetNumThreadsPerBlockPhysical(),
-                      static_cast<int64_t>(1024)),
-       /*y=*/1, /*z=*/1});
+      {/*x=*/tiling_scheme.GetNumThreadsPerBlockPhysical(), /*y=*/1, /*z=*/1});
   VLOG(3) << "Launch dimensions of "
           << mlir::mhlo::GetDebugNameFromLocation(fusion.getLoc()) << ": "
           << launch_dimensions.ToString();
