@@ -107,8 +107,7 @@ Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
     kernel = it->second.get();
   }
 
-  // LOG(INFO) << "Launching " << kernel->name();
-  // LOG(INFO) << "Launch Dimension " << launch_dimensions.ToString();
+  VLOG(3) << "Launching " << kernel->name();
   absl::InlinedVector<se::DeviceMemoryBase, 4> buffer_args;
   for (const BufferAllocation::Slice& arg : args_) {
     se::DeviceMemoryBase buf = params.buffer_allocations->GetDeviceAddress(arg);
