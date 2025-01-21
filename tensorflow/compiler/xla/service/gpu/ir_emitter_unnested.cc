@@ -4684,7 +4684,7 @@ Status IrEmitterUnnested::EmitTransposeTile(
 
   llvm::Type* index_type = GetIndexTypeForKernel(
       fusion.getOperation(), launch_dimensions.launch_bound(), &b_);
-  return EmitTilingKernel(tiling_scheme, index_type, tile_generator, 64).status();
+  return EmitTilingKernel(tiling_scheme, index_type, tile_generator, 32).status();
 }
 
 namespace {
