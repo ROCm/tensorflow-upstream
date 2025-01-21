@@ -1998,8 +1998,9 @@ Status IrEmitterUnnested::EmitUnnestedTranspose(
   // TODO(cheshire): have a more robust way of checking this.
   CHECK(dims_and_order.has_value());
 
-  constexpr int kNumRows = 4;
-  CHECK_EQ(WarpSize() % kNumRows, 0);
+  constexpr int kNumRows = 8;
+  constexpr int warp_size = 64;
+  CHECK_EQ(warp_size % kNumRows, 0);
 
   // 3D view over the input shape.
   Vector3 dims = dims_and_order->first;
@@ -2008,8 +2009,8 @@ Status IrEmitterUnnested::EmitUnnestedTranspose(
   CHECK_NE(order[2], 2);
   Vector3 permuted_dims = {dims[order[0]], dims[order[1]], dims[order[2]]};
   Vector3 tile_sizes{1, 1, 1};
-  tile_sizes[order[2]] = WarpSize() / kNumRows;
-  Vector3 num_threads{1, 1, WarpSize()};
+  tile_sizes[order[2]] = warp_size / kNumRows;
+  Vector3 num_threads{1, 1, warp_size};
   num_threads[order[2]] = kNumRows;
 
   TilingScheme tiling_scheme(
@@ -4363,7 +4364,7 @@ llvm::Value* IrEmitterUnnested::EmitThreadId(int64_t threads_per_block,
 }
 
 StatusOr<IrEmitterUnnested::ThreadIdInfo> IrEmitterUnnested::EmitThreadIdInfo(
-    const TilingScheme& tiling_scheme, llvm::Type* index_ty) {
+    const TilingScheme& tiling_scheme, llvm::Type* index_ty, const int warp_size) {
   auto constant = [&](uint64_t c) -> llvm::Constant* {
     return llvm::ConstantInt::get(index_ty, c);
   };
@@ -4400,7 +4401,7 @@ StatusOr<IrEmitterUnnested::ThreadIdInfo> IrEmitterUnnested::EmitThreadIdInfo(
            /*thread_id_y=*/
            b_.CreateUDiv(thread_id_logical, num_threads_x_v, "thread_id.y"),
            /*lane_id=*/
-           b_.CreateURem(thread_id_logical, constant(WarpSize()), "lane_id"),
+           b_.CreateURem(thread_id_logical, constant(warp_size), "lane_id"),
            /*block_id=*/block_id_logical,
            /*scaling=*/scaling}};
 }
@@ -4408,7 +4409,7 @@ StatusOr<IrEmitterUnnested::ThreadIdInfo> IrEmitterUnnested::EmitThreadIdInfo(
 StatusOr<IrEmitterUnnested::TilingKernelInfo>
 IrEmitterUnnested::EmitTilingKernel(
     const TilingScheme& tiling_scheme, llvm::Type* index_ty,
-    const TileElementGenerator& tile_element_generator) {
+    const TileElementGenerator& tile_element_generator, const int warp_size) {
   absl::Span<const int64_t> dims_in_elems = tiling_scheme.GetDimsInElems();
   Vector3 dims_in_blocks = tiling_scheme.GetDimsInBlocks();
   auto constant = [&](uint64_t c) -> llvm::Constant* {
@@ -4416,7 +4417,7 @@ IrEmitterUnnested::EmitTilingKernel(
   };
 
   TF_ASSIGN_OR_RETURN(ThreadIdInfo thread_id_info,
-                      EmitThreadIdInfo(tiling_scheme, index_ty));
+                      EmitThreadIdInfo(tiling_scheme, index_ty, warp_size));
 
   KernelSupportLibrary ksl(&b_, llvm_ir::UnrollMode::kDefaultUnroll);
 
@@ -4677,7 +4678,7 @@ Status IrEmitterUnnested::EmitTransposeTile(
 
   llvm::Type* index_type = GetIndexTypeForKernel(
       fusion.getOperation(), launch_dimensions.launch_bound(), &b_);
-  return EmitTilingKernel(tiling_scheme, index_type, tile_generator).status();
+  return EmitTilingKernel(tiling_scheme, index_type, tile_generator, 64).status();
 }
 
 namespace {
@@ -5158,7 +5159,7 @@ Status IrEmitterUnnested::EmitIRForReduction(
               ValueVector2 tile_dimensions) {
             EmitTile(codegen_state.GetTilingScheme(), index, thread_id_info,
                      tile_dimensions, emit_reduction_element);
-          }));
+          }, 64));
 
   KernelSupportLibrary ksl(&b_);
   for (const HloReduceInstruction* reduce : reductions) {
