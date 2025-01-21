@@ -226,14 +226,14 @@ Status ExecuteThunks(const std::string& module_name, ModuleIdentifier module_id,
                            module_id_str);
   });
 
-  LOG(INFO) << "Thunk Sequence: \n" << thunk_sequence.ToString();
+  // LOG(INFO) << "Thunk Sequence: \n" << thunk_sequence.ToString();
 
   for (const std::unique_ptr<Thunk>& thunk : thunk_sequence) {
     // Annotate execution of this op if tracing was enabled when we started
     // running this module.  If tracing is enabled *while* we're running the
     // module, we won't get any data, but that's probably an OK trade-off.
     ScopedAnnotation annotation([&] { return thunk->profile_annotation(); });
-    LOG(INFO) << "Executing the thunk for " << thunk->profile_annotation();
+    // LOG(INFO) << "Executing the thunk for " << thunk->profile_annotation();
     TF_RET_CHECK(async_comms_stream.ok() || !NeedsAsyncCommsStream(*thunk))
         << "`run_options` must have a stream borrower for async thunks.";
 
