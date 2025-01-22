@@ -145,6 +145,8 @@ class RocmExecutor : public GpuExecutor {
   // Collects metadata for the specified kernel.
   absl::Status GetKernelMetadata(GpuKernel* rocm_kernel,
                                  KernelMetadata* kernel_metadata);
+  // Initializes Blas interfaces
+  absl::Status InitBlas();
 
   // Loads a module in HSACO format.
   absl::Status LoadModuleFromHsaco(const char* hsaco, GpuModuleHandle* module)
