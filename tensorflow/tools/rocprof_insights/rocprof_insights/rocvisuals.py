@@ -12,6 +12,55 @@ Classes:
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import re
+
+# pre-defined category patterns that can be tailored futher
+CATEGORIES_PATTERNS = {
+    'amd_rocclr':       r'(amd_rocclr|__amd_rocclr)',
+    'rocprim':          r'rocprim',
+    'tensile_gemm':     r'^Cijk',  # e.g., Cijk_Ailk_Bjlk_...
+    # e.g., miopenSp3AsmConv..., MIOpenConvUniBatchNormActiv, igemm_wrw_gtcx2_
+    'miopen':           r'(miopen|igemm_|implicit_gemm)', 
+    'composable_kernel': r'\bck\b',
+    'eigen':            r'EigenMetaKernel',
+    'fusion_kernel':    r'(Fused|fused|fusion)',     # e.g., input_*_fusion, loop_*_fusion
+
+    # Separate out XLA-specific kernels:
+    'xla_kernels':      r'(?:select_and_scatter_\d+_\d+|xla_fp32_comparison|RepeatBufferKernel|wrapped_transpose|batched_transpose)',
+ 
+    # Merge the remaining TF-specific ops into a single category.
+    # (Everything that is not clearly XLA or MLIR or covered above.)
+    'tf_special_ops': (
+        r'(?:ApplyAdaMomKernel'
+        r'|FillPhiloxRandomKernelLaunch'
+        r'|ColumnReduceKernel'
+        r'|ColumnReduceSimpleKernel'
+        r'|ColumnReduceMax16ColumnsKernel'
+        r'|RowReduceKernel'
+        r'|RowReduceSimpleKernel'
+        r'|BlockReduceKernel'
+        r'|GatherOp'
+        r'|TransposeOp'
+        r'|transpose'
+        r'|concat_fixed_kernel'
+        r'|SubTensorOpWithScalar)'
+    ),
+    'mlir_generated':   r'_GPU_',  
+    'main_kernel':      r'main_kernel',
+    'redzone_checker':  r'redzone_checker_kernel',   # e.g. (anonymous namespace)::redzone_checker_kernel
+}
+
+
+def categorize_kernel(kernel_name: str) -> str:
+    """
+    Returns the first matching category from CATEGORIES_PATTERNS
+    or 'other' if none match.
+    """
+    for category, pattern in CATEGORIES_PATTERNS.items():
+        if re.search(pattern, kernel_name):
+            return category
+    return "other"
+
 
 class RocprofStatsVisualizer:
     """Class for creating various plots from a DataFrame of advanced stats.
@@ -238,6 +287,61 @@ class RocprofStatsVisualizer:
             fig.write_image(output_file, scale=4)
         else:
             fig.show()
+            
+    def assign_categories_and_plot(self,
+                                   df: pd.DataFrame = None,
+                                   kernel_field='kernel_name',
+                                   time_field='total time [s]',
+                                   top_n=10):
+        """
+        1. Categorize kernels using CATEGORIES_PATTERNS.
+        2. Group the total time by category.
+        3. Plot the top N categories as a pie chart and a horizontal bar chart.
+        """
+        # 1. Assign a 'category' column to the dataframe
+        if df is None:
+            df = self.df
+        df['category'] = df[kernel_field].apply(categorize_kernel)
+
+        # 2. Group by category, summing total time
+        grouped = df.groupby('category', as_index=False)[time_field].sum()
+
+        # 3. Sort descending and take top N
+        top_categories = grouped.nlargest(top_n, time_field)
+
+        # Create a pie chart
+        fig_pie = px.pie(
+            top_categories,
+            names='category',
+            values=time_field,
+            title=f"Top {top_n} Categories by {time_field}"
+        )
+        fig_pie.update_layout(template="plotly_white", width=800, height=600)
+        fig_pie.show()
+
+        # Create a horizontal bar chart (sorted descending):
+        fig_bar = px.bar(
+            top_categories.sort_values(time_field, ascending=True),
+            x=time_field,
+            y='category',
+            orientation='h',
+            title=f"Top {top_n} Categories by {time_field}"
+        )
+        
+        fig_bar.update_layout(
+            template="plotly_white",
+            width=800, height=600,
+            # Center the title
+            title=dict(
+                # text=title,
+                x=0.5,         # 0.5 = center; 0 = left, 1 = right
+                xanchor='center'
+            ),
+            # Add (or override) axis labels:
+            xaxis_title="Duration (total time) [s]",
+            yaxis_title="Kernel Category [-]"  # or whatever label you want
+        )
+        fig_bar.show()
             
             
 class MemoryCopyVisualizer:

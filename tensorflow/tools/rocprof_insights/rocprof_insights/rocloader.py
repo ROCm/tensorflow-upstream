@@ -85,5 +85,7 @@ class RocprofLoader:
 
         # Convert to ms for convenience
         self.df['duration_us'] = self.df['duration_ns'] / 1000.0
+        self.df['Private_Segment_Size'] = self.df['Private_Segment_Size'] / 1024.0
+        self.df['Group_Segment_Size'] = self.df['Group_Segment_Size'] / 1024.0
 
         return self.df

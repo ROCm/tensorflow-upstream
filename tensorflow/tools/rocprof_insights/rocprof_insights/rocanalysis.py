@@ -8,6 +8,44 @@ Classes:
 """
 
 import pandas as pd
+import re
+
+# pre-defined category patterns that can be tailored futher
+CATEGORIES_PATTERNS = {
+    'amd_rocclr':       r'(amd_rocclr|__amd_rocclr)',
+    'rocprim':          r'rocprim',
+    'tensile_gemm':     r'^Cijk',  # e.g., Cijk_Ailk_Bjlk_...
+    'miopen':           r'miopen', # e.g., miopenSp3AsmConv..., MIOpenConvUniBatchNormActiv
+    'implicit_gemm':    r'(igemm_|implicit_gemm)',   # e.g., igemm_wrw_gtcx2_...
+    'composable_kernel': r'\bck\b',
+    'eigen':            r'EigenMetaKernel',
+    'fusion_kernel':    r'(Fused|fused|fusion)',     # e.g., input_*_fusion, loop_*_fusion
+
+    # Separate out XLA-specific kernels:
+    'xla_kernels':      r'(?:select_and_scatter_\d+_\d+|xla_fp32_comparison|RepeatBufferKernel|wrapped_transpose|batched_transpose)',
+ 
+    # Merge the remaining TF-specific ops into a single category.
+    # (Everything that is not clearly XLA or MLIR or covered above.)
+    'tf_special_ops': (
+        r'(?:ApplyAdaMomKernel'
+        r'|FillPhiloxRandomKernelLaunch'
+        r'|ColumnReduceKernel'
+        r'|ColumnReduceSimpleKernel'
+        r'|ColumnReduceMax16ColumnsKernel'
+        r'|RowReduceKernel'
+        r'|RowReduceSimpleKernel'
+        r'|BlockReduceKernel'
+        r'|GatherOp'
+        r'|TransposeOp'
+        r'|transpose'
+        r'|concat_fixed_kernel'
+        r'|SubTensorOpWithScalar)'
+    ),
+    'mlir_generated':   r'_GPU_',  
+    'main_kernel':      r'main_kernel',
+    'redzone_checker':  r'redzone_checker_kernel',   # e.g. (anonymous namespace)::redzone_checker_kernel
+}
+
 
 class RocAnalyzer:
     """Analyzes roc profiling data."""
@@ -25,7 +63,8 @@ class RocAnalyzer:
         missing = required_cols - set(self.df.columns)
         if missing:
             raise ValueError(f"DataFrame is missing required columns: {missing}")
-        self.agg_df = None
+        # df for category kernels
+        self.cat_df = None
         
     def compute_advanced_stats(
         self,
@@ -51,7 +90,7 @@ class RocAnalyzer:
 
         Args:
             df (pd.DataFrame): A DataFrame containing profiling data.
-            group_col (str): Column to group by (e.g., 'kernel_name', 'api_name').
+            group_col (str): Column to group by (e.g., 'kernel_name', 'api_name', 'category').
             start_col (str): Column containing the start timestamp.
             end_col (str): Column containing the end timestamp.
 
@@ -67,6 +106,10 @@ class RocAnalyzer:
         """
         if df is None:
             df = self.df 
+        # if 'category' == group_col:
+        #    df = self.group_kernels()
+        #    print(df.columns) 
+            
         # Check if the required columns exist
         required_cols = {group_col, start_col, end_col}
         missing = required_cols - set(df.columns)
@@ -136,130 +179,51 @@ class RocAnalyzer:
             'q1 [ns]', 
             'q3 [ns]',
         ]
+        self.df = grouped[ordered_cols]
         return grouped[ordered_cols]
     
-    
-class MemoryCopyAnalyzer:
-    """Analyzes memory copy operations (H2D, D2H, D2D) from a CSV trace.
-
-    This class provides methods to:
-      - Load trace data into a pandas DataFrame.
-      - Filter data by copy direction.
-      - Calculate copy durations.
-      - Plot histograms for HOST_TO_DEVICE and DEVICE_TO_HOST durations.
-      - Plot a pie chart showing total duration distribution by copy direction.
-    """
-
-    def __init__(self, file_path: str):
-        """Initializes the MemoryCopyAnalyzer with a path to the CSV trace file.
+    def group_kernels(self, df=None, category_patterns=CATEGORIES_PATTERNS, mlir_patterns=None, kernel_col='kernel_name'):
+        """
+        Groups kernels by category based on regex patterns.
 
         Args:
-            file_path: The file path to the CSV trace data.
+            category_patterns (dict): A dict of {category_name: regex_pattern}.
+            mlir_patterns (dict): Optional dict for sub-categorizing MLIR ops, 
+                                  e.g. {op_name: regex_pattern}.
+            kernel_col (str): Column in self.df that contains the kernel name.
+
+        Returns:
+            pd.DataFrame: a DataFrame with a new 'category' column (and optional 'mlir_op' column).
         """
-        self.file_path = file_path
-        self.data = None
-        self.host_to_device = None
-        self.device_to_host = None
+        if df is None:
+            df = self.df.copy()
+        if kernel_col not in df.columns:
+            raise ValueError(f"DataFrame missing the required column '{kernel_col}'")
 
-    def load_data(self) -> None:
-        """Loads the CSV data into a pandas DataFrame.
+        # Create new columns in a copy of self.df
+        df_copy = df.copy()
+        df_copy['category'] = 'unclassified'
+        if mlir_patterns:
+            df_copy['mlir_op'] = None
 
-        Raises:
-            FileNotFoundError: If the specified file_path cannot be found.
-            pd.errors.EmptyDataError: If the CSV file is empty.
-        """
-        self.data = pd.read_csv(self.file_path)
-
-    def filter_data(self) -> None:
-        """Filters the DataFrame into separate subsets for H2D and D2H.
-
-        Assumes the `Direction` column contains values:
-          - 'MEMORY_COPY_HOST_TO_DEVICE'
-          - 'MEMORY_COPY_DEVICE_TO_HOST'
-          - (Optional) 'MEMORY_COPY_DEVICE_TO_DEVICE' if present.
-        """
-        self.host_to_device = self.data[self.data['Direction'] == 'MEMORY_COPY_HOST_TO_DEVICE']
-        self.device_to_host = self.data[self.data['Direction'] == 'MEMORY_COPY_DEVICE_TO_HOST']
-        self.device_to_device = self.data[self.data['Direction'] == 'MEMORY_COPY_DEVICE_TO_DEVICE']
-
-    def calculate_duration(self) -> None:
-        """Calculates the duration of each memory copy operation in-place.
-
-        Duration is computed as:
-            duration = End_Timestamp - Start_Timestamp (in nanoseconds).
-
-        Raises:
-            KeyError: If 'End_Timestamp' or 'Start_Timestamp' columns are missing.
-        """
-        # Calculate for HOST_TO_DEVICE
-        self.host_to_device['Duration'] = (
-            self.host_to_device['End_Timestamp'] - self.host_to_device['Start_Timestamp']
-        )
-        # Calculate for DEVICE_TO_HOST
-        self.device_to_host['Duration'] = (
-            self.device_to_host['End_Timestamp'] - self.device_to_host['Start_Timestamp']
-        )
-
-    def plot_distribution(self, nbins: int = 50) -> None:
-        """Plots histograms of memory copy durations for H2D and D2H.
-
-        Args:
-            nbins: Number of bins to use in each histogram.
-        """
-        # Histogram for HOST_TO_DEVICE
-        fig_h2d = px.histogram(
-            self.host_to_device,
-            x='Duration',
-            title='Distribution of MEMORY_COPY_HOST_TO_DEVICE Durations',
-            labels={'Duration': 'Duration (ns)'},
-            nbins=nbins
-        )
-        fig_h2d.show()
-
-        # Histogram for DEVICE_TO_HOST
-        fig_d2h = px.histogram(
-            self.device_to_host,
-            x='Duration',
-            title='Distribution of MEMORY_COPY_DEVICE_TO_HOST Durations',
-            labels={'Duration': 'Duration (ns)'},
-            nbins=nbins
-        )
-        fig_d2h.show()
-
-    def plot_direction_pie(self) -> None:
-        """Plots a pie chart showing total duration distribution by copy direction.
-
-        This aggregates the DataFrame over 'Direction' by summing Duration.
-        Assumes each row's duration has been calculated (via `calculate_duration()`).
-        """
-        # Merge both subsets back, or just use the entire data if you computed duration for all
-        # For demonstration, let's temporarily combine the two DataFrames:
-        combined = pd.concat([self.host_to_device, self.device_to_host], ignore_index=True)
-        # If you have a self.device_to_device, you can include it here as well.
-
-        # Sum duration by direction
-        direction_agg = combined.groupby('Direction', as_index=False)['Duration'].sum()
-
-        fig = px.pie(
-            direction_agg,
-            names='Direction',
-            values='Duration',
-            title='Total Memory Copy Duration by Direction'
-        )
-        fig.show()
-
-    def analyze(self) -> None:
-        """Runs the full analysis pipeline: Load, filter, compute durations, plot.
-
-        This function:
-          1. Loads data from CSV.
-          2. Separates H2D and D2H memory copies.
-          3. Calculates durations for each.
-          4. Plots their histograms.
-          5. Plots a pie chart of directions (H2D, D2H, optionally D2D).
-        """
-        self.load_data()
-        self.filter_data()
-        self.calculate_duration()
-        self.plot_distribution()
-        self.plot_direction_pie()
+        # For each row, check all patterns in order
+        for i, row in df_copy.iterrows():
+            kname = row[kernel_col]
+            matched_category = None
+            # Check all category patterns
+            for cat_name, pattern in category_patterns.items():
+                if re.search(pattern, kname):
+                    matched_category = cat_name
+                    break  # first match wins, or remove break if you want multi-tagging
+            if matched_category:
+                df_copy.at[i, 'category'] = matched_category
+                # If we matched the "mlir_generated" category and we have mlir_patterns,
+                # do a second pass to see if we can identify the op more specifically
+                if (matched_category == 'mlir_generated') and mlir_patterns:
+                    for op_name, op_pat in mlir_patterns.items():
+                        if re.search(op_pat, kname):
+                            df_copy.at[i, 'mlir_op'] = op_name
+                            break
+            # Otherwise it remains 'unclassified'
+        self.df = df_copy
+        return df_copy
