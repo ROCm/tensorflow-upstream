@@ -587,7 +587,7 @@ class IrEmitterUnnested : public IrEmitter {
   // scheme.
   StatusOr<TilingKernelInfo> EmitTilingKernel(
       const TilingScheme& tiling_scheme, llvm::Type* index_ty,
-      const TileElementGenerator& tile_element_generator, const int warp_size);
+      const TileElementGenerator& tile_element_generator);
 
   // Emits code to iterate through a 2-dimensional tile with a given tile
   // dimensions and given strides, and call the callback at each iteration.,
@@ -846,7 +846,7 @@ class IrEmitterUnnested : public IrEmitter {
   // combination of thread_id/block_id does not correspond to a real block.
   // Assumes the current function returns void.
   StatusOr<ThreadIdInfo> EmitThreadIdInfo(const TilingScheme& tiling_scheme,
-                                          llvm::Type* index_ty, const int warp_size);
+                                          llvm::Type* index_ty);
   // Emit __syncthreads(), synchronization barrier for all threads in a block.
   llvm::CallInst* EmitSyncThreads();
 
