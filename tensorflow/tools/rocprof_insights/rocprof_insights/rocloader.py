@@ -24,8 +24,8 @@ class RocprofLoader:
             'KernelName': 'kernel_name',
             'BeginNs': 'start_ts',
             'EndNs': 'end_ts',
-            'lds': 'Group_Segment_Size',
-            'scr': 'Private_Segment_Size',
+            'lds': 'Group_Segment_Size [Kb]',
+            'scr': 'Private_Segment_Size [Kb]',
             'DurationNs': 'duration_us',
         },
         'v2': {
@@ -33,8 +33,8 @@ class RocprofLoader:
             'Kernel_Name': 'kernel_name',
             'Start_Timestamp': 'start_ts',
             'End_Timestamp': 'end_ts',
-            'LDS_Per_Workgroup': 'Group_Segment_Size',
-            'Scratch_Per_Workitem': 'Private_Segment_Size',
+            'LDS_Per_Workgroup': 'Group_Segment_Size [Kb]',
+            'Scratch_Per_Workitem': 'Private_Segment_Size [Kb]',
             'DurationNS': 'duration_us',
         },
         'v3': {
@@ -42,8 +42,8 @@ class RocprofLoader:
             'Kernel_Name': 'kernel_name',
             'Start_Timestamp': 'start_ts',
             'End_Timestamp': 'end_ts',
-            'Private_Segment_Size': 'Private_Segment_Size',
-            'Group_Segment_Size': 'Group_Segment_Size',
+            'Private_Segment_Size': 'Private_Segment_Size [Kb]',
+            'Group_Segment_Size': 'Group_Segment_Size [Kb]',
             'DurationNs': 'duration_us'
         },
     }
@@ -80,12 +80,14 @@ class RocprofLoader:
         if 'duration_ns' not in self.df.columns:
             if 'start_ts' in self.df.columns and 'end_ts' in self.df.columns:
                 self.df['duration_ns'] = self.df['end_ts'] - self.df['start_ts']
+                # Convert to ms for convenience
+                self.df['duration_us'] = self.df['duration_ns'] / 1000.0
             else:
                 raise ValueError("Cannot compute duration_ns (missing start_ns or end_ns).")
 
-        # Convert to ms for convenience
-        self.df['duration_us'] = self.df['duration_ns'] / 1000.0
-        self.df['Private_Segment_Size'] = self.df['Private_Segment_Size'] / 1024.0
-        self.df['Group_Segment_Size'] = self.df['Group_Segment_Size'] / 1024.0
+        if 'Private_Segment_Size [Kb]' in self.df.columns:
+            self.df['Private_Segment_Size [Kb]'] = self.df['Private_Segment_Size [Kb]'] / 1024.0
+        if 'Group_Segment_Size [Kb]' in self.df.columns:
+            self.df['Group_Segment_Size [Kb]'] = self.df['Group_Segment_Size [Kb]'] / 1024.0
 
         return self.df

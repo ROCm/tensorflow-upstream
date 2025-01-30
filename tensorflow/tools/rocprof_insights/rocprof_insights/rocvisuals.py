@@ -204,7 +204,7 @@ class RocprofStatsVisualizer:
     def bar_chart_top10_a_field(
         self,
         column: str = 'kernel_name',
-        title: str = "Top 10 by Total Time (s)",
+        title: str = "Top 10 Kernels by Total Time (s)",
         output_file: str = None
     ):
         """Creates a bar chart of the top 10 items by 'total time [s]'.
@@ -281,7 +281,19 @@ class RocprofStatsVisualizer:
             hover_data=[field],
             title=title
         )
-        fig.update_layout(template="plotly_white")
+    
+        fig.update_layout(
+            template="plotly_white",
+            # Center the title
+            title=dict(
+                # text=title,
+                x=0.5,         # 0.5 = center; 0 = left, 1 = right
+                xanchor='center'
+            ),
+            # Add (or override) axis labels:
+            xaxis_title='Number of calls [-]',
+            yaxis_title="Count [-]"  # or whatever label you want
+        )
 
         if output_file:
             fig.write_image(output_file, scale=4)
