@@ -59,6 +59,7 @@ else
               --local_cpu_resources=15 \
               --local_test_jobs=${N_BUILD_JOBS} \
               --test_timeout 920,2400,7200,9600 \
+              --config=opt \
               --build_tests_only \
               --test_output=errors \
               --test_sharding_strategy=disabled \
