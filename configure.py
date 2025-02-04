@@ -458,6 +458,8 @@ def set_cc_opt_flags(environ_cp):
     default_cc_opt_flags = '-mcpu=native'
   elif is_windows():
     default_cc_opt_flags = '/arch:AVX'
+  elif is_linux():
+    default_cc_opt_flags = '-mavx'
   else:
     # On all other platforms, no longer use `-march=native` as this can result
     # in instructions that are too modern being generated. Users that want
