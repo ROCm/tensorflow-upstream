@@ -63,7 +63,6 @@ else
               --config=opt \
               --build_tests_only \
               --test_output=errors \
-              --test_sharding_strategy=disabled \
               --test_size_filters=small,medium \
               --test_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
               -- \
