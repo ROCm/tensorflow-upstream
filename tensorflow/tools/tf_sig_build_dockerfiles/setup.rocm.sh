@@ -25,13 +25,13 @@
 set -x
 
 # Get arguments (or defaults)
-ROCM_VERSION=6.2.0
+ROCM_VERSION=6.4.0
 DISTRO=focal
 if [[ -n $1 ]]; then
     ROCM_VERSION=$1
 fi
 if [[ -n $2 ]]; then
-    if [[ "$2" == "focal" ]] || [[ "$2" == "jammy" ]] || [[ "$2" == "noble" ]] || [[ "$2" == "el7" ]] || [[ "$2" == "el8" ]]; then
+    if [[ "$2" == "focal" ]] || [[ "$2" == "jammy" ]] || [[ "$2" == "noble" ]] || [[ "$2" == "el7" ]] || [[ "$2" == "el8" ]] || [[ "$2" == "buster" ]]; then
         DISTRO=$2
     else
         echo "Distro not supported"
@@ -49,7 +49,27 @@ else
         ROCM_VERS=$ROCM_VERSION
 fi
 
-if [[ "$DISTRO" == "focal" ]] || [[ "$DISTRO" == "jammy" ]] || [[ "$DISTRO" == "noble" ]]; then
+if [[ "$DISTRO" == "buster" ]]; then
+
+    # ROCM packages are pre-installed
+    wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+    echo "deb [arch=amd64 trusted=yes] http://apt.llvm.org/$DISTRO/ llvm-toolchain-$DISTRO-18 main" | tee /etc/apt/sources.list.d/llvm.list
+    apt-get update --allow-insecure-repositories
+
+    # install rocm
+    /setup.packages.sh /devel.packages.rocm.deb10.txt
+
+    MIOPENKERNELS=$( \
+                        apt-cache search --names-only miopen-hip-gfx | \
+                        awk '{print $1}' | \
+                        grep -F -v . || \
+                        true )
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated ${MIOPENKERNELS}
+
+    #install hipblasLT if available
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated hipblaslt-dev || true
+
+elif [[ "$DISTRO" == "focal" ]] || [[ "$DISTRO" == "jammy" ]] || [[ "$DISTRO" == "noble" ]]; then
     ROCM_DEB_REPO_HOME=https://repo.radeon.com/rocm/apt/
     AMDGPU_DEB_REPO_HOME=https://repo.radeon.com/amdgpu/
     ROCM_BUILD_NAME=${DISTRO}
