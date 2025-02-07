@@ -16,9 +16,9 @@ RUN dnf update -y && dnf install -y epel-release && dnf install -y elrepo-releas
 RUN echo -e "[build_system]\nname=ROCm\nbaseurl=https://repo.almalinux.org/build_system/8/x86_64/\nenabled=1\ngpgcheck=0" >/etc/yum.repos.d/build_system.repo
 RUN dnf group install -y "Development Tools"
 
-RUN bin/bash -c 'echo -e "[ROCm]\nname=ROCm\nbaseurl=$RPM_ROCM_REPO\nenabled=1\ngpgcheck=0" >>/etc/yum.repos.d/rocm.repo'
-RUN bin/bash -c 'echo -e "[amdgpu]\nname=amdgpu\nbaseurl=https://repo.radeon.com/amdgpu/latest/rhel/8.8/main/x86_64/\nenabled=1\ngpgcheck=0" >>/etc/yum.repos.d/amdgpu.repo'
-RUN bin/bash -c 'mkdir -p /etc/apt/preferences.d && touch /etc/apt/preferences.d/artifactory-pin-600 && echo -e "Package: *\nPin: release o=Artifactory\nPin-Priority: 600" > /etc/apt/preferences.d/artifactory-pin-600'
+RUN /bin/bash -c 'echo -e "[ROCm]\nname=ROCm\nbaseurl=$RPM_ROCM_REPO\nenabled=1\ngpgcheck=0" >>/etc/yum.repos.d/rocm.repo'
+RUN /bin/bash -c 'echo -e "[amdgpu]\nname=amdgpu\nbaseurl=https://repo.radeon.com/amdgpu/latest/rhel/8.8/main/x86_64/\nenabled=1\ngpgcheck=0" >>/etc/yum.repos.d/amdgpu.repo'
+RUN /bin/bash -c 'mkdir -p /etc/apt/preferences.d && touch /etc/apt/preferences.d/artifactory-pin-600 && echo -e "Package: *\nPin: release o=Artifactory\nPin-Priority: 600" > /etc/apt/preferences.d/artifactory-pin-600'
 
 RUN dnf clean all
 RUN dnf update -y
