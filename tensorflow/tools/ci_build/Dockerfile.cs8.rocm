@@ -1,7 +1,7 @@
 # This Dockerfile provides a starting point for a ROCm installation of 
 # MIOpen and tensorflow.  
-FROM almalinux:8
-MAINTAINER Jeff Poznanovic <jeffrey.poznanovic@amd.com>
+#FROM almalinux:8
+FROM compute-artifactory.amd.com:5000/rocm-base-images/almalinux-8.x:2025020602
 
 ARG ROCM_DEB_REPO=https://repo.radeon.com/rocm/rhel8/6.2/
 ARG RPM_ROCM_REPO=http://repo.radeon.com/rocm/rhel8/6.2/main
