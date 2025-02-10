@@ -25,10 +25,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/primitive_util.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 
@@ -193,8 +193,13 @@ class Comparison {
         //  -NaN < -Inf < -Finite < -0 < +0 < +Finite < +Inf < +NaN
         // Reference:
         // https://www.tensorflow.org/xla/operation_semantics#element-wise_comparison_operations
-        using R = SignedIntegerTypeForSizeType<sizeof(T)>;
-        return GetComparator<R>()(ToSignMagnitude(a), ToSignMagnitude(b));
+        if constexpr (std::numeric_limits<T>::is_signed) {
+          using R = SignedIntegerTypeForSizeType<sizeof(T)>;
+          return GetComparator<R>()(ToSignMagnitude(a), ToSignMagnitude(b));
+        } else {
+          using R = UnsignedIntegerTypeForSizeType<sizeof(T)>;
+          return GetComparator<R>()(ToSignMagnitude(a), ToSignMagnitude(b));
+        }
       }
     }
     // Applies the comparison from this Comparison's direction and ordering.

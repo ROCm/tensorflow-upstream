@@ -83,8 +83,8 @@ xla_cc_test(
     srcs = ["context_map_test.cc"],
     deps = [
         ":context_map",
+        "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
     ],
 )
 
@@ -94,7 +94,7 @@ cc_library(
     hdrs = ["mock_context.h"],
     deps = [
         ":context",
-        "//xla:test",
+        "//xla/hlo/testlib:test",
     ],
 )
 
@@ -131,7 +131,6 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
     ],
 )
 
@@ -459,9 +458,9 @@ xla_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
     ],
 )
 
@@ -507,9 +506,9 @@ xla_test(
         "//xla/tsl/framework:device_id",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
     ],
 )
 
@@ -595,9 +594,9 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":gpu_test_kernels_fatbin",
+        "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
     ],
 )
 
@@ -624,9 +623,9 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
     ],
 )
 
@@ -653,6 +652,7 @@ xla_test(
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -665,7 +665,6 @@ xla_test(
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/platform:test",
         "@local_tsl//tsl/platform:test_benchmark",
-        "@local_tsl//tsl/platform:test_main",
     ] + if_cuda([
         "//xla/stream_executor/cuda:cuda_platform",
     ]) + if_rocm([
@@ -684,9 +683,9 @@ xla_test(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
     ] + if_cuda([
         "//xla/stream_executor/cuda:cuda_platform",
     ]) + if_rocm([
@@ -707,9 +706,9 @@ xla_test(
         "//xla/stream_executor:stream_finder",
         "//xla/stream_executor/host:host_platform",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
     ] + if_cuda([
         "//xla/stream_executor/cuda:cuda_platform",
     ]) + if_rocm([
@@ -730,6 +729,7 @@ xla_test(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
@@ -769,11 +769,42 @@ xla_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:path",
         "@local_tsl//tsl/platform:protobuf",
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
+    name = "tma_metadata",
+    srcs = ["tma_metadata.cc"],
+    hdrs = ["tma_metadata.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    deps = [
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_test(
+    name = "tma_metadata_test",
+    srcs = ["tma_metadata_test.cc"],
+    deps = [
+        ":tma_metadata",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
     ],
 )

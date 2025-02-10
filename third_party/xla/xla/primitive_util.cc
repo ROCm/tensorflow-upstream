@@ -22,12 +22,14 @@ limitations under the License.
 
 #include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace primitive_util {
@@ -88,6 +90,18 @@ bool HasInfinity(PrimitiveType type) {
     return FloatingPointTypeSwitch<bool>(
         [&](auto constant_type) -> bool {
           return std::numeric_limits<NativeTypeOf<constant_type>>::has_infinity;
+        },
+        type);
+  }
+  return false;
+}
+
+bool HasNaN(PrimitiveType type) {
+  if (ABSL_PREDICT_TRUE(IsFloatingPointType(type))) {
+    return FloatingPointTypeSwitch<bool>(
+        [&](auto constant_type) -> bool {
+          return std::numeric_limits<
+              NativeTypeOf<constant_type>>::has_quiet_NaN;
         },
         type);
   }

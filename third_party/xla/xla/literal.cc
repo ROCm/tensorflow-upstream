@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -50,16 +51,16 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/core/bitmap.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/byte_swap_array.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/mem.h"
 #include "tsl/platform/ml_dtypes.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -92,6 +93,7 @@ bool LiteralProtoHasValues(const LiteralProto& proto) {
          proto.s64s_size() || !proto.u1s().empty() || !proto.u2s().empty() ||
          !proto.u4s().empty() || !proto.u8s().empty() ||
          !proto.u16s().empty() || proto.u32s_size() || proto.u64s_size() ||
+         !proto.f4e2m1fns().empty() || !proto.f8e8m0fnus().empty() ||
          !proto.f8e5m2s().empty() || !proto.f8e4m3s().empty() ||
          !proto.f8e4m3fns().empty() || !proto.f8e4m3b11fnuzs().empty() ||
          !proto.f8e5m2fnuzs().empty() || !proto.f8e4m3fnuzs().empty() ||
@@ -137,7 +139,9 @@ const Shape* TryInternShape(const Shape& shape) {
     return &NilShape();
   }
   if (shape.IsArray() && shape.dimensions_size() == 0 && shape.is_static() &&
-      shape.layout().tiles_size() == 0 && shape.layout().memory_space() == 0) {
+      shape.has_layout() && shape.layout().tiles_size() == 0 &&
+      shape.layout().memory_space() == 0 &&
+      shape.layout().element_size_in_bits() == 0) {
     return &ScalarShape(shape.element_type());
   }
   return nullptr;
@@ -252,18 +256,20 @@ Literal::Literal(const Shape& shape)
     : Literal(shape, /*allocate_arrays=*/true) {}
 
 void Literal::SetShape(const Shape& shape) {
-  Shape shape_storage;
-  const Shape* shape_ptr = &shape;
-  if (shape.IsArray() && LayoutUtil::HasCustomElementSizeInBits(shape)) {
-    shape_storage = shape;
-    shape_storage.mutable_layout()->set_element_size_in_bits(0);
-    shape_ptr = &shape_storage;
-  }
-  if (const Shape* intered_shape_ptr = TryInternShape(*shape_ptr)) {
+  if (const Shape* intered_shape_ptr = TryInternShape(shape)) {
     shape_ = intered_shape_ptr;
-  } else {
-    shape_ = std::make_unique<Shape>(*shape_ptr);
+    return;
   }
+  auto owning_shape_ptr = std::make_unique<Shape>(shape);
+  if (owning_shape_ptr->IsArray() && !owning_shape_ptr->has_layout()) {
+    *owning_shape_ptr->mutable_layout() =
+        LayoutUtil::GetDefaultLayoutForShape(*owning_shape_ptr);
+  }
+  if (owning_shape_ptr->IsArray() &&
+      LayoutUtil::HasCustomElementSizeInBits(*owning_shape_ptr)) {
+    owning_shape_ptr->mutable_layout()->set_element_size_in_bits(0);
+  }
+  shape_ = std::move(owning_shape_ptr);
 }
 
 void Literal::SetPiece(const Shape& shape, Piece* piece, bool allocate_arrays,
@@ -622,8 +628,10 @@ void LiteralBase::Piece::AllocateBuffers() {
   if (bytes > kMaxInlinedBytes) {
     CHECK_EQ(buffer(), nullptr);
     rep_.emplace<DenseRep>();
-    set_buffer(
-        static_cast<char*>(tsl::port::AlignedMalloc(bytes, kMinimumAlignment)));
+    char* buffer =
+        static_cast<char*>(tsl::port::AlignedMalloc(bytes, kMinimumAlignment));
+    CHECK(buffer != nullptr) << "Failed to allocate buffer for Literal";
+    set_buffer(buffer);
   } else {
     rep_.emplace<DenseInlinedRep>();
   }
@@ -1875,7 +1883,6 @@ bool LiteralBase::Piece::EqualElements(const LiteralBase::Piece& other) const {
         << __func__ << " is only supported for dense arrays: " << subshape();
     CHECK_EQ(size_bytes_dense(), other.size_bytes_dense());
     if (primitive_util::IsSubByteNonPredType(subshape().element_type())) {
-      CHECK(!primitive_util::IsFloatingPointType(subshape().element_type()));
       auto one_array = buffer();
       auto two_array = other.buffer();
       const int bits_per_element =
@@ -2268,6 +2275,11 @@ void LiteralBase::Piece::WriteToProto(LiteralProto* proto) const {
     case S64:
       CopyToRepeatedField(proto->mutable_s64s(), data<int64_t>());
       break;
+    case F4E2M1FN:
+      *proto->mutable_f4e2m1fns() = std::string(
+          reinterpret_cast<const char*>(data<tsl::float4_e2m1fn>().data()),
+          size_bytes_dense());
+      break;
     case F8E5M2:
       *proto->mutable_f8e5m2s() = std::string(
           reinterpret_cast<const char*>(data<tsl::float8_e5m2>().data()),
@@ -2301,6 +2313,11 @@ void LiteralBase::Piece::WriteToProto(LiteralProto* proto) const {
     case F8E3M4:
       *proto->mutable_f8e3m4s() = std::string(
           reinterpret_cast<const char*>(data<tsl::float8_e3m4>().data()),
+          size_bytes_dense());
+      break;
+    case F8E8M0FNU:
+      *proto->mutable_f8e8m0fnus() = std::string(
+          reinterpret_cast<const char*>(data<tsl::float8_e8m0fnu>().data()),
           size_bytes_dense());
       break;
     case F16:
@@ -2454,6 +2471,14 @@ absl::Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
     case U64:
       TF_RETURN_IF_ERROR(CopyFromRepeatedField(data<uint64_t>(), proto.u64s()));
       break;
+    case F4E2M1FN: {
+      const std::string& s(proto.f4e2m1fns());
+      TF_RET_CHECK(data<tsl::float4_e2m1fn>().size() *
+                       sizeof(tsl::float4_e2m1fn) ==
+                   s.size());
+      memcpy(untyped_data(), s.data(), s.size());
+      break;
+    }
     case F8E5M2: {
       const std::string& s(proto.f8e5m2s());
       TF_RET_CHECK(data<tsl::float8_e5m2>().size() * sizeof(tsl::float8_e5m2) ==
@@ -2503,6 +2528,14 @@ absl::Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
     case F8E3M4: {
       const std::string& s(proto.f8e3m4s());
       TF_RET_CHECK(data<tsl::float8_e3m4>().size() * sizeof(tsl::float8_e3m4) ==
+                   s.size());
+      memcpy(untyped_data(), s.data(), s.size());
+      break;
+    }
+    case F8E8M0FNU: {
+      const std::string& s(proto.f8e8m0fnus());
+      TF_RET_CHECK(data<tsl::float8_e8m0fnu>().size() *
+                       sizeof(tsl::float8_e8m0fnu) ==
                    s.size());
       memcpy(untyped_data(), s.data(), s.size());
       break;

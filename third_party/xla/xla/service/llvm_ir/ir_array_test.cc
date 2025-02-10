@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <string>
 
+#include <gtest/gtest.h>
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
@@ -29,9 +30,8 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace llvm_ir {

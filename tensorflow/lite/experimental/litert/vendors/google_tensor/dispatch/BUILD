@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//tensorflow/lite/experimental/litert/build_common:litert_build_defs.bzl", "litert_dynamic_lib")
+load("//tensorflow/lite/experimental/litert/build_common:litert_build_defs.bzl", "copy_file", "litert_dynamic_lib")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -24,6 +24,7 @@ litert_dynamic_lib(
     srcs = [
         "dispatch_api.cc",
         "litert_dispatch_device_context.cc",
+        "litert_dispatch_graph.cc",
         "litert_dispatch_invocation_context.cc",
         "southbound.cc",
     ],
@@ -43,6 +44,10 @@ litert_dynamic_lib(
     linkstatic = 1,
     shared_lib_name = "dispatch_api_so",
     so_name = "libLiteRtDispatch.so",
+    tags = [
+        # Don't build/test in OSS until Southbound is available.
+        "nobuilder",
+    ],
     visibility = ["//tensorflow/lite/experimental/litert:__subpackages__"],
     deps = [
         "//tensorflow/lite/experimental/litert/c:litert_common",
@@ -59,6 +64,13 @@ litert_dynamic_lib(
     ],
 )
 
+# Copies the shared library so that it is available for use in test data as libLiteRtDispatch.so.
+copy_file(
+    name = "copy_dispatch_api_so",
+    src = "//tensorflow/lite/experimental/litert/vendors/google_tensor/dispatch:dispatch_api_so",
+    target = "libLiteRtDispatch.so",
+)
+
 cc_test(
     name = "dispatch_api_google_tensor_test",
     srcs = [
@@ -71,6 +83,11 @@ cc_test(
         "//tensorflow:android": ["-landroid"],
         "//conditions:default": [],
     }),
+    tags = [
+        # Don't build/test in OSS until Southbound is available.
+        "nobuilder",
+        "no_oss",
+    ],
     deps = [
         "//tensorflow/lite/experimental/litert/c:litert_common",
         "//tensorflow/lite/experimental/litert/c:litert_tensor_buffer",
@@ -82,5 +99,38 @@ cc_test(
         "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "dispatch_api_async_google_tensor_test",
+    srcs = [
+        "dispatch_api_async_google_tensor_test.cc",
+    ],
+    data = [
+        ":dispatch_api_so",
+    ],
+    linkopts = select({
+        "//tensorflow:android": ["-landroid"],
+        "//conditions:default": [],
+    }),
+    tags = [
+        # Don't build/test in OSS until Southbound is available.
+        "nobuilder",
+        "no_oss",
+    ],
+    deps = [
+        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:absl_log",
+        "@com_google_absl//absl/types:span",
+        # copybara:uncomment "//third_party/darwinn/driver_shared/fence:fence_test_util",
+        "//tensorflow/lite/experimental/litert/c:litert_common",
+        "//tensorflow/lite/experimental/litert/c:litert_event",
+        "//tensorflow/lite/experimental/litert/c:litert_tensor_buffer",
+        "//tensorflow/lite/experimental/litert/core:filesystem",
+        "//tensorflow/lite/experimental/litert/test:common",
+        "//tensorflow/lite/experimental/litert/test:simple_model_npu",
+        "//tensorflow/lite/experimental/litert/vendors/c:litert_dispatch_c_api",
     ],
 )

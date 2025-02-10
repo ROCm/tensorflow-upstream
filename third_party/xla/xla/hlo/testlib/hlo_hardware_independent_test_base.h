@@ -43,9 +43,9 @@ limitations under the License.
 #include "xla/service/hlo_verifier.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/test.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 
@@ -64,12 +64,13 @@ class HloHardwareIndependentTestBase : public ::testing::Test {
   // inspect a particular computation or instruction.
   static HloComputation* FindComputation(HloModule* module,
                                          absl::string_view name);
-  static HloInstruction* FindInstruction(HloModule* module,
+  static HloInstruction* FindInstruction(const HloModule* module,
                                          absl::string_view name);
   // Gets the instruction from the given module with the given opcode.
-  static HloInstruction* FindInstruction(HloModule* module, HloOpcode opcode);
+  static HloInstruction* FindInstruction(const HloModule* module,
+                                         HloOpcode opcode);
   // Gets all the instructions from the given module with the given opcode.
-  static std::vector<HloInstruction*> FindInstructions(HloModule* module,
+  static std::vector<HloInstruction*> FindInstructions(const HloModule* module,
                                                        HloOpcode opcode);
 
  protected:
@@ -135,12 +136,22 @@ class HloHardwareIndependentTestBase : public ::testing::Test {
   static void SetAotFastMathDebugOptions(DebugOptions* options);
 
   // Runs pass `hlo_pass` on input HLO module `hlo` with optional config, and
+  // FileChecks the result against interleaved expected `CHECK` directives.
+  //
+  // If the rewrite has changed the module, also runs `additional_checks` on the
+  // result.
+  void RunAndFilecheckHloRewrite(
+      absl::string_view hlo_with_checks, HloPassInterface&& hlo_pass,
+      std::function<void(HloModule*)> after_pass_checks = nullptr,
+      const HloModuleConfig* config = nullptr) const;
+
+  // Runs pass `hlo_pass` on input HLO module `hlo` with optional config, and
   // FileChecks the result against `expected`.
   //
   // If the rewrite has changed the module, also runs `additional_checks` on the
   // result.
   void RunAndFilecheckHloRewrite(
-      absl::string_view hlo, HloPassInterface&& hlo_pass,
+      absl::string_view hlo_with_filecheck_lines, HloPassInterface&& hlo_pass,
       std::optional<absl::string_view> expected,
       std::function<void(HloModule*)> after_pass_checks = nullptr,
       const HloModuleConfig* config = nullptr) const;

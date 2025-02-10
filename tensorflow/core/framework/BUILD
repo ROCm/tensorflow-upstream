@@ -724,6 +724,7 @@ cc_library(
         "//learning/brain/google/data/core/parse_proto:__pkg__",
         "//learning/deepmind/tensorflow/sstable:__pkg__",
         "//learning/deepmind/video/tensorflow:__pkg__",
+        "//learning/processing/hydra/tensorflow:__pkg__",
         "//learning/sibyl/tfx/state/kernels:__pkg__",
         "//learning/sibyl/tfx/transformation/kernels:__pkg__",
         "//tensorflow/compiler/mlir/tools/kernel_gen:__pkg__",
@@ -949,7 +950,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:errors",
+        "@local_xla//xla/tsl/platform:errors",
     ],
 )
 

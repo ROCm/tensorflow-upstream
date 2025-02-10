@@ -35,7 +35,6 @@ pytype_strict_library(
     visibility = [
         "//tensorflow/dtensor:dtensor-internal",
         "//tensorflow/dtensor:dtensor-users",
-        "//tensorflow/tools/pip_package:__pkg__",
         "//tensorflow/tools/pip_package:__subpackages__",
     ],
     deps = [
@@ -77,7 +76,6 @@ py_strict_test(
     srcs = [
         "api_test.py",
     ],
-    python_version = "PY3",
     deps = [
         ":test_util",
         "//tensorflow/dtensor/python:api",
@@ -488,8 +486,6 @@ pytype_strict_library(
     srcs = ["multi_client_test_util.py"],
     visibility = [
         "//tensorflow/dtensor:dtensor-internal",
-        "//tensorflow/dtensor:dtensor-users",
-        "//tensorflow/tools/pip_package:__pkg__",
         "//tensorflow/tools/pip_package:__subpackages__",
     ],
     deps = [

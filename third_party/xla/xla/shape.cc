@@ -30,9 +30,9 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/printer.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 
@@ -40,9 +40,9 @@ namespace xla {
 Shape::Shape() = default;
 Shape::~Shape() = default;
 Shape::Shape(const Shape&) = default;
-Shape::Shape(Shape&&) = default;
+Shape::Shape(Shape&&) noexcept = default;
 Shape& Shape::operator=(const Shape&) = default;
-Shape& Shape::operator=(Shape&&) = default;
+Shape& Shape::operator=(Shape&&) noexcept = default;
 
 Shape::Shape(const ShapeProto& shape_proto) {
   set_element_type(shape_proto.element_type());
