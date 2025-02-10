@@ -658,6 +658,9 @@ GpuDriver::GraphNodeGetType(hipGraphNode_t node) {
 
   switch (node_type) {
     case hipGraphNodeTypeCount:
+#if TF_ROCM_VERSION >= 60400
+    case hipGraphNodeTypeBatchMemOp:
+#endif
       break;
     case hipGraphNodeTypeKernel:
       return GraphNodeType::kKernel;
