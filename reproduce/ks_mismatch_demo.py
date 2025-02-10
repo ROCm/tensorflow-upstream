@@ -1,4 +1,12 @@
-from __future__ import print_function
+import os
+
+os.environ["XLA_FLAGS"] = (
+    "--xla_dump_to=./generated "
+    "--xla_dump_hlo_as_dot "
+    "--xla_dump_hlo_as_text "
+    "--xla_dump_hlo_as_html "
+)
+
 import numpy as np
 import tensorflow.compat.v1 as tf
 import random
