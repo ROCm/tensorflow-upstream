@@ -239,6 +239,19 @@ xla::StatusOr<absl::string_view> Type2String(blas::DataType type) {
   return xla::InternalError("Unknown data type!");
 }
 
+const std::vector<absl::string_view> LayoutOrderNames = {
+  "R", // kRowMajor
+  "C", // kColumnMajor
+};
+
+xla::StatusOr<absl::string_view> LayoutOrder2String(MatrixLayout::Order order) {
+  size_t idx = static_cast<size_t>(order);
+  if (idx < LayoutOrderNames.size()) {
+    return LayoutOrderNames[idx];
+  }
+  return xla::InternalError("Unknown Matrix Layout Order!");
+}
+
 }  // namespace
 
 std::string ToCSVString(const GemmConfig& cfg, bool full_string) {
@@ -253,22 +266,23 @@ std::string ToCSVString(const GemmConfig& cfg, bool full_string) {
        type_b = Type2String(R.dtype).value(),
        type_c = Type2String(O.dtype).value(),
        trans_a = Transpose2String(L.transpose).value(),
-       trans_b = Transpose2String(R.transpose).value();
+       trans_b = Transpose2String(R.transpose).value(),
+       order_a = LayoutOrder2String(L.order).value(),
+       order_b = LayoutOrder2String(R.order).value();
 
-// LHS: k x n
-// RHS: m x k
-// OUT: m x n
+  // LHS: k x n
+  // RHS: m x k
+  // OUT: m x n
   // VLOG(0) << "LHS: " << L.num_cols << "x" << L.num_rows;
   // VLOG(0) << "RHS: " << R.num_cols << "x" << R.num_rows;
   // VLOG(0) << "OUT: " << O.num_cols << "x" << O.num_rows;
   int n = L.num_rows, k = L.num_cols, m = O.num_cols;
-  oss << m << kCsvSep << n << kCsvSep << k << kCsvSep
-     << O.batch_size << kCsvSep << trans_a << kCsvSep 
-     << trans_b << kCsvSep << type_a << kCsvSep 
-     << type_b << kCsvSep << type_c << kCsvSep << L.leading_dim_stride 
-     << kCsvSep << R.leading_dim_stride << kCsvSep
-     << O.leading_dim_stride  << kCsvSep << L.batch_stride << kCsvSep
-     << R.batch_stride << kCsvSep << O.batch_stride;
+  oss << m << kCsvSep << n << kCsvSep << k << kCsvSep << O.batch_size << kCsvSep
+      << trans_a << kCsvSep << trans_b << kCsvSep << order_a << kCsvSep
+      << order_b << kCsvSep << type_a << kCsvSep << type_b << kCsvSep << type_c
+      << kCsvSep << L.leading_dim_stride << kCsvSep << R.leading_dim_stride
+      << kCsvSep << O.leading_dim_stride << kCsvSep << L.batch_stride << kCsvSep
+      << R.batch_stride << kCsvSep << O.batch_stride;
 
   if (full_string) {
     // NOTE: epilogue is required for MatmulPlan caching !
