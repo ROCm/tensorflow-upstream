@@ -214,6 +214,8 @@ xla::Status BlasLtGemmRunner::RunStridedBatchedImpl(Stream& stream,
   LOG(INFO) << "m: " << m;
   LOG(INFO) << "n: " << n;
   LOG(INFO) << "k: " << k;
+  LOG(INFO) << "trans_a: " << (int)trans_a;
+  LOG(INFO) << "trans_a: " << (int)trans_b;
 
   StridedGemmConfig scfg{
     .m = m,
