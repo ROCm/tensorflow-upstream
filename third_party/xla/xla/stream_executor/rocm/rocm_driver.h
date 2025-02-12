@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
+#include "rocm/rocm_config.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
 
 namespace stream_executor {
