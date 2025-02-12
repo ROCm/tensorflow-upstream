@@ -139,6 +139,11 @@ struct BlasLtGemmRunner {
       Scalar beta, TypeC* c, int64 ldc, int64 stride_c,
       int64 batch_count, ScratchAllocator* allocator) {
 
+    LOG(INFO) << "in function BlasLtGemmRunner::RunStridedBatched()"
+    LOG(INFO) << "m: " << m;
+    LOG(INFO) << "n: " << n;
+    LOG(INFO) << "k: " << k;
+
     auto type_a = dnn::ToDataType<TypeA>::value,
          type_b = dnn::ToDataType<TypeB>::value,
          type_c = dnn::ToDataType<TypeC>::value;
