@@ -210,6 +210,11 @@ xla::Status BlasLtGemmRunner::RunStridedBatchedImpl(Stream& stream,
       blas::DataType type_c, DeviceMemoryBase *c, int64 ldc, int64 stride_c, 
       int64 batch_count, ScratchAllocator* allocator)
 {
+  LOG(INFO) << "in BlasLtGemmRunner Stream::RunStridedBatchedImpl()"
+  LOG(INFO) << "m: " << m;
+  LOG(INFO) << "n: " << n;
+  LOG(INFO) << "k: " << k;
+
   StridedGemmConfig scfg{
     .m = m,
     .n = n,
@@ -237,6 +242,11 @@ xla::Status BlasLtGemmRunner::RunStridedBatchedImpl(Stream& stream,
     int64 row_a = m, col_a = k, row_b = k, col_b = n;
     if (trans_a == blas::Transpose::kTranspose) std::swap(row_a, col_a);
     if (trans_b == blas::Transpose::kTranspose) std::swap(row_b, col_b);
+
+    LOG(INFO) << "row_a: " << row_a;
+    LOG(INFO) << "col_a: " << col_a;
+    LOG(INFO) << "row_b: " << row_b;
+    LOG(INFO) << "col_b: " << col_b;
 
     auto order = MatrixLayout::Order::kColumnMajor;
     GemmConfig cfg = {
