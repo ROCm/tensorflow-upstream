@@ -210,7 +210,7 @@ xla::Status BlasLtGemmRunner::RunStridedBatchedImpl(Stream& stream,
       blas::DataType type_c, DeviceMemoryBase *c, int64 ldc, int64 stride_c, 
       int64 batch_count, ScratchAllocator* allocator)
 {
-  LOG(INFO) << "in BlasLtGemmRunner Stream::RunStridedBatchedImpl()"
+  LOG(INFO) << "in BlasLtGemmRunner Stream::RunStridedBatchedImpl()";
   LOG(INFO) << "m: " << m;
   LOG(INFO) << "n: " << n;
   LOG(INFO) << "k: " << k;
