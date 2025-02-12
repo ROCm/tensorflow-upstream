@@ -2,6 +2,7 @@ import os
 
 os.environ["ROCBLAS_LAYER"] = "2"
 os.environ["HIPBLASLT_LOG_MASK"] = "32"
+os.environ["XLA_FLAGS"] = "--xla_gpu_enable_cublaslt=true"
 
 import numpy as np
 import tensorflow.compat.v1 as tf
