@@ -1560,6 +1560,11 @@ tsl::Status Stream::ThenBlasGemmStridedBatched(
             std::is_same_v<ConstantType, float>),
       "Mismatched input and alpha/beta types");
   
+  LOG(INFO) << "in function Stream::ThenBlasGemmStridedBatched()"
+  LOG(INFO) << "m: " << m;
+  LOG(INFO) << "n: " << n;
+  LOG(INFO) << "k: " << k;
+  
   if (gpu::GpuBlasLtEnabled()) {
     auto &r = gpu::BlasLtGemmRunner::i(this);
     CheckStatus(r.RunStridedBatched(
