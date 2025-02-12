@@ -20,6 +20,7 @@ load(
     "get_python_bin",
     "raw_exec",
     "realpath",
+    "relative_to",
     "which",
 )
 load(
@@ -175,54 +176,36 @@ def auto_configure_warning(msg):
 # END cc_configure common functions (see TODO above).
 
 def _rocm_include_path(repository_ctx, rocm_config, bash_bin):
-    """Generates the cxx_builtin_include_directory entries for rocm inc dirs.
+    """Generates the entries for rocm inc dirs based on rocm_config.
 
     Args:
       repository_ctx: The repository context.
       rocm_config: The path to the gcc host compiler.
+      bash_bin: path to the bash interpreter.
 
     Returns:
-      A string containing the Starlark string for each of the gcc
-      host compiler include directories, which can be added to the CROSSTOOL
+      A string containing the Starlark string for each of the hipcc
+      compiler include directories, which can be added to the CROSSTOOL
       file.
     """
     inc_dirs = []
 
-    # Add HSA headers (needs to match $HSA_PATH)
-    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hsa/include")
+    # Add HIP-Clang headers (relative to rocm root)
+    rocm_path = repository_ctx.path(rocm_config.rocm_toolkit_path)
+    clang_path = rocm_path.get_child("llvm/bin/clang")
+    resource_dir_result = execute(repository_ctx, [str(clang_path), "-print-resource-dir"])
 
-    # Add HIP headers (needs to match $HIP_PATH)
-    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hip/include")
-    if int(rocm_config.rocm_version_number) >= 50200:
-        inc_dirs.append(rocm_config.rocm_toolkit_path + "/include")
-        inc_dirs.append(rocm_config.rocm_toolkit_path + "/include/hip")
-        inc_dirs.append(rocm_config.rocm_toolkit_path + "/include/rocprim")
-        inc_dirs.append(rocm_config.rocm_toolkit_path + "/include/rocsolver")
-        inc_dirs.append(rocm_config.rocm_toolkit_path + "/include/rocblas")
+    if resource_dir_result.return_code:
+        auto_configure_fail("Failed to run hipcc -print-resource-dir: %s" % err_out(resource_dir_result))
 
-    # Add HIP-Clang headers (realpath relative to compiler binary)
-    rocm_toolkit_path = realpath(repository_ctx, rocm_config.rocm_toolkit_path, bash_bin)
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/12.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/13.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/14.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/15.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/16.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/17.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/17/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/18/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/19/include")
-    if int(rocm_config.rocm_version_number) >= 60200:
-        inc_dirs.append(rocm_toolkit_path + "/lib/llvm/lib/clang/17/include")
-        inc_dirs.append(rocm_toolkit_path + "/lib/llvm/lib/clang/18/include")
-        inc_dirs.append(rocm_toolkit_path + "/lib/llvm/lib/clang/19/include")
-        inc_dirs.append(rocm_toolkit_path + "/lib/llvm/lib/clang/20/include")
+    resource_dir_abs = resource_dir_result.stdout.strip()
 
-    # Support hcc based off clang 10.0.0 (for ROCm 3.3)
-    inc_dirs.append(rocm_toolkit_path + "/hcc/compiler/lib/clang/10.0.0/include/")
-    inc_dirs.append(rocm_toolkit_path + "/hcc/lib/clang/10.0.0/include")
+    resource_dir_rel = relative_to(repository_ctx, str(rocm_path.realpath), resource_dir_abs, bash_bin)
 
-    # Add hcc headers
-    inc_dirs.append(rocm_toolkit_path + "/hcc/include")
+    resource_dir = str(rocm_path.get_child(resource_dir_rel))
+
+    inc_dirs.append(resource_dir + "/include")
+    inc_dirs.append(resource_dir + "/share")
 
     return inc_dirs
 
