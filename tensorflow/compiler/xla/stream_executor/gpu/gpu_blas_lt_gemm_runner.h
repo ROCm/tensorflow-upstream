@@ -139,13 +139,6 @@ struct BlasLtGemmRunner {
       Scalar beta, TypeC* c, int64 ldc, int64 stride_c,
       int64 batch_count, ScratchAllocator* allocator) {
 
-    LOG(INFO) << "in function BlasLtGemmRunner::RunStridedBatched()";
-    LOG(INFO) << "m: " << m;
-    LOG(INFO) << "n: " << n;
-    LOG(INFO) << "k: " << k;
-    LOG(INFO) << "trans_a: " << (int)trans_a;
-    LOG(INFO) << "trans_b: " << (int)trans_b;
-
     auto type_a = dnn::ToDataType<TypeA>::value,
          type_b = dnn::ToDataType<TypeB>::value,
          type_c = dnn::ToDataType<TypeC>::value;
@@ -165,6 +158,13 @@ struct BlasLtGemmRunner {
       const DeviceMemory<TypeB>& b, int64 ldb, int64 stride_b,
       Scalar beta, DeviceMemory<TypeC> *c, int64 ldc, int64 stride_c,
       int64 batch_count, ScratchAllocator* allocator) {
+
+    LOG(INFO) << "in function BlasLtGemmRunner::RunStridedBatched()";
+    LOG(INFO) << "m: " << m;
+    LOG(INFO) << "n: " << n;
+    LOG(INFO) << "k: " << k;
+    LOG(INFO) << "trans_a: " << (int)trans_a;
+    LOG(INFO) << "trans_b: " << (int)trans_b;
 
     auto type_a = dnn::ToDataType<TypeA>::value,
          type_b = dnn::ToDataType<TypeB>::value,
