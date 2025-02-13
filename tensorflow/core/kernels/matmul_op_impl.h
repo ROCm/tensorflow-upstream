@@ -641,20 +641,20 @@ struct LaunchBatchMatMul<GPUDevice, Scalar> {
 
         OP_REQUIRES_OK(context,
                        stream->ThenBlasGemm(
-                           blas_transpose_b, blas_transpose_a, n, m, k,
-                           *(b_ptrs[0]), adj_y || trans_y ? k : n, *(a_ptrs[0]),
-                           adj_x || trans_x ? m : k, c_ptrs[0], n,
+                           blas_transpose_a, blas_transpose_b, m, n, k,
+                           *(a_ptrs[0]), adj_x || trans_x ? k : m, *(b_ptrs[0]),
+                           adj_y || trans_y ? n : k, c_ptrs[0], m,
                            se::blas::kDefaultComputePrecision,
                            call_context));
       } else if (use_strided_batched) {
 	LOG(INFO) << "use_strided_batched==true";
         OP_REQUIRES_OK(
             context, stream->ThenBlasGemmStridedBatched(
-                         blas_transpose_b, blas_transpose_a, n, m, k,
-                         static_cast<Coefficient>(1.0), *b_ptrs[0],
-                         adj_y || trans_y ? k : n, b_stride, *a_ptrs[0],
-                         adj_x || trans_x ? m : k, a_stride,
-                         static_cast<Coefficient>(0.0), c_ptrs[0], n, c_stride,
+                         blas_transpose_a, blas_transpose_b, m, n, k,
+                         static_cast<Coefficient>(1.0), *a_ptrs[0],
+                         adj_x || trans_x ? k : m, a_stride, *b_ptrs[0],
+                         adj_y || trans_y ? n : k, b_stride,
+                         static_cast<Coefficient>(0.0), c_ptrs[0], m, c_stride,
                          batch_size, se::blas::kDefaultComputePrecision,
                          call_context));
       } else {
@@ -663,10 +663,10 @@ struct LaunchBatchMatMul<GPUDevice, Scalar> {
         bool blas_launch_status =
             stream
                 ->ThenBlasGemmBatchedWithScratch(
-                    blas_transpose_b, blas_transpose_a, n, m, k,
-                    static_cast<Coefficient>(1.0), b_ptrs,
-                    adj_y || trans_y ? k : n, a_ptrs, adj_x || trans_x ? m : k,
-                    static_cast<Coefficient>(0.0), c_ptrs, n, batch_size,
+                    blas_transpose_a, blas_transpose_b, m, n, k,
+                    static_cast<Coefficient>(1.0), a_ptrs,
+                    adj_x || trans_x ? k : m, b_ptrs, adj_y || trans_y ? n : k,
+                    static_cast<Coefficient>(0.0), c_ptrs, m, batch_size,
                     &scratch_allocator, call_context)
                 .ok();
         if (!blas_launch_status) {
