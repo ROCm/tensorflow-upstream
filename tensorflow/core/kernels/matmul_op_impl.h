@@ -648,6 +648,12 @@ struct LaunchBatchMatMul<GPUDevice, Scalar> {
                            call_context));
       } else if (use_strided_batched) {
 	LOG(INFO) << "use_strided_batched==true";
+        int lda = adj_x || trans_x ? k : m;
+        int ldb = adj_y || trans_y ? n : k;
+        int ldc = m;
+        LOG(INFO) << "lda: " << lda;
+        LOG(INFO) << "ldb: " << ldb;
+        LOG(INFO) << "ldc: " << ldc;
         OP_REQUIRES_OK(
             context, stream->ThenBlasGemmStridedBatched(
                          blas_transpose_a, blas_transpose_b, m, n, k,

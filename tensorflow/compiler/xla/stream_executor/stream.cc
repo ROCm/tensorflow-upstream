@@ -1566,6 +1566,9 @@ tsl::Status Stream::ThenBlasGemmStridedBatched(
   LOG(INFO) << "k: " << k;
   LOG(INFO) << "transa: " << (int)transa;
   LOG(INFO) << "transb: " << (int)transb;
+  LOG(INFO) << "lda: " << lda;
+  LOG(INFO) << "ldb: " << ldb;
+  LOG(INFO) << "ldc: " << ldc;
   
   if (gpu::GpuBlasLtEnabled()) {
     auto &r = gpu::BlasLtGemmRunner::i(this);

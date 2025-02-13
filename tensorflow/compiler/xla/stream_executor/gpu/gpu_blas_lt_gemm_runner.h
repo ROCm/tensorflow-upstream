@@ -165,6 +165,9 @@ struct BlasLtGemmRunner {
     LOG(INFO) << "k: " << k;
     LOG(INFO) << "trans_a: " << (int)trans_a;
     LOG(INFO) << "trans_b: " << (int)trans_b;
+    LOG(INFO) << "lda: " << lda;
+    LOG(INFO) << "ldb: " << ldb;
+    LOG(INFO) << "ldc: " << ldc;
 
     auto type_a = dnn::ToDataType<TypeA>::value,
          type_b = dnn::ToDataType<TypeB>::value,
