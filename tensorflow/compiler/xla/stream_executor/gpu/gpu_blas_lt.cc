@@ -286,8 +286,7 @@ std::string ToCSVString(const GemmConfig& cfg, bool full_string) {
 
   if (full_string) {
     // NOTE: epilogue is required for MatmulPlan caching !
-    oss //<< kCsvSep << cfg.alpha << kCsvSep << cfg.beta 
-        << kCsvSep << (int64_t)cfg.epilogue;
+    oss << kCsvSep << cfg.alpha.real() << kCsvSep << cfg.alpha.imag() << kCsvSep << cfg.beta << kCsvSep << (int64_t)cfg.epilogue;
   }
 
   return oss.str();
