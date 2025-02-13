@@ -22,14 +22,14 @@ def CompareCpuAndGpu():
 
     q_placeholder = tf.placeholder(tf.float32, shape_input)
     input_xla[q_placeholder] = [
-        [[[1.0 for i in range(dim)] for j in range(nh)] for k in range(seqlen)]
+        [[[random.uniform(-2, 2) for i in range(dim)] for j in range(nh)] for k in range(seqlen)]
         for t in range(batch)
     ]
     input_non_xla[q_placeholder] = copy.deepcopy(input_xla[q_placeholder])
 
     k_placeholder = tf.placeholder(tf.float32, shape_input)
     input_xla[k_placeholder] = [
-        [[[1.0 for i in range(dim)] for j in range(nh)] for k in range(seqlen)]
+        [[[random.uniform(-2, 2) for i in range(dim)] for j in range(nh)] for k in range(seqlen)]
         for t in range(batch)
     ]
     input_non_xla[k_placeholder] = copy.deepcopy(input_xla[k_placeholder])
