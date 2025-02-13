@@ -368,9 +368,15 @@ struct LaunchBatchMatMul<GPUDevice, Scalar> {
     LOG(INFO) << "m: " << m;
     LOG(INFO) << "n: " << n;
     LOG(INFO) << "k: " << k;
+    LOG(INFO) << "adj_x: " << adj_x;
+    LOG(INFO) << "adj_y: " << adj_y;
+    LOG(INFO) << "trans_x: " << trans_x;
+    LOG(INFO) << "trans_y: " << trans_y;
     const int64_t batch_size = bcast.output_batch_size();
     auto blas_transpose_a = trans[adj_x ? 2 : (trans_x ? 1 : 0)];
     auto blas_transpose_b = trans[adj_y ? 2 : (trans_y ? 1 : 0)];
+    LOG(INFO) << "blas_transpose_a: " << blas_transpose_a;
+    LOG(INFO) << "blas_transpose_b: " << blas_transpose_b;
 
     auto* stream = context->op_device_context()->stream();
     OP_REQUIRES(context, stream, errors::Internal("No GPU stream available."));
