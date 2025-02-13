@@ -235,8 +235,14 @@ xla::Status BlasLtGemmRunner::RunStridedBatchedImpl(Stream& stream,
   auto res = strided_gemm_map_.find(scfg);
   while (res == strided_gemm_map_.end()) {
     int64 row_a = m, col_a = k, row_b = k, col_b = n;
-    if (trans_a == blas::Transpose::kTranspose) std::swap(row_a, col_a);
-    if (trans_b == blas::Transpose::kTranspose) std::swap(row_b, col_b);
+    if (trans_a == blas::Transpose::kTranspose ||
+        trans_a == blas::Transpose::kConjugateTranspose) {
+      std::swap(row_a, col_a);
+    }
+    if (trans_b == blas::Transpose::kTranspose ||
+        trans_b == blas::Transpose::kConjugateTranspose) {
+      std::swap(row_b, col_b);
+    }
 
     auto order = MatrixLayout::Order::kColumnMajor;
     GemmConfig cfg = {
