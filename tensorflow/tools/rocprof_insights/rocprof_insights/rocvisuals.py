@@ -292,7 +292,7 @@ class RocprofStatsVisualizer:
             ),
             # Add (or override) axis labels:
             xaxis_title='Number of calls [-]',
-            yaxis_title="Count [-]"  # or whatever label you want
+            yaxis_title="avg duration [us]"  # or whatever label you want
         )
 
         if output_file:

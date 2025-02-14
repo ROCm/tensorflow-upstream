@@ -74,7 +74,7 @@ class RocprofLoader:
 
         # Rename columns based on the version
         rename_map = self.VERSION_COLUMN_MAP[self.version]
-        self.df.rename(columns=rename_map, inplace=True, errors='ignore')
+        self.df.rename(columns=rename_map, inplace=True, errors='ignore')      
 
         # Ensure duration_ns is present; if not, try to compute it
         if 'duration_ns' not in self.df.columns:
