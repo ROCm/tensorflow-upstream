@@ -99,10 +99,12 @@ bool GpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kSubtract:
     case HloOpcode::kMultiply: {
       if (LowPrecisionType() == BF16) {
-        auto* cuda_compute_capability =
-            std::get_if<se::CudaComputeCapability>(&compute_capability_);
-        return cuda_compute_capability != nullptr &&
-               cuda_compute_capability->IsAtLeastHopper();
+        if (std::holds_alternative<se::CudaComputeCapability>(compute_capability_)){
+          return std::get<se::CudaComputeCapability>(compute_capability_).IsAtLeastHopper();
+        }
+        else if (std::holds_alternative<se::RocmComputeCapability>(compute_capability_)){
+          return std::get<se::RocmComputeCapability>(compute_capability_).gfx9_mi200_or_later();
+        }
       }
       return false;
     }
