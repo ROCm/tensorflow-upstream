@@ -139,19 +139,20 @@ def prepare_headers(headers: list[str], srcs_dir: str) -> None:
       "external/local_tsl/": "tensorflow",
   }
 
-  for file in headers:
-    if file.endswith("cc.inc"):
-      continue
+  if headers is not None and len(headers) > 0:
+    for file in headers:
+      if file.endswith("cc.inc"):
+        continue
 
-    if any(i in file for i in path_to_exclude):
-      continue
+      if any(i in file for i in path_to_exclude):
+        continue
 
-    for path, val in path_to_replace.items():
-      if path in file:
-        copy_file(file, os.path.join(srcs_dir, val), path)
-        break
-    else:
-      copy_file(file, srcs_dir)
+      for path, val in path_to_replace.items():
+        if path in file:
+          copy_file(file, os.path.join(srcs_dir, val), path)
+          break
+        else:
+          copy_file(file, srcs_dir)
 
   create_local_config_python(
       os.path.join(srcs_dir, "external/local_config_python")
