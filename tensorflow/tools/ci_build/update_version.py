@@ -349,6 +349,7 @@ def main():
 
   check_all_files()
   old_version = get_current_semver_version()
+  print(f"{old_version = } {args.nightly = } {args.version = } {args.rocm_version = }")
 
   if args.nightly:
     if args.version:
@@ -397,6 +398,8 @@ def main():
   print("Identifier String: %s -> %s\n" % (old_version.identifier_string, new_version.identifier_string))
 
   check_for_old_version(old_version, new_version)
+  print(f"{new_version = }")
+  exit(-1)
 
 
 if __name__ == "__main__":
