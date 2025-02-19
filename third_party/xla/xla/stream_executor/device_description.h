@@ -188,9 +188,8 @@ class RocmComputeCapability {
                                       gfx_version() == "gfx1101" ||
                                       gfx_version() == "gfx1102"); }
 
-  bool gfx12_rx8900() const { return ((gfx_version() == "gfx1200") || 
-                                      (gfx_version() == "gfx1201") || 
-                                      (gfx_version() == "gfx1202")); }
+  bool gfx12_rx8900() const { return (gfx_version() == "gfx1200" || 
+                                      gfx_version() == "gfx1201"); }
 
   bool has_nhwc_layout_support() const { return gfx9_mi100_or_later(); }
 
