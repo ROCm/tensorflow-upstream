@@ -947,11 +947,15 @@ absl::Status AMDGPUTargetModuleLinker(
   // not has major impact as the hipcc path by default enables flush to zero for
   // compilation.
   // If ftz is enabled, set it as an attribute on every function in the module.
-  if (debug_options.xla_gpu_ftz()) {
-    for (llvm::Function& fn : *module) {
+  for (llvm::Function& fn : *module) {
+    if (debug_options.xla_gpu_ftz()) {
       // may be necessary for the compiler to generate atomics (confirm!)
       fn.addFnAttr("denormal-fp-math-f32", "preserve-sign");
       fn.addFnAttr("amdgpu-unsafe-fp-atomics", "true");
+    }
+
+    if (!fn.isDeclaration() && fn.hasInternalLinkage()) {
+      fn.addFnAttr(llvm::Attribute::AttrKind::AlwaysInline);
     }
   }
 
