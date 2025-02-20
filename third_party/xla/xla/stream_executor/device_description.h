@@ -78,13 +78,13 @@ class RocmComputeCapability {
 
   bool gfx9_mi100_or_later() const {
     static constexpr absl::string_view kList[] = {"gfx908", "gfx90a", "gfx940",
-                                                  "gfx941", "gfx942"};
+                                                  "gfx941", "gfx942", "gfx950"};
     return absl::c_count(kList, gfx_version()) != 0;
   }
 
   bool gfx9_mi200_or_later() const {
     static constexpr absl::string_view kList[] = {"gfx90a", "gfx940", "gfx941",
-                                                  "gfx942"};
+                                                  "gfx942", "gfx950"};
     return absl::c_count(kList, gfx_version()) != 0;
   }
 
@@ -157,6 +157,7 @@ class RocmComputeCapability {
       "gfx908",                         // MI100
       "gfx90a",                         // MI200
       "gfx940",  "gfx941", "gfx942",    // MI300
+      "gfx950",                        
       "gfx1030",                        // RX68xx / RX69xx
       "gfx1100", "gfx1101", "gfx1102",  // RX7900
       "gfx1200", "gfx1201",             // RX8900      
