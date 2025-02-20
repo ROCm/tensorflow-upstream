@@ -916,7 +916,7 @@ Status MarkForCompilationPassImpl::DeclusterNodes() {
     // increasing its live range.
     //
     // See b/221997940 for a real-world example of this.
-    if (n->op_def().name() == "Fill" &&
+    if ((n->op_def().name() == "Fill" || n->def().op() == "SplitV") &&
         n->out_nodes().begin() != n->out_nodes().end() &&
         absl::c_all_of(n->out_nodes(), [&](Node* user) {
           return GetClusterForNode(user) != cluster;
