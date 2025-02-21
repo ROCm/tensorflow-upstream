@@ -934,6 +934,10 @@ std::unique_ptr<llvm::TargetMachine> AMDGPUGetTargetMachine(
 }
 
 void AMDGPUBackendInit(const HloModuleConfig& hlo_module_config) {
+  FeedLLVMWithFlags({
+      "-amdgpu-kernarg-preload-count=16",
+  });
+
   llvm_ir::InitializeLLVMCommandLineOptions(
       hlo_module_config.debug_options().xla_backend_extra_options());
 
