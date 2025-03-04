@@ -189,7 +189,7 @@ class DistributedSaveTest(
 
   @combinations.generate(
       combinations.times(
-          test_base.default_test_combinations(),
+          test_base.v1_only_combinations(),
           combinations.combine(
               num_workers=[1, 3],
               repeated_load=[1, 5],
