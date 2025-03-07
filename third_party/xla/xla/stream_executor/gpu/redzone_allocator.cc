@@ -258,7 +258,7 @@ absl::StatusOr<RedzoneCheckStatus> RedzoneAllocator::CheckRedzones() const {
   StreamExecutor* executor = stream_->parent();
 
   TF_ASSIGN_OR_RETURN(
-      const ComparisonKernel* kernel,
+      ComparisonKernel kernel,
       GetComparisonKernel(stream_->parent(), gpu_compilation_opts_));
 
   stream_executor::DeviceMemoryHandle out_param(
@@ -271,7 +271,7 @@ absl::StatusOr<RedzoneCheckStatus> RedzoneAllocator::CheckRedzones() const {
         RedzoneCheckStatus redzone_status,
         CheckRedzonesForBuffer(stream_, *buf_and_size.first,
                                DeviceMemory<uint64_t>(out_param.memory()),
-                               *kernel, buf_and_size.second, redzone_size_,
+                               kernel, buf_and_size.second, redzone_size_,
                                redzone_pattern_));
     if (!redzone_status.ok()) {
       return redzone_status;

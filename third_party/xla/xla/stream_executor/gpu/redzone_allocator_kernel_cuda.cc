@@ -38,7 +38,7 @@ limitations under the License.
 namespace stream_executor {
 // Maintains a cache of pointers to loaded kernels
 template <typename... Args>
-static absl::StatusOr<TypedKernel<Args...>*> LoadKernelOrGetPtr(
+static absl::StatusOr<TypedKernel<Args...>*> LoadOrGetKernel(
     StreamExecutor* executor, absl::string_view kernel_name,
     absl::string_view ptx, absl::Span<const uint8_t> cubin_data) {
   using KernelPtrCacheKey =
@@ -60,7 +60,7 @@ static absl::StatusOr<TypedKernel<Args...>*> LoadKernelOrGetPtr(
   }
 
   CHECK(it != kernel_ptr_cache.end());
-  return &it->second;
+  return it->second;
 }
 
 // PTX blob for the function which checks that every byte in
@@ -119,7 +119,7 @@ LBB6_3:
 }
 )";
 
-absl::StatusOr<const ComparisonKernel*> GetComparisonKernel(
+absl::StatusOr<ComparisonKernel> GetComparisonKernel(
     StreamExecutor* executor, GpuAsmOpts gpu_asm_opts) {
   absl::Span<const uint8_t> compiled_ptx = {};
   absl::StatusOr<absl::Span<const uint8_t>> compiled_ptx_or =
@@ -136,7 +136,7 @@ absl::StatusOr<const ComparisonKernel*> GetComparisonKernel(
     });
   }
 
-  return LoadKernelOrGetPtr<DeviceMemory<uint8_t>, uint8_t, uint64_t,
+  return LoadOrGetKernel<DeviceMemory<uint8_t>, uint8_t, uint64_t,
                             DeviceMemory<uint64_t>>(
       executor, "redzone_checker", redzone_checker_ptx, compiled_ptx);
 }
