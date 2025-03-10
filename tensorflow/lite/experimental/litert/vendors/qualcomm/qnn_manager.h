@@ -31,6 +31,7 @@
 #include "third_party/qairt/latest/include/QNN/QnnCommon.h"
 #include "third_party/qairt/latest/include/QNN/QnnContext.h"
 #include "third_party/qairt/latest/include/QNN/QnnInterface.h"
+#include "third_party/qairt/latest/include/QNN/QnnTypes.h"
 #include "third_party/qairt/latest/include/QNN/System/QnnSystemContext.h"
 #include "third_party/qairt/latest/include/QNN/System/QnnSystemInterface.h"
 #include "tensorflow/lite/experimental/litert/c/litert_common.h"
@@ -86,6 +87,7 @@ class QnnManager {
 
   static absl::Span<const QnnBackend_Config_t*> DefaultBackendConfigs();
   static absl::Span<const QnnContext_Config_t*> DefaultContextConfigs();
+  static absl::Span<const QnnContext_Config_t*> WeightSharingContextConfigs();
 
   // Get resolved function pointers for qnn sdk calls. Nullptr if functions
   // have not been resolved yet.
@@ -119,6 +121,8 @@ class QnnManager {
   // buffer.
   LiteRtStatus GenerateContextBinary(Qnn_ContextHandle_t context_handle,
                                      std::vector<char>& buffer);
+
+  LiteRtStatus ValidateOp(const Qnn_OpConfig_t& op_config);
 
  private:
   QnnManager() = default;

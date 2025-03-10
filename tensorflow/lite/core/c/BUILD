@@ -16,6 +16,7 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//tensorflow/lite:__subpackages__",
+        "//third_party/odml/litert:__subpackages__",
     ],
     licenses = ["notice"],
 )
@@ -101,13 +102,13 @@ tflite_cc_library_with_c_headers_test(
         ":operator",
         "//tensorflow/lite:builtin_ops",
         "//tensorflow/lite:mutable_op_resolver",
-        "//tensorflow/lite:signature_runner",
         "//tensorflow/lite:stderr_reporter",
         "//tensorflow/lite:version",
         "//tensorflow/lite/c:c_api_internal",
         "//tensorflow/lite/c:common_internal",
         "//tensorflow/lite/core:create_op_resolver_header",
         "//tensorflow/lite/core:framework_stable",
+        "//tensorflow/lite/core:signature_runner",
         "//tensorflow/lite/core/api",
         "//tensorflow/lite/core/async/c:types",
         "//tensorflow/lite/delegates:interpreter_utils",
@@ -150,15 +151,14 @@ tflite_cc_library_with_c_headers_test(
         ":c_api_types",
         ":operator_without_alwayslink",
         "//tensorflow/lite:builtin_ops",
-        "//tensorflow/lite:framework_stable",
         "//tensorflow/lite:mutable_op_resolver",
-        "//tensorflow/lite:signature_runner",
         "//tensorflow/lite:stderr_reporter",
         "//tensorflow/lite:version",
         "//tensorflow/lite/c:c_api_internal",
         "//tensorflow/lite/c:common_internal",
         "//tensorflow/lite/core:create_op_resolver_header",
         "//tensorflow/lite/core:framework_stable",
+        "//tensorflow/lite/core:signature_runner",
         "//tensorflow/lite/core/api",
         "//tensorflow/lite/core/async/c:types",
         "//tensorflow/lite/delegates:interpreter_utils",
@@ -296,6 +296,7 @@ tflite_cc_library_with_c_headers_test(
     visibility = [
         "//tensorflow/compiler/mlir/lite/experimental/lrt:__subpackages__",
         "//tensorflow/lite:__subpackages__",
+        "//third_party/odml/litert/litert:__subpackages__",
     ] + c_api_visibility_allowlist(),
     deps = [
         "//tensorflow/compiler/mlir/lite/core/c:tflite_common",
@@ -310,7 +311,10 @@ cc_test(
     deps = [
         ":c_api_types",
         ":common",
+        "//tensorflow/lite:array",
+        "//tensorflow/lite:test_util",
         "//tensorflow/lite:util",
+        "//tensorflow/lite/c:c_api_types",
         "@com_google_googletest//:gtest_main",
     ],
 )

@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/index_domain.h"
@@ -85,6 +86,11 @@ std::shared_ptr<MockClient> MakeTestClient(int num_devices) {
   ON_CALL(*client, devices)
       .WillByDefault(
           [state]() -> absl::Span<Device* const> { return state->devices; });
+  ON_CALL(*client, MakeDeviceList)
+      .WillByDefault([](absl::Span<Device* const> devices)
+                         -> tsl::RCReference<DeviceList> {
+        return BasicDeviceList::Create(devices);
+      });
   return client;
 }
 

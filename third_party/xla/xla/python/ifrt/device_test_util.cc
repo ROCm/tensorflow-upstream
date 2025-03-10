@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/memory.h"
@@ -129,6 +130,11 @@ std::shared_ptr<MockClient> MakeDeviceTestClient(int num_devices,
           return InvalidArgument("Unexpected device id: %d", device_id.value());
         }
         return it->second.get();
+      });
+  ON_CALL(*client, MakeDeviceList)
+      .WillByDefault([](absl::Span<Device* const> devices)
+                         -> tsl::RCReference<DeviceList> {
+        return BasicDeviceList::Create(devices);
       });
   ON_CALL(*client, GetTopologyForDevices)
       .WillByDefault(

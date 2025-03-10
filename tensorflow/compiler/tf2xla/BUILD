@@ -1040,6 +1040,7 @@ tf_cc_test(
         "@local_xla//xla/client:local_client",
         "@local_xla//xla/hlo/builder:xla_builder",
         "@local_xla//xla/service:cpu_plugin",
+        "@local_xla//xla/service:hlo_module_util",
         "@local_xla//xla/service:hlo_proto_cc",
         "@local_xla//xla/service:hlo_proto_util",
         "@local_xla//xla/tests:literal_test_util",
@@ -1134,7 +1135,6 @@ tf_gen_op_wrapper_py(
 cuda_py_strict_test(
     name = "light_outside_compilation_test",
     srcs = ["light_outside_compilation_test.py"],
-    python_version = "PY3",
     tags = [
         "no_oss",
     ],

@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -247,15 +248,12 @@ IfrtServingExecutable::Create(
                          original_compile_metadata.num_cores_per_replica()));
 
   auto executable = absl::WrapUnique(new IfrtServingExecutable(
-      program_id, model_name, signature_name, std::move(module),
-      std::move(client), thread_pool, ifrt_loaded_variable_registry,
-      ifrt_restore, checkpoint_loader_queue, device_mgr,
-      std::move(shape_representation_fn), ifrt_serving_core_selector,
-      std::move(original_compile_metadata),
-      xla::ifrt::BasicDeviceList::Create(xla::ifrt::BasicDeviceList::Devices(
-          assigned_devices.begin(), assigned_devices.end())),
-      compilation_environment_proto, tf_to_hlo_compiler,
-      persistent_compilation_cache));
+      program_id, model_name, signature_name, std::move(module), client,
+      thread_pool, ifrt_loaded_variable_registry, ifrt_restore,
+      checkpoint_loader_queue, device_mgr, std::move(shape_representation_fn),
+      ifrt_serving_core_selector, std::move(original_compile_metadata),
+      client->MakeDeviceList(assigned_devices), compilation_environment_proto,
+      tf_to_hlo_compiler, persistent_compilation_cache));
 
   return executable;
 }
@@ -433,7 +431,9 @@ IfrtServingExecutable::CreateExecutableSynchronously(
       .platform_name = ifrt_client_->platform_name(),
   };
 
-  if (tf2hlo_arg.platform_name != xla::CudaName()) {
+  // Only get device topology for clients that implement GetTopologyForDevices.
+  if (tf2hlo_arg.platform_name != xla::CudaName() &&
+      !absl::StartsWith(ifrt_client_->runtime_type(), "proxy/")) {
     TF_ASSIGN_OR_RETURN(
         tf2hlo_arg.topology,
         ifrt_client_->GetTopologyForDevices(assigned_device_list_));
@@ -651,8 +651,7 @@ absl::StatusOr<std::vector<tensorflow::Tensor>> IfrtServingExecutable::Execute(
     TF_ASSIGN_OR_RETURN(xla::ifrt::Device * device,
                         ifrt_client_->LookupDevice(xla::ifrt::DeviceId(
                             device_reservation.device_index())));
-    device_list = xla::ifrt::BasicDeviceList::Create(
-        xla::ifrt::BasicDeviceList::Devices({device}));
+    device_list = ifrt_client_->MakeDeviceList({device});
   } else {
     device_list = assigned_device_list_;
   }

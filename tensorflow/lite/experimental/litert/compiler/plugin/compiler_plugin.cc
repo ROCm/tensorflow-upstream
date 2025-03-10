@@ -44,9 +44,9 @@
 #include "tensorflow/lite/experimental/litert/core/dynamic_loading.h"
 #include "tensorflow/lite/experimental/litert/core/environment.h"
 #include "tensorflow/lite/experimental/litert/core/filesystem.h"
+#include "tensorflow/lite/experimental/litert/core/model/buffer_manager.h"
 #include "tensorflow/lite/experimental/litert/core/model/ir_allocator.h"
 #include "tensorflow/lite/experimental/litert/core/model/model.h"
-#include "tensorflow/lite/experimental/litert/core/model/model_serialize.h"
 #include "tensorflow/lite/experimental/litert/core/util/flatbuffer_tools.h"
 #include "tensorflow/lite/experimental/litert/vendors/c/litert_compiler_plugin.h"
 #include "tensorflow/lite/experimental/litert/vendors/c/litert_compiler_plugin_api.h"
@@ -256,7 +256,7 @@ Expected<std::vector<CompilerPlugin>> CompilerPlugin::LoadPlugins(
     // Skip paths that are not valid.
     if (Exists(search_path)) {
       LITERT_RETURN_IF_ERROR(
-          FindLiteRtSharedLibs(search_path, plugin_lib_paths));
+          FindLiteRtCompilerPluginSharedLibs(search_path, plugin_lib_paths));
     }
   }
 
@@ -333,12 +333,12 @@ Expected<LiteRtHwAccelerators> CompilerPlugin::SupportedHardware() const {
   return supported_hardware;
 }
 
-Expected<std::vector<LiteRtOp>> CompilerPlugin::Partition(
+Expected<std::vector<LiteRtOpWithPartitionIndex>> CompilerPlugin::Partition(
     const Subgraph& subgraph) {
   LiteRtOpListT ops;
   LITERT_RETURN_IF_ERROR(plugin_api_.compiler_plugin_partition(
       plugin_handle_, subgraph.Get(), &ops));
-  return ops.Vec();
+  return ops.Values();
 }
 
 Expected<CompiledResult> CompilerPlugin::Compile(LiteRtModel partitions,
@@ -357,18 +357,12 @@ Expected<CompiledResult> CompilerPlugin::Compile(LiteRtModel partitions,
 
 namespace {
 
-LiteRtStatus PartitionSubgraph(CompilerPlugin& compiler_plugin,
-                               LiteRtSubgraphT& subgraph,
-                               PartitionResult& result) {
-  // Get selected ops from plugin.
-  auto selected_ops = compiler_plugin.Partition(Subgraph(&subgraph));
-  if (!selected_ops) {
-    LITERT_LOG(LITERT_ERROR, "Failed to get partitions from plugin");
-    return selected_ops.Error().Status();
-  }
-
+LiteRtStatus PartitionSubgraph(
+    std::vector<LiteRtOpWithPartitionIndex> selected_ops,
+    LiteRtSubgraphT& subgraph, PartitionResult& result,
+    BufferManager* buffer_manager) {
   // Group selected ops into connected islands.
-  auto islands = GroupPartitions(*selected_ops);
+  auto islands = GroupPartitions(selected_ops);
   if (islands.empty()) {
     LITERT_LOG(LITERT_ERROR, "Failed to group partitions");
     return kLiteRtStatusErrorRuntimeFailure;
@@ -377,7 +371,7 @@ LiteRtStatus PartitionSubgraph(CompilerPlugin& compiler_plugin,
   // For each connected island, slice into new subgraph and replace use with
   // single dispatch op.
   for (auto& island : islands) {
-    auto& new_subgraph = result.second.EmplaceBack();
+    auto& new_subgraph = result.second.EmplaceBack(buffer_manager);
     auto* dispatch_op = OutlinePartition(subgraph, &new_subgraph, island);
     result.first.push_back(dispatch_op);
   }
@@ -392,23 +386,41 @@ Expected<PartitionResult> PartitionModel(CompilerPlugin& compiler_plugin,
   // Accumulate partition results for each subgraph in model.
   PartitionResult result;
   for (auto* subgraph : model.Subgraphs()) {
+    // Get selected ops from plugin.
+    auto selected_ops = compiler_plugin.Partition(Subgraph(subgraph));
+    if (!selected_ops) {
+      LITERT_LOG(LITERT_ERROR, "Failed to get partitions from plugin");
+      return selected_ops.Error();
+    }
+
     LITERT_RETURN_IF_ERROR(
-        PartitionSubgraph(compiler_plugin, *subgraph, result));
+        PartitionSubgraph(*selected_ops, *subgraph, result, model.Buffers()));
   }
   ABSL_DCHECK_EQ(result.first.size(), result.second.Size());
   return result;
 }
 
-Expected<void> ApplyPlugin(CompilerPlugin& compiler_plugin, LiteRtModelT& model,
-                           absl::string_view soc_model) {
-  // Collect partitions to pass to compilation.
-  auto partitions = PartitionModel(compiler_plugin, model);
-  if (!partitions) {
-    return partitions.Error();
+Expected<PartitionResult> PartitionModelDirect(
+    std::vector<LiteRtOpWithPartitionIndex> selected_ops, LiteRtModelT& model) {
+  if (model.Subgraphs().size() != 1) {
+    // Only single subgraphs supported for direct partitioning.
+    return Unexpected(kLiteRtStatusErrorRuntimeFailure);
   }
+  // Accumulate partition results for each subgraph in model.
+  PartitionResult result;
+  auto* subgraph = model.Subgraphs().front();
+  LITERT_RETURN_IF_ERROR(PartitionSubgraph(std::move(selected_ops), *subgraph,
+                                           result, model.Buffers()));
+  ABSL_DCHECK_EQ(result.first.size(), result.second.Size());
+  return result;
+}
 
-  auto& dispatch_ops = partitions->first;
-  auto& subgraphs = partitions->second;
+Expected<void> ApplyPluginWithPartition(CompilerPlugin& compiler_plugin,
+                                        LiteRtModelT& model,
+                                        PartitionResult partitions,
+                                        absl::string_view soc_model) {
+  auto& dispatch_ops = partitions.first;
+  auto& subgraphs = partitions.second;
 
   // Wrap the partitioned subgraphs in a LiteRtModel.
   LiteRtModelT sliced_model;
@@ -485,12 +497,23 @@ Expected<void> ApplyPlugin(CompilerPlugin& compiler_plugin, LiteRtModelT& model,
   return {};
 }
 
+Expected<void> ApplyPlugin(CompilerPlugin& compiler_plugin, LiteRtModelT& model,
+                           absl::string_view soc_model) {
+  // Collect partitions to pass to compilation.
+  auto partitions = PartitionModel(compiler_plugin, model);
+  if (!partitions) {
+    return partitions.Error();
+  }
+  return ApplyPluginWithPartition(compiler_plugin, model,
+                                  std::move(*partitions), soc_model);
+}
+
 Expected<ApplyPluginsResult> ApplyPlugins(
     LiteRtEnvironment environment, LiteRtModel model,
     LiteRtHwAcceleratorSet selected_hw_accelerators) {
   std::string compiler_plugin_lib_path = ".";
   auto option =
-      environment->GetOption(kLiteRtEnvOptionTagCompilerPluginLibraryPath);
+      environment->GetOption(kLiteRtEnvOptionTagCompilerPluginLibraryDir);
   if (option.has_value() && option->type == kLiteRtAnyTypeString) {
     compiler_plugin_lib_path = option->str_value;
   }

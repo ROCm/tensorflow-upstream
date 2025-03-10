@@ -65,14 +65,14 @@ litert::Expected<void> NeuronAdapterApi::LoadSymbols(
   const std::vector<std::string> so_paths = {
       // The following preinstalled library is for system partition
       // applications.
-      "libneuronusdk_adapter.mtk.so",
-      // The next preinstalled library is in the vendor partition.
-      "libneuron_adapter_mgvi.so",
+      "libneuronusdk_adapter.mtk.so", "libneuron_adapter_mgvi.so",
+      kLibNeuronAdapterLib,
       // Finally, the app may want to provide their own version of the library.
       shared_library_dir.has_value()
           ? absl::StrCat(*shared_library_dir, "/", kLibNeuronAdapterLib)
           : kLibNeuronAdapterLib};
-  if (auto status = litert::internal::OpenLib(so_paths, &dlib_handle_, true);
+  if (auto status = litert::internal::OpenLib(so_paths, &dlib_handle_,
+                                              /*log_failure=*/false);
       status != kLiteRtStatusOk) {
     return litert::Error(status, "Failed to load NeuronAdapter shared library");
   }
