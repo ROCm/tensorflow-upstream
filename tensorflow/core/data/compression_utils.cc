@@ -231,9 +231,10 @@ Status UncompressElement(const CompressedElement& compressed,
   return absl::OkStatus();
 }
 
+namespace {
+
 REGISTER_UNARY_VARIANT_DECODE_FUNCTION(CompressedElement,
                                        "tensorflow.data.CompressedElement");
-namespace {
 
 Status CopyCompressedElementOnDevice(
     const CompressedElement& from, CompressedElement* to,
