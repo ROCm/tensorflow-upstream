@@ -186,6 +186,8 @@ xla_test(
         "data/multiple_gemm_fusions.hlo",
         "data/sharded_16_devices.hlo",
         "data/sharded_2_devices.hlo",
+        "data/sharded_computation.hlo",
+        "data/sharded_unoptimized_hlo_snapshot.pbtxt",
         "data/single_device.hlo",
         "data/single_device_tupled.hlo",
     ],
