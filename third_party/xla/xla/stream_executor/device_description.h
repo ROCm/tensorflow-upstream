@@ -215,9 +215,13 @@ class RocmComputeCapability {
     return gfx_version() != "gfx900" && gfx_version() != "gfx906";
   }
 
-  bool has_hipblaslt() const { return gfx9_mi200_or_later(); }
+  bool has_hipblaslt() const { return gfx9_mi200_or_later() || gfx12_rx8900() || gfx_version() == "gfx950"; }
 
-  bool has_fp8_support() const { return gfx9_mi300(); }
+  bool has_fp8_support() const { return has_ocp_fp8_support() || has_nanoo_fp8_support(); }
+
+  bool has_ocp_fp8_support() const { return gfx12_rx8900() || gfx_version() == "gfx950"; }
+
+  bool has_nanoo_fp8_support() const { return gfx9_mi300(); }
 
   RocmComputeCapabilityProto ToProto() const {
     RocmComputeCapabilityProto proto;
@@ -241,6 +245,7 @@ class RocmComputeCapability {
       "gfx1030",                        // RX68xx / RX69xx
       "gfx1100", "gfx1101", "gfx1102",  // RX7900
       "gfx1200", "gfx1201",             // RX8900
+      "gfx950",
   };
 };
 

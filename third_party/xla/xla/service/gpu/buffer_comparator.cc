@@ -187,7 +187,7 @@ absl::StatusOr<bool> BufferComparator::CompareEqual(
                           stream,        current,  expected};
 
   switch (shape_.element_type()) {
-#if GOOGLE_CUDA  // not available for ROCm yet..
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60300
     case xla::F8E4M3FN:
       return CompareEqualParameterized<tsl::float8_e4m3fn, float>(
           "fp8_e4m3fn_comparison", buffer_comparator::fp8_e4m3fn_comparison(),
@@ -196,7 +196,7 @@ absl::StatusOr<bool> BufferComparator::CompareEqual(
       return CompareEqualParameterized<tsl::float8_e5m2, float>(
           "fp8_e5m2_comparison", buffer_comparator::fp8_e5m2_comparison(),
           params);
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60300
 #if TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60200
     case xla::F8E4M3FNUZ:
       return CompareEqualParameterized<tsl::float8_e4m3fnuz, float>(
