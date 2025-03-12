@@ -111,7 +111,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_cudnn_frontend(true);
 
-  opts.set_xla_gpu_enable_cublaslt(false);
+  opts.set_xla_gpu_enable_cublaslt(true);
 
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);

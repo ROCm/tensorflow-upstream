@@ -659,7 +659,7 @@ TEST(CommandBufferThunkTest, GemmCmd) {
       ShapeUtil::MakeShape(PrimitiveType::F32, {4, 3}), {}, {0},
       ShapeUtil::MakeShape(PrimitiveType::F32, {2, 3}), 1.0, 0.0, 0.0,
       PrecisionConfig::ALG_UNSET, std::nullopt,
-      se::blas::kDefaultComputePrecision, false, false,
+      se::blas::kDefaultComputePrecision, false, false, false,
       executor->GetDeviceDescription().gpu_compute_capability());
   ASSERT_TRUE(config.ok());
 
@@ -785,7 +785,7 @@ TEST(CommandBufferThunkTest, DynamicSliceFusionCmd) {
       ShapeUtil::MakeShape(PrimitiveType::F32, {4, 3}), {}, {0},
       ShapeUtil::MakeShape(PrimitiveType::F32, {2, 3}), 1.0, 0.0, 0.0,
       PrecisionConfig::ALG_UNSET, std::nullopt,
-      se::blas::kDefaultComputePrecision, false, false,
+      se::blas::kDefaultComputePrecision, false, false, false,
       executor->GetDeviceDescription().gpu_compute_capability());
   ASSERT_TRUE(config.ok());
 
@@ -924,7 +924,7 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
       /*precision_algorithm*/ PrecisionConfig::ALG_UNSET,
       /*algorithm*/ std::nullopt,
       /*compute_precision*/ se::blas::kDefaultComputePrecision,
-      /*grad_x*/ false, /*grad_y*/ false,
+      /*grad_x*/ false, /*grad_y*/ false, /*is_fp8*/ false,
       executor->GetDeviceDescription().gpu_compute_capability());
   ASSERT_TRUE(config.ok());
 
