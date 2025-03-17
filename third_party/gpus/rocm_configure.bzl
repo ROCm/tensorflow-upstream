@@ -748,6 +748,7 @@ def _create_local_rocm_repository(repository_ctx):
         "-D__HIP_PLATFORM_AMD__",
         "-DEIGEN_USE_HIP",
         "-DUSE_ROCM",
+        "-DMIOPEN_BETA_API",
     ])
 
     rocm_defines["%{link_flags}"] = to_list_of_strings([

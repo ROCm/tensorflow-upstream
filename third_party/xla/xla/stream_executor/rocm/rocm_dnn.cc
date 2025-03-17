@@ -313,6 +313,7 @@ namespace wrap {
   __macro(miopenSet4dTensorDescriptor)                               \
   __macro(miopenGetTensorDescriptor)                                 \
   __macro(miopenSetTensorDescriptor)                                 \
+  __macro(miopenSetTensorDescriptorV2)                               \
   __macro(miopenGetTensorDescriptorSize)                             \
   __macro(miopenPoolingForward)                                      \
   __macro(miopenPoolingGetWorkSpaceSizeV2)                           \
@@ -892,13 +893,13 @@ absl::StatusOr<ScopedTensorDescriptor> scope(
           batch_descriptor.full_dims(dnn::DataLayout::kBatchDepthYX);
 
       // MIOpen requires arrays of ints.
-      std::vector<int> strides(nd);
-      std::vector<int> dims(nd);
+      std::vector<unsigned long> strides(nd);
+      std::vector<unsigned long> dims(nd);
       std::transform(strides64.cbegin(), strides64.cend(), strides.begin(),
-                     &CheckedNarrowing<int64_t, int>);
+                     &CheckedNarrowing<int64_t, size_t>);
       std::transform(dims64.cbegin(), dims64.cend(), dims.begin(),
-                     &CheckedNarrowing<int64_t, int>);
-      status = wrap::miopenSetTensorDescriptor(obj.handle_, data_type, nd,
+                     &CheckedNarrowing<int64_t, size_t>);
+      status = wrap::miopenSetTensorDescriptorV2(obj.handle_, data_type, nd,
                                                dims.data(), strides.data());
 
       if (status != miopenStatusSuccess) {
@@ -969,13 +970,13 @@ absl::StatusOr<ScopedFilterDescriptor> scope(
           filter_descriptor.full_dims(dnn::FilterLayout::kOutputInputYX);
 
       // MIOpen requires arrays of ints.
-      std::vector<int> strides;
-      std::vector<int> dims;
+      std::vector<unsigned long> strides;
+      std::vector<unsigned long> dims;
       absl::c_transform(strides64, std::back_inserter(strides),
-                        &CheckedNarrowing<int64_t, int>);
+                        &CheckedNarrowing<int64_t, size_t>);
       absl::c_transform(dims64, std::back_inserter(dims),
-                        &CheckedNarrowing<int64_t, int>);
-      status = wrap::miopenSetTensorDescriptor(obj.handle_, data_type, nd,
+                        &CheckedNarrowing<int64_t, size_t>);
+      status = wrap::miopenSetTensorDescriptorV2(obj.handle_, data_type, nd,
                                                dims.data(), strides.data());
 
       if (status != miopenStatusSuccess) {
