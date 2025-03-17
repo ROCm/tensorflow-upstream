@@ -385,8 +385,11 @@ class PreemptionCheckpointTest(test.TestCase, parameterized.TestCase):
     )
 
     logging.info('Cluster starting.')
-    mpr.start()
-    mpr.join(timeout=250)
+    with self.assertRaises(Exception) as error:
+        mpr.start()
+        mpr.join(timeout=250)
+        self.assertIn('Graph execution error',
+                      str(error.exception))
 
   @combinations.generate(
       combinations.combine(
