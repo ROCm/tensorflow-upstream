@@ -203,11 +203,7 @@ GpuLaunchConfig GetGpuLaunchConfigFixedBlockSize(
 #elif TENSORFLOW_USE_ROCM
   hipError_t err = hipOccupancyMaxActiveBlocksPerMultiprocessor(
       &block_count, func, fixed_block_size, dynamic_shared_memory_size);
-  LOG(INFO) << "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-  LOG(INFO) << "block_count: " << block_count;
-  LOG(INFO) << "fixed_block_size: " << fixed_block_size;
-  LOG(INFO) << "dynamic_shared_memory_size: " << dynamic_shared_memory_size;
-  LOG(INFO) << "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+  if (block_count < 1) { block_count = 1; }
   CHECK_EQ(err, hipSuccess);
 #endif
   block_count = std::min(block_count * d.getNumGpuMultiProcessors(),
