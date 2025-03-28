@@ -51,11 +51,50 @@ export TF_PYTHON_VERSION=$PYTHON_VERSION
 export TF_NEED_ROCM=1
 export ROCM_PATH=$ROCM_INSTALL_DIR
 
-bazel test \
-    --jobs=${N_BUILD_JOBS} \
-    --compilation_mode=dbg \
-    --copt=-O1 \
-    --local_test_jobs=${N_TEST_JOBS} \
-    --config=rocm \
-    --test_output=streamed \
-    -- //tensorflow/core/grappler/optimizers:remapper_test
+if [ -f /usertools/rocm.bazelrc ]; then
+	# Use the bazelrc files in /usertools if available
+	bazel \
+	     --bazelrc=/usertools/rocm.bazelrc \
+             test \
+             --jobs=${N_BUILD_JOBS} \
+	     --local_test_jobs=${N_TEST_JOBS} \
+             --config=sigbuild_local_cache \
+             --config=rocm \
+             --config=pycpp \
+             --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
+             --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
+             --test_env=TF_GPU_COUNT=$TF_GPU_COUNT
+else
+	# Legacy style: run configure then build
+	yes "" | $PYTHON_BIN_PATH configure.py
+
+  # Run bazel test command. Double test timeouts to avoid flakes.
+	bazel test \
+	      --config=rocm \
+	      -k \
+	      --test_tag_filters=gpu,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-cuda-only,-benchmark-test,-rocm_multi_gpu,-tpu,-v1only \
+	      --jobs=${N_BUILD_JOBS} \
+	      --local_test_jobs=${N_TEST_JOBS} \
+	      --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
+	      --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
+	      --test_env=HSA_TOOLS_LIB=libroctracer64.so \
+        --test_env=MIOPEN_DEBUG_CONV_WINOGRAD=0 \
+	      --test_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
+	      --test_timeout 920,2400,7200,9600 \
+	      --build_tests_only \
+	      --test_output=errors \
+	      --test_sharding_strategy=disabled \
+	      --test_size_filters=small,medium \
+	      --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute \
+	      -- \
+	      //tensorflow/... \
+	      -//tensorflow/python/integration_testing/... \
+	      -//tensorflow/core/tpu/... \
+	      -//tensorflow/lite/... \
+	      -//tensorflow/compiler/tf2tensorrt/... \
+	      -//tensorflow/tools/toolchains/... \
+	      -//tensorflow/dtensor/python/tests:multi_client_test_nccl_2gpus \
+              -//tensorflow/dtensor/python/tests:multi_client_test_2gpus \
+	      -//tensorflow/dtensor/python/tests:multi_client_test_nccl_local_2gpus \
+	      -//tensorflow/python/distribute/experimental:multi_worker_mirrored_strategy_test_2gpus
+fi
