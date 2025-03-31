@@ -20,14 +20,19 @@ load(
     "get_python_bin",
     "raw_exec",
     "realpath",
+    "relative_to",
     "which",
+)
+load(
+    ":compiler_common_tools.bzl",
+    "get_cxx_inc_directories",
+    "to_list_of_strings",
 )
 load(
     ":cuda_configure.bzl",
     "enable_cuda",
     "make_copy_dir_rule",
     "make_copy_files_rule",
-    "to_list_of_strings",
 )
 load(
     ":sycl_configure.bzl",
@@ -89,68 +94,6 @@ def find_cc(repository_ctx):
               " environment variable").format(target_cc_name, cc_path_envvar))
     return cc
 
-_INC_DIR_MARKER_BEGIN = "#include <...>"
-
-def _cxx_inc_convert(path):
-    """Convert path returned by cc -E xc++ in a complete path."""
-    path = path.strip()
-    return path
-
-def _get_cxx_inc_directories_impl(repository_ctx, cc, lang_is_cpp):
-    """Compute the list of default C or C++ include directories."""
-    if lang_is_cpp:
-        lang = "c++"
-    else:
-        lang = "c"
-
-    # TODO: We pass -no-canonical-prefixes here to match the compiler flags,
-    #       but in rocm_clang CROSSTOOL file that is a `feature` and we should
-    #       handle the case when it's disabled and no flag is passed
-    result = raw_exec(repository_ctx, [
-        cc,
-        "-no-canonical-prefixes",
-        "-E",
-        "-x" + lang,
-        "-",
-        "-v",
-    ])
-    stderr = err_out(result)
-    index1 = stderr.find(_INC_DIR_MARKER_BEGIN)
-    if index1 == -1:
-        return []
-    index1 = stderr.find("\n", index1)
-    if index1 == -1:
-        return []
-    index2 = stderr.rfind("\n ")
-    if index2 == -1 or index2 < index1:
-        return []
-    index2 = stderr.find("\n", index2 + 1)
-    if index2 == -1:
-        inc_dirs = stderr[index1 + 1:]
-    else:
-        inc_dirs = stderr[index1 + 1:index2].strip()
-
-    return [
-        str(repository_ctx.path(_cxx_inc_convert(p)))
-        for p in inc_dirs.split("\n")
-    ]
-
-def get_cxx_inc_directories(repository_ctx, cc):
-    """Compute the list of default C and C++ include directories."""
-
-    # For some reason `clang -xc` sometimes returns include paths that are
-    # different from the ones from `clang -xc++`. (Symlink and a dir)
-    # So we run the compiler with both `-xc` and `-xc++` and merge resulting lists
-    includes_cpp = _get_cxx_inc_directories_impl(repository_ctx, cc, True)
-    includes_c = _get_cxx_inc_directories_impl(repository_ctx, cc, False)
-
-    includes_cpp_set = depset(includes_cpp)
-    return includes_cpp + [
-        inc
-        for inc in includes_c
-        if inc not in includes_cpp_set.to_list()
-    ]
-
 def auto_configure_fail(msg):
     """Output failure message when rocm configuration fails."""
     red = "\033[0;31m"
@@ -166,52 +109,36 @@ def auto_configure_warning(msg):
 # END cc_configure common functions (see TODO above).
 
 def _rocm_include_path(repository_ctx, rocm_config, bash_bin):
-    """Generates the cxx_builtin_include_directory entries for rocm inc dirs.
+    """Generates the entries for rocm inc dirs based on rocm_config.
 
     Args:
       repository_ctx: The repository context.
       rocm_config: The path to the gcc host compiler.
+      bash_bin: path to the bash interpreter.
 
     Returns:
-      A string containing the Starlark string for each of the gcc
-      host compiler include directories, which can be added to the CROSSTOOL
+      A string containing the Starlark string for each of the hipcc
+      compiler include directories, which can be added to the CROSSTOOL
       file.
     """
     inc_dirs = []
 
-    # Add HSA headers (needs to match $HSA_PATH)
-    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hsa/include")
+    # Add HIP-Clang headers (relative to rocm root)
+    rocm_path = repository_ctx.path(rocm_config.rocm_toolkit_path)
+    clang_path = rocm_path.get_child("llvm/bin/clang")
+    resource_dir_result = execute(repository_ctx, [str(clang_path), "-print-resource-dir"])
 
-    # Add HIP headers (needs to match $HIP_PATH)
-    inc_dirs.append(rocm_config.rocm_toolkit_path + "/hip/include")
-    if int(rocm_config.rocm_version_number) >= 50200:
-        inc_dirs.append(rocm_config.rocm_toolkit_path + "/include")
-        inc_dirs.append(rocm_config.rocm_toolkit_path + "/include/hip")
-        inc_dirs.append(rocm_config.rocm_toolkit_path + "/include/rocprim")
-        inc_dirs.append(rocm_config.rocm_toolkit_path + "/include/rocsolver")
-        inc_dirs.append(rocm_config.rocm_toolkit_path + "/include/rocblas")
+    if resource_dir_result.return_code:
+        auto_configure_fail("Failed to run hipcc -print-resource-dir: %s" % err_out(resource_dir_result))
 
-    # Add HIP-Clang headers (realpath relative to compiler binary)
-    rocm_toolkit_path = realpath(repository_ctx, rocm_config.rocm_toolkit_path, bash_bin)
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/8.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/9.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/10.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/11.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/12.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/13.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/14.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/15.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/16.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/17.0.0/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/17/include")
-    inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/18/include")
+    resource_dir_abs = resource_dir_result.stdout.strip()
 
-    # Support hcc based off clang 10.0.0 (for ROCm 3.3)
-    inc_dirs.append(rocm_toolkit_path + "/hcc/compiler/lib/clang/10.0.0/include/")
-    inc_dirs.append(rocm_toolkit_path + "/hcc/lib/clang/10.0.0/include")
+    resource_dir_rel = relative_to(repository_ctx, str(rocm_path.realpath), resource_dir_abs, bash_bin)
 
-    # Add hcc headers
-    inc_dirs.append(rocm_toolkit_path + "/hcc/include")
+    resource_dir = str(rocm_path.get_child(resource_dir_rel))
+
+    inc_dirs.append(resource_dir + "/include")
+    inc_dirs.append(resource_dir + "/share")
 
     return inc_dirs
 
