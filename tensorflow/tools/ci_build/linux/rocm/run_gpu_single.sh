@@ -54,7 +54,7 @@ export ROCM_PATH=$ROCM_INSTALL_DIR
 yes "" | $PYTHON_BIN_PATH configure.py
 
 TARGET_ARCHS=$(rocminfo | grep "Name: *gfx" | awk '/Name:/ {print $2}' | sort -u | tr '\n' ',' | xargs)
-if [ -z "$TARGET_ARGS" ]; then
+if [ -z "$TARGET_ARCHS" ]; then
     echo "No gpu found"
     exit 1
 fi
