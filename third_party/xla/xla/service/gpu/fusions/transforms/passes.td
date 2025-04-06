@@ -177,7 +177,10 @@ def LowerXlaGpuToScfPass :
     "mlir::gpu::GPUDialect", "mlir::LLVM::LLVMDialect", "mlir::scf::SCFDialect",
     "mlir::tensor::TensorDialect", "xla::gpu::XlaGpuDialect", "mlir::vector::VectorDialect",
   ];
-
+  
+  let options = [
+    Option<"warp_size", "warp_size", "int64_t", /*default=*/"32", "Warp size.">,
+  ];
   let constructor = "CreateLowerXlaGpuToScfPass()";
 }
 
@@ -234,6 +237,7 @@ def LowerToLLVMPass :
   ];
 }
 
+/*
 def RewriteReductionsPass : Pass<
     "xla-gpu-rewrite-reductions", "mlir::func::FuncOp"> {
   let summary = "Rewrites reductions to pieces that can efficiently be emitted.";
@@ -255,6 +259,7 @@ def RewriteReductionsPass : Pass<
 
   let constructor = "CreateRewriteReductionsPass()";
 }
+*/
 
 def VectorizeLoadsAndStoresPass :
    Pass<"xla-gpu-vectorize-loads-stores", "mlir::func::FuncOp"> {

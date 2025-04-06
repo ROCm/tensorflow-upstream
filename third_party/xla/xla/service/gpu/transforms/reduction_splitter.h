@@ -36,12 +36,15 @@ namespace gpu {
 // fixpoint to split reduce ops along multiple dimensions.
 //
 // Precondition: ReductionDimensionGrouper has been run and adjacent reduce
-// dimentsions have been grouped. Reduction layouts have been normalized.
+// dimensions have been grouped. Reduction layouts have been normalized.
 
 class ReductionSplitter : public HloModulePass {
  public:
-  explicit ReductionSplitter(bool ignore_small_dims)
-      : ignore_small_dims_(ignore_small_dims) {}
+  ReductionSplitter(const se::DeviceDescription& device_description,
+                    bool ignore_small_dims)
+      : device_description_(device_description),
+        ignore_small_dims_(ignore_small_dims) {}  
+
   absl::string_view name() const override { return "reduction-splitter"; }
 
   using HloPassInterface::Run;
@@ -50,7 +53,8 @@ class ReductionSplitter : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
-  bool ignore_small_dims_;
+    const se::DeviceDescription& device_description_;
+    const bool ignore_small_dims_;
 };
 
 }  // namespace gpu

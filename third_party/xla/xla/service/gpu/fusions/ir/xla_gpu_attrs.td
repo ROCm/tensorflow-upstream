@@ -68,6 +68,7 @@ def XLAGPU_IndexingMapAttr : XLAGPU_Attr<"IndexingMap"> {
   }];
 }
 
+/*
 def XLAGPU_LaunchGridAttr : XLAGPU_Attr<"LaunchGrid"> {
   let summary = "An attribute representing a launch grid.";
   let mnemonic = "launch_grid";
@@ -81,6 +82,7 @@ def XLAGPU_LaunchGridAttr : XLAGPU_Attr<"LaunchGrid"> {
     `>`
   }];
 }
+*/
 
 //===----------------------------------------------------------------------===//
 // Tensor layout attribute
