@@ -54,20 +54,29 @@ __device__ __inline__ float Canonicalize(float input) {
   return isnan(input) ? input : max(-65505.0f, min(input, 65505.0f));
 }
 
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60300
+__global__ void xla_fp8_e4m3fn_comparison(
 #if GOOGLE_CUDA
-__global__ void xla_fp8_e4m3fn_comparison(__nv_fp8_storage_t* buffer_a,
-                                          __nv_fp8_storage_t* buffer_b,
-                                          float rel_error_threshold,
-                                          uint64_t buffer_length,
-                                          int* mismatch_count) {
+    __nv_fp8_storage_t* buffer_a, __nv_fp8_storage_t* buffer_b,
+#else  // TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60300
+    __hip_fp8_storage_t* buffer_a, __hip_fp8_storage_t* buffer_b,
+#endif
+    float rel_error_threshold, uint64_t buffer_length, int* mismatch_count) {
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
   if (idx >= buffer_length) return;
   // TODO(philipphack): Replace with direct conversion to float when this
   // functionality becomes available.
+#if GOOGLE_CUDA
   float elem_a =
       __half2float(__nv_cvt_fp8_to_halfraw(buffer_a[idx], __NV_E4M3));
   float elem_b =
       __half2float(__nv_cvt_fp8_to_halfraw(buffer_b[idx], __NV_E4M3));
+#else  // TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60300
+  float elem_a =
+      __half2float(__hip_cvt_fp8_to_halfraw(buffer_a[idx], __HIP_E4M3));
+  float elem_b =
+      __half2float(__hip_cvt_fp8_to_halfraw(buffer_b[idx], __HIP_E4M3));
+#endif
   elem_a = Canonicalize(elem_a);
   elem_b = Canonicalize(elem_b);
   if (isnan(elem_a) && isnan(elem_b)) return;
@@ -78,19 +87,28 @@ __global__ void xla_fp8_e4m3fn_comparison(__nv_fp8_storage_t* buffer_a,
     atomicAdd(mismatch_count, 1);
 }
 
-__global__ void xla_fp8_e5m2_comparison(__nv_fp8_storage_t* buffer_a,
-                                        __nv_fp8_storage_t* buffer_b,
-                                        float rel_error_threshold,
-                                        uint64_t buffer_length,
-                                        int* mismatch_count) {
+__global__ void xla_fp8_e5m2_comparison(
+#if GOOGLE_CUDA
+    __nv_fp8_storage_t* buffer_a, __nv_fp8_storage_t* buffer_b,
+#else  // TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60300
+    __hip_fp8_storage_t* buffer_a, __hip_fp8_storage_t* buffer_b,
+#endif
+    float rel_error_threshold, uint64_t buffer_length, int* mismatch_count) {
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
   if (idx >= buffer_length) return;
-  // TODO(philipphack): Replace with direct conversion to float when this
-  // functionality becomes available.
+// TODO(philipphack): Replace with direct conversion to float when this
+// functionality becomes available.
+#if GOOGLE_CUDA
   float elem_a =
       __half2float(__nv_cvt_fp8_to_halfraw(buffer_a[idx], __NV_E5M2));
   float elem_b =
       __half2float(__nv_cvt_fp8_to_halfraw(buffer_b[idx], __NV_E5M2));
+#else  // TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60300
+  float elem_a =
+      __half2float(__hip_cvt_fp8_to_halfraw(buffer_a[idx], __HIP_E5M2));
+  float elem_b =
+      __half2float(__hip_cvt_fp8_to_halfraw(buffer_b[idx], __HIP_E5M2));
+#endif
   elem_a = Canonicalize(elem_a);
   elem_b = Canonicalize(elem_b);
   if (isnan(elem_a) && isnan(elem_b)) return;
@@ -100,7 +118,7 @@ __global__ void xla_fp8_e5m2_comparison(__nv_fp8_storage_t* buffer_a,
   if (rel_error > rel_error_threshold || isnan(rel_error))
     atomicAdd(mismatch_count, 1);
 }
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60300
 
 #if TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60200
 
@@ -262,7 +280,7 @@ __global__ void xla_int32_comparison(int* buffer_a, int* buffer_b,
 
 }  // namespace
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60300
 void* fp8_e4m3fn_comparison() {
   return reinterpret_cast<void*>(&xla_fp8_e4m3fn_comparison);
 }
@@ -270,7 +288,7 @@ void* fp8_e4m3fn_comparison() {
 void* fp8_e5m2_comparison() {
   return reinterpret_cast<void*>(&xla_fp8_e5m2_comparison);
 }
-#endif
+#endif // GOOGLE_CUDA || TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60300
 
 #if TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60200
 void* fp8_e4m3fnuz_comparison() {
