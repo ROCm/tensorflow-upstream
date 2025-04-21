@@ -1,6 +1,8 @@
 ################################################################################
 ARG DISTRO_IMG
-FROM ${DISTRO_IMG:-'compute-artifactory.amd.com:5000/rocm-base-images/debian-10:2025011603'} as runtime
+#FROM ${DISTRO_IMG:-'compute-artifactory.amd.com:5000/rocm-base-images/debian-10:2025022301-6.4-47'} as runtime
+#FROM ${DISTRO_IMG:-'compute-artifactory.amd.com:5000/rocm-base-images/debian-10:2025032101-6.5-15845'} as runtime
+FROM ${DISTRO_IMG:-'compute-artifactory.amd.com:5000/rocm-base-images/debian-10:2025022301-6.4.1-60'} as runtime
 ################################################################################
 
 # Note: Ubuntu Noble as Python 3.12 installed by default
