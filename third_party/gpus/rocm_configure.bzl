@@ -140,11 +140,7 @@ def _rocm_include_path(repository_ctx, rocm_config, bash_bin):
     if resource_dir_result.return_code:
         auto_configure_fail("Failed to run hipcc -print-resource-dir: %s" % err_out(resource_dir_result))
 
-    resource_dir_abs = resource_dir_result.stdout.strip()
-
-    resource_dir_rel = relative_to(repository_ctx, str(rocm_path.realpath), resource_dir_abs, bash_bin)
-
-    resource_dir = str(rocm_path.get_child(resource_dir_rel))
+    resource_dir = resource_dir_result.stdout.strip()
 
     inc_dirs.append(resource_dir + "/include")
     inc_dirs.append(resource_dir + "/share")
