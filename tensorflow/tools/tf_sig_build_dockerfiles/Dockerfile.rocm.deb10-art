@@ -3,7 +3,7 @@ FROM compute-artifactory.amd.com:5000/rocm-base-images/debian-10:2025011603
 #FROM deb-10-rocm:latest
 ################################################################################
 
-ARG GPU_DEVICE_TARGETS="gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"
+ARG GPU_DEVICE_TARGETS="gfx942"
 ENV GPU_DEVICE_TARGETS=${GPU_DEVICE_TARGETS}
 
 # Install build dependencies
