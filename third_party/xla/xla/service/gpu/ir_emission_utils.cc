@@ -312,9 +312,6 @@ llvm::Value* EmitFullWarpShuffleDown(
     if (target_triple.isNVPTX()) {
       return EmitNVPTXShflDown(value, offset, builder, gpu_device_info);
     } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
-      if (gpu_device_info.rocm_compute_capability().gfx9_mi100_or_later()) {
-        return EmitAMDGPUShflDownSwizzle(value, offset, builder);
-      }
       return EmitAMDGPUShflDown(value, offset, builder);
     } else if (target_triple.isSPIR()) {
       return EmitSPIRShflDown(value, offset, builder);
@@ -337,13 +334,8 @@ llvm::Value* EmitFullWarpShuffleDown(
       insert_val = EmitNVPTXShflDown(builder->CreateExtractElement(x, i),
                                      offset, builder, gpu_device_info);
     } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
-      if (gpu_device_info.rocm_compute_capability().gfx9_mi100_or_later()) {
-        insert_val = EmitAMDGPUShflDownSwizzle(
-            builder->CreateExtractElement(x, i), offset, builder);
-      } else {
-        insert_val = EmitAMDGPUShflDown(builder->CreateExtractElement(x, i),
-                                        offset, builder);
-      }
+      insert_val = EmitAMDGPUShflDown(builder->CreateExtractElement(x, i),
+                                      offset, builder);
     } else if (target_triple.isSPIR()) {
       insert_val = EmitSPIRShflDown(builder->CreateExtractElement(x, i), offset,
                                     builder);
