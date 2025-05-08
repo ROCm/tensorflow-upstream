@@ -5,6 +5,9 @@ ARG DISTRO_IMG
 FROM ${DISTRO_IMG:-'compute-artifactory.amd.com:5000/rocm-base-images/debian-10:2025022301-6.4.1-60'} as runtime
 ################################################################################
 
+ARG GPU_DEVICE_TARGETS="gfx942"
+ENV GPU_DEVICE_TARGETS=${GPU_DEVICE_TARGETS}
+
 # Note: Ubuntu Noble as Python 3.12 installed by default
 #
 # Install dependencies
