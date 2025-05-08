@@ -2011,7 +2011,7 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
   } else if (compute_capability.gfx10_rx68xx() ||
              compute_capability.gfx10_rx69xx()) {
     *reserve = RESERVED_GFX10_X;
-  } else if (compute_capability.gfx11_rx7900()) {
+  } else if (compute_capability.gfx11()) {
     *reserve = RESERVED_GFX11_X;
   } else if (compute_capability.gfx12_rx8900()) {
     *reserve = RESERVED_GFX12_X;
