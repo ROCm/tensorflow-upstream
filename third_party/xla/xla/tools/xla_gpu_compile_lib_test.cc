@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/tsl/protobuf/error_codes.pb.h"
 #include "xla/tsl/protobuf/status.pb.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/status_matchers.h"
@@ -73,9 +74,14 @@ TEST_F(XlaCompileLibTest, CompilesForGpuWithDevice) {
 
 TEST_F(XlaCompileLibTest, CompilesForGpuWithoutDevice) {
   const std::string target_config_path =
+<<<<<<< HEAD
       tsl::io::JoinPath(tsl::testing::XlaSrcRoot(),
                         "../external/local_xla/xla", "service",
                         "xla_aot_compile_test_gpu_target_config.prototxt");
+=======
+      tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "service",
+                        "xla_aot_compile_test_gpu_target_config.txtpb");
+>>>>>>> upstream/master
   stream_executor::GpuTargetConfigProto target_config;
   TF_ASSERT_OK(tsl::ReadTextProto(tsl::Env::Default(), target_config_path,
                                   &target_config));

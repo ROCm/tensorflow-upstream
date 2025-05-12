@@ -28,7 +28,7 @@ namespace xla {
 
 absl::StatusOr<ProgramShape> XlaComputation::GetProgramShape() const {
   TF_RET_CHECK(proto_.has_host_program_shape());
-  return ProgramShape(proto_.host_program_shape());
+  return ProgramShape::FromProto(proto_.host_program_shape());
 }
 
 absl::StatusOr<std::unique_ptr<HloSnapshot>> XlaComputation::Snapshot() const {
@@ -37,7 +37,7 @@ absl::StatusOr<std::unique_ptr<HloSnapshot>> XlaComputation::Snapshot() const {
   }
   auto session = std::make_unique<HloSnapshot>();
   *session->mutable_hlo()->mutable_hlo_module() = proto_;
-  return std::move(session);
+  return session;
 }
 
 }  // namespace xla

@@ -71,10 +71,8 @@ void ReplaceCalledComputation(HloInstruction* instruction,
     }
     case HloOpcode::kAsyncStart: {
       CHECK(computation->IsAsyncComputation());
-      computation->RemoveAsyncStart();
       instruction->ReplaceCalledComputations(
           [&](HloComputation*) { return new_computation; });
-      new_computation->AddAsyncStart(instruction);
       break;
     }
     default:
@@ -136,10 +134,6 @@ absl::Status AnnotateNode(const CallGraphNode& node) {
     if (instruction->opcode() == HloOpcode::kFusion) {
       for (HloComputation* computation : instruction->called_computations()) {
         computation->SetFusionInstruction(instruction);
-      }
-    } else if (instruction->opcode() == HloOpcode::kConditional) {
-      for (HloComputation* branch : instruction->branch_computations()) {
-        branch->SetConditionalCallInstruction(instruction);
       }
     }
   }

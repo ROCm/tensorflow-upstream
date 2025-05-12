@@ -1,7 +1,5 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_binary")
-load("//xla/service/gpu:build_defs.bzl", "gpu_kernel_library")
 load("//xla/tests:build_defs.bzl", "DEFAULT_DISABLED_BACKENDS", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_windows")
 load(
@@ -129,7 +127,6 @@ xla_test(
         "//xla:literal_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
-        "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
         "//xla/stream_executor:device_description",
@@ -142,6 +139,7 @@ xla_test(
     ],
 )
 
+<<<<<<< HEAD
 cc_library(
     name = "topk_kernel",
     srcs = ["topk_kernel.cc"],
@@ -325,6 +323,8 @@ xla_test(
     ],
 )
 
+=======
+>>>>>>> upstream/master
 #===--------------------------------------------------------------------------------------------===#
 # CUTLASS Gemm <-> xla::gpu::kernel::CustomKernel adaptor
 #===--------------------------------------------------------------------------------------------===#
@@ -359,7 +359,6 @@ xla_test(
     name = "cutlass_gemm_custom_kernel_test",
     srcs = ["cutlass_gemm_custom_kernel_test.cc"],
     backends = ["gpu"],
-    data = [":cutlass_gemm_kernel_f32xf32_to_f32.so"],
     linkstatic = False,  # This test is incompatible with linkstatic in the OSS build.
     tags = ["cuda-only"],
     deps = [
@@ -431,6 +430,7 @@ cuda_library(
     deps = [
         ":cutlass_gemm",
         "@cutlass_archive//:cutlass",
+        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 
@@ -484,7 +484,6 @@ cuda_library(
     deps = [
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 
@@ -499,7 +498,6 @@ cuda_library(
     deps = [
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 
@@ -517,7 +515,6 @@ cuda_library(
     deps = [
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 
@@ -535,7 +532,6 @@ cuda_library(
     deps = [
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 
@@ -550,24 +546,7 @@ cuda_library(
     deps = [
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
-)
-
-#===--------------------------------------------------------------------------------------------===#
-# CUTLASS Gemm kernel libraries
-#===--------------------------------------------------------------------------------------------===#
-
-cc_binary(
-    name = "cutlass_gemm_kernel_f32xf32_to_f32.so",
-    srcs = ["cutlass_gemm_kernel_f32xf32_to_f32.cc"],
-    linkshared = True,
-    linkstatic = False,
-    tags = [
-        "cuda-only",
-        "gpu",
-    ],
-    deps = [":cutlass_gemm"],
 )
 
 #===--------------------------------------------------------------------------------------------===#
@@ -584,10 +563,10 @@ cc_library(
     ],
     deps = [
         ":custom_kernel",
+        "//xla/stream_executor:device_memory",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
     ],

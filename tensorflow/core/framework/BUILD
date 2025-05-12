@@ -41,9 +41,14 @@ default_visibility = [
     # copybara:uncomment #internal tuning service,
     # copybara:uncomment "//third_party/odml/experimental:__subpackages__",
     #internal nexus library,
+    #internal headless cuj tests library,
     #internal nexus library tests,
     "//tensorflow/compiler/jit:__subpackages__",
     #internal library,
+    # TODO(matthurd): to be removed when summary.proto.h deps moves to TSL
+    "@org_xprof//xprof:__subpackages__",
+    "//tensorflow/cc/experimental/tfa:__subpackages__",
+    "//tensorflow/compiler/mlir/utils:__subpackages__",
 ]
 
 package(

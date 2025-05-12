@@ -6,10 +6,6 @@ load(
     _if_cuda_or_rocm = "if_cuda_or_rocm",
     _if_gpu_is_configured = "if_gpu_is_configured",
 )
-load(
-    "//xla/tsl/platform:rules_cc.bzl",
-    "cc_library",
-)
 
 def stream_executor_friends():
     return ["//..."]
@@ -38,6 +34,7 @@ def if_cuda_or_rocm(if_true, if_false = []):
 def tf_additional_gpu_compilation_copts():
     return ["-DTF_DISABLE_NVLINK_BY_DEFAULT"]
 
+<<<<<<< HEAD
 def gpu_only_cc_library(name, tags = [], **kwargs):
     """A library that only gets compiled when GPU is configured, otherwise it's an empty target.
 
@@ -96,5 +93,7 @@ def cuda_only_cc_library(name, tags = [], **kwargs):
     )
 
 
+=======
+>>>>>>> upstream/master
 def stream_executor_build_defs_bzl_deps():
     return []
