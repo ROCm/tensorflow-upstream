@@ -137,6 +137,9 @@ struct TilingThreadIdInfo {
   // Lane id: `thread_id % WarpSize`
   llvm::Value* lane_id;
 
+  // Warp id: `thread_id / WarpSize`
+  llvm::Value* warp_id;
+
   // Block id.
   llvm::Value* block_id;
 };

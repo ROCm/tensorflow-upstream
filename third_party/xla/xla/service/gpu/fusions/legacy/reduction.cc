@@ -822,10 +822,11 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
 
   reduction_emitter_.EmitSyncThreads();
 
-  kept_index = builder->CreateURem(thread_id_info.thread_id,
-                                   constant(reduction_emitter_.WarpSize()));
-  reduced_index = builder->CreateUDiv(thread_id_info.thread_id,
-                                      constant(reduction_emitter_.WarpSize()));
+  auto* kept_index_preserved = kept_index;
+  auto* reduced_index_preserved = reduced_index;
+
+  kept_index = thread_id_info.lane_id;
+  reduced_index = thread_id_info.warp_id;
 
   // Get transposed element from shared memory.
   absl::InlinedVector<TypedPointer, 2> shmem_transposed_addrs;
@@ -859,6 +860,9 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
            WriteReductionOutput(tiling_kernel_info, reduction, roots,
                                 shmem_transposed_addrs);
          });
+
+  kept_index = kept_index_preserved;
+  reduced_index = reduced_index_preserved;
 }
 
 // Generate a single element of the tile (update the accumulator state) for a

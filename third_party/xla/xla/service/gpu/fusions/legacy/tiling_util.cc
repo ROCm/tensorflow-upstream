@@ -204,6 +204,8 @@ absl::StatusOr<TilingThreadIdInfo> EmitThreadIdInfo(
 
   info.lane_id = builder->CreateURem(
       info.thread_id, constant(WarpSize(gpu_device_info)), "lane_id");
+  info.warp_id = builder->CreateUDiv(
+      info.thread_id, constant(WarpSize(gpu_device_info)), "warp_id");
   return info;
 }
 
