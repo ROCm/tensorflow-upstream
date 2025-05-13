@@ -649,7 +649,7 @@ TEST_F(GpuKernelTilingTest, RowReductionCorrectShmemUsage) {
   auto &debug_options = hlo_module->mutable_config().mutable_debug_options();
   debug_options.set_xla_gpu_mlir_emitter_level(3);
   auto expected_ir = is_built_with_rocm_ ? R"(
-; CHECK: %llvm.amdgcn.kernel.input_reduce_fusion.lds.t = type { [4 x [2 x float]] }
+; CHECK: %llvm.amdgcn.kernel.input_reduce_fusion.lds.t = type { [4 x [1 x float]] }
 ; CHECK: @llvm.amdgcn.kernel.input_reduce_fusion.lds = internal addrspace(3) global %llvm.amdgcn.kernel.input_reduce_fusion.lds.t poison
   )"
                                          : R"(
