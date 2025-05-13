@@ -240,25 +240,6 @@ GpuCudaMallocAsyncAllocator::GpuCudaMallocAsyncAllocator(
   }
 
   // Set read/write access to all GPUs.
-<<<<<<< HEAD
-  static auto* all_pools_ = new std::vector<CUmemoryPool*>();
-  static auto* all_ids_ = new std::vector<tsl::PlatformDeviceId>();
-  if (!create_new_pool_) {
-    DCHECK(all_pools_->size() == all_ids_->size());
-    for (int i = 0; i < all_pools_->size(); ++i) {
-      // Set the current pool access to the previous GPUs.
-      CUmemAccessDesc map;
-      map.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-      map.location.id = (*all_ids_)[i].value();
-
-      map.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-      VLOG(2) << "Setting access of the current pool to "
-              << " location id: " << map.location.id;
-      int canAccessPeer;
-      if (auto status = cuDeviceCanAccessPeer(
-              &canAccessPeer, platform_device_id.value(), map.location.id)) {
-        pool_ = nullptr;
-=======
   static auto* const all_pools_ = new std::vector<CUmemoryPool>();
   static auto* const all_ids_ = new std::vector<tsl::PlatformDeviceId>();
   DCHECK(all_pools_->size() == all_ids_->size());
@@ -299,7 +280,6 @@ GpuCudaMallocAsyncAllocator::GpuCudaMallocAsyncAllocator(
     if (canAccessPeer == 1) {
       if (auto status = cuMemPoolSetAccess(cuda_state_->pool, &map, 1)) {
         cuda_state_->pool = nullptr;
->>>>>>> upstream/master
         LOG(FATAL)  // Crash OK.
             << "cuDeviceCanAccessPeer failed to know if GPU id "
             << map.location.id << " can access GPU id "

@@ -34,7 +34,6 @@ def if_cuda_or_rocm(if_true, if_false = []):
 def tf_additional_gpu_compilation_copts():
     return ["-DTF_DISABLE_NVLINK_BY_DEFAULT"]
 
-<<<<<<< HEAD
 def gpu_only_cc_library(name, tags = [], **kwargs):
     """A library that only gets compiled when GPU is configured, otherwise it's an empty target.
 
@@ -92,8 +91,5 @@ def cuda_only_cc_library(name, tags = [], **kwargs):
         target_compatible_with = kwargs.get("target_compatible_with"),
     )
 
-
-=======
->>>>>>> upstream/master
 def stream_executor_build_defs_bzl_deps():
     return []

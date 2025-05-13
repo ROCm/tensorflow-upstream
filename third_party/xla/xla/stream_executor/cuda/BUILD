@@ -210,7 +210,6 @@ cuda_only_cc_library(
     ],
 )
 
-<<<<<<< HEAD
 cuda_only_cc_library(
     name = "cuda_collectives",
     hdrs = ["cuda_collectives.h"],
@@ -284,8 +283,6 @@ xla_test(
     ],
 )
 
-=======
->>>>>>> upstream/master
 xla_test(
     name = "cuda_driver_test",
     srcs = ["cuda_driver_test.cc"],

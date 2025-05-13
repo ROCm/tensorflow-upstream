@@ -2219,7 +2219,6 @@ ENTRY entry_computation {
   EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), kExactMatch));
 }
 
-<<<<<<< HEAD
 TEST_F(TritonEmitterTest, FP8ToFP8EndToEnd) {
   if (auto cuda_cc =
           std::get_if<se::CudaComputeCapability>(&GpuComputeCapability())) {
@@ -2244,13 +2243,6 @@ triton_dot {
   convert = f8e4m3fn[32,32]{1,0} convert(parameter_0)
   ROOT dot = f32[32,32]{1,0} dot(convert, parameter_1),
                 lhs_contracting_dims={1}, rhs_contracting_dims={1}
-=======
-TEST_F(TritonEmitterTest, ConvertS4ToS8Exhaustive) {
-  constexpr absl::string_view kHloText = R"(
-computation {
-  p0 = s4[16] parameter(0)
-  ROOT convert = s8[16] convert(p0)
->>>>>>> upstream/master
 }
 
 ENTRY entry_computation {

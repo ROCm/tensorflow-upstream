@@ -126,15 +126,12 @@ build --config=short_logs
 # TODO(mihaimaruseac): Document this option or remove if no longer needed
 build --config=v2
 
-<<<<<<< HEAD
 # Disable AWS/HDFS support by default
 build --define=no_aws_support=true
 build --define=no_hdfs_support=true
-=======
 # Precompiling results in some action conflicts. Disable it for now until
 # the problematic targets are fixed.
 build --@rules_python//python/config_settings:precompile=force_disabled
->>>>>>> upstream/master
 
 # TF now has `cc_shared_library` targets, so it needs the experimental flag
 # TODO(rostam): Remove when `cc_shared_library` is enabled by default

@@ -57,8 +57,6 @@ bool BlasLtMatmulPlanParams::operator==(
 
 namespace {
 
-<<<<<<< HEAD
-=======
 // Thread-safe map from matmul parameters to their corresponding plan and
 // algorithms.
 struct BlasLtMatmulPlanMap {
@@ -76,7 +74,6 @@ struct BlasLtMatmulPlanMap {
       map_ ABSL_GUARDED_BY(mu);
 };
 
->>>>>>> upstream/master
 int MatmulMaxAutotuneAlgorithmCount() {
   int64_t value;
   Status status =
@@ -139,15 +136,10 @@ StatusOr<se::blas::ComputationType> GetBlasComputationType(
   if (!max_algorithm_count) max_algorithm_count = max_autotune_algorithm_count;
   auto& self = BlasLtMatmulPlanCache::i(stream);
 
-<<<<<<< HEAD
-  auto [ptr, inserted] = self.map_.emplace(params, Entry{});
-  auto& entry = ptr->second;
-=======
   static BlasLtMatmulPlanMap plan_map;
 
   auto [ptr, inserted] =
       plan_map.try_emplace(params, std::make_unique<PlanAndAlgorithms>());
->>>>>>> upstream/master
   if (inserted) {
     TF_ASSIGN_OR_RETURN(auto xlatype,
                         se::gpu::AsXlaPrimitiveType(params.dtype));
@@ -200,13 +192,6 @@ StatusOr<se::blas::ComputationType> GetBlasComputationType(
                                         stream, cfg, params.epilogue));
 
     TF_ASSIGN_OR_RETURN(
-<<<<<<< HEAD
-        entry.algorithms,
-        entry.plan->GetAlgorithms(stream, *max_algorithm_count, max_scratch_size));
-  }
-  *ppmu = self.mutex_.get();
-  return &entry;
-=======
         auto algorithms,
         plan->GetAlgorithms(stream, *max_algorithm_count, max_scratch_size));
 
@@ -214,27 +199,12 @@ StatusOr<se::blas::ComputationType> GetBlasComputationType(
   }
   *ppmu = &plan_map.mu;
   return ptr->second.get();
->>>>>>> upstream/master
 }
 
 /*static */ Status BlasLtMatmulPlanCache::ExecuteOnStream(
     se::Stream* stream, const Entry& entry, const se::DeviceMemoryBase& a,
     const se::DeviceMemoryBase& b, se::DeviceMemoryBase& c,
     size_t algorithm_idx, se::ScratchAllocator& scratch_allocator,
-<<<<<<< HEAD
-    const se::DeviceMemoryBase& bias, se::blas::ProfileResult* profile_result) {
-  return entry.plan->ExecuteOnStream(stream, a, b, c, c,
-                                     bias,                    // bias_buffer
-                                     se::DeviceMemoryBase{},  // aux_buffer
-                                     se::DeviceMemoryBase{},  // a_scale_buffer
-                                     se::DeviceMemoryBase{},  // b_scale_buffer
-                                     se::DeviceMemoryBase{},  // c_scale_buffer
-                                     se::DeviceMemoryBase{},  // d_scale_buffer
-                                     se::DeviceMemoryBase{},  // d_amax_buffer
-
-                                     entry.algorithms[algorithm_idx],
-                                     scratch_allocator, profile_result);
-=======
     const se::DeviceMemoryBase& bias,
     se::blas::ProfileResult* profile_result) const {
   if (!plan || algorithm_idx >= algorithms.size()) {
@@ -250,7 +220,6 @@ StatusOr<se::blas::ComputationType> GetBlasComputationType(
                                se::DeviceMemoryBase{},  // d_scale_buffer
                                se::DeviceMemoryBase{},  // d_amax_buffer
                                scratch_allocator, profile_result);
->>>>>>> upstream/master
 }
 }  // namespace tensorflow
 
