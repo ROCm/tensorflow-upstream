@@ -6,6 +6,10 @@ load(
     _if_cuda_or_rocm = "if_cuda_or_rocm",
     _if_gpu_is_configured = "if_gpu_is_configured",
 )
+load(
+    "//xla/tsl/platform:rules_cc.bzl",
+    "cc_library",
+)
 
 def stream_executor_friends():
     return ["//..."]
@@ -90,6 +94,7 @@ def cuda_only_cc_library(name, tags = [], **kwargs):
         restricted_to = kwargs.get("restricted_to"),
         target_compatible_with = kwargs.get("target_compatible_with"),
     )
+
 
 def stream_executor_build_defs_bzl_deps():
     return []

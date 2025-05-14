@@ -217,10 +217,8 @@ cuda_only_cc_library(
         "cuda-only",
         "gpu",
     ],
-    deps = if_nccl(
-        [":cuda_collectives_impl"],
-        [":cuda_collectives_stub"],
-    ) + [
+    deps = [
+        ":cuda_collectives_stub",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:context",
         "@com_google_absl//absl/status",

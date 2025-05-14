@@ -775,6 +775,8 @@ cc_library(
     ],
     deps = [
         ":rocm_executor",
+        ":rocm_platform_id",
+        ":roctracer_if_static",
         "//xla/tsl/platform:env",
         "@local_config_rocm//rocm:rocm_headers",
         "@local_tsl//tsl/platform",

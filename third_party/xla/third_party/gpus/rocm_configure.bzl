@@ -26,6 +26,7 @@ load(
     "get_cpu_value",
     "get_host_environ",
     "get_python_bin",
+    "raw_exec",
     "realpath",
     "relative_to",
     "which",
