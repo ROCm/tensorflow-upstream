@@ -45,36 +45,36 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MathExtras.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/Traits.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/Matchers.h"  // from @llvm-project
-#include "mlir/IR/OpDefinition.h"  // from @llvm-project
-#include "mlir/IR/OperationSupport.h"  // from @llvm-project
-#include "mlir/IR/PatternMatch.h"  // from @llvm-project
-#include "mlir/IR/Region.h"  // from @llvm-project
-#include "mlir/IR/SymbolTable.h"  // from @llvm-project
-#include "mlir/IR/TypeRange.h"  // from @llvm-project
-#include "mlir/IR/TypeUtilities.h"  // from @llvm-project
-#include "mlir/IR/Types.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "mlir/Interfaces/CallInterfaces.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"           // from @llvm-project
+#include "mlir/Dialect/Traits.h"                    // from @llvm-project
+#include "mlir/IR/Attributes.h"                     // from @llvm-project
+#include "mlir/IR/Builders.h"                       // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"              // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"                     // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"          // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"                   // from @llvm-project
+#include "mlir/IR/Diagnostics.h"                    // from @llvm-project
+#include "mlir/IR/Location.h"                       // from @llvm-project
+#include "mlir/IR/MLIRContext.h"                    // from @llvm-project
+#include "mlir/IR/Matchers.h"                       // from @llvm-project
+#include "mlir/IR/OpDefinition.h"                   // from @llvm-project
+#include "mlir/IR/OperationSupport.h"               // from @llvm-project
+#include "mlir/IR/PatternMatch.h"                   // from @llvm-project
+#include "mlir/IR/Region.h"                         // from @llvm-project
+#include "mlir/IR/SymbolTable.h"                    // from @llvm-project
+#include "mlir/IR/TypeRange.h"                      // from @llvm-project
+#include "mlir/IR/TypeUtilities.h"                  // from @llvm-project
+#include "mlir/IR/Types.h"                          // from @llvm-project
+#include "mlir/IR/Value.h"                          // from @llvm-project
+#include "mlir/IR/ValueRange.h"                     // from @llvm-project
+#include "mlir/Interfaces/CallInterfaces.h"         // from @llvm-project
 #include "mlir/Interfaces/ControlFlowInterfaces.h"  // from @llvm-project
-#include "mlir/Interfaces/InferTypeOpInterface.h"  // from @llvm-project
-#include "mlir/Interfaces/SideEffectInterfaces.h"  // from @llvm-project
-#include "mlir/Parser/Parser.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "mlir/Transforms/InliningUtils.h"  // from @llvm-project
+#include "mlir/Interfaces/InferTypeOpInterface.h"   // from @llvm-project
+#include "mlir/Interfaces/SideEffectInterfaces.h"   // from @llvm-project
+#include "mlir/Parser/Parser.h"                     // from @llvm-project
+#include "mlir/Support/LLVM.h"                      // from @llvm-project
+#include "mlir/Support/LogicalResult.h"             // from @llvm-project
+#include "mlir/Transforms/InliningUtils.h"          // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_arith_ops_folder.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_op_interfaces.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
@@ -180,7 +180,7 @@ LogicalResult NotEqualOp::verify() {
       op.getOperation());
 }
 
-void NotEqualOp::build(OpBuilder &builder, OperationState &result, Value x,
+void NotEqualOp::build(OpBuilder& builder, OperationState& result, Value x,
                        Value y, BoolAttr incompatible_shape_error) {
   auto result_type = DeduceEqualCmpOpType(&builder, result.location, x, y,
                                           incompatible_shape_error);
@@ -253,7 +253,7 @@ static TensorType InferOneHotOpType(Value indices, Value depth, Value on_value,
   return tensorflow::GetTypeFromTFTensorShape(shape, element_ty);
 }
 
-void OneHotOp::build(OpBuilder &builder, OperationState &result, Value indices,
+void OneHotOp::build(OpBuilder& builder, OperationState& result, Value indices,
                      Value depth, Value on_value, Value off_value,
                      IntegerAttr axis) {
   build(builder, result,
@@ -409,7 +409,7 @@ struct ConvertPackToReshape : public OpRewritePattern<PackOp> {
   using OpRewritePattern<PackOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(PackOp pack_op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     // Check if there is only one operand to be packed.
     if (pack_op.getN() != 1) {
       return failure();
@@ -452,8 +452,8 @@ struct ConvertPackToReshape : public OpRewritePattern<PackOp> {
   }
 };
 
-void PackOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                         MLIRContext *context) {
+void PackOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                         MLIRContext* context) {
   results.add<ConvertPackToReshape>(context);
 }
 
@@ -473,7 +473,7 @@ LogicalResult PadOp::FoldOperandsPermutation(ArrayRef<int64_t> permutation) {
     return failure();
 
   SmallVector<int32_t, 8> shuffled_paddings(paddings_value.getNumElements());
-  for (const auto &index_pair :
+  for (const auto& index_pair :
        llvm::enumerate(paddings_value.getValues<APInt>())) {
     size_t outer_idx = index_pair.index() / 2;
     size_t inner_idx = index_pair.index() % 2;
@@ -560,7 +560,7 @@ LogicalResult ParseExampleV2Op::verify() {
 
 template <typename CallOpClass>
 static LogicalResult VerifyPartitionedCall(CallOpClass op,
-                                           SymbolTableCollection &symbolTable) {
+                                           SymbolTableCollection& symbolTable) {
   SymbolRefAttr func = op->getAttr("f").template cast<SymbolRefAttr>();
   auto function = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(op, func);
   if (!function) {
@@ -582,15 +582,15 @@ static LogicalResult VerifyPartitionedCall(CallOpClass op,
 }
 
 LogicalResult PartitionedCallOp::verifySymbolUses(
-    SymbolTableCollection &symbolTable) {
+    SymbolTableCollection& symbolTable) {
   return VerifyPartitionedCall(*this, symbolTable);
 }
 LogicalResult StatefulPartitionedCallOp::verifySymbolUses(
-    SymbolTableCollection &symbolTable) {
+    SymbolTableCollection& symbolTable) {
   return VerifyPartitionedCall(*this, symbolTable);
 }
 LogicalResult TPUPartitionedCallOp::verifySymbolUses(
-    SymbolTableCollection &symbolTable) {
+    SymbolTableCollection& symbolTable) {
   return VerifyPartitionedCall(*this, symbolTable);
 }
 
@@ -646,7 +646,7 @@ OpFoldResult PowOp::fold(FoldAdaptor adaptor) {
 //===----------------------------------------------------------------------===//
 
 void QuantizeAndDequantizeV2Op::getCanonicalizationPatterns(
-    RewritePatternSet &results, MLIRContext *context) {
+    RewritePatternSet& results, MLIRContext* context) {
   results.add<QuantizeAndDequantizeV2ToQuantizeAndDequantizeV4>(context);
 }
 
@@ -677,8 +677,8 @@ LogicalResult QrOp::verify() {
 // ReadVariableOp
 //===----------------------------------------------------------------------===//
 
-void ReadVariableOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                                 MLIRContext *context) {
+void ReadVariableOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                                 MLIRContext* context) {
   results.add<ReadVariableOfCast>(context);
 }
 
@@ -748,7 +748,7 @@ DenseElementsAttr BuildConstRangeTensor(Type result_elem_type, int num_elements,
 }
 }  // namespace
 
-void RangeOp::build(OpBuilder &builder, OperationState &result, Value start,
+void RangeOp::build(OpBuilder& builder, OperationState& result, Value start,
                     Value limit, Value delta) {
   assert(start.getType() == limit.getType());
   assert(start.getType() == delta.getType());
@@ -826,7 +826,7 @@ OpFoldResult RangeOp::fold(FoldAdaptor adaptor) {
 // RankOp
 //===----------------------------------------------------------------------===//
 
-void RankOp::build(OpBuilder &builder, OperationState &result, Value input) {
+void RankOp::build(OpBuilder& builder, OperationState& result, Value input) {
   return RankOp::build(
       builder, result,
       tensorflow::GetTypeFromTFTensorShape({}, builder.getIntegerType(32)),
@@ -852,8 +852,8 @@ OpFoldResult RankOp::fold(FoldAdaptor) {
 // RealDivOp
 //===----------------------------------------------------------------------===//
 
-void RealDivOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                            MLIRContext *context) {
+void RealDivOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                            MLIRContext* context) {
   results.add<RealDivWithSqrtDivisor, RealDivWithConstDivisor>(context);
 }
 
@@ -866,8 +866,8 @@ OpFoldResult RealDivOp::fold(FoldAdaptor adaptor) {
 // ReluOp
 //===----------------------------------------------------------------------===//
 
-void ReluOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                         MLIRContext *context) {
+void ReluOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                         MLIRContext* context) {
   results.add<ReluOfMinimum6ToRelu6>(context);
 }
 
@@ -877,11 +877,11 @@ void ReluOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 namespace {
 using ReshapeErrorHandler =
-    llvm::function_ref<LogicalResult(const llvm::Twine &)>;
+    llvm::function_ref<LogicalResult(const llvm::Twine&)>;
 
 LogicalResult GetReshapeOutputType(Value tensor, Value shape,
                                    ReshapeErrorHandler error_handler,
-                                   TensorType &output_ty) {
+                                   TensorType& output_ty) {
   auto tensor_ty = tensor.getType().cast<TensorType>();
   auto element_ty = tensor_ty.getElementType();
   output_ty = UnrankedTensorType::get(element_ty);
@@ -912,7 +912,7 @@ LogicalResult GetReshapeOutputType(Value tensor, Value shape,
   int64_t shape_ty_size = 1;
   llvm::SmallVector<int64_t, 8> output_ty_shape;
   output_ty_shape.reserve(shape_attr.getNumElements());
-  for (const auto &dim : llvm::enumerate(shape_attr.getValues<APInt>())) {
+  for (const auto& dim : llvm::enumerate(shape_attr.getValues<APInt>())) {
     const int64_t size = dim.value().getSExtValue();
     if (size == tensorflow::kTFDynamicSize ||  // NOLINT
         size == ShapedType::kDynamic) {        // NOLINT
@@ -947,7 +947,7 @@ LogicalResult GetReshapeOutputType(Value tensor, Value shape,
     // Compute number of elements in tensor shape.
     int64_t tensor_ty_size = 1;
     bool tensor_ty_zero_dim = false;
-    for (const auto &dim : tensor_ty.getShape()) {
+    for (const auto& dim : tensor_ty.getShape()) {
       if (dim > 0 || !shape_ty_zero_dim) {
         tensor_ty_size *= dim;
       } else {
@@ -974,7 +974,7 @@ LogicalResult GetReshapeOutputType(Value tensor, Value shape,
 
 LogicalResult ReshapeOp::verify() {
   ReshapeOp op = *this;
-  auto error_handler = [&op](const llvm::Twine &message) -> LogicalResult {
+  auto error_handler = [&op](const llvm::Twine& message) -> LogicalResult {
     return op.emitOpError() << message;
   };
   TensorType expected_ty;
@@ -1005,9 +1005,9 @@ LogicalResult ReshapeOp::verify() {
 // Currently there are use cases that rely on partial evaluation of the `shape`
 // operand, so InferTypeOpInterface is not used (along with generated builder of
 // the same signature).
-void ReshapeOp::build(OpBuilder &builder, OperationState &result, Value tensor,
+void ReshapeOp::build(OpBuilder& builder, OperationState& result, Value tensor,
                       Value shape) {
-  auto error_handler = [&result](const llvm::Twine &message) {
+  auto error_handler = [&result](const llvm::Twine& message) {
     return mlir::emitError(result.location) << message;
   };
   TensorType output_ty;
@@ -1017,8 +1017,8 @@ void ReshapeOp::build(OpBuilder &builder, OperationState &result, Value tensor,
   return ReshapeOp::build(builder, result, output_ty, tensor, shape);
 }
 
-void ReshapeOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                            MLIRContext *context) {
+void ReshapeOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                            MLIRContext* context) {
   results.add<RedundantReshape, ReshapeToSelfShape>(context);
 }
 
@@ -1132,7 +1132,7 @@ static Type InferSelectV2OpType(Value condition, Value e, Value t) {
   return tensorflow::GetTypeFromTFTensorShape(result_shape, element_ty);
 }
 
-void SelectV2Op::build(OpBuilder &builder, OperationState &result,
+void SelectV2Op::build(OpBuilder& builder, OperationState& result,
                        Value condition, Value e, Value t) {
   build(builder, result, InferSelectV2OpType(condition, e, t), condition, e, t);
 }
@@ -1143,7 +1143,7 @@ void SelectV2Op::build(OpBuilder &builder, OperationState &result,
 
 namespace {
 // Validates Shape/ShapeN/VariableShape operand and associated result types.
-LogicalResult VerifyShapeOperandAndResult(Operation *op, Type operand_type,
+LogicalResult VerifyShapeOperandAndResult(Operation* op, Type operand_type,
                                           Type result_type,
                                           int variadic_idx = -1) {
   std::string variadic_idx_str =
@@ -1219,7 +1219,7 @@ OpFoldResult ShapeOp::fold(FoldAdaptor) {
   return ConvertShapeToAttr(getOperand().getType(), width);
 }
 
-void ShapeOp::build(OpBuilder &builder, OperationState &result, Value input,
+void ShapeOp::build(OpBuilder& builder, OperationState& result, Value input,
                     BoolAttr use32Bit) {
   auto rankedTensorType = input.getType().dyn_cast<RankedTensorType>();
   int64_t rank = rankedTensorType ? rankedTensorType.getRank() : -1;
@@ -1262,7 +1262,7 @@ namespace {
 class ShapeNPartialStaticInputShape : public OpRewritePattern<ShapeNOp> {
   using OpRewritePattern<ShapeNOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(ShapeNOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     if (op.getNumOperands() == 0) {
       rewriter.eraseOp(op);
       return success();
@@ -1274,7 +1274,7 @@ class ShapeNPartialStaticInputShape : public OpRewritePattern<ShapeNOp> {
     SmallVector<int64_t, 4> dynamic_indices;
     SmallVector<Value, 4> dynamic_inputs;
     SmallVector<Type, 4> result_types;
-    for (const auto &e : llvm::enumerate(op.getOperands())) {
+    for (const auto& e : llvm::enumerate(op.getOperands())) {
       if (Attribute result = ConvertShapeToAttr(e.value().getType(), width)) {
         results[e.index()] = rewriter.create<TF::ConstOp>(op.getLoc(), result);
       } else {
@@ -1308,7 +1308,7 @@ class ShapeNPartialStaticInputShape : public OpRewritePattern<ShapeNOp> {
 class ShapeNToShape : public OpRewritePattern<ShapeNOp> {
   using OpRewritePattern<ShapeNOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(ShapeNOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     if (op.getNumOperands() != 1) {
       return failure();
     }
@@ -1320,8 +1320,8 @@ class ShapeNToShape : public OpRewritePattern<ShapeNOp> {
 };
 }  // namespace
 
-void ShapeNOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                           MLIRContext *context) {
+void ShapeNOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                           MLIRContext* context) {
   results.add<ShapeNToShape, ShapeNPartialStaticInputShape>(context);
 }
 
@@ -1417,7 +1417,7 @@ LogicalResult SliceOp::verify() {
     int dim = 0;
     // TODO(jpienaar): Reformulate the shape verification below to not use magic
     // constants.
-    for (const APInt &raw_begin_index : begin_indices.getValues<APInt>()) {
+    for (const APInt& raw_begin_index : begin_indices.getValues<APInt>()) {
       int64_t begin_index = raw_begin_index.getSExtValue();
       int64_t input_size =
           input_ty ? input_ty.getShape()[dim] : ShapedType::kDynamic;
@@ -1649,7 +1649,7 @@ LogicalResult SparseSoftmaxCrossEntropyWithLogitsOp::verify() {
 // if it's a constant.
 template <class Op>
 LogicalResult VerifySplitInputAndSplitDim(Op op,
-                                          std::optional<int64_t> *dim_index) {
+                                          std::optional<int64_t>* dim_index) {
   *dim_index = std::nullopt;
 
   Value split_dim = op.getSplitDim();
@@ -1741,7 +1741,7 @@ LogicalResult SplitVOp::verify() {
   split_sizes.reserve(
       split_sizes_attr.getType().cast<ShapedType>().getNumElements());
 
-  for (const auto &dim : llvm::enumerate(split_sizes_attr)) {
+  for (const auto& dim : llvm::enumerate(split_sizes_attr)) {
     int64_t dim_val = dim.value().getSExtValue();
     split_sizes.push_back(dim_val);
     if (dim_val == tensorflow::kTFDynamicSize) {
@@ -1774,8 +1774,8 @@ LogicalResult SplitVOp::verify() {
 // SquareOp
 //===----------------------------------------------------------------------===//
 
-void SquareOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                           MLIRContext *context) {
+void SquareOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                           MLIRContext* context) {
   results.add<SquareOfSub>(context);
 }
 
@@ -1790,7 +1790,7 @@ LogicalResult SqueezeOp::verify() {
   if (!input_type) return success();  // Can't verify squeeze dims.
 
   int64_t input_rank = input_type.getRank();
-  for (const auto &squeeze_dim_apint :
+  for (const auto& squeeze_dim_apint :
        op.getSqueezeDims().getAsValueRange<IntegerAttr>()) {
     int64_t squeeze_dim = squeeze_dim_apint.getSExtValue();
     if (squeeze_dim < -input_rank || squeeze_dim >= input_rank) {
@@ -1807,8 +1807,8 @@ LogicalResult SqueezeOp::verify() {
 // SubOp
 //===----------------------------------------------------------------------===//
 
-void SubOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                        MLIRContext *context) {
+void SubOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                        MLIRContext* context) {
   results.add<SubOfNeg>(context);
 }
 
@@ -1821,7 +1821,7 @@ OpFoldResult SubOp::fold(FoldAdaptor adaptor) {
 // SumOp
 //===----------------------------------------------------------------------===//
 
-void SumOp::build(OpBuilder &builder, OperationState &result, Value input,
+void SumOp::build(OpBuilder& builder, OperationState& result, Value input,
                   Value reduction_indices, BoolAttr keep_dims) {
   Type out_ty = InferReductionOpType(input, reduction_indices, keep_dims);
   build(builder, result, out_ty, input, reduction_indices, keep_dims);
@@ -1919,32 +1919,32 @@ LogicalResult StridedSliceOp::verify() { return VerifyStridedSliceBase(*this); }
 // Clamps the given `val`: returns `low` if `val` is less than `low`; returns
 // `high` if `high` is less than `val`; otherwise returns `val`.
 template <class T>
-constexpr const T &Clamp(const T &val, const T &low, const T &high) {
+constexpr const T& Clamp(const T& val, const T& low, const T& high) {
   assert(!(high < low));
   return (val < low) ? low : (high < val) ? high : val;
 }
 
 // Checks if the `index` bit of `val` is set.
 template <class T>
-constexpr bool IsSet(const T &val, unsigned index) {
+constexpr bool IsSet(const T& val, unsigned index) {
   return (val & (1 << index)) != 0;
 }
 
 // Sets the `index` bit of `val`.
 template <class T>
-constexpr void Set(T &val, unsigned index) {
+constexpr void Set(T& val, unsigned index) {
   val |= (1 << index);
 }
 
 // Unset the `index` bit of `val`.
 template <class T>
-constexpr void Unset(T &val, unsigned index) {
+constexpr void Unset(T& val, unsigned index) {
   val &= ~(1 << index);
 }
 
 // Copy the `src_index` bit of `src` to `dst_index` bit of `dst`.
 template <class T>
-constexpr void CopyBit(const T &src, unsigned src_index, T &dst,
+constexpr void CopyBit(const T& src, unsigned src_index, T& dst,
                        unsigned dst_index) {
   if (IsSet(src, src_index))
     Set(dst, dst_index);
@@ -1958,9 +1958,9 @@ constexpr void CopyBit(const T &src, unsigned src_index, T &dst,
 struct SparseSliceSpec {
   int64_t dims;
   int32_t begin_mask, end_mask, ellipsis_mask, new_axis_mask, shrink_axis_mask;
-  const ArrayRef<int64_t> &begin;
-  const ArrayRef<int64_t> &end;
-  const ArrayRef<int64_t> &strides;
+  const ArrayRef<int64_t>& begin;
+  const ArrayRef<int64_t>& end;
+  const ArrayRef<int64_t>& strides;
 };
 
 // The dense spec of strided slice is the canonicalized version of sparse spec.
@@ -1969,9 +1969,9 @@ struct SparseSliceSpec {
 struct DenseSliceSpec {
   int64_t dims;
   int32_t begin_mask, end_mask, shrink_axis_mask;
-  SmallVectorImpl<int64_t> &begin;
-  SmallVectorImpl<int64_t> &end;
-  SmallVectorImpl<int64_t> &strides;
+  SmallVectorImpl<int64_t>& begin;
+  SmallVectorImpl<int64_t>& end;
+  SmallVectorImpl<int64_t>& strides;
 };
 
 // Make a sparse spec into a dense index spec.
@@ -1981,8 +1981,8 @@ struct DenseSliceSpec {
 // For example suppose foo[...,3:, 2] on foo.shape=(2,2,3,4) then
 // we need to produce the missing begin_mask, end_mask for the first two
 // dimensions i.e. foo[:, :, 3:, 2].
-static void BuildDenseSliceSpec(const SparseSliceSpec &sparse,
-                                DenseSliceSpec *dense) {
+static void BuildDenseSliceSpec(const SparseSliceSpec& sparse,
+                                DenseSliceSpec* dense) {
   // Build expanded dense begin, end, strides, begin_mask, end_mask, and
   // shrink_axis_mask.
   dense->begin.resize(dense->dims);
@@ -2110,8 +2110,8 @@ static void CalculateSlicedShapeFromSparseIndices(
     ArrayRef<int64_t> sparse_end, ArrayRef<int64_t> sparse_strides,
     int32_t begin_mask, int32_t end_mask, int32_t ellipsis_mask,
     int32_t new_axis_mask, int32_t shrink_axis_mask,
-    SmallVectorImpl<int64_t> *begin, SmallVectorImpl<int64_t> *end,
-    SmallVectorImpl<int64_t> *stride) {
+    SmallVectorImpl<int64_t>* begin, SmallVectorImpl<int64_t>* end,
+    SmallVectorImpl<int64_t>* stride) {
   int64_t num_sparse_indices = sparse_begin.size();
   SparseSliceSpec sparse = {num_sparse_indices, begin_mask,    end_mask,
                             ellipsis_mask,      new_axis_mask, shrink_axis_mask,
@@ -2141,8 +2141,8 @@ static void CalculateSlicedShapeFromSparseIndices(
 }
 
 bool StridedSliceOp::GetSlicedBoundRanges(
-    SmallVectorImpl<int64_t> *slice_begin, SmallVectorImpl<int64_t> *slice_end,
-    SmallVectorImpl<int64_t> *slice_stride) {
+    SmallVectorImpl<int64_t>* slice_begin, SmallVectorImpl<int64_t>* slice_end,
+    SmallVectorImpl<int64_t>* slice_stride) {
   // TODO(hinsu): Support lowering for ops with dynamic begin and end values
   // when it is possible to derive indices based on mask attributes.
   DenseIntElementsAttr sparse_begin_attr, sparse_end_attr, sparse_strides_attr;
@@ -2157,11 +2157,11 @@ bool StridedSliceOp::GetSlicedBoundRanges(
 
   SmallVector<int64_t, 4> sparse_begin, sparse_end, sparse_strides;
 
-  for (const APInt &index : sparse_begin_attr)
+  for (const APInt& index : sparse_begin_attr)
     sparse_begin.push_back(index.getSExtValue());
-  for (const APInt &index : sparse_end_attr)
+  for (const APInt& index : sparse_end_attr)
     sparse_end.push_back(index.getSExtValue());
-  for (const APInt &stride : sparse_strides_attr)
+  for (const APInt& stride : sparse_strides_attr)
     sparse_strides.push_back(stride.getSExtValue());
 
   CalculateSlicedShapeFromSparseIndices(
@@ -2310,9 +2310,9 @@ LogicalResult StridedSliceGradOp::verify() {
 }
 
 bool StridedSliceGradOp::GetSlicedShapeAndBoundRanges(
-    SmallVectorImpl<int64_t> *input_shape,
-    SmallVectorImpl<int64_t> *slice_begin, SmallVectorImpl<int64_t> *slice_end,
-    SmallVectorImpl<int64_t> *slice_stride) {
+    SmallVectorImpl<int64_t>* input_shape,
+    SmallVectorImpl<int64_t>* slice_begin, SmallVectorImpl<int64_t>* slice_end,
+    SmallVectorImpl<int64_t>* slice_stride) {
   DenseIntElementsAttr shape_attr;
   DenseIntElementsAttr sparse_begin_attr, sparse_end_attr, sparse_strides_attr;
   if (!matchPattern(getShape(), m_Constant(&shape_attr)) ||
@@ -2325,16 +2325,16 @@ bool StridedSliceGradOp::GetSlicedShapeAndBoundRanges(
 
   input_shape->clear();
   input_shape->reserve(rank);
-  for (const APInt &dim : shape_attr)
+  for (const APInt& dim : shape_attr)
     input_shape->push_back(dim.getSExtValue());
 
   SmallVector<int64_t, 4> sparse_begin, sparse_end, sparse_strides;
 
-  for (const APInt &index : sparse_begin_attr)
+  for (const APInt& index : sparse_begin_attr)
     sparse_begin.push_back(index.getSExtValue());
-  for (const APInt &index : sparse_end_attr)
+  for (const APInt& index : sparse_end_attr)
     sparse_end.push_back(index.getSExtValue());
-  for (const APInt &stride : sparse_strides_attr)
+  for (const APInt& stride : sparse_strides_attr)
     sparse_strides.push_back(stride.getSExtValue());
 
   CalculateSlicedShapeFromSparseIndices(
@@ -2350,8 +2350,8 @@ bool StridedSliceGradOp::GetSlicedShapeAndBoundRanges(
 
 llvm::SmallVector<ResourceHandleValueAndId, 4>
 SummaryWriterOp::GetResourceHandleValueAndIdList(
-    llvm::SmallDenseMap<ResourceHandle, int64_t> &resource_handle_id_map,
-    int64_t &next_id) {
+    llvm::SmallDenseMap<ResourceHandle, int64_t>& resource_handle_id_map,
+    int64_t& next_id) {
   llvm::StringRef device = GetDeviceOrEmpty(getOperation());
   return {GetResourceHandleValueAndIdBase(getContainer(), getSharedName(),
                                           device, getWriter(),
@@ -2363,8 +2363,8 @@ SummaryWriterOp::GetResourceHandleValueAndIdList(
 //===----------------------------------------------------------------------===//
 
 void TPUExecuteOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>&
+        effects) {
   effects.reserve(2 * getArgs().size() + 1);
   effects.emplace_back(MemoryEffects::Write::get(),
                        ResourceEffects::TPUExecute::get());
@@ -2384,8 +2384,8 @@ void TPUExecuteOp::getEffects(
 //===----------------------------------------------------------------------===//
 
 void _XlaRunOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>&
+        effects) {
   effects.reserve(2 * getArgs().size() + 1);
   effects.emplace_back(MemoryEffects::Write::get(),
                        ResourceEffects::_XlaRun::get());
@@ -2393,8 +2393,8 @@ void _XlaRunOp::getEffects(
   // Conservatively mark resource handles as read and write, as without
   // analyzing _XlaCompile, there is not sufficient information to determine
   // effects on resources.
-  for (Value value : getArgs()) {
-    MarkResourceAsReadAndWrite(value, effects);
+  for (OpOperand& op_operand : getArgsMutable()) {
+    MarkResourceAsReadAndWrite(op_operand, effects);
   }
 }
 
@@ -2403,8 +2403,8 @@ void _XlaRunOp::getEffects(
 //===----------------------------------------------------------------------===//
 
 void WriteTrainingPredictionsOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>&
+        effects) {
   effects.reserve(1);
   effects.emplace_back(MemoryEffects::Write::get(),
                        ResourceEffects::WriteTrainingPredictions::get());
@@ -2430,7 +2430,7 @@ LogicalResult TPUExecuteAndUpdateVariablesOp::verify() {
                 "("
              << num_resource_args << "), but got " << indices.size();
 
-    for (const auto &entry : llvm::enumerate(indices.getValue())) {
+    for (const auto& entry : llvm::enumerate(indices.getValue())) {
       auto int_attr = entry.value().cast<IntegerAttr>();
       if (int_attr.getInt() < min)
         return op.emitOpError()
@@ -2450,27 +2450,29 @@ LogicalResult TPUExecuteAndUpdateVariablesOp::verify() {
 }
 
 void TPUExecuteAndUpdateVariablesOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>&
+        effects) {
   effects.reserve(getDeviceVarReadsIndices().size() + 1);
   effects.emplace_back(MemoryEffects::Write::get(),
                        ResourceEffects::TPUExecute::get());
-  auto resource_handles = llvm::make_filter_range(getArgs(), [](Value value) {
-    return value.getType()
-        .cast<TensorType>()
-        .getElementType()
-        .isa<ResourceType>();
-  });
+  auto resource_handles =
+      llvm::make_filter_range(getArgsMutable(), [](OpOperand& op_operand) {
+        return op_operand.get()
+            .getType()
+            .cast<TensorType>()
+            .getElementType()
+            .isa<ResourceType>();
+      });
 
-  for (const auto &entry : llvm::enumerate(resource_handles)) {
-    Value value = entry.value();
-    effects.emplace_back(MemoryEffects::Read::get(), value,
+  for (const auto& entry : llvm::enumerate(resource_handles)) {
+    OpOperand& op_operand = entry.value();
+    effects.emplace_back(MemoryEffects::Read::get(), &op_operand,
                          ResourceEffects::Variable::get());
     if (getDeviceVarUpdatesIndices()
             .getValue()[entry.index()]
             .cast<IntegerAttr>()
             .getInt() >= 0)
-      effects.emplace_back(MemoryEffects::Write::get(), value,
+      effects.emplace_back(MemoryEffects::Write::get(), &op_operand,
                            ResourceEffects::Variable::get());
   }
 }
@@ -2487,7 +2489,7 @@ class ConvertTensorListGetItemOpOfTensorListFromTensorOpToGather
     : public OpRewritePattern<TensorListGetItemOp> {
   using OpRewritePattern<TensorListGetItemOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(TensorListGetItemOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     // Checks that the input is created by TensorListFromTensorOp and the input
     // is only used by TensorListGetItemOp.
     auto tensor_list_from_tensor_op = dyn_cast_or_null<TensorListFromTensorOp>(
@@ -2495,7 +2497,7 @@ class ConvertTensorListGetItemOpOfTensorListFromTensorOpToGather
     if (!tensor_list_from_tensor_op ||
         llvm::any_of(
             tensor_list_from_tensor_op->getUsers(),
-            [](Operation *user) { return !isa<TensorListGetItemOp>(user); })) {
+            [](Operation* user) { return !isa<TensorListGetItemOp>(user); })) {
       return failure();
     }
 
@@ -2508,7 +2510,7 @@ class ConvertTensorListGetItemOpOfTensorListFromTensorOpToGather
 }  // namespace
 
 void TensorListGetItemOp::getCanonicalizationPatterns(
-    RewritePatternSet &results, MLIRContext *context) {
+    RewritePatternSet& results, MLIRContext* context) {
   results.add<ConvertTensorListGetItemOpOfTensorListFromTensorOpToGather>(
       context);
 }
@@ -2700,7 +2702,7 @@ namespace {
 class ToBoolOfRankedTensor : public OpRewritePattern<ToBoolOp> {
   using OpRewritePattern<ToBoolOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(ToBoolOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     auto type = op.getOperand().getType().dyn_cast<RankedTensorType>();
     // If the input is an unranked tensor, cannpt rewrite.
     if (!type) return failure();
@@ -2744,15 +2746,15 @@ class ToBoolOfRankedTensor : public OpRewritePattern<ToBoolOp> {
 };
 }  // namespace
 
-void ToBoolOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                           MLIRContext *context) {
+void ToBoolOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                           MLIRContext* context) {
   results.add<ToBoolOfRankedTensor>(context);
 }
 
 LogicalResult ToBoolOp::inferReturnTypes(
-    MLIRContext *context, std::optional<Location> location, ValueRange operands,
+    MLIRContext* context, std::optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, OpaqueProperties, RegionRange regions,
-    SmallVectorImpl<Type> &inferredReturnTypes) {
+    SmallVectorImpl<Type>& inferredReturnTypes) {
   inferredReturnTypes.push_back(
       tensorflow::GetTypeFromTFTensorShape({}, IntegerType::get(context, 1)));
   return success();
@@ -2768,7 +2770,7 @@ LogicalResult TPUPartitionedInputV2Op::verify() {
 
   int num_partitions = 1;
   const mlir::ArrayAttr partition_dims = op.getPartitionDims();
-  for (const mlir::Attribute &dim : partition_dims) {
+  for (const mlir::Attribute& dim : partition_dims) {
     num_partitions *= dim.cast<IntegerAttr>().getInt();
   }
 
@@ -2821,7 +2823,7 @@ LogicalResult TransposeOp::verify() {
   if (matchPattern(op.getPerm(), m_Constant(&attr_perm))) {
     // y.shape[i] should be equal to x.shape[perm[i]]
     // for i = [0, 1, ..., rank(x) - 1]
-    for (const auto &e : llvm::enumerate(attr_perm)) {
+    for (const auto& e : llvm::enumerate(attr_perm)) {
       const int64_t y_idx = e.index();
       const int64_t y_dim = y_type.getDimSize(y_idx);
       int64_t x_idx = e.value().getSExtValue();
@@ -2847,7 +2849,7 @@ LogicalResult TransposeOp::verify() {
 }
 
 // TODO(jpienaar): perm could be optional too.
-void TransposeOp::build(OpBuilder &builder, OperationState &result, Value x,
+void TransposeOp::build(OpBuilder& builder, OperationState& result, Value x,
                         Value perm) {
   auto x_type = x.getType().cast<TensorType>();
   // If value is unranked, then so is results.
@@ -2869,7 +2871,7 @@ void TransposeOp::build(OpBuilder &builder, OperationState &result, Value x,
           x_type.getDimSize((*attr_shape.begin()).getSExtValue()));
     } else {
       const_shape.reserve(attr_shape.getNumElements());
-      for (const auto &dim : attr_shape)
+      for (const auto& dim : attr_shape)
         const_shape.push_back(x_type.getDimSize(dim.getSExtValue()));
     }
     return TransposeOp::build(
@@ -2887,7 +2889,7 @@ OpFoldResult FoldIdentityTranspose(TransposeOp op) {
   if (!matchPattern(op.getPerm(), m_Constant(&perm))) return {};
   const auto elements = perm.getValues<APInt>();
 
-  for (const auto &it : llvm::enumerate(elements)) {
+  for (const auto& it : llvm::enumerate(elements)) {
     if (it.index() != it.value()) return {};
   }
 
@@ -2947,8 +2949,8 @@ OpFoldResult TransposeOp::fold(FoldAdaptor) {
 // TruncateDivOp
 //===----------------------------------------------------------------------===//
 
-void TruncateDivOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                                MLIRContext *context) {
+void TruncateDivOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                                MLIRContext* context) {
   results.add<TruncateDivWithSqrtDivisor>(context);
 }
 
@@ -2962,7 +2964,7 @@ namespace {
 class NMSV3ToNMSV4Op : public OpRewritePattern<NonMaxSuppressionV3Op> {
   using OpRewritePattern<NonMaxSuppressionV3Op>::OpRewritePattern;
   LogicalResult matchAndRewrite(NonMaxSuppressionV3Op nms_op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     if (nms_op.getNumOperands() != 5) {
       return failure();
     }
@@ -2987,7 +2989,7 @@ class NMSV3ToNMSV4Op : public OpRewritePattern<NonMaxSuppressionV3Op> {
 }  // namespace.
 
 void NonMaxSuppressionV3Op::getCanonicalizationPatterns(
-    RewritePatternSet &results, MLIRContext *context) {
+    RewritePatternSet& results, MLIRContext* context) {
   results.add<NMSV3ToNMSV4Op>(context);
 }
 
@@ -3000,7 +3002,7 @@ namespace {
 class ConvertFusedBatchNorm : public OpRewritePattern<TF::FusedBatchNormOp> {
   using OpRewritePattern<FusedBatchNormOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(TF::FusedBatchNormOp tf_fused_batch_norm_op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     auto new_result_types =
         llvm::to_vector<6>(tf_fused_batch_norm_op.getResultTypes());
     // reserve_space_3
@@ -3018,8 +3020,8 @@ class ConvertFusedBatchNorm : public OpRewritePattern<TF::FusedBatchNormOp> {
 };
 }  // namespace.
 
-void FusedBatchNormOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                                   MLIRContext *context) {
+void FusedBatchNormOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                                   MLIRContext* context) {
   results.add<ConvertFusedBatchNorm>(context);
 }
 
@@ -3028,8 +3030,8 @@ void FusedBatchNormOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 void XlaCallModuleOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>&
+        effects) {
   if (!getFunctionList().empty()) {
     // The StableHLO module embedded in XlaCallModule contains
     // `stablehlo.custom_call` calling TF host callback functions.
@@ -3045,7 +3047,7 @@ void XlaCallModuleOp::getEffects(
 }
 
 LogicalResult XlaCallModuleOp::verifySymbolUses(
-    SymbolTableCollection &symbolTable) {
+    SymbolTableCollection& symbolTable) {
   for (auto f : getFunctionList()) {
     auto func = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
         getOperation(), f.cast<mlir::SymbolRefAttr>());
@@ -3061,8 +3063,8 @@ LogicalResult XlaCallModuleOp::verifySymbolUses(
 //===----------------------------------------------------------------------===//
 
 void XlaLaunchOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>&
+        effects) {
   effects.reserve(2 * getArgs().size() + 1);
   effects.emplace_back(MemoryEffects::Write::get(),
                        ResourceEffects::XlaLaunch::get());
@@ -3070,9 +3072,15 @@ void XlaLaunchOp::getEffects(
   // Conservatively mark resource handles as read and write, as without
   // analyzing XlaLaunch, there is not sufficient information to determine
   // effects on resources.
-  for (Value value : getArgs()) {
-    MarkResourceAsReadAndWrite(value, effects);
+  for (OpOperand& op_operand : getArgsMutable()) {
+    MarkResourceAsReadAndWrite(op_operand, effects);
   }
+}
+
+// For `XlaLaunch` ops the `device` attribute corresponds to the resource
+// instance.
+std::optional<std::string> XlaLaunchOp::GetResourceInstanceStr() {
+  return GetDeviceAttrAsResourceInstanceStr(*this);
 }
 
 // For `XlaLaunch` ops the `device` attribute corresponds to the resource
@@ -3122,22 +3130,22 @@ namespace {
 //   %unpacked:N = "tf.Unpack"(%neg)
 class HoistCwiseUnaryOutOfUnpack : public OpRewritePattern<UnpackOp> {
  public:
-  explicit HoistCwiseUnaryOutOfUnpack(MLIRContext *context)
+  explicit HoistCwiseUnaryOutOfUnpack(MLIRContext* context)
       : OpRewritePattern<UnpackOp>(context) {}
   LogicalResult matchAndRewrite(UnpackOp op,
-                                PatternRewriter &rewriter) const override;
+                                PatternRewriter& rewriter) const override;
 };
 
 LogicalResult HoistCwiseUnaryOutOfUnpack::matchAndRewrite(
-    UnpackOp op, PatternRewriter &rewriter) const {
+    UnpackOp op, PatternRewriter& rewriter) const {
   auto loc = op.getLoc();
 
   // First unpack user must be coeff-wise unary operation.
-  Operation *first_user = *op->getUsers().begin();
+  Operation* first_user = *op->getUsers().begin();
   if (!first_user->hasTrait<OpTrait::TF::CwiseUnary>()) return failure();
 
   // All unpack users must be defined by the op of same kind.
-  bool users_same_op = llvm::all_of(op->getUsers(), [&](Operation *user) {
+  bool users_same_op = llvm::all_of(op->getUsers(), [&](Operation* user) {
     return user->getName() == first_user->getName();
   });
   if (!users_same_op) return failure();
@@ -3146,7 +3154,7 @@ LogicalResult HoistCwiseUnaryOutOfUnpack::matchAndRewrite(
   OperationState new_unary_op_state(loc, first_user->getName().getStringRef(),
                                     op.getOperand(), op.getOperand().getType(),
                                     ArrayRef<NamedAttribute>());
-  Operation *new_unary_op = rewriter.create(new_unary_op_state);
+  Operation* new_unary_op = rewriter.create(new_unary_op_state);
   CopyDeviceAndUnderscoredAttributes(op, new_unary_op);
 
   // Unpack results after applying unary operation.
@@ -3159,7 +3167,7 @@ LogicalResult HoistCwiseUnaryOutOfUnpack::matchAndRewrite(
   for (auto pair : llvm::zip(op.getResults(), unpack_unary_op.getResults())) {
     OpResult old_result = std::get<0>(pair);  // result of original Unpack
     OpResult new_result = std::get<1>(pair);  // result of transformed Unpack
-    for (Operation *user : llvm::make_early_inc_range(old_result.getUsers()))
+    for (Operation* user : llvm::make_early_inc_range(old_result.getUsers()))
       rewriter.replaceOp(user, ValueRange(new_result));
   }
 
@@ -3171,8 +3179,8 @@ LogicalResult HoistCwiseUnaryOutOfUnpack::matchAndRewrite(
 
 }  // namespace
 
-void UnpackOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                           MLIRContext *context) {
+void UnpackOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                           MLIRContext* context) {
   results.add<HoistCwiseUnaryOutOfUnpack>(context);
 }
 
@@ -3249,8 +3257,8 @@ LogicalResult VarHandleOp::verify() {
 
 llvm::SmallVector<ResourceHandleValueAndId, 4>
 VarHandleOp::GetResourceHandleValueAndIdList(
-    llvm::SmallDenseMap<ResourceHandle, int64_t> &resource_handle_id_map,
-    int64_t &next_id) {
+    llvm::SmallDenseMap<ResourceHandle, int64_t>& resource_handle_id_map,
+    int64_t& next_id) {
   llvm::StringRef device = GetDeviceOrEmpty(getOperation());
   return {GetResourceHandleValueAndIdBase(getContainer(), getSharedName(),
                                           device, getResource(),
@@ -3270,7 +3278,7 @@ struct EraseDeadVarIsInitializedOp
   using OpRewritePattern<VarIsInitializedOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(VarIsInitializedOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     if (!op.use_empty()) return failure();
     rewriter.eraseOp(op);
     return success();
@@ -3279,7 +3287,7 @@ struct EraseDeadVarIsInitializedOp
 }  // end anonymous namespace.
 
 void VarIsInitializedOp::getCanonicalizationPatterns(
-    RewritePatternSet &patterns, MLIRContext *context) {
+    RewritePatternSet& patterns, MLIRContext* context) {
   patterns.add<EraseDeadVarIsInitializedOp>(context);
 }
 
@@ -3287,8 +3295,8 @@ void VarIsInitializedOp::getCanonicalizationPatterns(
 // VariableOp
 //===----------------------------------------------------------------------===//
 
-void VariableOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                             MLIRContext *context) {
+void VariableOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                             MLIRContext* context) {
   results.add<VariableToVariableV2>(context);
 }
 
@@ -3329,7 +3337,7 @@ OpFoldResult VariableShapeOp::fold(FoldAdaptor) {
 // WhileOp
 //===----------------------------------------------------------------------===//
 
-static LogicalResult VerifyWhileTypes(Operation *op, TypeRange cond_input,
+static LogicalResult VerifyWhileTypes(Operation* op, TypeRange cond_input,
                                       TypeRange body_input,
                                       TypeRange body_result,
                                       bool shape_invariant) {
@@ -3388,7 +3396,7 @@ static LogicalResult VerifyWhileTypes(Operation *op, TypeRange cond_input,
   return success();
 }
 
-LogicalResult WhileOp::verifySymbolUses(SymbolTableCollection &symbol_table) {
+LogicalResult WhileOp::verifySymbolUses(SymbolTableCollection& symbol_table) {
   auto cond_fn =
       symbol_table.lookupNearestSymbolFrom<func::FuncOp>(*this, getCondAttr());
   auto body_fn =
@@ -3420,7 +3428,7 @@ LogicalResult WhileRegionOp::verify() {
   WhileRegionOp op = *this;
 
   // Verify that the condition generates a single tensor<i1> result.
-  Operation *cond_yield = op.getCond().front().getTerminator();
+  Operation* cond_yield = op.getCond().front().getTerminator();
 
   // Allow either the "yield cond" or "yield cond, arg1, ... argN" form,
   // for the yield in the condition block.
@@ -3436,7 +3444,7 @@ LogicalResult WhileRegionOp::verify() {
     return op.emitOpError()
            << "condition should have a single tensor<i1> result";
 
-  Operation *body_yield = op.getBody().front().getTerminator();
+  Operation* body_yield = op.getBody().front().getTerminator();
   if (failed(VerifyWhileTypes(op,
                               /*cond_input=*/op.getCond().getArgumentTypes(),
                               /*body_input=*/op.getBody().getArgumentTypes(),
@@ -3464,14 +3472,13 @@ LogicalResult WhileRegionOp::verify() {
 // WhileRegionOp LoopLikeOpInterface
 //===----------------------------------------------------------------------===//
 
-SmallVector<Region *> WhileRegionOp::getLoopRegions() { return {&getBody()}; }
+SmallVector<Region*> WhileRegionOp::getLoopRegions() { return {&getBody()}; }
 
 //===----------------------------------------------------------------------===//
 // WhileRegionOp RegionBranchOpInterface
 //===----------------------------------------------------------------------===//
 
-OperandRange WhileRegionOp::getEntrySuccessorOperands(
-    RegionBranchPoint point) {
+OperandRange WhileRegionOp::getEntrySuccessorOperands(RegionBranchPoint point) {
   if (point.isParent()) {
     // WhileRegionOp branches to the condition, which branches to the body. But
     // the op itself doesn't branch back to itself. So this range is empty.
@@ -3487,10 +3494,10 @@ OperandRange WhileRegionOp::getEntrySuccessorOperands(
 }
 
 void WhileRegionOp::getSuccessorRegions(
-    RegionBranchPoint point, SmallVectorImpl<RegionSuccessor> &regions) {
+    RegionBranchPoint point, SmallVectorImpl<RegionSuccessor>& regions) {
   if (!point.isParent() && point == (*this)->getRegion(0)) {
     // 'cond' branches to the body or returns.
-    Operation *yield = getCond().front().getTerminator();
+    Operation* yield = getCond().front().getTerminator();
     if (yield->getOperands().size() ==
         1 + this->getOperation()->getOperands().size()) {
       regions.push_back(
@@ -3518,7 +3525,7 @@ void WhileRegionOp::getSuccessorRegions(
 
 void WhileRegionOp::getRegionInvocationBounds(
     ArrayRef<Attribute> operands,
-    SmallVectorImpl<InvocationBounds> &invocationBounds) {
+    SmallVectorImpl<InvocationBounds>& invocationBounds) {
   // We execute cond at least once, and body any number of times.
   invocationBounds.emplace_back(InvocationBounds(1, std::nullopt));
   invocationBounds.emplace_back(InvocationBounds::getUnknown());
@@ -3542,9 +3549,9 @@ struct WhileRegionExplicitCast : public OpRewritePattern<WhileRegionOp> {
   using OpRewritePattern<WhileRegionOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(WhileRegionOp while_op,
-                                PatternRewriter &rewriter) const override {
-    auto &body_block = while_op.getBody().front();
-    auto &cond_block = while_op.getCond().front();
+                                PatternRewriter& rewriter) const override {
+    auto& body_block = while_op.getBody().front();
+    auto& cond_block = while_op.getCond().front();
     bool changed = false;
     for (int op_idx : llvm::seq<int>(0, while_op.getNumOperands())) {
       auto body_arg = body_block.getArgument(op_idx);
@@ -3571,17 +3578,17 @@ struct WhileRegionEliminatePassThrough
   using OpRewritePattern<WhileRegionOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(WhileRegionOp while_op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     // Remove any extern values that are explicitly captured and returned. Also
     // replace values that simply passthrough the body with extern values. The
     // block arguments of body and while match and so the corresponding cond
     // argument can be easily found.
     int old_num_operands = while_op.getNumOperands();
     int new_num_operands = old_num_operands;
-    auto &body_block = while_op.getBody().front();
-    auto &cond_block = while_op.getCond().front();
-    auto &body_yield = *body_block.getTerminator();
-    auto &cond_yield = *cond_block.getTerminator();
+    auto& body_block = while_op.getBody().front();
+    auto& cond_block = while_op.getCond().front();
+    auto& body_yield = *body_block.getTerminator();
+    auto& cond_yield = *cond_block.getTerminator();
 
     bool cond_forwards_args = cond_yield.getOperands().size() > 1;
 
@@ -3652,10 +3659,10 @@ struct WhileRegionEliminatePassThrough
     rewriter.inlineRegionBefore(while_op.getBody(), new_while_op.getBody(),
                                 new_while_op.getBody().end());
 
-    auto &new_body_block = new_while_op.getBody().front();
-    auto &new_cond_block = new_while_op.getCond().front();
-    auto &new_body_yield = *new_body_block.getTerminator();
-    auto &new_cond_yield = *new_cond_block.getTerminator();
+    auto& new_body_block = new_while_op.getBody().front();
+    auto& new_cond_block = new_while_op.getCond().front();
+    auto& new_body_yield = *new_body_block.getTerminator();
+    auto& new_cond_yield = *new_cond_block.getTerminator();
 
     // Patch up the region bodies and yield.
     new_cond_block.eraseArguments(removed_operand);
@@ -3683,8 +3690,8 @@ struct WhileRegionEliminatePassThrough
 
 }  // anonymous namespace
 
-void WhileRegionOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                                MLIRContext *context) {
+void WhileRegionOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                                MLIRContext* context) {
   results.add<WhileRegionExplicitCast, WhileRegionEliminatePassThrough>(
       context);
 }
@@ -3693,8 +3700,8 @@ void WhileRegionOp::getCanonicalizationPatterns(RewritePatternSet &results,
 // XdivyOp
 //===----------------------------------------------------------------------===//
 
-void XdivyOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                          MLIRContext *context) {
+void XdivyOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                          MLIRContext* context) {
   results.add<XdivyWithSqrtDivisor>(context);
 }
 
@@ -3703,10 +3710,10 @@ void XdivyOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult XlaBroadcastHelperOp::inferReturnTypeComponents(
-    MLIRContext *context, std::optional<Location> location,
+    MLIRContext* context, std::optional<Location> location,
     ValueShapeRange operands, DictionaryAttr attributes, OpaqueProperties,
     RegionRange regions,
-    SmallVectorImpl<ShapedTypeComponents> &inferredReturnShapes) {
+    SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
   XlaBroadcastHelperOpAdaptor op(operands.getValues(), attributes);
   Value lhs = op.getLhs();
   Value rhs = op.getRhs();
@@ -3753,7 +3760,7 @@ LogicalResult XlaBroadcastHelperOp::inferReturnTypeComponents(
   int64_t output_rank = max_rank_ty.getRank();
   llvm::SmallVector<int64_t, 4> broadcast_shape(output_rank, 1LL);
   llvm::SmallVector<bool, 4> is_broadcasted(output_rank, false);
-  for (const auto &item : llvm::enumerate(dims)) {
+  for (const auto& item : llvm::enumerate(dims)) {
     int64_t index = item.index();
     int64_t dim = item.value().getSExtValue();
     if (dim < 0 || dim > output_rank) {
@@ -3785,7 +3792,7 @@ class XlaConvToV2 : public OpRewritePattern<TF::XlaConvOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(TF::XlaConvOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     SmallVector<Type> result_types{op.getResult().getType()};
     ReplaceTfOpWithNewOp<TF::XlaConvV2Op>(
         rewriter, op, op.getResult().getType(), op.getLhs(), op.getRhs(),
@@ -3796,8 +3803,8 @@ class XlaConvToV2 : public OpRewritePattern<TF::XlaConvOp> {
   };
 };
 
-void XlaConvOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                            MLIRContext *context) {
+void XlaConvOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                            MLIRContext* context) {
   results.insert<XlaConvToV2>(context);
 }
 
@@ -3820,7 +3827,7 @@ LogicalResult XlaConvV2Op::verify() {
   if (window_strides_attr.getType().getRank() != 1)
     return op.emitOpError() << "expects window_stride to be a vector";
 
-  const ShapedType &padding_ty = padding_attr.getType();
+  const ShapedType& padding_ty = padding_attr.getType();
   if (padding_ty.getRank() != 2 || padding_ty.getDimSize(1) != 2)
     return op.emitOpError()
            << "expects padding to be a matrix with minor dimension 2";
@@ -3842,10 +3849,10 @@ LogicalResult XlaConvV2Op::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult XlaSetDynamicDimensionSizeOp::inferReturnTypeComponents(
-    MLIRContext *context, std::optional<Location> location,
+    MLIRContext* context, std::optional<Location> location,
     ValueShapeRange operands, DictionaryAttr attributes, OpaqueProperties,
     RegionRange regions,
-    SmallVectorImpl<ShapedTypeComponents> &inferredReturnShapes) {
+    SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
   XlaSetDynamicDimensionSizeOpAdaptor op(operands.getValues(), attributes);
 
   TensorType operand_ty = op.getInput().getType().cast<TensorType>();
@@ -3887,7 +3894,7 @@ class XlaReduceToXlaVariadicReduceV2
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(TF::XlaReduceOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     SmallVector<Value> inputs{op.getInput()};
     SmallVector<Value> init_values{op.getInitValue()};
     SmallVector<Type> result_types{op.getResult().getType()};
@@ -3898,8 +3905,8 @@ class XlaReduceToXlaVariadicReduceV2
   };
 };
 
-void XlaReduceOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                              MLIRContext *context) {
+void XlaReduceOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                              MLIRContext* context) {
   results.add<XlaReduceToXlaVariadicReduceV2>(context);
 }
 
@@ -3909,7 +3916,7 @@ void XlaReduceOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 LogicalResult XlaReduceWindowOp::verify() {
   XlaReduceWindowOp op = *this;
-  const auto &input_ty = op.getInput().getType().cast<ShapedType>();
+  const auto& input_ty = op.getInput().getType().cast<ShapedType>();
 
   auto check = [&](mlir::Value val, std::string attr_name) -> LogicalResult {
     ElementsAttr attr;
@@ -3945,7 +3952,7 @@ LogicalResult XlaReduceWindowOp::verify() {
 
   ElementsAttr padding;
   if (matchPattern(op.getPadding(), m_Constant(&padding))) {
-    const ShapedType &padding_ty = cast<ShapedType>(padding.getType());
+    const ShapedType& padding_ty = cast<ShapedType>(padding.getType());
     if (padding_ty.getRank() != 2 || padding_ty.getDimSize(1) != 2) {
       return op.emitOpError()
              << "expects padding to be a matrix with minor dimension 2, got "
@@ -4002,7 +4009,7 @@ LogicalResult XlaSelectAndScatterOp::verify() {
 
   ElementsAttr padding;
   if (matchPattern(op.getPadding(), m_Constant(&padding))) {
-    const ShapedType &padding_ty = cast<ShapedType>(padding.getType());
+    const ShapedType& padding_ty = cast<ShapedType>(padding.getType());
     if (padding_ty.getRank() != 2 || padding_ty.getDimSize(1) != 2) {
       return op.emitOpError()
              << "expects padding to be a matrix with minor dimension 2, got "
@@ -4050,10 +4057,10 @@ LogicalResult XlaSelectAndScatterOp::verify() {
 LogicalResult XlaVariadicReduceOp::verify() {
   XlaVariadicReduceOp op = *this;
   // We rely on V2 for the majority of the checks.
-  const auto &input_ty = op.getInput().getType();
+  const auto& input_ty = op.getInput().getType();
   if (input_ty.empty()) return op.emitOpError() << "No input";
-  const auto &dtype = input_ty[0].cast<TensorType>().getElementType();
-  for (const auto &ty : input_ty) {
+  const auto& dtype = input_ty[0].cast<TensorType>().getElementType();
+  for (const auto& ty : input_ty) {
     if (ty.cast<TensorType>().getElementType() != dtype)
       return op.emitOpError()
              << "This version is limited to operands of the same dtype";
@@ -4066,7 +4073,7 @@ class XlaVariadicReduceToV2 : public OpRewritePattern<TF::XlaVariadicReduceOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(TF::XlaVariadicReduceOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     ReplaceTfOpWithNewOp<::mlir::TF::XlaVariadicReduceV2Op>(
         rewriter, op, op.getResults().getTypes(), op.getInput(),
         op.getInitValue(), op.getDimensionsToReduce(), op.getReducer());
@@ -4076,7 +4083,7 @@ class XlaVariadicReduceToV2 : public OpRewritePattern<TF::XlaVariadicReduceOp> {
 };
 
 void XlaVariadicReduceOp::getCanonicalizationPatterns(
-    RewritePatternSet &results, MLIRContext *context) {
+    RewritePatternSet& results, MLIRContext* context) {
   results.add<XlaVariadicReduceToV2>(context);
 }
 
@@ -4086,11 +4093,11 @@ void XlaVariadicReduceOp::getCanonicalizationPatterns(
 
 LogicalResult XlaVariadicReduceV2Op::verify() {
   XlaVariadicReduceV2Op op = *this;
-  const auto &inputs_ty = op.getInputs().getType();
+  const auto& inputs_ty = op.getInputs().getType();
   int n_inputs = inputs_ty.size();
   if (n_inputs < 1) return op.emitOpError() << "No inputs";
 
-  const auto &init_values_ty = op.getInitValues().getType();
+  const auto& init_values_ty = op.getInitValues().getType();
   int n_init_values = init_values_ty.size();
   if (n_init_values != n_inputs) {
     return op.emitOpError() << "Number of inputs (" << n_inputs
@@ -4142,7 +4149,7 @@ LogicalResult XlaVariadicReduceV2Op::verify() {
 
 LogicalResult XlaVariadicSortOp::verify() {
   XlaVariadicSortOp op = *this;
-  const auto &inputs_ty = op.getInputs().getType();
+  const auto& inputs_ty = op.getInputs().getType();
   int n_inputs = inputs_ty.size();
   auto input_ty_0 = inputs_ty[0].cast<ShapedType>();
   if (input_ty_0.hasStaticShape()) {

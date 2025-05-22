@@ -17,11 +17,11 @@ limitations under the License.
 
 #include <string>
 
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"                  // from @llvm-project
+#include "mlir/IR/Operation.h"                     // from @llvm-project
+#include "mlir/IR/Value.h"                         // from @llvm-project
 #include "mlir/Interfaces/SideEffectInterfaces.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"                     // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_side_effects.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
 
@@ -38,23 +38,31 @@ std::string GetDeviceAttrAsResourceInstanceStr(mlir::Operation* op) {
 }
 
 void MarkResourceAsReadAndWrite(
-    Value value,
+    OpOperand& op_operand,
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>&
         effects) {
-  if (value.getType().cast<TensorType>().getElementType().isa<ResourceType>()) {
-    effects.emplace_back(MemoryEffects::Read::get(), value,
+  if (op_operand.get()
+          .getType()
+          .cast<TensorType>()
+          .getElementType()
+          .isa<ResourceType>()) {
+    effects.emplace_back(MemoryEffects::Read::get(), &op_operand,
                          ResourceEffects::Variable::get());
-    effects.emplace_back(MemoryEffects::Write::get(), value,
+    effects.emplace_back(MemoryEffects::Write::get(), &op_operand,
                          ResourceEffects::Variable::get());
   }
 }
 
 void MarkResourceAsReadOnly(
-    Value value,
+    OpOperand& op_operand,
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>&
         effects) {
-  if (value.getType().cast<TensorType>().getElementType().isa<ResourceType>()) {
-    effects.emplace_back(MemoryEffects::Read::get(), value,
+  if (op_operand.get()
+          .getType()
+          .cast<TensorType>()
+          .getElementType()
+          .isa<ResourceType>()) {
+    effects.emplace_back(MemoryEffects::Read::get(), &op_operand,
                          ResourceEffects::Variable::get());
   }
 }

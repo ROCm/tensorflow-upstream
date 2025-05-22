@@ -18,10 +18,10 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "mlir/IR/PatternMatch.h"  // from @llvm-project
-#include "mlir/IR/SymbolTable.h"  // from @llvm-project
-#include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
+#include "mlir/IR/PatternMatch.h"                        // from @llvm-project
+#include "mlir/IR/SymbolTable.h"                         // from @llvm-project
+#include "mlir/Pass/Pass.h"                              // from @llvm-project
+#include "mlir/Pass/PassManager.h"                       // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "tensorflow/core/ir/dialect.h"
 #include "tensorflow/core/transforms/functional_to_region/impl.h"
@@ -44,7 +44,6 @@ struct FunctionalToRegionPass
     // Use top-down traversal for more efficient conversion. Disable region
     // simplification as all regions are single block.
     config.useTopDownTraversal = true;
-    config.enableRegionSimplification = false;
     // If there are deeply nested conditionals, instantiating them too deep will
     // cause the verifiers, which are implemented recursively, to stack
     // overflow. Set a relatively low iteration limit.

@@ -18,9 +18,9 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "mlir/IR/PatternMatch.h"  // from @llvm-project
-#include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
+#include "mlir/IR/PatternMatch.h"                        // from @llvm-project
+#include "mlir/Pass/Pass.h"                              // from @llvm-project
+#include "mlir/Pass/PassManager.h"                       // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "tensorflow/core/ir/dialect.h"
 #include "tensorflow/core/transforms/region_to_functional/impl.h"
@@ -48,7 +48,6 @@ struct RegionToFunctionalPass
     // Use top-down traversal for more efficient conversion. Disable region
     // simplification as all regions are single block.
     config.useTopDownTraversal = true;
-    config.enableRegionSimplification = false;
     // Iterate until all regions have been outlined. This is guaranteed to
     // terminate because the IR can only hold a finite depth of regions.
     config.maxIterations = GreedyRewriteConfig::kNoLimit;

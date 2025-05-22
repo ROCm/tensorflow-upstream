@@ -16,13 +16,13 @@ limitations under the License.
 #include <optional>
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/TypeRange.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"                // from @llvm-project
+#include "mlir/Dialect/MemRef/IR/MemRef.h"               // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"                          // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"                        // from @llvm-project
+#include "mlir/IR/TypeRange.h"                           // from @llvm-project
+#include "mlir/Support/LLVM.h"                           // from @llvm-project
+#include "mlir/Transforms/DialectConversion.h"           // from @llvm-project
 #include "tensorflow/compiler/mlir/tools/kernel_gen/ir/tf_framework_ops.h"
 #include "tensorflow/compiler/mlir/tools/kernel_gen/transforms/rewriters.h"
 
@@ -38,7 +38,7 @@ class FuncOpConverter : public OpConversionPattern<func::FuncOp> {
 
   LogicalResult matchAndRewrite(
       func::FuncOp func, OpAdaptor /*adaptor*/,
-      ConversionPatternRewriter &rewriter) const override {
+      ConversionPatternRewriter& rewriter) const override {
     // Convert function arguments using the provided TypeConverter.
     auto func_type = func.getFunctionType();
     TypeConverter::SignatureConversion conversion(func_type.getNumInputs());
@@ -48,7 +48,7 @@ class FuncOpConverter : public OpConversionPattern<func::FuncOp> {
       conversion.addInputs(arg_type.index(), arg_type.value());
     }
 
-    rewriter.applySignatureConversion(&func.getBody(), conversion);
+    rewriter.applySignatureConversion(&func.getBody().front(), conversion);
 
     // Update the signature of the function.
     rewriter.modifyOpInPlace(func, [&] {
@@ -59,7 +59,7 @@ class FuncOpConverter : public OpConversionPattern<func::FuncOp> {
   }
 };
 
-std::optional<Value> FindOpKernelContext(Operation *op) {
+std::optional<Value> FindOpKernelContext(Operation* op) {
   auto func = op->getParentOfType<func::FuncOp>();
   if (func.getNumArguments() == 0) {
     return std::nullopt;
@@ -78,7 +78,7 @@ struct AllocOpConverter : public OpConversionPattern<memref::AllocOp> {
 
   LogicalResult matchAndRewrite(
       memref::AllocOp alloc, OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+      ConversionPatternRewriter& rewriter) const override {
     std::optional<Value> ctx = FindOpKernelContext(alloc);
     if (!ctx) return failure();
 
@@ -110,7 +110,7 @@ struct DeallocOpConverter : public OpConversionPattern<memref::DeallocOp> {
 
   LogicalResult matchAndRewrite(
       memref::DeallocOp dealloc, OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+      ConversionPatternRewriter& rewriter) const override {
     std::optional<Value> ctx = FindOpKernelContext(dealloc);
     if (!ctx) return failure();
 
@@ -134,7 +134,7 @@ struct AssertOpConverter : public OpConversionPattern<cf::AssertOp> {
 
   LogicalResult matchAndRewrite(
       cf::AssertOp op, OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+      ConversionPatternRewriter& rewriter) const override {
     std::optional<Value> ctx = FindOpKernelContext(op);
     if (!ctx) return failure();
     rewriter.replaceOpWithNewOp<TFAssertOp>(op, *ctx, adaptor.getArg(),
@@ -150,7 +150,7 @@ struct JITExecuteOpConverter : public OpConversionPattern<JITExecuteOp> {
 
   LogicalResult matchAndRewrite(
       JITExecuteOp op, OpAdaptor /*adaptor*/,
-      ConversionPatternRewriter &rewriter) const override {
+      ConversionPatternRewriter& rewriter) const override {
     std::optional<Value> ctx = FindOpKernelContext(op);
     if (!ctx) return failure();
     rewriter.replaceOpWithNewOp<JITExecuteOp>(
@@ -167,7 +167,7 @@ struct JITCompileFromStrOpConverter
 
   LogicalResult matchAndRewrite(
       JITCompileFromStrOp op, OpAdaptor /*adaptor*/,
-      ConversionPatternRewriter &rewriter) const override {
+      ConversionPatternRewriter& rewriter) const override {
     std::optional<Value> ctx = FindOpKernelContext(op);
     if (!ctx) return failure();
     rewriter.replaceOpWithNewOp<JITCompileFromStrOp>(
@@ -178,11 +178,11 @@ struct JITCompileFromStrOpConverter
 
 }  // namespace
 
-void PopulateEmbedTFFrameworkAssertPattern(RewritePatternSet *patterns) {
+void PopulateEmbedTFFrameworkAssertPattern(RewritePatternSet* patterns) {
   patterns->add<AssertOpConverter>(patterns->getContext());
 }
 
-void PopulateEmbedTFFrameworkPatterns(RewritePatternSet *patterns) {
+void PopulateEmbedTFFrameworkPatterns(RewritePatternSet* patterns) {
   // clang-format off
   patterns->add<
       AllocOpConverter,

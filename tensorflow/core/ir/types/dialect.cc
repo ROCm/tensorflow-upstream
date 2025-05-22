@@ -27,19 +27,20 @@ limitations under the License.
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/SMLoc.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/Dialect/Traits.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Dialect.h"  // from @llvm-project
+#include "mlir/Dialect/Traits.h"            // from @llvm-project
+#include "mlir/IR/Attributes.h"             // from @llvm-project
+#include "mlir/IR/Builders.h"               // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"      // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"             // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"           // from @llvm-project
+#include "mlir/IR/Dialect.h"                // from @llvm-project
 #include "mlir/IR/DialectImplementation.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/OpImplementation.h"  // from @llvm-project
-#include "mlir/IR/OperationSupport.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"            // from @llvm-project
+#include "mlir/IR/OpImplementation.h"       // from @llvm-project
+#include "mlir/IR/OperationSupport.h"       // from @llvm-project
+#include "mlir/Support/LLVM.h"              // from @llvm-project
+#include "mlir/Support/LogicalResult.h"     // from @llvm-project
 
 #define GET_ATTRDEF_CLASSES
 #include "tensorflow/core/ir/types/attributes.cc.inc"
@@ -259,8 +260,11 @@ FailureOr<FullTypeAttr> RawFullTypeAttrParser(AsmParser& parser) {
   // Parse variable 'attr'
   Attribute attr;
   parser.parseOptionalAttribute(attr);
-  return FullTypeAttr::get(parser.getContext(), static_cast<int32_t>(*type_id),
-                           args, attr);
+  return FullTypeAttr::get(
+      parser.getContext(),
+      mlir::IntegerAttr::get(mlir::IntegerType::get(parser.getContext(), 32),
+                             static_cast<int32_t>(*type_id)),
+      args, attr);
 }
 
 Attribute FullTypeAttr::parse(AsmParser& parser, Type odsType) {
@@ -271,7 +275,8 @@ Attribute FullTypeAttr::parse(AsmParser& parser, Type odsType) {
 }
 
 static void RawFullTypeAttrPrint(FullTypeAttr tfattr, AsmPrinter& printer) {
-  printer << stringifyFullTypeId(tf_type::FullTypeId(tfattr.getTypeId()));
+  printer << stringifyFullTypeId(
+      tf_type::FullTypeId(tfattr.getTypeId().getInt()));
   if (!tfattr.getArgs().empty()) {
     printer << "<";
     llvm::interleaveComma(tfattr.getArgs(), printer, [&](Attribute arg) {
@@ -398,7 +403,7 @@ Attribute ShapeAttr::parse(AsmParser& parser, Type type) {
       llvm::SMLoc loc = parser.getCurrentLocation();
       if (succeeded(parser.parseOptionalQuestion())) {
         shape.back() = ShapedType::kDynamic;
-      } else if (failed(parser.parseInteger(shape.back()))) {
+      } else if (failed(parser.parseDecimalInteger(shape.back()))) {
         parser.emitError(loc)
             << "expected an integer or `?` when parsing a tf.shape attribute";
         return failure();
