@@ -457,6 +457,8 @@ def TF_LegacyCallOp : TF_Op<"LegacyCall",
 
   let arguments = (ins
     Variadic<TF_Tensor>:$args,
+	OptionalAttr<DictArrayAttr>:$arg_attrs,
+    OptionalAttr<DictArrayAttr>:$res_attrs,
 
     FlatSymbolRefAttr:$f,
     DefaultValuedOptionalAttr<BoolAttr, "false">:$_disable_call_shape_inference
@@ -1071,6 +1073,8 @@ def TF_TPUPartitionedCallOp : TF_Op<"TPUPartitionedCall",
   let arguments = (ins
     Variadic<TF_Tensor>:$args,
     TF_Int32Tensor:$device_ordinal,
+    OptionalAttr<DictArrayAttr>:$arg_attrs,
+    OptionalAttr<DictArrayAttr>:$res_attrs,
 
     SymbolRefAttr:$f,
     DefaultValuedOptionalAttr<I64Attr, "0">:$autotuner_thresh

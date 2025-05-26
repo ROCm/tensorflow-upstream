@@ -11348,6 +11348,8 @@ underlying graph, and executes each of the partitioned subgraphs as a function.
 
   let arguments = (ins
     Arg<Variadic<TF_Tensor>, [{A list of input tensors.}]>:$args,
+    OptionalAttr<DictArrayAttr>:$arg_attrs,
+    OptionalAttr<DictArrayAttr>:$res_attrs,
 
     SymbolRefAttr:$f,
     DefaultValuedOptionalAttr<StrAttr, "\"\"">:$config,
@@ -12869,6 +12871,8 @@ def TF_RemoteCallOp : TF_Op<"RemoteCall", [CallOpInterface]> {
   let arguments = (ins
     Arg<TF_StrTensor, [{A fully specified device name where we want to run the function.}]>:$target,
     Arg<Variadic<TF_Tensor>, [{A list of arguments for the function.}]>:$args,
+    OptionalAttr<DictArrayAttr>:$arg_attrs,
+    OptionalAttr<DictArrayAttr>:$res_attrs,
 
     SymbolRefAttr:$f
   );

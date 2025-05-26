@@ -393,6 +393,8 @@ private:
   }
 };
 
+} // namespace
+
 void populateExtraBufferizePatterns(MLIRContext *context,
                                     TypeConverter *converter,
                                     RewritePatternSet *patterns) {
@@ -403,7 +405,5 @@ void populateExtraBufferizePatterns(MLIRContext *context,
   >(*converter, context);
   // clang-format on
 }
-
-} // namespace
 
 } // namespace mlir
