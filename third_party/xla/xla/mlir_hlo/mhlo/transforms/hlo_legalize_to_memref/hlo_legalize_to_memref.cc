@@ -71,12 +71,14 @@ struct ReshapeOpInterface
     auto reshapeOp = cast<mhlo::ReshapeOp>(op);
     auto unrankedOperandType =
         mlir::dyn_cast<UnrankedTensorType>(reshapeOp.getOperand().getType());
-    if (unrankedOperandType == nullptr) return success();
+    if (unrankedOperandType == nullptr)
+      return success();
 
     // The buffer still has the old (pre-reshape) type.
     FailureOr<Value> operandBuffer =
         getBuffer(rewriter, reshapeOp.getOperand(), options);
-    if (failed(operandBuffer)) return failure();
+    if (failed(operandBuffer))
+      return failure();
 
     auto resultType = mlir::cast<RankedTensorType>(reshapeOp.getType());
     auto destType =
@@ -114,7 +116,8 @@ struct DynamicReshapeOpInterface
         getBuffer(rewriter, reshapeOp.getOperand(), options);
     FailureOr<Value> outputShapeBuffer =
         getBuffer(rewriter, reshapeOp.getOutputShape(), options);
-    if (failed(operandBuffer) || failed(outputShapeBuffer)) return failure();
+    if (failed(operandBuffer) || failed(outputShapeBuffer))
+      return failure();
 
     ShapedType resultType;
     TensorType opResultType = reshapeOp.getType();
@@ -134,7 +137,8 @@ struct DynamicReshapeOpInterface
       FailureOr<Value> tensorAlloc =
           bufferization::allocateTensorForShapedValue(rewriter, op->getLoc(),
                                                       *operandBuffer, options);
-      if (failed(tensorAlloc)) return failure();
+      if (failed(tensorAlloc))
+        return failure();
       auto memrefType =
           MemRefType::get(bufferType.getShape(), bufferType.getElementType());
       operand = rewriter.create<bufferization::ToMemrefOp>(
@@ -149,9 +153,10 @@ struct DynamicReshapeOpInterface
 // Inserts dynamic memref to change the layout of the memref to put 0-stride
 // and size of the target dimension if size-1 dimension expansion is
 // necessary.
-FailureOr<Value> insertDynamicMemrefCastOp(
-    mhlo::DynamicBroadcastInDimOp op, Value operand, RewriterBase &rewriter,
-    const BufferizationOptions &options) {
+FailureOr<Value>
+insertDynamicMemrefCastOp(mhlo::DynamicBroadcastInDimOp op, Value operand,
+                          RewriterBase &rewriter,
+                          const BufferizationOptions &options) {
   auto loc = op.getLoc();
   auto operandType = mlir::cast<MemRefType>(operand.getType());
   auto operandShape = operandType.getShape();
@@ -196,7 +201,8 @@ FailureOr<Value> insertDynamicMemrefCastOp(
     Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i);
     FailureOr<Value> outputDimsBuffer =
         getBuffer(rewriter, op.getOutputDimensions(), options);
-    if (failed(outputDimsBuffer)) return failure();
+    if (failed(outputDimsBuffer))
+      return failure();
     Value resultDimSize =
         rewriter.create<memref::LoadOp>(loc, *outputDimsBuffer, iVal);
     if (!resultDimSize.getType().isIndex()) {
@@ -267,41 +273,24 @@ struct DynamicBroadcastInDimOpInterface
     auto broadcastInDimOp = cast<mhlo::DynamicBroadcastInDimOp>(op);
     auto resultType =
         mlir::dyn_cast<RankedTensorType>(broadcastInDimOp.getType());
-    if (!resultType) return success();
+    if (!resultType)
+      return success();
 
     // The buffer still has the old (pre-reshape) type.
     FailureOr<Value> operandBuffer =
         getBuffer(rewriter, broadcastInDimOp.getOperand(), options);
-    if (failed(operandBuffer)) return failure();
+    if (failed(operandBuffer))
+      return failure();
     FailureOr<Value> result = insertDynamicMemrefCastOp(
         broadcastInDimOp, *operandBuffer, rewriter, options);
-    if (failed(result)) return failure();
+    if (failed(result))
+      return failure();
     bufferization::replaceOpWithBufferizedValues(rewriter, op, *result);
     return success();
   }
 };
 
-struct HloLegalizeToMemrefPass
-    : public impl::HloLegalizeToMemrefPassBase<HloLegalizeToMemrefPass> {
-  void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<mhlo::MhloDialect>();
-    registerBufferizableOpInterfaceExternalModels(registry);
-  }
-
- public:
-  void runOnOperation() override {
-    bufferization::BufferizationOptions options =
-        bufferization::getPartialBufferizationOptions();
-    options.opFilter.allowDialect<mhlo::MhloDialect>();
-    if (failed(bufferizeOp(getOperation(), options))) signalPassFailure();
-  }
-};
-
-}  // namespace
-
-std::unique_ptr<OperationPass<ModuleOp>> createLegalizeToMemrefPass() {
-  return std::make_unique<HloLegalizeToMemrefPass>();
-}
+} // namespace
 
 void registerBufferizableOpInterfaceExternalModels(DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *ctx, MhloDialect * /*dialect*/) {
@@ -316,5 +305,5 @@ void registerBufferizableOpInterfaceExternalModels(DialectRegistry &registry) {
   });
 }
 
-}  // namespace mhlo
-}  // namespace mlir
+} // namespace mhlo
+} // namespace mlir

@@ -49,36 +49,35 @@ Type convertShapedType(ShapedType shapedType) {
   return shapedType;
 }
 
-std::optional<Value> materializeCastFromIllegal(OpBuilder& builder, Type type,
-                                                ValueRange inputs,
-                                                Location loc) {
+Value materializeCastFromIllegal(OpBuilder &builder, Type type,
+                                 ValueRange inputs, Location loc) {
   Type fromType = getElementTypeOrSelf(inputs[0].getType());
   Type toType = getElementTypeOrSelf(type);
   if ((!fromType.isSignedInteger() && !fromType.isUnsignedInteger()) ||
       !toType.isSignlessInteger())
-    return std::nullopt;
+    return Value();
   // Use unrealized conversion casts to do signful->signless conversions.
   return builder.create<UnrealizedConversionCastOp>(loc, type, inputs[0])
       ->getResult(0);
 }
 
-std::optional<Value> materializeCastToIllegal(OpBuilder& builder, Type type,
-                                              ValueRange inputs, Location loc) {
+Value materializeCastToIllegal(OpBuilder &builder, Type type, ValueRange inputs,
+                               Location loc) {
   Type fromType = getElementTypeOrSelf(inputs[0].getType());
   Type toType = getElementTypeOrSelf(type);
   if (!fromType.isSignlessInteger() ||
       (!toType.isSignedInteger() && !toType.isUnsignedInteger()))
-    return std::nullopt;
+    return Value();
   // Use unrealized conversion casts to do signless->signful conversions.
   return builder.create<UnrealizedConversionCastOp>(loc, type, inputs[0])
       ->getResult(0);
 }
 
-std::optional<Value> scalarToTensor(OpBuilder& builder, Type type,
-                                    ValueRange inputs, Location loc) {
+Value scalarToTensor(OpBuilder &builder, Type type, ValueRange inputs,
+                     Location loc) {
   assert(inputs.size() == 1);
   if (mlir::isa<ShapedType>(inputs.front().getType())) {
-    return std::nullopt;
+    return Value();
   }
   Value result =
       builder
@@ -95,7 +94,7 @@ std::optional<Value> scalarToTensor(OpBuilder& builder, Type type,
   return result;
 }
 
-}  // namespace
+} // namespace
 
 RemoveSignTypeConverter::RemoveSignTypeConverter() {
   addConversion([](Type type) { return type; });
@@ -110,9 +109,11 @@ RemoveSignTypeConverter::RemoveSignTypeConverter() {
 
 LinalgTypeConverter::LinalgTypeConverter() : RemoveSignTypeConverter() {
   addArgumentMaterialization(scalarToTensor);
+  addSourceMaterialization(scalarToTensor);
+  addTargetMaterialization(scalarToTensor);
 }
 
-}  // namespace mhlo
+} // namespace mhlo
 
 namespace stablehlo {
 
@@ -123,19 +124,22 @@ HloTypeConverter::HloTypeConverter() {
     // However, we restrict the use of types defined in the source dialect.
     // This check is here only for exceptional situations, e.g. when we added
     // a new type and forgot to update the converters in the subclass.
-    if (isSourceDialect(type.getDialect())) return {};
+    if (isSourceDialect(type.getDialect()))
+      return {};
     return type;
   });
   addConversion([&](RankedTensorType type) -> Type {
     auto encoding = type.getEncoding();
-    if (!encoding) return type;
+    if (!encoding)
+      return type;
 
     // Since this type converter can be used in all sorts of programs,
     // we generally want to allow most of the encodings to pass through,
     // However, we restrict the use of encodings defined in the source dialect.
     if (isSourceDialect(encoding.getDialect())) {
       auto convertedEncoding = convertSourceDialectEncoding(encoding);
-      if (!convertedEncoding) return {};
+      if (!convertedEncoding)
+        return {};
       return RankedTensorType::get(type.getShape(), type.getElementType(),
                                    convertedEncoding);
     }
@@ -143,7 +147,8 @@ HloTypeConverter::HloTypeConverter() {
   });
   addConversion([&](TupleType type) -> Type {
     SmallVector<Type> convertedTypes;
-    if (failed(convertTypes(type.getTypes(), convertedTypes))) return {};
+    if (failed(convertTypes(type.getTypes(), convertedTypes)))
+      return {};
     return TupleType::get(type.getContext(), convertedTypes);
   });
 }
@@ -163,12 +168,12 @@ HloToStablehloTypeConverter::HloToStablehloTypeConverter()
   // Proposal: https://github.com/openxla/stablehlo/issues/743.
 }
 
-bool HloToStablehloTypeConverter::isSourceDialect(Dialect& dialect) {
+bool HloToStablehloTypeConverter::isSourceDialect(Dialect &dialect) {
   return dialect.getNamespace() == mhlo::MhloDialect::getDialectNamespace();
 }
 
-Attribute HloToStablehloTypeConverter::convertSourceDialectEncoding(
-    Attribute attr) {
+Attribute
+HloToStablehloTypeConverter::convertSourceDialectEncoding(Attribute attr) {
   if (auto hloAttr = mlir::dyn_cast_or_null<mhlo::TypeExtensionsAttr>(attr)) {
     return stablehlo::TypeExtensionsAttr::get(hloAttr.getContext(),
                                               hloAttr.getBounds());
@@ -186,13 +191,13 @@ StablehloToHloTypeConverter::StablehloToHloTypeConverter()
   });
 }
 
-bool StablehloToHloTypeConverter::isSourceDialect(Dialect& dialect) {
+bool StablehloToHloTypeConverter::isSourceDialect(Dialect &dialect) {
   return dialect.getNamespace() ==
          stablehlo::StablehloDialect::getDialectNamespace();
 }
 
-Attribute StablehloToHloTypeConverter::convertSourceDialectEncoding(
-    Attribute attr) {
+Attribute
+StablehloToHloTypeConverter::convertSourceDialectEncoding(Attribute attr) {
   if (auto stablehloAttr =
           mlir::dyn_cast_or_null<stablehlo::TypeExtensionsAttr>(attr)) {
     return mhlo::TypeExtensionsAttr::get(stablehloAttr.getContext(),
@@ -204,9 +209,9 @@ Attribute StablehloToHloTypeConverter::convertSourceDialectEncoding(
   return {};
 }
 
-void registerFuncOpsForTypeConversion(ConversionTarget& target,
-                                      RewritePatternSet& patterns,
-                                      TypeConverter& converter) {
+void registerFuncOpsForTypeConversion(ConversionTarget &target,
+                                      RewritePatternSet &patterns,
+                                      TypeConverter &converter) {
   target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
     return converter.isSignatureLegal(op.getFunctionType());
   });
@@ -222,6 +227,6 @@ void registerFuncOpsForTypeConversion(ConversionTarget& target,
   populateReturnOpTypeConversionPattern(patterns, converter);
 }
 
-}  // namespace stablehlo
+} // namespace stablehlo
 
-}  // namespace mlir
+} // namespace mlir

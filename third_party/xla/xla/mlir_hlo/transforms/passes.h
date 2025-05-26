@@ -27,18 +27,18 @@ class MLIRContext;
 class ConversionTarget;
 class DialectRegistry;
 class PassManager;
+class TypeConverter;
 
 namespace func {
 class FuncOp;
-}  // namespace func
+} // namespace func
 namespace bufferization {
 class BufferizeTypeConverter;
-}  // namespace bufferization
+} // namespace bufferization
 
-using BufferizeDialectsCallback = std::function<void(DialectRegistry&)>;
+using BufferizeDialectsCallback = std::function<void(DialectRegistry &)>;
 using BufferizePatternsCallback = std::function<void(
-    ConversionTarget&, MLIRContext*, bufferization::BufferizeTypeConverter*,
-    RewritePatternSet*)>;
+    ConversionTarget &, MLIRContext *, TypeConverter *, RewritePatternSet *)>;
 
 //===----------------------------------------------------------------------===//
 // Passes
@@ -64,17 +64,18 @@ std::unique_ptr<OperationPass<ModuleOp>> createComputeOpAndFuncBufferizePass();
 // Note: dependency from kernelgen.
 std::unique_ptr<OperationPass<ModuleOp>> createFinalBufferizePass();
 
-std::unique_ptr<OperationPass<ModuleOp>> createFinalBufferizePass(
-    uint64_t alignment, BufferizeDialectsCallback dc = {},
-    BufferizePatternsCallback pc = {});
+std::unique_ptr<OperationPass<ModuleOp>>
+createFinalBufferizePass(uint64_t alignment, BufferizeDialectsCallback dc = {},
+                         BufferizePatternsCallback pc = {});
 
 // Creates a pass for collapsing multidimensional parallel loops into 1D loops.
 std::unique_ptr<OperationPass<>> createCollapseParallelLoopsTo1DPass();
 
 // Creates a TileLoopsPass with tiles sizes provided through `tile_sizes`
 // and unroll factors provided through `unroll_factors`.
-std::unique_ptr<OperationPass<func::FuncOp>> createTileLoopsPass(
-    ArrayRef<int64_t> tileSizes = {}, ArrayRef<int64_t> unrollFactors = {});
+std::unique_ptr<OperationPass<func::FuncOp>>
+createTileLoopsPass(ArrayRef<int64_t> tileSizes = {},
+                    ArrayRef<int64_t> unrollFactors = {});
 
 // Detensorizes loop-carried variables and block arguments of scf.while, scf.for
 // and scf.if.
@@ -89,8 +90,8 @@ std::unique_ptr<OperationPass<func::FuncOp>> createVectorizeCopyPass();
 namespace hlo {
 std::unique_ptr<OperationPass<ModuleOp>> createOneShotBufferizePass();
 
-std::unique_ptr<OperationPass<ModuleOp>> createGenericHostToLLVMPass(
-    const GenericHostToLLVMPassOptions& options = {});
+std::unique_ptr<OperationPass<ModuleOp>>
+createGenericHostToLLVMPass(const GenericHostToLLVMPassOptions &options = {});
 
 std::unique_ptr<OperationPass<func::FuncOp>> createUnbufferizePass();
 std::unique_ptr<OperationPass<func::FuncOp>> createAllocToArgPass();
@@ -98,7 +99,7 @@ std::unique_ptr<OperationPass<func::FuncOp>> createAllocToArgPass();
 #define GEN_PASS_REGISTRATION
 #include "transforms/passes.h.inc"
 
-}  // namespace hlo
-}  // namespace mlir
+} // namespace hlo
+} // namespace mlir
 
-#endif  // MLIR_HLO_TRANSFORMS_PASSES_H
+#endif // MLIR_HLO_TRANSFORMS_PASSES_H
