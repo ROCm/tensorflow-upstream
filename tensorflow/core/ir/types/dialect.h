@@ -19,11 +19,11 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
-#include "mlir/IR/Dialect.h"  // from @llvm-project
-#include "mlir/IR/TypeUtilities.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/IR/QuantTypes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"              // from @llvm-project
+#include "mlir/IR/Diagnostics.h"               // from @llvm-project
+#include "mlir/IR/Dialect.h"                   // from @llvm-project
+#include "mlir/IR/TypeUtilities.h"             // from @llvm-project
 
 // Include the dialect class generated from dialect.td.
 // The constructor and the printing/parsing of dialect types are manually
