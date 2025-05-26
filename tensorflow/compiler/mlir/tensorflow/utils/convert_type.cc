@@ -19,10 +19,10 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "llvm/Support/Casting.h"
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Types.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"            // from @llvm-project
+#include "mlir/IR/Types.h"                   // from @llvm-project
 #include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"               // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/dynamic_shape_utils.h"
 #include "tensorflow/core/framework/types.h"
@@ -83,10 +83,10 @@ Status ConvertDataType(DataType dtype, Builder builder, Type* type) {
       *type = mlir::ComplexType::get(builder.getF64Type());
       return absl::OkStatus();
     case tensorflow::DT_FLOAT8_E4M3FN:
-      *type = builder.getFloat8E4M3FNType();
+      *type = builder.getType<mlir::Float8E4M3FNType>();
       return absl::OkStatus();
     case tensorflow::DT_FLOAT8_E5M2:
-      *type = builder.getFloat8E5M2Type();
+      *type = builder.getType<mlir::Float8E5M2Type>();
       return absl::OkStatus();
     case DT_INT4:
       *type = builder.getIntegerType(4, /*isSigned=*/true);
@@ -119,10 +119,10 @@ Status ConvertScalarTypeToDataType(Type type, DataType* dtype) {
   } else if (type.isBF16()) {
     *dtype = DT_BFLOAT16;
     return absl::OkStatus();
-  } else if (type.isFloat8E4M3FN()) {
+  } else if (llvm::isa<mlir::Float8E4M3FNType>(type)) {
     *dtype = DT_FLOAT8_E4M3FN;
     return absl::OkStatus();
-  } else if (type.isFloat8E5M2()) {
+  } else if (llvm::isa<mlir::Float8E5M2Type>(type)) {
     *dtype = DT_FLOAT8_E5M2;
     return absl::OkStatus();
   } else if (auto itype = mlir::dyn_cast<mlir::IntegerType>(type)) {

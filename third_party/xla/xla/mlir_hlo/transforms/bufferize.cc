@@ -37,9 +37,9 @@ namespace {
 struct BufferizeConstantOp : public OpConversionPattern<arith::ConstantOp> {
   using OpConversionPattern<arith::ConstantOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(
-      arith::ConstantOp op, OpAdaptor /*adaptor*/,
-      ConversionPatternRewriter &rewriter) const final {
+  LogicalResult
+  matchAndRewrite(arith::ConstantOp op, OpAdaptor /*adaptor*/,
+                  ConversionPatternRewriter &rewriter) const final {
     // We only need to bufferize tensor constants.
     Location loc = op.getLoc();
     auto resultType = mlir::dyn_cast<RankedTensorType>(op.getType());
@@ -78,7 +78,8 @@ struct BufferizeConstantOp : public OpConversionPattern<arith::ConstantOp> {
                            elementType);
     for (const auto &en :
          llvm::enumerate(elementsAttr.getValues<Attribute>())) {
-      if (!allSameElems) value = makeConstant(en.value(), elementType);
+      if (!allSameElems)
+        value = makeConstant(en.value(), elementType);
       Value index = rewriter.create<arith::ConstantIndexOp>(loc, en.index());
       rewriter.create<memref::StoreOp>(loc, value, buffer, index);
     }
@@ -92,9 +93,10 @@ struct BufferizeAndConvertMinimumBroadcastShapesOp
   using OpConversionPattern<
       mhlo::MinimumBroadcastShapesOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(
-      mhlo::MinimumBroadcastShapesOp broadcastShapesOp, OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewrite(mhlo::MinimumBroadcastShapesOp broadcastShapesOp,
+                  OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     auto loc = broadcastShapesOp.getLoc();
     ImplicitLocOpBuilder lb(loc, rewriter);
     Value zero = lb.create<arith::ConstantIndexOp>(0);
@@ -196,20 +198,20 @@ struct BufferizeAndConvertMinimumBroadcastShapesOp
                 l, arith::CmpIPredicate::ult, ranks[i], v);
             Value dimension = b.create<arith::SubIOp>(l, ranks[i], v);
             resultDimensions.push_back(dimension);
-            Value currentSize =
-                b.create<scf::IfOp>(
-                     l, isOutOfBounds,
-                     [&](OpBuilder &b, Location l) {
-                       b.create<scf::YieldOp>(l, one);
-                     },
-                     [&](OpBuilder &b, Location l) {
-                       // Using IfOp instead of SelectOp makes sure that we
-                       // don't try to load if the dimension is out of bounds.
-                       Value size =
-                           b.create<memref::LoadOp>(l, shapes[i], dimension);
-                       b.create<scf::YieldOp>(l, size);
-                     })
-                    .getResult(0);
+            Value currentSize = b.create<scf::IfOp>(
+                                     l, isOutOfBounds,
+                                     [&](OpBuilder &b, Location l) {
+                                       b.create<scf::YieldOp>(l, one);
+                                     },
+                                     [&](OpBuilder &b, Location l) {
+                                       // Using IfOp instead of SelectOp makes
+                                       // sure that we don't try to load if the
+                                       // dimension is out of bounds.
+                                       Value size = b.create<memref::LoadOp>(
+                                           l, shapes[i], dimension);
+                                       b.create<scf::YieldOp>(l, size);
+                                     })
+                                    .getResult(0);
             // Compute whether the current dimension does require broadcasting.
             Value currentSizeIsNotOne = b.create<arith::CmpIOp>(
                 l, arith::CmpIPredicate::ne, currentSize, one);
@@ -338,7 +340,7 @@ struct BufferizeAndConvertMinimumBroadcastShapesOp
     return success();
   }
 
- private:
+private:
   Value countLeadingOnes(ImplicitLocOpBuilder &lb, Value extentMemref,
                          Value rank) const {
     // Count leading 1's. Use two iteration variables for that: one with a
@@ -391,11 +393,9 @@ struct BufferizeAndConvertMinimumBroadcastShapesOp
   }
 };
 
-}  // namespace
-
-void populateExtraBufferizePatterns(
-    MLIRContext *context, bufferization::BufferizeTypeConverter *converter,
-    RewritePatternSet *patterns) {
+void populateExtraBufferizePatterns(MLIRContext *context,
+                                    TypeConverter *converter,
+                                    RewritePatternSet *patterns) {
   // clang-format off
   patterns->add<
       BufferizeAndConvertMinimumBroadcastShapesOp,
@@ -404,4 +404,6 @@ void populateExtraBufferizePatterns(
   // clang-format on
 }
 
-}  // namespace mlir
+} // namespace
+
+} // namespace mlir

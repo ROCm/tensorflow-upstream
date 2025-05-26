@@ -19,10 +19,10 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "llvm/Support/Casting.h"
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Types.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"            // from @llvm-project
+#include "mlir/IR/Types.h"                   // from @llvm-project
 #include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"               // from @llvm-project
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/ir/dialect.h"
@@ -86,10 +86,10 @@ Status ConvertDataType(DataType dtype, Builder& builder, Type* type) {
       *type = ComplexType::get(builder.getF64Type());
       return absl::OkStatus();
     case tensorflow::DT_FLOAT8_E4M3FN:
-      *type = builder.getFloat8E4M3FNType();
+      *type = builder.getType<mlir::Float8E4M3FNType>();
       return absl::OkStatus();
     case tensorflow::DT_FLOAT8_E5M2:
-      *type = builder.getFloat8E5M2Type();
+      *type = builder.getType<mlir::Float8E5M2Type>();
       return absl::OkStatus();
     case tensorflow::DT_INT4:
       *type = builder.getIntegerType(4, /*isSigned=*/true);
@@ -97,9 +97,9 @@ Status ConvertDataType(DataType dtype, Builder& builder, Type* type) {
     case tensorflow::DT_UINT4:
       *type = builder.getIntegerType(4, /*isSigned=*/false);
       return absl::OkStatus();
-#define HANDLE_TF_TYPE(tftype, enumerant, name) \
-  case tensorflow::DT_##enumerant:              \
-    *type = builder.getType<tftype##Type>();    \
+#define HANDLE_TF_TYPE(tftype, enumerant, name)       \
+  case tensorflow::DT_##enumerant:                    \
+    *type = builder.getType<tf_type::tftype##Type>(); \
     return ::tensorflow::OkStatus();
 #include "tensorflow/core/ir/types/types.def"
 
@@ -122,10 +122,10 @@ Status ConvertScalarTypeToDataType(Type type, DataType* dtype) {
   } else if (type.isBF16()) {
     *dtype = tensorflow::DT_BFLOAT16;
     return absl::OkStatus();
-  } else if (type.isFloat8E4M3FN()) {
+  } else if (llvm::isa<Float8E4M3FNType>(type)) {
     *dtype = ::tensorflow::DT_FLOAT8_E4M3FN;
     return absl::OkStatus();
-  } else if (type.isFloat8E5M2()) {
+  } else if (llvm::isa<Float8E5M2FNUZType>(type)) {
     *dtype = ::tensorflow::DT_FLOAT8_E5M2;
     return absl::OkStatus();
   } else if (auto itype = mlir::dyn_cast<IntegerType>(type)) {
@@ -171,7 +171,7 @@ Status ConvertScalarTypeToDataType(Type type, DataType* dtype) {
   }
 
 #define HANDLE_TF_TYPE(tftype, enumerant, name) \
-  if (type.isa<tftype##Type>()) {               \
+  if (type.isa<tf_type::tftype##Type>()) {      \
     *dtype = tensorflow::DT_##enumerant;        \
     return ::tensorflow::OkStatus();            \
   }
