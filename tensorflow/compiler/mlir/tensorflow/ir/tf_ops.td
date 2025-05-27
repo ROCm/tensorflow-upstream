@@ -617,7 +617,7 @@ underlying graph, and executes each of the partitioned subgraphs as a function.
 
   let arguments = (ins
     Variadic<TF_Tensor>:$args,
-	OptionalAttr<DictArrayAttr>:$arg_attrs,
+    OptionalAttr<DictArrayAttr>:$arg_attrs,
     OptionalAttr<DictArrayAttr>:$res_attrs,
 
     FlatSymbolRefAttr:$f,
