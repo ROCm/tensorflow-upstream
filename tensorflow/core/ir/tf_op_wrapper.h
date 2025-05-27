@@ -20,12 +20,12 @@ limitations under the License.
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/iterator_range.h"
-#include "mlir/Dialect/Quant/IR/QuantTypes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"         // from @llvm-project
-#include "mlir/IR/Operation.h"                 // from @llvm-project
-#include "mlir/IR/OperationSupport.h"          // from @llvm-project
-#include "mlir/IR/TypeRange.h"                 // from @llvm-project
-#include "mlir/Support/LLVM.h"                 // from @llvm-project
+#include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/OperationSupport.h"  // from @llvm-project
+#include "mlir/IR/TypeRange.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "tensorflow/core/ir/dialect.h"
 #include "tensorflow/core/ir/types/dialect.h"
 #include "tensorflow/core/ir/utility.h"
@@ -57,21 +57,21 @@ class TFOp {
  public:
   // Wrap an operation. The operation can be null. The constructor must be
   // marked as implicit to support `llvm::dyn_cast`.
-  TFOp(Operation* op = nullptr);  // NOLINT
+  TFOp(Operation *op = nullptr);  // NOLINT
 
-  explicit TFOp(Operation& op) : TFOp(&op) {}
+  explicit TFOp(Operation &op) : TFOp(&op) {}
 
   // Support LLVM-style RTTI.
-  static bool classof(Operation* op) {
+  static bool classof(Operation *op) {
     return isa<TFGraphDialect>(op->getDialect());
   }
 
   // Get the wrapped operation.
-  Operation* getOperation() { return op_; }
+  Operation *getOperation() { return op_; }
 
   // Returns a pointer to the TensorFlow Graph Dialect. It nevers returns
   // nullptr.
-  TFGraphDialect* getDialect() {
+  TFGraphDialect *getDialect() {
     return cast<TFGraphDialect>(op_->getDialect());
   }
 
@@ -99,7 +99,7 @@ class TFOp {
   StringAttr nameAttr();
   StringRef name();
   // Set a new node name for this operation.
-  void setName(const Twine& name);
+  void setName(const Twine &name);
   void setName(StringAttr name);
 
   // Returns the requested device, which is also the "device" field in a
@@ -107,14 +107,14 @@ class TFOp {
   StringAttr requestedDeviceAttr();
   StringRef requestedDevice();
   // Set a new requested device for this operation.
-  void setRequestedDevice(const Twine& requested_device);
+  void setRequestedDevice(const Twine &requested_device);
   void setRequestedDevice(StringAttr requested_device);
 
   // Returns the assigned device, this field is set by placer in general.
   StringAttr assignedDeviceAttr();
   StringRef assignedDevice();
   // Set a new assigned device for this operation.
-  void setAssignedDevice(const Twine& assigned_device);
+  void setAssignedDevice(const Twine &assigned_device);
   void setAssignedDevice(StringAttr assigned_device);
 
   // Returns the assigned TPU cluster name.
@@ -139,15 +139,15 @@ class TFOp {
   }
 
   // Forward `->` to the underlying operation, exposing the `Operation` methods.
-  Operation* operator->() { return op_; }
-  Operation& operator*() { return *op_; }
+  Operation *operator->() { return op_; }
+  Operation &operator*() { return *op_; }
 
   // Converts to true if there is a wrapped operation.
   explicit operator bool() const { return op_; }
 
  private:
   // The wrapped operation.
-  Operation* op_;
+  Operation *op_;
 };
 
 // A range iterator to get the control tokens associated with a value range.
@@ -180,12 +180,12 @@ class ControlRetRange final
 
   // Compare this range with another.
   template <typename OtherT>
-  bool operator==(const OtherT& other) const {
+  bool operator==(const OtherT &other) const {
     return llvm::size(*this) == llvm::size(other) &&
            std::equal(this->begin(), this->end(), other.begin());
   }
   template <typename OtherT>
-  bool operator!=(const OtherT& other) const {
+  bool operator!=(const OtherT &other) const {
     return !(*this == other);
   }
 };
