@@ -17,14 +17,14 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/SymbolTable.h"  // from @llvm-project
-#include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Transforms/Passes.h"  // from @llvm-project
-#include "mlir/Transforms/RegionUtils.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"            // from @llvm-project
+#include "mlir/IR/Builders.h"              // from @llvm-project
+#include "mlir/IR/SymbolTable.h"           // from @llvm-project
+#include "mlir/Pass/Pass.h"                // from @llvm-project
+#include "mlir/Pass/PassManager.h"         // from @llvm-project
+#include "mlir/Support/LLVM.h"             // from @llvm-project
+#include "mlir/Transforms/Passes.h"        // from @llvm-project
+#include "mlir/Transforms/RegionUtils.h"   // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
@@ -52,6 +52,7 @@ void ConvertLaunchFuncToTFCallPass::runOnOperation() {
     OpBuilder builder(launch);
     auto call_op = builder.create<TF::PartitionedCallOp>(
         module.getLoc(), launch.getResultTypes(), launch.getOperands(),
+        /*args_attrs=*/nullptr, /*res_attrs=*/nullptr,
         SymbolRefAttr::get(builder.getContext(), launch.getFunc()),
         /*config=*/builder.getStringAttr(""),
         /*config_proto=*/builder.getStringAttr(""),

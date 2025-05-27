@@ -13,18 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "absl/strings/match.h"
+#include <cassert>
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/FormatVariadic.h"
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/IRMapping.h"  // from @llvm-project
-#include "mlir/IR/PatternMatch.h"  // from @llvm-project
-#include "mlir/IR/SymbolTable.h"  // from @llvm-project
-#include "mlir/IR/Visitors.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"                 // from @llvm-project
+#include "mlir/IR/Builders.h"                   // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"          // from @llvm-project
+#include "mlir/IR/IRMapping.h"                  // from @llvm-project
+#include "mlir/IR/PatternMatch.h"               // from @llvm-project
+#include "mlir/IR/SymbolTable.h"                // from @llvm-project
+#include "mlir/IR/Visitors.h"                   // from @llvm-project
+#include "mlir/Support/LLVM.h"                  // from @llvm-project
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/dialect_registration.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.h"
@@ -54,9 +58,9 @@ static const char kImportModelDefaultGraphFuncName[] = "main";
 // which are inconsistent between TFG and TFE.
 //
 static mlir::LogicalResult FilterTfgSpecificArgResultAttributes(
-    mlir::MLIRContext *context, mlir::ArrayRef<Type> types,
-    mlir::ArrayAttr array_attr, llvm::SmallVector<mlir::Type> &output_types,
-    llvm::SmallVector<mlir::DictionaryAttr> &output_attrs) {
+    mlir::MLIRContext* context, mlir::ArrayRef<Type> types,
+    mlir::ArrayAttr array_attr, llvm::SmallVector<mlir::Type>& output_types,
+    llvm::SmallVector<mlir::DictionaryAttr>& output_attrs) {
   for (auto it : llvm::zip(
            types, array_attr.template getAsRange<mlir::DictionaryAttr>())) {
     if (mlir::isa<tfg::ControlType>(std::get<0>(it))) continue;
@@ -74,8 +78,8 @@ static mlir::LogicalResult FilterTfgSpecificArgResultAttributes(
 }
 
 static mlir::LogicalResult ReformatOpAttributes(
-    mlir::MLIRContext *context, llvm::ArrayRef<mlir::NamedAttribute> attrs,
-    llvm::SmallVectorImpl<mlir::NamedAttribute> &output) {
+    mlir::MLIRContext* context, llvm::ArrayRef<mlir::NamedAttribute> attrs,
+    llvm::SmallVectorImpl<mlir::NamedAttribute>& output) {
   for (mlir::NamedAttribute attr : attrs) {
     if (attr.getName().strref().contains(
             mlir::tfg::TFGraphDialect::getDeviceAttrKey())) {
@@ -105,16 +109,16 @@ static mlir::LogicalResult ReformatOpAttributes(
 }
 
 static void FilterOutBlockArgControlDep(
-    ValueRange operands, llvm::SmallVectorImpl<Value> &filtered) {
+    ValueRange operands, llvm::SmallVectorImpl<Value>& filtered) {
   for (Value value : operands)
     if (!mlir::isa<mlir::BlockArgument>(value)) filtered.push_back(value);
 }
 
 // Split the tfg.NextIteration into tf_executor::NextIterationSourceOp and
 // tf_executor::NextIterationSinkOp to break the cycle introduced by itself.
-static void SplitNextIteration(Block &block) {
+static void SplitNextIteration(Block& block) {
   // TODO(b/207144333): Supports callback for unregistered ops
-  block.walk([&](Operation *op) {
+  block.walk([&](Operation* op) {
     if (op->getName().getStringRef() != "tfg.NextIteration") return;
     mlir::OpBuilder builder(op);
 
@@ -138,7 +142,7 @@ class ConvertGraphOp : public OpConversionPattern<tfg::GraphOp> {
 
   LogicalResult matchAndRewrite(
       tfg::GraphOp graph, OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const final {
+      ConversionPatternRewriter& rewriter) const final {
     Location loc = graph.getLoc();
     // To keep the import-as-graph logic taken by TFG, we create `void func()`
     // to contain the ops in the tfg::GraphOp. That means the arguments/results
@@ -173,7 +177,7 @@ class ConvertGraphFuncOp : public OpConversionPattern<tfg::GraphFuncOp> {
 
   LogicalResult matchAndRewrite(
       tfg::GraphFuncOp graph_func, OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const final {
+      ConversionPatternRewriter& rewriter) const final {
     assert(!graph_func.getGeneric());
     Location loc = graph_func.getLoc();
     FunctionType ftype = graph_func.getFunctionType();
@@ -216,7 +220,7 @@ class ConvertGraphFuncOp : public OpConversionPattern<tfg::GraphFuncOp> {
     // can't erase the arguments here because the operations may still use them
     // and these uses will be dropped after legalization of each op.
     unsigned idx = 0;
-    Block &block = graph_func.getBody().front();
+    Block& block = graph_func.getBody().front();
     for (auto iter = block.args_begin(), end_iter = block.args_end();
          iter != end_iter; ++iter) {
       if (!mlir::isa<tfg::ControlType>(iter->getType()))
@@ -242,7 +246,7 @@ class ConvertReturnOp : public OpConversionPattern<tfg::ReturnOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
       tfg::ReturnOp ret, OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const final {
+      ConversionPatternRewriter& rewriter) const final {
     rewriter.replaceOpWithNewOp<tf_executor::FetchOp>(ret.getOperation(),
                                                       adaptor.getOperands());
     return success();
@@ -251,12 +255,12 @@ class ConvertReturnOp : public OpConversionPattern<tfg::ReturnOp> {
 
 class ConvertControlTriggerOp : public ConversionPattern {
  public:
-  explicit ConvertControlTriggerOp(MLIRContext *context)
+  explicit ConvertControlTriggerOp(MLIRContext* context)
       : ConversionPattern("tfg.ControlTrigger", PatternBenefit(1), context) {}
 
   LogicalResult matchAndRewrite(
-      Operation *op, llvm::ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const final {
+      Operation* op, llvm::ArrayRef<Value> operands,
+      ConversionPatternRewriter& rewriter) const final {
     llvm::SmallVector<Type, 2> new_types(op->getResultTypes());
     new_types.back() = rewriter.getType<tf_executor::ControlType>();
 
@@ -271,12 +275,12 @@ class ConvertControlTriggerOp : public ConversionPattern {
 
 class ConvertEnterOp : public ConversionPattern {
  public:
-  explicit ConvertEnterOp(MLIRContext *context)
+  explicit ConvertEnterOp(MLIRContext* context)
       : ConversionPattern("tfg.Enter", PatternBenefit(1), context) {}
 
   LogicalResult matchAndRewrite(
-      Operation *op, llvm::ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const final {
+      Operation* op, llvm::ArrayRef<Value> operands,
+      ConversionPatternRewriter& rewriter) const final {
     llvm::SmallVector<Type, 2> new_types(op->getResultTypes());
     new_types.back() = rewriter.getType<tf_executor::ControlType>();
 
@@ -291,12 +295,12 @@ class ConvertEnterOp : public ConversionPattern {
 
 class ConvertExitOp : public ConversionPattern {
  public:
-  explicit ConvertExitOp(MLIRContext *context)
+  explicit ConvertExitOp(MLIRContext* context)
       : ConversionPattern("tfg.Exit", PatternBenefit(1), context) {}
 
   LogicalResult matchAndRewrite(
-      Operation *op, llvm::ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const final {
+      Operation* op, llvm::ArrayRef<Value> operands,
+      ConversionPatternRewriter& rewriter) const final {
     llvm::SmallVector<Type, 2> new_types(op->getResultTypes());
     new_types.back() = rewriter.getType<tf_executor::ControlType>();
 
@@ -311,12 +315,12 @@ class ConvertExitOp : public ConversionPattern {
 
 class ConvertLoopCondOp : public ConversionPattern {
  public:
-  explicit ConvertLoopCondOp(MLIRContext *context)
+  explicit ConvertLoopCondOp(MLIRContext* context)
       : ConversionPattern("tfg.LoopCond", PatternBenefit(1), context) {}
 
   LogicalResult matchAndRewrite(
-      Operation *op, llvm::ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const final {
+      Operation* op, llvm::ArrayRef<Value> operands,
+      ConversionPatternRewriter& rewriter) const final {
     llvm::SmallVector<Type, 2> new_types(op->getResultTypes());
     new_types.back() = rewriter.getType<tf_executor::ControlType>();
 
@@ -331,12 +335,12 @@ class ConvertLoopCondOp : public ConversionPattern {
 
 class ConvertMergeOp : public ConversionPattern {
  public:
-  explicit ConvertMergeOp(MLIRContext *context)
+  explicit ConvertMergeOp(MLIRContext* context)
       : ConversionPattern("tfg.Merge", PatternBenefit(1), context) {}
 
   LogicalResult matchAndRewrite(
-      Operation *op, llvm::ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const final {
+      Operation* op, llvm::ArrayRef<Value> operands,
+      ConversionPatternRewriter& rewriter) const final {
     llvm::SmallVector<Type, 2> new_types(op->getResultTypes());
     new_types.back() = rewriter.getType<tf_executor::ControlType>();
 
@@ -351,12 +355,12 @@ class ConvertMergeOp : public ConversionPattern {
 
 class ConvertSwitchOp : public ConversionPattern {
  public:
-  explicit ConvertSwitchOp(MLIRContext *context)
+  explicit ConvertSwitchOp(MLIRContext* context)
       : ConversionPattern("tfg.Switch", PatternBenefit(1), context) {}
 
   LogicalResult matchAndRewrite(
-      Operation *op, llvm::ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const final {
+      Operation* op, llvm::ArrayRef<Value> operands,
+      ConversionPatternRewriter& rewriter) const final {
     llvm::SmallVector<Type, 2> new_types(op->getResultTypes());
     new_types.back() = rewriter.getType<tf_executor::ControlType>();
 
@@ -371,12 +375,12 @@ class ConvertSwitchOp : public ConversionPattern {
 
 class ConvertSwitchNOp : public ConversionPattern {
  public:
-  explicit ConvertSwitchNOp(MLIRContext *context)
+  explicit ConvertSwitchNOp(MLIRContext* context)
       : ConversionPattern("tfg.SwitchN", PatternBenefit(1), context) {}
 
   LogicalResult matchAndRewrite(
-      Operation *op, llvm::ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const final {
+      Operation* op, llvm::ArrayRef<Value> operands,
+      ConversionPatternRewriter& rewriter) const final {
     llvm::SmallVector<Type, 2> new_types(op->getResultTypes());
     new_types.back() = rewriter.getType<tf_executor::ControlType>();
 
@@ -391,14 +395,14 @@ class ConvertSwitchNOp : public ConversionPattern {
 
 class ConvertGeneralOp : public ConversionPattern {
  public:
-  ConvertGeneralOp(MLIRContext *context,
-                   const DenseSet<StringRef> &func_symbols)
+  ConvertGeneralOp(MLIRContext* context,
+                   const DenseSet<StringRef>& func_symbols)
       : ConversionPattern(MatchAnyOpTypeTag(), PatternBenefit(1), context),
         func_symbols_(func_symbols) {}
 
   LogicalResult matchAndRewrite(
-      Operation *op, llvm::ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const final {
+      Operation* op, llvm::ArrayRef<Value> operands,
+      ConversionPatternRewriter& rewriter) const final {
     if (!llvm::isa<tfg::TFGraphDialect>(op->getDialect())) return failure();
 
     Location loc = op->getLoc();
@@ -433,7 +437,7 @@ class ConvertGeneralOp : public ConversionPattern {
     new_types.pop_back();
 
     llvm::SmallVector<std::unique_ptr<Region>, 1> new_regions;
-    for (auto &region : op->getRegions()) {
+    for (auto& region : op->getRegions()) {
       new_regions.push_back(std::make_unique<Region>());
       new_regions.back()->takeBody(region);
     }
@@ -442,7 +446,7 @@ class ConvertGeneralOp : public ConversionPattern {
     if (failed(ReformatOpAttributes(getContext(), op->getAttrs(), attrs)))
       return failure();
 
-    Operation *inner_op;
+    Operation* inner_op;
 
     StringRef op_name = op->getName().stripDialect();
     if (!func_symbols_.contains(op_name)) {
@@ -459,9 +463,10 @@ class ConvertGeneralOp : public ConversionPattern {
             op->getAttrOfType<BoolAttr>("_disable_call_shape_inference")
                 .getValue();
       }
-      inner_op =
-          rewriter.create<LegacyCallOp>(loc, new_types, inner_op_operands,
-                                        op_name, disable_call_shape_inference);
+      inner_op = rewriter.create<LegacyCallOp>(
+          loc, new_types, inner_op_operands,
+          /*args_attrs=*/nullptr,
+          /*res_attrs=*/nullptr, op_name, disable_call_shape_inference);
     }
 
     rewriter.create<tf_executor::YieldOp>(loc, inner_op->getResults());
@@ -472,7 +477,7 @@ class ConvertGeneralOp : public ConversionPattern {
   }
 
  private:
-  const DenseSet<StringRef> &func_symbols_;
+  const DenseSet<StringRef>& func_symbols_;
 };
 
 #define GEN_PASS_DEF_LEGALIZETFGTOTFPASS
@@ -480,7 +485,7 @@ class ConvertGeneralOp : public ConversionPattern {
 
 class LegalizeTFGToTFE
     : public impl::LegalizeTFGToTFPassBase<LegalizeTFGToTFE> {
-  void getDependentDialects(DialectRegistry &registry) const override {
+  void getDependentDialects(DialectRegistry& registry) const override {
     RegisterAllTensorFlowDialects(registry);
   }
 
@@ -490,11 +495,11 @@ class LegalizeTFGToTFE
 }  // namespace
 
 void LegalizeTFGToTFE::runOnOperation() {
-  MLIRContext &context = getContext();
+  MLIRContext& context = getContext();
   ModuleOp module = getOperation();
 
   DenseSet<StringRef> func_symbols;
-  for (auto &op : module.getBodyRegion().getOps()) {
+  for (auto& op : module.getBodyRegion().getOps()) {
     if (auto func = llvm::dyn_cast<tfg::GraphFuncOp>(op)) {
       func_symbols.insert(
           func->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName())
@@ -526,9 +531,9 @@ void LegalizeTFGToTFE::runOnOperation() {
 
   // Turn the graph region into SSACFG region by applying an order to the
   // operations.
-  for (auto &op : module.getBodyRegion().getOps()) {
-    for (auto &region : op.getRegions()) {
-      for (auto &block : region) {
+  for (auto& op : module.getBodyRegion().getOps()) {
+    for (auto& region : op.getRegions()) {
+      for (auto& block : region) {
         // Split tfg.NextIteration to break the cycle.
         SplitNextIteration(block);
         tfg::SortTopologically(&block);
@@ -538,7 +543,7 @@ void LegalizeTFGToTFE::runOnOperation() {
 
   // Version information is embedded in graph operation in TFG. In TFE, it's
   // embedded in the module operation.
-  for (auto &op : module.getBodyRegion().getOps()) {
+  for (auto& op : module.getBodyRegion().getOps()) {
     auto graph = dyn_cast<tfg::GraphOp>(op);
     if (!graph) continue;
     Builder b(&context);

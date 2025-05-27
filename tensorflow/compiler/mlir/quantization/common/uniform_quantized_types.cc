@@ -19,13 +19,13 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
-#include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/Types.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/IR/QuantTypes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"              // from @llvm-project
+#include "mlir/IR/Location.h"                  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"               // from @llvm-project
+#include "mlir/IR/Operation.h"                 // from @llvm-project
+#include "mlir/IR/Types.h"                     // from @llvm-project
+#include "mlir/Support/LLVM.h"                 // from @llvm-project
 
 #define DEBUG_TYPE "uniform-quantized-types"
 
@@ -40,7 +40,7 @@ UniformQuantizedType CreateI8F32UniformQuantizedType(const Location loc,
   return UniformQuantizedType::getChecked(
       loc, /*flags=*/QuantizationFlags::Signed,
       /*storageType=*/IntegerType::get(&context, /*width=*/8),
-      /*expressedType=*/FloatType::getF32(&context), scale, zero_point,
+      /*expressedType=*/Float32Type::get(&context), scale, zero_point,
       /*storageTypeMin=*/llvm::minIntN(8) + (narrow_range ? 1 : 0),
       /*storageTypeMax=*/llvm::maxIntN(8));
 }
@@ -51,7 +51,7 @@ UniformQuantizedType CreateI32F32UniformQuantizedType(
   return UniformQuantizedType::getChecked(
       loc, /*flags=*/QuantizationFlags::Signed,
       /*storageType=*/IntegerType::get(&context, /*width=*/32),
-      /*expressedType=*/FloatType::getF32(&context), scale, zero_point,
+      /*expressedType=*/Float32Type::get(&context), scale, zero_point,
       /*storageTypeMin=*/llvm::minIntN(32),
       /*storageTypeMax=*/llvm::maxIntN(32));
 }
@@ -63,9 +63,8 @@ UniformQuantizedPerAxisType CreateI8F32UniformQuantizedPerAxisType(
   return UniformQuantizedPerAxisType::getChecked(
       loc, /*flags=*/QuantizationFlags::Signed,
       /*storageType=*/IntegerType::get(&context, /*width=*/8),
-      /*expressedType=*/FloatType::getF32(&context),
-      SmallVector<double>(scales), SmallVector<int64_t>(zero_points),
-      quantization_dimension,
+      /*expressedType=*/Float32Type::get(&context), SmallVector<double>(scales),
+      SmallVector<int64_t>(zero_points), quantization_dimension,
       /*storageTypeMin=*/llvm::minIntN(8) + (narrow_range ? 1 : 0),
       /*storageTypeMax=*/llvm::maxIntN(8));
 }
@@ -76,9 +75,9 @@ UniformQuantizedPerAxisType CreateI32F32UniformQuantizedPerAxisType(
   return UniformQuantizedPerAxisType::getChecked(
       loc, /*flags=*/QuantizationFlags::Signed,
       /*storageType=*/IntegerType::get(&context, /*width=*/32),
-      /*expressedType=*/FloatType::getF32(&context),
-      SmallVector<double>(scales), SmallVector<int64_t>(zero_points),
-      quantization_dimension, /*storageTypeMin=*/llvm::minIntN(32),
+      /*expressedType=*/Float32Type::get(&context), SmallVector<double>(scales),
+      SmallVector<int64_t>(zero_points), quantization_dimension,
+      /*storageTypeMin=*/llvm::minIntN(32),
       /*storageTypeMax=*/llvm::maxIntN(32));
 }
 

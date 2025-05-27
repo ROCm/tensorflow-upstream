@@ -17,14 +17,14 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/SymbolTable.h"  // from @llvm-project
-#include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Transforms/Passes.h"  // from @llvm-project
-#include "mlir/Transforms/RegionUtils.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"            // from @llvm-project
+#include "mlir/IR/Builders.h"              // from @llvm-project
+#include "mlir/IR/SymbolTable.h"           // from @llvm-project
+#include "mlir/Pass/Pass.h"                // from @llvm-project
+#include "mlir/Pass/PassManager.h"         // from @llvm-project
+#include "mlir/Support/LLVM.h"             // from @llvm-project
+#include "mlir/Transforms/Passes.h"        // from @llvm-project
+#include "mlir/Transforms/RegionUtils.h"   // from @llvm-project
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
@@ -53,8 +53,8 @@ struct TPUBridgeExecutorIslandOutlining
 };
 
 // Move FuncOp referenced by `symbol_ref` from one symbol table to another.
-void MoveFuncOp(FlatSymbolRefAttr &symbol_ref, SymbolTable &from,
-                SymbolTable &to) {
+void MoveFuncOp(FlatSymbolRefAttr& symbol_ref, SymbolTable& from,
+                SymbolTable& to) {
   if (to.lookup<func::FuncOp>(symbol_ref.getValue())) return;
   func::FuncOp callee = from.lookup<func::FuncOp>(symbol_ref.getValue());
   callee.getOperation()->getBlock()->getOperations().remove(
@@ -63,10 +63,10 @@ void MoveFuncOp(FlatSymbolRefAttr &symbol_ref, SymbolTable &from,
 }
 
 void TPUBridgeExecutorIslandOutlining::runOnOperation() {
-  MLIRContext *ctx = &getContext();
+  MLIRContext* ctx = &getContext();
 
   SymbolTable symbol_table(getOperation());
-  if (Operation *nested_module = symbol_table.lookup(kNestedModule)) {
+  if (Operation* nested_module = symbol_table.lookup(kNestedModule)) {
     nested_module->emitOpError("unexpected already present outlined module.");
     return signalPassFailure();
   }
@@ -88,7 +88,7 @@ void TPUBridgeExecutorIslandOutlining::runOnOperation() {
       // Island was marked to be skipped.
       return WalkResult::advance();
     }
-    for (Operation &op : island_op.GetBody().without_terminator()) {
+    for (Operation& op : island_op.GetBody().without_terminator()) {
       if (isa<TF::TPUReplicateMetadataOp>(&op)) {
         // Handle replicated TPU case.
         islands_to_outline.push_back(island_op);
@@ -150,7 +150,7 @@ void TPUBridgeExecutorIslandOutlining::runOnOperation() {
     // Remap the captured operands in the (former) island block with newly
     // created entry block arguments in the function body.
     {
-      Block &entry_block = outlined_func.getBody().front();
+      Block& entry_block = outlined_func.getBody().front();
       auto loc = outlined_func.getLoc();
       for (Value operand : operands) {
         BlockArgument newArg = entry_block.addArgument(operand.getType(), loc);
@@ -163,6 +163,7 @@ void TPUBridgeExecutorIslandOutlining::runOnOperation() {
     OpBuilder builder = OpBuilder::atBlockEnd(&island_op.GetBody());
     auto call_op = builder.create<mlir::TF::PartitionedCallOp>(
         island_op.getLoc(), func_result_types, operands.getArrayRef(),
+        /*args_attrs=*/nullptr, /*res_attrs=*/nullptr,
         SymbolRefAttr::get(
             builder.getContext(), kNestedModule,
             SymbolRefAttr::get(builder.getContext(), outlined_func.getName())),
@@ -176,7 +177,7 @@ void TPUBridgeExecutorIslandOutlining::runOnOperation() {
   // Outline all the transitively called functions by moving them in the
   // outlined module.
   for (func::FuncOp func : outlined_module.getOps<func::FuncOp>()) {
-    func.walk([&](Operation *op) {
+    func.walk([&](Operation* op) {
       for (NamedAttribute attr : op->getAttrs()) {
         if (auto symbol_ref =
                 mlir::dyn_cast<FlatSymbolRefAttr>(attr.getValue())) {
@@ -184,7 +185,7 @@ void TPUBridgeExecutorIslandOutlining::runOnOperation() {
           continue;
         }
         if (auto array_attr = mlir::dyn_cast<ArrayAttr>(attr.getValue())) {
-          for (const Attribute &attribute : array_attr) {
+          for (const Attribute& attribute : array_attr) {
             auto symbol_ref = mlir::dyn_cast<FlatSymbolRefAttr>(attribute);
             if (!symbol_ref) continue;
             MoveFuncOp(symbol_ref, symbol_table, outlined_symbol_table);

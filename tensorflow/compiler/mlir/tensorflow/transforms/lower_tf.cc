@@ -627,7 +627,7 @@ class LowerLgammaOp : public RewritePattern {
     bool needs_cast = float_type.getWidth() < 32;
     if (needs_cast) {
       MLIRContext *context = rewriter.getContext();
-      float_type = FloatType::getF32(context);
+      float_type = Float32Type::get(context);
       if (original_tensor_type.hasRank()) {
         tensor_type = tensorflow::GetTypeFromTFTensorShape(
             original_tensor_type.getShape(), float_type);
@@ -1268,6 +1268,10 @@ class LowerBatchToSpaceND : public RewritePattern {
 // since we currently don't have an implementation that can use this
 // information. Adds appropriate casts where necessary to align element types
 // of operands and result for `MatMulOp`.
+// Lowers `SparseMatMulOp` to `MatMulOp`, ignoring the sparseness hints,
+// since we currently don't have an implementation that can use this
+// information. Adds appropriate casts where necessary to align element types
+// of operands and result for `MatMulOp`.
 class LowerSparseMatMulOp : public RewritePattern {
  public:
   explicit LowerSparseMatMulOp(MLIRContext *context)
@@ -1298,9 +1302,9 @@ class LowerSparseMatMulOp : public RewritePattern {
       Type tensor_type_f32;
       if (tensor_type.hasRank()) {
         tensor_type_f32 = tensorflow::GetTypeFromTFTensorShape(
-            tensor_type.getShape(), FloatType::getF32(context));
+            tensor_type.getShape(), Float32Type::get(context));
       } else {
-        tensor_type_f32 = UnrankedTensorType::get(FloatType::getF32(context));
+        tensor_type_f32 = UnrankedTensorType::get(Float32Type::get(context));
       }
       // Add cast to f32 to conform with element type of result.
       operand = rewriter.create<CastOp>(op.getLoc(), tensor_type_f32, operand);

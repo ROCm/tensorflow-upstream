@@ -21,23 +21,23 @@ limitations under the License.
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Regex.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/Quant/QuantOps.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"        // from @llvm-project
+#include "mlir/Dialect/Quant/IR/Quant.h"         // from @llvm-project
+#include "mlir/IR/Attributes.h"                  // from @llvm-project
+#include "mlir/IR/Builders.h"                    // from @llvm-project
 #include "mlir/IR/BuiltinAttributeInterfaces.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/OpDefinition.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "mlir/Pass/PassRegistry.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Support/TypeID.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"           // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"       // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"                // from @llvm-project
+#include "mlir/IR/DialectRegistry.h"             // from @llvm-project
+#include "mlir/IR/Location.h"                    // from @llvm-project
+#include "mlir/IR/OpDefinition.h"                // from @llvm-project
+#include "mlir/IR/Operation.h"                   // from @llvm-project
+#include "mlir/IR/Value.h"                       // from @llvm-project
+#include "mlir/Pass/Pass.h"                      // from @llvm-project
+#include "mlir/Pass/PassRegistry.h"              // from @llvm-project
+#include "mlir/Support/LLVM.h"                   // from @llvm-project
+#include "mlir/Support/TypeID.h"                 // from @llvm-project
 #include "tensorflow/compiler/mlir/lite/quantization/ir/QuantOps.h"
 #include "tensorflow/compiler/mlir/lite/quantization/quantization_info.pb.h"
 #include "tensorflow/compiler/mlir/lite/quantization/quantization_passes.h"
@@ -80,25 +80,24 @@ class ImportQuantStatsPass
 
   void runOnOperation() override;
 
-  void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<quant::QuantizationDialect,
-                    quantfork::QuantizationForkDialect>();
+  void getDependentDialects(DialectRegistry& registry) const override {
+    registry.insert<quant::QuantDialect, quantfork::QuantizationForkDialect>();
   }
 
   // Parses the serialized quant stats protobuf and initialize the internal
   // data structure. This method must be called after the pass is created.
-  bool ParseQuantStats(const std::string &stats_str);
+  bool ParseQuantStats(const std::string& stats_str);
 
  private:
-  void ImportAsStatsOps(OpBuilder b, Operation *op, int index,
-                        const QuantParamsEntry &info);
+  void ImportAsStatsOps(OpBuilder b, Operation* op, int index,
+                        const QuantParamsEntry& info);
 
   void InsertStatsOpAtResult(OpBuilder b, Value res, ElementsAttr layer_stats,
                              ElementsAttr axis_stats, IntegerAttr axis);
 
   // If the index is out of range, this method returns false. Otherwise it
   // returns true if the value is a float tensor.
-  bool IsQuantizableResult(Operation *op, int index) {
+  bool IsQuantizableResult(Operation* op, int index) {
     if (index < 0 || index >= static_cast<int>(op->getNumResults()))
       return false;
     Value res = op->getResult(index);
@@ -119,13 +118,13 @@ class ImportQuantStatsPass
 };
 }  // namespace
 
-bool ImportQuantStatsPass::ParseQuantStats(const std::string &stats_str) {
+bool ImportQuantStatsPass::ParseQuantStats(const std::string& stats_str) {
   QuantizationInfo quant_stats;
   if (!tensorflow::LoadProtoFromBuffer(stats_str, &quant_stats).ok()) {
     return true;
   }
 
-  for (const auto &entry : quant_stats.entries()) {
+  for (const auto& entry : quant_stats.entries()) {
     if (!entry.name().empty()) {
       std::vector<std::string> name_and_port =
           absl::StrSplit(entry.name(), ':');
@@ -151,14 +150,14 @@ void ImportQuantStatsPass::InsertStatsOpAtResult(OpBuilder b, Value res,
   stats_op.getOperation()->replaceUsesOfWith(stats_op, res);
 }
 
-void ImportQuantStatsPass::ImportAsStatsOps(OpBuilder b, Operation *op,
+void ImportQuantStatsPass::ImportAsStatsOps(OpBuilder b, Operation* op,
                                             int index,
-                                            const QuantParamsEntry &info) {
+                                            const QuantParamsEntry& info) {
   if (info.params_size() == 0) return;
 
   SmallVector<APFloat, 4> min_maxs;
   min_maxs.reserve(info.params_size() * 2);
-  for (const auto &param : info.params()) {
+  for (const auto& param : info.params()) {
     llvm::APFloat min(param.min_max().min());
     llvm::APFloat max(param.min_max().max());
     min_maxs.push_back(min);
@@ -195,7 +194,7 @@ void ImportQuantStatsPass::runOnOperation() {
   func::FuncOp func = getOperation();
   OpBuilder builder(func);
 
-  func.walk([&](Operation *op) {
+  func.walk([&](Operation* op) {
     if (op->hasTrait<OpTrait::IsTerminator>()) return;
     auto op_name = op_to_name_(op);
 
@@ -207,7 +206,7 @@ void ImportQuantStatsPass::runOnOperation() {
     }
 
     // Iterate all the regex names and matches the first one.
-    for (auto &regex : regex_to_info_) {
+    for (auto& regex : regex_to_info_) {
       if (llvm::Regex(regex.first()).match(op_name)) {
         ImportAsStatsOps(builder, op, regex.second.first, regex.second.second);
         break;
@@ -218,7 +217,7 @@ void ImportQuantStatsPass::runOnOperation() {
 
 // Creates an instance of the default quant parameters pass.
 std::unique_ptr<OperationPass<func::FuncOp>> CreateImportQuantStatsPass(
-    OperationToName op_to_name, const std::string &stats_str) {
+    OperationToName op_to_name, const std::string& stats_str) {
   auto pass = std::make_unique<ImportQuantStatsPass>(op_to_name);
   if (pass->ParseQuantStats(stats_str)) return nullptr;
   return pass;
@@ -228,8 +227,8 @@ std::unique_ptr<OperationPass<func::FuncOp>> CreateImportQuantStatsPass(
 // the function. A custom method to get the name from the op is used because
 // different dialect ops might have different ways to assign the name.
 std::unique_ptr<OperationPass<func::FuncOp>>
-CreateImportQuantStatsPassForTFControlDialect(const std::string &stats_str) {
-  auto get_name_func = [](Operation *op) {
+CreateImportQuantStatsPassForTFControlDialect(const std::string& stats_str) {
+  auto get_name_func = [](Operation* op) {
     Location loc = tensorflow::GetLocationWithoutOpType(op->getLoc());
     if (auto name = loc.dyn_cast<NameLoc>()) {
       return name.getName().strref();
