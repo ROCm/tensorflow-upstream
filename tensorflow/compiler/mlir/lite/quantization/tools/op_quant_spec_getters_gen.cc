@@ -27,7 +27,7 @@ limitations under the License.
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 #include "mlir/TableGen/Operator.h"  // from @llvm-project
-#include "mlir/TableGen/Trait.h"  // from @llvm-project
+#include "mlir/TableGen/Trait.h"     // from @llvm-project
 
 using llvm::LessRecord;
 using llvm::raw_ostream;
@@ -41,7 +41,7 @@ using mlir::tblgen::Operator;
 // The function below has a non-constant reference as that is required by LLVM's
 // TableGenMain.
 // NOLINTNEXTLINE
-static bool OpQuantSpecWriter(raw_ostream &os, RecordKeeper &records) {
+static bool OpQuantSpecWriter(raw_ostream& os, const RecordKeeper& records) {
   llvm::Regex acc_uniform_trait_regex{"AccumulatorUniformScale<([0-9]*),"};
   llvm::Regex coeff_index_trait_regex{"AffineOpCoefficient<(-?[0-9]*),"};
   llvm::Regex fixed_uniform_trait_regex{
@@ -50,7 +50,7 @@ static bool OpQuantSpecWriter(raw_ostream &os, RecordKeeper &records) {
 
   // Retrieve all the definitions derived from Op definition and sort by record
   // name.
-  std::vector<Record *> defs = records.getAllDerivedDefinitions("Op");
+  std::vector<const Record*> defs = records.getAllDerivedDefinitions("Op");
   llvm::sort(defs, LessRecord());
 
   OUT(0) << "static std::unique_ptr<quant::OpQuantSpec> "
@@ -68,7 +68,7 @@ static bool OpQuantSpecWriter(raw_ostream &os, RecordKeeper &records) {
 
   OUT(2) << "auto spec = std::make_unique<quant::OpQuantSpec>();\n";
   llvm::SmallVector<llvm::StringRef, 3> matches;
-  for (auto *def : defs) {
+  for (auto* def : defs) {
     Operator op(def);
     for (const auto t : op.getTraits()) {
       if (auto opTrait = llvm::dyn_cast<mlir::tblgen::NativeTrait>(&t)) {
@@ -114,7 +114,7 @@ static bool OpQuantSpecWriter(raw_ostream &os, RecordKeeper &records) {
   return false;
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   llvm::InitLLVM y(argc, argv);
   llvm::cl::ParseCommandLineOptions(argc, argv);
   return TableGenMain(argv[0], &OpQuantSpecWriter);
