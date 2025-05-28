@@ -129,27 +129,27 @@ return selected_results
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Casting.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/IRMapping.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/Region.h"  // from @llvm-project
-#include "mlir/IR/SymbolTable.h"  // from @llvm-project
-#include "mlir/IR/Types.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/Visitors.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"    // from @llvm-project
+#include "mlir/IR/Attributes.h"              // from @llvm-project
+#include "mlir/IR/Builders.h"                // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"       // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"              // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"            // from @llvm-project
+#include "mlir/IR/IRMapping.h"               // from @llvm-project
+#include "mlir/IR/Location.h"                // from @llvm-project
+#include "mlir/IR/MLIRContext.h"             // from @llvm-project
+#include "mlir/IR/Operation.h"               // from @llvm-project
+#include "mlir/IR/Region.h"                  // from @llvm-project
+#include "mlir/IR/SymbolTable.h"             // from @llvm-project
+#include "mlir/IR/Types.h"                   // from @llvm-project
+#include "mlir/IR/Value.h"                   // from @llvm-project
+#include "mlir/IR/Visitors.h"                // from @llvm-project
 #include "mlir/Interfaces/CallInterfaces.h"  // from @llvm-project
-#include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "mlir/Transforms/InliningUtils.h"  // from @llvm-project
-#include "mlir/Transforms/RegionUtils.h"  // from @llvm-project
+#include "mlir/Pass/Pass.h"                  // from @llvm-project
+#include "mlir/Support/LLVM.h"               // from @llvm-project
+#include "mlir/Support/LogicalResult.h"      // from @llvm-project
+#include "mlir/Transforms/InliningUtils.h"   // from @llvm-project
+#include "mlir/Transforms/RegionUtils.h"     // from @llvm-project
 #include "tensorflow/compiler/jit/flags.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_dialect.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
@@ -628,7 +628,8 @@ TF::StatefulPartitionedCallOp MakeFuncCaller(mlir::OpBuilder& builder,
       mlir::SymbolRefAttr::get(builder.getContext(), func.getSymName());
   auto result_types = func.getResultTypes();
   auto caller = builder.create<TF::StatefulPartitionedCallOp>(
-      loc, result_types, operands, symbol,
+      loc, result_types, operands, /*args_attrs=*/nullptr,
+      /*res_attrs=*/nullptr, symbol,
       /*config=*/builder.getStringAttr(""),
       /*config_proto=*/builder.getStringAttr(""),
       /*executor_type=*/builder.getStringAttr(""));

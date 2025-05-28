@@ -34,22 +34,22 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"   // from @llvm-project
+#include "mlir/IR/Attributes.h"             // from @llvm-project
+#include "mlir/IR/Builders.h"               // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"      // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"             // from @llvm-project
 #include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/SymbolTable.h"  // from @llvm-project
-#include "mlir/IR/TypeRange.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "mlir/IR/Diagnostics.h"            // from @llvm-project
+#include "mlir/IR/Location.h"               // from @llvm-project
+#include "mlir/IR/MLIRContext.h"            // from @llvm-project
+#include "mlir/IR/Operation.h"              // from @llvm-project
+#include "mlir/IR/SymbolTable.h"            // from @llvm-project
+#include "mlir/IR/TypeRange.h"              // from @llvm-project
+#include "mlir/IR/Value.h"                  // from @llvm-project
+#include "mlir/IR/ValueRange.h"             // from @llvm-project
+#include "mlir/Support/LLVM.h"              // from @llvm-project
+#include "mlir/Support/LogicalResult.h"     // from @llvm-project
 #include "tensorflow/compiler/mlir/quantization/common/attrs_and_constraints.h"
 #include "tensorflow/compiler/mlir/quantization/common/quantization_lib/quantization_utils.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/quantization_config.pb.h"
@@ -115,6 +115,7 @@ ValueRange CreateTFPartitionedCallOp(OpBuilder& builder,
                                      const ValueRange args) {
   TF::PartitionedCallOp call_op = builder.create<TF::PartitionedCallOp>(
       location, output_types, args,
+      /*args_attrs=*/nullptr, /*res_attrs=*/nullptr,
       FlatSymbolRefAttr::get(builder.getStringAttr(func_name)),
       /*config=*/"", /*config_proto=*/"", /*executor_type=*/"");
 

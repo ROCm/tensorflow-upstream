@@ -294,8 +294,9 @@ bool CreateMainFunction(ModuleOp module_op) {
         result_types.begin() + result_idx, func_op.getNumResults());
     result_idx += func_op.getNumResults();
 
-    auto call_op = builder.create<TF::PartitionedCallOp>(
-        module_op.getLoc(), new_types, new_args,
+	auto call_op = builder.create<TF::PartitionedCallOp>(
+        module_op.getLoc(), new_types, new_args, /*args_attrs=*/nullptr,
+        /*res_attrs=*/nullptr,
         SymbolRefAttr::get(context, func_op.getSymName()),
         /*config=*/builder.getStringAttr(""),
         /*config_proto=*/builder.getStringAttr(""),

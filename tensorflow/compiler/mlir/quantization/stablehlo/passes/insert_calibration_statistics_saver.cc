@@ -20,15 +20,15 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/SymbolTable.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/Pass/Pass.h"  // from @llvm-project  // IWYU pragma: keep
+#include "mlir/IR/Attributes.h"            // from @llvm-project
+#include "mlir/IR/Builders.h"              // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"     // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"            // from @llvm-project
+#include "mlir/IR/MLIRContext.h"           // from @llvm-project
+#include "mlir/IR/Operation.h"             // from @llvm-project
+#include "mlir/IR/SymbolTable.h"           // from @llvm-project
+#include "mlir/IR/Value.h"                 // from @llvm-project
+#include "mlir/Pass/Pass.h"     // from @llvm-project  // IWYU pragma: keep
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/quantization/tensorflow/passes/tf_quant_ops.h"
@@ -180,7 +180,7 @@ CreateInsertCalibrationStatisticsSaverPass(
     StringRef calibration_data_dir,
     const std::vector<std::string>& aggregator_ops_to_ignore) {
   InsertCalibrationStatisticsSaverPassOptions options = {
-      .aggregator_ops_to_ignore_ = aggregator_ops_to_ignore,
+      .aggregator_ops_to_ignore_ = llvm::to_vector(aggregator_ops_to_ignore),
       .calibration_data_dir_ = calibration_data_dir.str(),
   };
   return std::make_unique<InsertCalibrationStatisticsSaverPass>(options);

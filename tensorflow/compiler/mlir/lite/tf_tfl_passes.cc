@@ -330,7 +330,7 @@ void AddPreVariableFreezingTFToTFLConversionPasses(
   // folded before being converted to tfl.quantize and tfl.dequantize ops.
   std::vector<std::string> target_ops = mlir::TFL::AllTfFakeQuantOps();
   mlir::TFL::RaiseCustomOpsPassOptions raise_custom_ops_pass_options;
-  raise_custom_ops_pass_options.target_ops_ = target_ops;
+  raise_custom_ops_pass_options.target_ops_ = {target_ops.cbegin(), target_ops.cend()};
   pass_manager->addNestedPass<mlir::func::FuncOp>(
       mlir::TFL::CreateRaiseCustomOpsPass(raise_custom_ops_pass_options));
 

@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
                   mlir::tf_saved_model::TensorFlowSavedModelDialect,
                   mlir::func::FuncDialect, mlir::shape::ShapeDialect,
                   mlir::arith::ArithDialect, mlir::tf_type::TFTypeDialect,
-                  mlir::quant::QuantizationDialect,
+                  mlir::quant::QuantDialect,
                   mlir::quantfork::QuantizationForkDialect,
                   mlir::tf_executor::TensorFlowExecutorDialect,
                   mlir::stablehlo::StablehloDialect>();

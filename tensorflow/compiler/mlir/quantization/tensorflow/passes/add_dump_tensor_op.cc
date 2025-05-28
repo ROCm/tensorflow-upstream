@@ -21,7 +21,7 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/Quant/QuantOps.h"  // from @llvm-project
+#include "mlir/Dialect/Quant/IR/Quant.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
@@ -82,6 +82,7 @@ Operation *DuplicateOp(TF::PartitionedCallOp call_op, PatternRewriter &rewriter,
   // get quantized.
   auto new_call_op = rewriter.create<TF::PartitionedCallOp>(
       call_op.getLoc(), call_op.getResultTypes(), call_op.getOperands(),
+      call_op.getArgAttrsAttr(), call_op.getResAttrsAttr(),
       FlatSymbolRefAttr::get(new_ref_func_name));
   return new_call_op;
 }
@@ -139,7 +140,7 @@ class AddDumpTensorOpPass
 
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<TF::TensorFlowDialect>();
-    registry.insert<quant::QuantizationDialect>();
+    registry.insert<quant::QuantDialect>();
     registry.insert<quantfork::QuantizationForkDialect>();
   }
 

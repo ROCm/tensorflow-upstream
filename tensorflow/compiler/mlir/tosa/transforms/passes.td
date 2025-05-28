@@ -19,7 +19,8 @@ def TosaLegalizeTFPass : Pass<"tosa-legalize-tf", "mlir::func::FuncOp"> {
   let summary = "Legalize from TensorFlow to TOSA";
   let constructor = "createLegalizeTFPass()";
   let dependentDialects = ["TosaDialect",
-    "quant::QuantizationDialect","quantfork::QuantizationForkDialect"
+    //"quant::QuantDialect",
+	"quantfork::QuantizationForkDialect"
   ];
 }
 

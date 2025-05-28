@@ -18,27 +18,27 @@ limitations under the License.
 
 #include "llvm/Support/Debug.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"  // from @llvm-project
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/PatternMatch.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "mlir/IR/Visitors.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
-#include "mlir/Pass/PassRegistry.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
+#include "mlir/Dialect/Arith/IR/Arith.h"                 // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"                // from @llvm-project
+#include "mlir/IR/Attributes.h"                          // from @llvm-project
+#include "mlir/IR/Builders.h"                            // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"                   // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"                          // from @llvm-project
+#include "mlir/IR/MLIRContext.h"                         // from @llvm-project
+#include "mlir/IR/PatternMatch.h"                        // from @llvm-project
+#include "mlir/IR/ValueRange.h"                          // from @llvm-project
+#include "mlir/IR/Visitors.h"                            // from @llvm-project
+#include "mlir/Pass/PassManager.h"                       // from @llvm-project
+#include "mlir/Pass/PassRegistry.h"                      // from @llvm-project
+#include "mlir/Support/LLVM.h"                           // from @llvm-project
+#include "mlir/Support/LogicalResult.h"                  // from @llvm-project
+#include "mlir/Transforms/DialectConversion.h"           // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
-#include "stablehlo/api/PortableApi.h"  // from @stablehlo
-#include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
-#include "stablehlo/dialect/VhloOps.h"  // from @stablehlo
-#include "stablehlo/dialect/VhloTypes.h"  // from @stablehlo
-#include "stablehlo/transforms/Passes.h"  // from @stablehlo
+#include "stablehlo/api/PortableApi.h"                   // from @stablehlo
+#include "stablehlo/dialect/StablehloOps.h"              // from @stablehlo
+#include "stablehlo/dialect/VhloOps.h"                   // from @stablehlo
+#include "stablehlo/dialect/VhloTypes.h"                 // from @stablehlo
+#include "stablehlo/transforms/Passes.h"                 // from @stablehlo
 #include "tensorflow/compiler/mlir/lite/core/macros.h"
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 #include "tensorflow/compiler/mlir/lite/stablehlo/transforms/passes.h"
@@ -58,8 +58,8 @@ namespace {
 // StableHLO --> VHLO types
 //===----------------------------------------------------------------------===//
 
-std::optional<Value> MaterializeIllegalCast(OpBuilder &builder, Type type,
-                                            ValueRange inputs, Location loc) {
+Value MaterializeIllegalCast(OpBuilder& builder, Type type, ValueRange inputs,
+                             Location loc) {
   return builder.create<UnrealizedConversionCastOp>(loc, type, inputs)
       ->getResult(0);
 }
@@ -141,8 +141,8 @@ class VhloToStablehloTypeConverter : public vhlo::VhloTypeConverter {
 //   result = op(V0)
 //   V1     = unrealized_cast(result)
 //   V2     = op2(V1)
-void ConvertAndWrapUsesInUnrealizedCast(Value result, TypeConverter &converter,
-                                        IRRewriter &rewriter) {
+void ConvertAndWrapUsesInUnrealizedCast(Value result, TypeConverter& converter,
+                                        IRRewriter& rewriter) {
   auto type = result.getType();
   result.setType(converter.convertType(result.getType()));
   auto new_value = converter.materializeArgumentConversion(
@@ -156,9 +156,9 @@ void ConvertAndWrapUsesInUnrealizedCast(Value result, TypeConverter &converter,
 //   ==>
 //   V0 = unrealized_cast(operand)
 //   V1 = op(V0)
-void WrapOperandsInUnrealizedCastAndConvert(Operation *op,
-                                            TypeConverter &converter,
-                                            IRRewriter &rewriter) {
+void WrapOperandsInUnrealizedCastAndConvert(Operation* op,
+                                            TypeConverter& converter,
+                                            IRRewriter& rewriter) {
   for (int i = 0; i < op->getNumOperands(); ++i) {
     auto operand = op->getOperand(i);
     auto new_operand = converter.materializeArgumentConversion(
@@ -174,10 +174,10 @@ void WrapOperandsInUnrealizedCastAndConvert(Operation *op,
 //
 // TODO: There's likely a way to make MLIR manage the unrealized cast
 // conversions using a specific rewriter.
-LogicalResult ApplyTypeConverter(ModuleOp op, TypeConverter &converter) {
+LogicalResult ApplyTypeConverter(ModuleOp op, TypeConverter& converter) {
   IRRewriter rewriter(op->getContext());
 
-  op->walk([&](Operation *op) {
+  op->walk([&](Operation* op) {
     if (op->getDialect()->getNamespace() != "vhlo") return;
 
     // Convert operands
@@ -192,8 +192,8 @@ LogicalResult ApplyTypeConverter(ModuleOp op, TypeConverter &converter) {
       }
 
       // Convert block arguments
-      for (auto &region : op->getRegions()) {
-        for (auto &block : region.getBlocks()) {
+      for (auto& region : op->getRegions()) {
+        for (auto& block : region.getBlocks()) {
           rewriter.setInsertionPointToStart(&block);
           for (auto arg : block.getArguments()) {
             ConvertAndWrapUsesInUnrealizedCast(arg, converter, rewriter);
@@ -208,7 +208,7 @@ LogicalResult ApplyTypeConverter(ModuleOp op, TypeConverter &converter) {
 // Legalize StableHLO portion of program to VHLO, leaves TFL untouched
 LogicalResult ApplyStablehloToVhloPatterns(ModuleOp module,
                                            bool is_func_legal) {
-  MLIRContext *context = module.getContext();
+  MLIRContext* context = module.getContext();
   ConversionTarget target(*context);
   target.addIllegalDialect<stablehlo::StablehloDialect>();
   target.addDynamicallyLegalDialect<func::FuncDialect>(
@@ -228,7 +228,7 @@ LogicalResult ApplyStablehloToVhloPatterns(ModuleOp module,
 }
 
 LogicalResult ApplyVhloToVersionPatterns(ModuleOp module,
-                                         const std::string &version) {
+                                         const std::string& version) {
   PassManager pm(module.getContext());
   pm.addPass(stablehlo::createVhloToVersionPass({version}));
   if (failed(pm.run(module))) {
@@ -239,7 +239,7 @@ LogicalResult ApplyVhloToVersionPatterns(ModuleOp module,
 
 // Legalize VHLO portion of program to StableHLO, leaves TFL untouched.
 LogicalResult ApplyVhloToStablehloPatterns(ModuleOp module) {
-  MLIRContext *context = module.getContext();
+  MLIRContext* context = module.getContext();
   ConversionTarget target(*context);
   target.addIllegalDialect<vhlo::VhloDialect>();
   target.addLegalDialect<TFL::TensorFlowLiteDialect>();
