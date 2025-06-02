@@ -191,8 +191,10 @@ xla_cc_test(
     srcs = ["gpu_copy_insertion_test.cc"],
     deps = [
         ":buffer_sharing",
+        ":gpu_device_info_for_tests",
         "//xla:test",
         "//xla:test_helpers",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/service:copy_insertion",
         "//xla/tests:hlo_test_base",
@@ -263,7 +265,7 @@ xla_cc_test(
 
 cc_library(
     name = "gpu_device_info_for_tests",
-    testonly = 1,
+    testonly = 0,
     srcs = ["gpu_device_info_for_tests.cc"],
     hdrs = ["gpu_device_info_for_tests.h"],
     compatible_with = get_compatible_with_portable(),
@@ -696,25 +698,18 @@ cc_library(
     srcs = ["reduction_utils.cc"],
     hdrs = ["reduction_utils.h"],
     compatible_with = get_compatible_with_portable(),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":ir_emission_utils",
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_module_config",
-        "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor:device_description",        
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@local_tsl//tsl/platform:logging",
-    ] + if_cuda_is_configured([
-        ":gpu_asm_opts_util",
-        "//xla/stream_executor/cuda:cuda_asm_compiler",
-    ]),
+    ],
 )
 
 xla_cc_test(
@@ -1345,6 +1340,7 @@ cc_library(
         "//xla/service/gpu/transforms:copy_fusion",
         "//xla/service/gpu/transforms:horizontal_loop_fusion",
         "//xla/service/gpu/transforms:sanitize_constant_names",
+        "//xla/stream_executor:device_description",        
     ],
 )
 
@@ -2262,6 +2258,11 @@ xla_cc_test(
     ],
 )
 
+cc_library(
+    name = "stream_executor_util_kernel_stub",
+    srcs = ["stream_executor_util_kernel_stub.cc"],
+)
+
 gpu_kernel_library(
     name = "stream_executor_util_kernel",
     srcs = ["stream_executor_util_kernel.cu.cc"],
@@ -2278,7 +2279,6 @@ cc_library(
     srcs = ["stream_executor_util.cc"],
     hdrs = ["stream_executor_util.h"],
     copts = tsl_copts(),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":cublas_cudnn",
         ":launch_dimensions",
@@ -2311,9 +2311,10 @@ cc_library(
         "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/protobuf:dnn_proto_cc",
-    ] + if_gpu_is_configured([
-        ":stream_executor_util_kernel",
-    ]),
+    ] + if_gpu_is_configured(
+        if_false = [":stream_executor_util_kernel_stub"],
+        if_true = [":stream_executor_util_kernel"],
+    ),
 )
 
 xla_cc_test(
@@ -2520,6 +2521,10 @@ xla_cc_test(
         ":gpu_fusible",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_parser",
+        "//xla/service:hlo_runner",
+        "//xla/service:instruction_fusion",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:device_description",        
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",

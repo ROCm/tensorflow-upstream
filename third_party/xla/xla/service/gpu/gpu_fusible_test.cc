@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_fusible.h"
 
 #include <memory>
-#include <vector>
 
 #include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
@@ -24,14 +23,71 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/service/hlo_runner.h"
+#include "xla/service/instruction_fusion.h"
+#include "xla/service/platform_util.h"
+#include "xla/stream_executor/device_description.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
-
+namespace {
 using ::testing::ElementsAre;
 
-using GpuFusibleTest = HloTestBase;
+auto MakeDeviceDescription() {
+  stream_executor::DeviceDescription device_description{
+      stream_executor::GpuDeviceInfoProto{}};
+  device_description.set_threads_per_warp(32);
+  return device_description;
+}
+
+class GpuFusibleTest : public NewHloTestBase {
+ public:
+  GpuFusibleTest()
+      : NewHloTestBase(std::make_unique<HloRunner>(
+                           PlatformUtil::GetDefaultPlatform().value()),
+                       std::make_unique<HloRunner>(
+                           PlatformUtil::GetDefaultPlatform().value())),
+        device_description_(MakeDeviceDescription()) {}
+
+  bool IsReduceInputFusion(const HloInstruction& instr) const {
+    return ::xla::gpu::IsReduceInputFusion(instr, device_description_);
+  }
+
+  bool IsInputFusibleReduction(const HloInstruction& instr) const {
+    return ::xla::gpu::IsInputFusibleReduction(instr, device_description_);
+  }
+
+  FusionDecision IsProducerMultiOutputFusible(
+      const HloInstruction& producer) const {
+    return ::xla::gpu::IsProducerMultiOutputFusible(producer,
+                                                    device_description_);
+  }
+
+  bool IsFusibleAsMultiOutputFusionRoot(const HloInstruction& instr) const {
+    return ::xla::gpu::IsFusibleAsMultiOutputFusionRoot(instr,
+                                                        device_description_);
+  }
+
+  FusionDecision FusionHeroesAreCompatible(const HloInstruction* hero1,
+                                           const HloInstruction* hero2) const {
+    return ::xla::gpu::FusionHeroesAreCompatible(hero1, hero2,
+                                                 device_description_);
+  }
+
+  FusionDecision ShapesCompatibleForMultiOutputFusion(
+      const HloInstruction& instr1, const HloInstruction& instr2) const {
+    return ::xla::gpu::ShapesCompatibleForMultiOutputFusion(
+        instr1, instr2, device_description_);
+  }
+
+  const se::DeviceDescription& device_description() const {
+    return device_description_;
+  }
+
+ private:
+  const se::DeviceDescription device_description_;
+};
 
 const char kModulePrefix[] = R"(
     HloModule test_module
@@ -1068,7 +1124,8 @@ TEST_F(GpuFusibleTest, ProducerConsumerFusionElementwiseAndReduce) {
   const HloInstruction* producer = root->operand(1);
   EXPECT_TRUE(IsProducerMultiOutputFusible(*producer));
   EXPECT_TRUE(IsFusibleAsMultiOutputFusionRoot(*consumer));
-  EXPECT_TRUE(ShapesCompatibleForMultiOutputFusion(*producer, *consumer));
+  EXPECT_TRUE(ShapesCompatibleForMultiOutputFusion(*producer, *consumer,
+                                                    device_description()));
 }
 
 TEST_F(GpuFusibleTest, ProducerConsumerFusionTransposeAndLoopFusion) {
@@ -1090,7 +1147,8 @@ TEST_F(GpuFusibleTest, ProducerConsumerFusionTransposeAndLoopFusion) {
   const HloInstruction* root = module->entry_computation()->root_instruction();
   const HloInstruction* consumer = root;
   const HloInstruction* producer = root->operand(1);
-  EXPECT_TRUE(IsProducerConsumerFusible(*producer, *consumer));
+  EXPECT_TRUE(IsProducerConsumerFusible(*producer, *consumer,
+                                        device_description()));
 }
 
 TEST_F(GpuFusibleTest, ProducerConsumerFusionReduceAndLoopFusion) {
@@ -1113,7 +1171,8 @@ TEST_F(GpuFusibleTest, ProducerConsumerFusionReduceAndLoopFusion) {
   const HloInstruction* root = module->entry_computation()->root_instruction();
   const HloInstruction* consumer = root;
   const HloInstruction* producer = root->operand(1);
-  EXPECT_TRUE(IsProducerConsumerFusible(*producer, *consumer));
+  EXPECT_TRUE(IsProducerConsumerFusible(*producer, *consumer,
+                                        device_description()));
 }
 
 TEST_F(GpuFusibleTest, ProducerConsumerFusionLoopFusionAndReduce) {
@@ -1307,9 +1366,11 @@ TEST_F(GpuFusibleTest, NonscalarConstantsNotFused) {
   const HloInstruction* consumer2 = root->operand(2);
   const HloInstruction* producer2 = root->operand(3);
   EXPECT_FALSE(
-      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer)));
+      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer,
+                                                  device_description())));
   EXPECT_FALSE(
-      static_cast<bool>(IsProducerConsumerFusible(*producer2, *consumer2)));
+      static_cast<bool>(IsProducerConsumerFusible(*producer2, *consumer2,
+                                                  device_description())));
 }
 
 TEST_F(GpuFusibleTest, FuseLayoutChangingOpWithElementwise) {
@@ -1326,7 +1387,8 @@ TEST_F(GpuFusibleTest, FuseLayoutChangingOpWithElementwise) {
       module->entry_computation()->root_instruction();
   const HloInstruction* producer = consumer->operand(0);
   EXPECT_TRUE(
-      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer)));
+      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer,
+                                                  device_description())));
 }
 
 TEST_F(GpuFusibleTest, FuseReduceWithUnaryElementwise) {
@@ -1343,7 +1405,8 @@ TEST_F(GpuFusibleTest, FuseReduceWithUnaryElementwise) {
       module->entry_computation()->root_instruction();
   const HloInstruction* producer = consumer->operand(0);
   EXPECT_TRUE(
-      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer)));
+      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer,
+                                                  device_description())));
 }
 
 TEST_F(GpuFusibleTest, DoNotFuseReduceWithRacesWithUnaryElementwise) {
@@ -1360,7 +1423,8 @@ TEST_F(GpuFusibleTest, DoNotFuseReduceWithRacesWithUnaryElementwise) {
       module->entry_computation()->root_instruction();
   const HloInstruction* producer = consumer->operand(0);
   EXPECT_FALSE(
-      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer)));
+      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer,
+                                                  device_description())));
 }
 
 TEST_F(GpuFusibleTest, CreatesHeavyComputation_NonfusionInstr) {
@@ -1383,7 +1447,8 @@ TEST_F(GpuFusibleTest, CreatesHeavyComputation_NonfusionInstr) {
   const HloInstruction* root = module->entry_computation()->root_instruction();
   const HloInstruction* producer = root->operand(0);
   const HloInstruction* consumer = root->operand(1);
-  EXPECT_TRUE(CreatesHeavyComputation(*producer, *consumer));
+  EXPECT_TRUE(CreatesHeavyComputation(*producer, *consumer,
+                                        device_description()));
 }
 
 TEST_F(GpuFusibleTest, DoesNotCreateHeavyComputation_NonfusionInstr) {
@@ -1404,7 +1469,8 @@ TEST_F(GpuFusibleTest, DoesNotCreateHeavyComputation_NonfusionInstr) {
   const HloInstruction* root = module->entry_computation()->root_instruction();
   const HloInstruction* producer = root->operand(0);
   const HloInstruction* consumer = root->operand(1);
-  EXPECT_FALSE(CreatesHeavyComputation(*producer, *consumer));
+  EXPECT_FALSE(CreatesHeavyComputation(*producer, *consumer,
+                                        device_description()));
 }
 
 TEST_F(GpuFusibleTest,
@@ -1427,7 +1493,8 @@ TEST_F(GpuFusibleTest,
   const HloInstruction* root = module->entry_computation()->root_instruction();
   const HloInstruction* producer = root->operand(0);
   const HloInstruction* consumer = root->operand(1);
-  EXPECT_FALSE(CreatesHeavyComputation(*producer, *consumer));
+  EXPECT_FALSE(CreatesHeavyComputation(*producer, *consumer,
+                                        device_description()));
 }
 
 TEST_F(GpuFusibleTest, CreatesHeavyComputation_ReduceWindowGather) {
@@ -1450,7 +1517,8 @@ TEST_F(GpuFusibleTest, CreatesHeavyComputation_ReduceWindowGather) {
   EXPECT_FALSE(IfFusedReadsElementsMultipleTimes(*reduce_window));
   EXPECT_TRUE(IsExpensiveToRepeat(*reduce_window));
   EXPECT_TRUE(IfFusedReadsElementsMultipleTimes(*gather));
-  EXPECT_TRUE(CreatesHeavyComputation(*reduce_window, *gather));
+  EXPECT_TRUE(CreatesHeavyComputation(*reduce_window, *gather,
+                                      device_description()));
 }
 
 TEST_F(GpuFusibleTest, CreatesHeavyComputation_FusionInstr) {
@@ -1483,7 +1551,8 @@ TEST_F(GpuFusibleTest, CreatesHeavyComputation_FusionInstr) {
   const HloInstruction* root = module->entry_computation()->root_instruction();
   const HloInstruction* producer = root->operand(0);
   const HloInstruction* consumer = root->operand(1);
-  EXPECT_TRUE(CreatesHeavyComputation(*producer, *consumer));
+  EXPECT_TRUE(CreatesHeavyComputation(*producer, *consumer, 
+                                    device_description()));
 }
 
 TEST_F(GpuFusibleTest, DoesNotCreateHeavyComputation_FusionInstr) {
@@ -1516,7 +1585,8 @@ TEST_F(GpuFusibleTest, DoesNotCreateHeavyComputation_FusionInstr) {
   const HloInstruction* root = module->entry_computation()->root_instruction();
   const HloInstruction* producer = root->operand(0);
   const HloInstruction* consumer = root->operand(1);
-  EXPECT_FALSE(CreatesHeavyComputation(*producer, *consumer));
+  EXPECT_FALSE(CreatesHeavyComputation(*producer, *consumer, 
+                                        device_description()));
 }
 
 TEST_F(GpuFusibleTest, ChooseFusionKind) {
@@ -1532,7 +1602,7 @@ ENTRY computation {
                     .value();
   const HloInstruction* root = module->entry_computation()->root_instruction();
   const HloInstruction* producer = root->operand(0);
-  EXPECT_EQ(ChooseFusionKind(*producer, *root),
+  EXPECT_EQ(ChooseFusionKind(*producer, *root, device_description()),
             HloInstruction::FusionKind::kInput);
 }
 
@@ -1773,12 +1843,13 @@ TEST_F(GpuFusibleTest, GetSharedMemoryUsage) {
       ROOT res = f32[1024,128,2]{2,1,0} fusion(p), kind=kInput, calls=wrapped_transpose
     })"))
                     .value();
-  auto& debug_options = module->mutable_config().mutable_debug_options();
-  debug_options.set_xla_gpu_mlir_emitter_level(3);
-  FusionInfoCache cache;
+  // auto& debug_options = module->mutable_config().mutable_debug_options();
+  // debug_options.set_xla_gpu_mlir_emitter_level(3);
+  FusionInfoCache cache(device_description());
   auto fusion = module->entry_computation()->root_instruction();
   EXPECT_EQ(cache.GetSharedMemoryUsage(*fusion), 32 * 33 * 2 * 4);
 }
 
+}   // namspace
 }  // namespace gpu
 }  // namespace xla

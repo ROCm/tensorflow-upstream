@@ -77,7 +77,7 @@ absl::Status EmitGeneric(mlir::OpBuilder b, absl::string_view libdevice_path,
 // Compute the launch dimensions for the given Triton MatMul.
 absl::StatusOr<LaunchDimensions> GetMatMulLaunchDimensions(
     const TritonFusionAnalysis& analysis, const HloFusionAdaptor& fusion,
-    const TritonGemmConfig& config);
+    const TritonGemmConfig& config, const se::DeviceDescription& device_info);
 
 // Use tiling and execution parameters from 'config'. output_tile_sizes is
 // ignored.

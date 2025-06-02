@@ -16,6 +16,7 @@ limitations under the License.
 #define XLA_SERVICE_GPU_FUSIONS_REDUCTION_MLIR_H_
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -123,6 +124,10 @@ class MlirReductionFusion : public MlirFusionEmitterBase {
     return IndexingMap::GetUndefined();
   }
 
+  int64_t WarpSize() const {
+    return ::xla::gpu::WarpSize(analysis_.device_info());
+  }  
+
   // The reduction heroes for each reduction group.
   std::vector<std::vector<const HloInstruction*>> reduction_heroes_;
   // The roots that have reduction heroes for each reduction group.
@@ -168,9 +173,21 @@ class MlirRowReductionFusion : public MlirReductionFusion {
 
 class MlirMultiRowReductionFusion : public MlirReductionFusion {
  public:
-  explicit MlirMultiRowReductionFusion(const HloFusionAnalysis& analysis);
+  MlirMultiRowReductionFusion(const HloFusionAnalysis& analysis, int vector_size);
+  // Attempts to create a multi-row reduction emitter for the given analysis.
+  // Returns nullptr if the fusion is not supported.
+  static std::unique_ptr<MlirReductionFusion> TryCreate(
+    const HloFusionAnalysis& analysis);
 
  protected:
+ // Returns the number of {kept, reduced} threads for the given reduction and 
+ // vector size.
+ static absl::InlinedVector<int64_t, 4> GetNumThreads(
+    const ReductionDimensions& reduction_dimensions, int vector_size);    
+static int64_t GetNumBlocks(
+    const ReductionDimensions& reduction_dimensions,
+    const absl::InlinedVector<int64_t, 4>& num_threads);
+
   int GetRowsPerWarp() const;
   llvm::SmallVector<mlir::Value> EmitReduction(
       int group_id, EmitterState& state) const override;
