@@ -273,7 +273,6 @@ using stream_executor::internal::CachedDsoLoader::GetRocblasDsoHandle;
   __macro(rocblas_set_stream)                   \
   __macro(rocblas_set_atomics_mode)             \
   __macro(rocblas_is_managing_device_memory)    \
-  __macro(rocblas_is_user_managing_device_memory) \
   __macro(rocblas_set_workspace)
 
 // clang-format on
