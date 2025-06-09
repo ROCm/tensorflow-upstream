@@ -160,4 +160,189 @@ void StreamCommon::CheckStatus(absl::Status status) {
   status_ = status;
 }
 
+Stream& StreamCommon::ThenFusedConvolutionBiasActivation(
+		const dnn::BatchDescriptor& conv_input_descriptor,
+		const DeviceMemory<float>& conv_input_data,
+		const dnn::FilterDescriptor& filter_descriptor,
+		const DeviceMemory<float>& filter_data,
+		const dnn::ConvolutionDescriptor& convolution_descriptor,
+		const dnn::BatchDescriptor& bias_descriptor,
+		const DeviceMemory<float>& bias_data, dnn::ActivationMode activation_mode,
+		const dnn::BatchDescriptor& output_descriptor,
+		DeviceMemory<float>* output_data) {
+
+	if (ok()) {
+		if (dnn::DnnSupport* dnn = parent_->AsDnn()) {
+			CheckError(dnn->DoFusedConvolutionBiasActivation(
+						this, conv_input_descriptor, conv_input_data, filter_descriptor,
+						filter_data, convolution_descriptor, bias_descriptor, bias_data,
+						activation_mode, output_descriptor, output_data,
+						/*output_profile_result=*/nullptr));
+		} else {
+			SetErrorAndLogNoDnnSupport();
+		}
+	}
+
+	return *this;
+}
+
+Stream& StreamCommon::ThenFusedBatchNormActivationInference(
+		const dnn::BatchDescriptor& x_descriptor, const DeviceMemory<float>& x_data,
+		const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+		const DeviceMemory<float>& scale_data,
+		const DeviceMemory<float>& offset_data,
+		const DeviceMemory<float>& mean_data,
+		const DeviceMemory<float>& variance_data, double epsilon,
+		dnn::ActivationMode activation_mode, DeviceMemory<float>* y_data) {
+
+	if (ok()) {
+		if (dnn::DnnSupport* dnn = parent_->AsDnn()) {
+			CheckError(dnn->DoFusedBatchNormActivationInference(
+						this, x_descriptor, x_data, scale_offset_mean_variance_descriptor,
+						scale_data, offset_data, mean_data, variance_data, epsilon,
+						activation_mode, y_data,
+						/*output_profile_result=*/nullptr));
+		} else {
+			SetErrorAndLogNoDnnSupport();
+		}
+	}
+
+	return *this;
+}
+
+Stream& StreamCommon::ThenFusedBatchNormActivationInference(
+		const dnn::BatchDescriptor& x_descriptor,
+		const DeviceMemory<Eigen::half>& x_data,
+		const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+		const DeviceMemory<float>& scale_data,
+		const DeviceMemory<float>& offset_data,
+		const DeviceMemory<float>& mean_data,
+		const DeviceMemory<float>& variance_data, double epsilon,
+		dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y_data) {
+
+	if (ok()) {
+		if (dnn::DnnSupport* dnn = parent_->AsDnn()) {
+			CheckError(dnn->DoFusedBatchNormActivationInference(
+						this, x_descriptor, x_data, scale_offset_mean_variance_descriptor,
+						scale_data, offset_data, mean_data, variance_data, epsilon,
+						activation_mode, y_data,
+						/*output_profile_result=*/nullptr));
+		} else {
+			SetErrorAndLogNoDnnSupport();
+		}
+	}
+
+	return *this;
+}
+
+Stream& StreamCommon::ThenFusedBatchNormActivationForward(
+		const dnn::BatchDescriptor& x_descriptor, const DeviceMemory<float>& x_data,
+		const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+		const DeviceMemory<float>& scale_data,
+		const DeviceMemory<float>& offset_data, double epsilon,
+		dnn::ActivationMode activation_mode, DeviceMemory<float>* y_data,
+		DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
+		DeviceMemory<float>* saved_mean_data, DeviceMemory<float>* saved_var_data) {
+
+	if (ok()) {
+		if (dnn::DnnSupport* dnn = parent_->AsDnn()) {
+			CheckError(dnn->DoFusedBatchNormActivationForward(
+						this, x_descriptor, x_data, scale_offset_mean_variance_descriptor,
+						scale_data, offset_data, epsilon, activation_mode, y_data,
+						batch_mean_data, batch_var_data, saved_mean_data, saved_var_data,
+						/*output_profile_result=*/nullptr));
+		} else {
+			SetErrorAndLogNoDnnSupport();
+		}
+	}
+
+	return *this;
+}
+
+Stream& StreamCommon::ThenFusedBatchNormActivationForward(
+		const dnn::BatchDescriptor& x_descriptor,
+		const DeviceMemory<Eigen::half>& x_data,
+		const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+		const DeviceMemory<float>& scale_data,
+		const DeviceMemory<float>& offset_data, double epsilon,
+		dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y_data,
+		DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
+		DeviceMemory<float>* saved_mean_data, DeviceMemory<float>* saved_var_data) {
+
+	if (ok()) {
+		if (dnn::DnnSupport* dnn = parent_->AsDnn()) {
+			CheckError(dnn->DoFusedBatchNormActivationForward(
+						this, x_descriptor, x_data, scale_offset_mean_variance_descriptor,
+						scale_data, offset_data, epsilon, activation_mode, y_data,
+						batch_mean_data, batch_var_data, saved_mean_data, saved_var_data,
+						/*output_profile_result=*/nullptr));
+		} else {
+			SetErrorAndLogNoDnnSupport();
+		}
+	}
+
+	return *this;
+}
+
+Stream& StreamCommon::ThenFusedBatchNormActivationBackward(
+		const dnn::BatchDescriptor& y_act_backprop_descriptor,
+		const DeviceMemory<float>& y_act_backprop_data,
+		const DeviceMemory<float>& y_act_data, dnn::ActivationMode activation_mode,
+		const DeviceMemory<float>& x_bn_data,
+		const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+		const DeviceMemory<float>& scale_data,
+		const DeviceMemory<float>& offset_data,
+		const DeviceMemory<float>& saved_mean_data,
+		const DeviceMemory<float>& saved_var_data,
+		DeviceMemory<float>* x_bn_backprop_data,
+		DeviceMemory<float>* scale_backprop_data,
+		DeviceMemory<float>* offset_backprop_data) {
+
+	if (ok()) {
+		if (dnn::DnnSupport* dnn = parent_->AsDnn()) {
+			CheckError(dnn->DoFusedBatchNormActivationBackward(
+						this, y_act_backprop_descriptor, y_act_backprop_data, y_act_data,
+						activation_mode, x_bn_data, scale_offset_mean_variance_descriptor,
+						scale_data, offset_data, saved_mean_data, saved_var_data,
+						x_bn_backprop_data, scale_backprop_data, offset_backprop_data,
+						/*output_profile_result=*/nullptr));
+		} else {
+			SetErrorAndLogNoDnnSupport();
+		}
+	}
+
+	return *this;
+}
+
+Stream& StreamCommon::ThenFusedBatchNormActivationBackward(
+		const dnn::BatchDescriptor& y_act_backprop_descriptor,
+		const DeviceMemory<Eigen::half>& y_act_backprop_data,
+		const DeviceMemory<Eigen::half>& y_act_data,
+		dnn::ActivationMode activation_mode,
+		const DeviceMemory<Eigen::half>& x_bn_data,
+		const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+		const DeviceMemory<float>& scale_data,
+		const DeviceMemory<float>& offset_data,
+		const DeviceMemory<float>& saved_mean_data,
+		const DeviceMemory<float>& saved_var_data,
+		DeviceMemory<Eigen::half>* x_bn_backprop_data,
+		DeviceMemory<float>* scale_backprop_data,
+		DeviceMemory<float>* offset_backprop_data) {
+
+	if (ok()) {
+		if (dnn::DnnSupport* dnn = parent_->AsDnn()) {
+			CheckError(dnn->DoFusedBatchNormActivationBackward(
+						this, y_act_backprop_descriptor, y_act_backprop_data, y_act_data,
+						activation_mode, x_bn_data, scale_offset_mean_variance_descriptor,
+						scale_data, offset_data, saved_mean_data, saved_var_data,
+						x_bn_backprop_data, scale_backprop_data, offset_backprop_data,
+						/*output_profile_result=*/nullptr));
+		} else {
+			SetErrorAndLogNoDnnSupport();
+		}
+	}
+
+	return *this;
+}
+
 }  // namespace stream_executor

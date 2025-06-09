@@ -5170,6 +5170,403 @@ absl::Status MIOpenSupport::GetFusedConvolveRunners(
   return absl::OkStatus();
 }
 
+template <typename T>
+bool MIOpenSupport::DoFusedConvolutionBiasActivationImpl(
+    Stream* stream,
+    dnn::DataType miopen_type,  // Actually miopenDataType_t.
+    const dnn::BatchDescriptor& conv_input_descriptor,
+    const DeviceMemory<T>& conv_input_data,
+    const dnn::FilterDescriptor& filter_descriptor,
+    const DeviceMemory<T>& filter_data,
+    const dnn::ConvolutionDescriptor& convolution_descriptor,
+    const dnn::BatchDescriptor& bias_descriptor,
+    const DeviceMemory<T>& bias_data, dnn::ActivationMode activation_mode,
+    const dnn::BatchDescriptor& output_descriptor, DeviceMemory<T>* output_data,
+    dnn::ProfileResult* output_profile_result) {
+  auto miopen = miopen_->GetHandle(parent_, stream);
+
+  ASSIGN_OR_RETURN_FALSE(auto conv_input_nd,
+      scope(conv_input_descriptor, ToMIOpenDataType(miopen_type)));
+
+  ASSIGN_OR_RETURN_FALSE(auto bias_nd, scope(bias_descriptor, ToMIOpenDataType(miopen_type)));
+
+  ASSIGN_OR_RETURN_FALSE(auto output_nd, scope(output_descriptor, ToMIOpenDataType(miopen_type)));
+
+  ASSIGN_OR_RETURN_FALSE(auto conv,  scope(convolution_descriptor));
+
+  ASSIGN_OR_RETURN_FALSE(auto filter, scope(filter_descriptor, ToMIOpenDataType(miopen_type)));
+
+  ASSIGN_OR_RETURN_FALSE(auto activation_desc, ScopedActivationDescriptor::Create(activation_mode));
+
+  ASSIGN_OR_RETURN_FALSE(auto fusion_plan,
+        ScopedFusionPlanConvolutionBiasActivation::Create(
+            miopen.handle(), conv_input_nd.handle(),
+            filter.handle(), conv.handle(), bias_nd.handle(),
+            activation_desc));
+
+
+  bool retval = false;
+
+  if (fusion_plan.CompilationSucceeded()) {
+
+    const bool is_profiling = output_profile_result != nullptr;
+
+    miopenStatus_t status = miopenStatusSuccess;
+
+    if (status == miopenStatusSuccess) {
+      fusion_plan.SetConvolutionArgs(filter_data.opaque());
+    }
+
+    if (status == miopenStatusSuccess) {
+      status = fusion_plan.SetBiasArgs(bias_data.opaque());
+    }
+
+    if (status == miopenStatusSuccess) {
+      status = fusion_plan.SetActivationForwardArgs(activation_desc);
+    }
+
+    if (status == miopenStatusSuccess) {
+      status =
+          fusion_plan.Execute(conv_input_nd.handle(), conv_input_data.opaque(),
+                              output_nd.handle(), output_data->opaque());
+    }
+
+  
+    if (status != miopenStatusSuccess) {
+      // Silently return when we are profiling.
+      if (!is_profiling) {
+        LOG(FATAL) << "failed to enqueue fused-convolution on stream: "
+                   << ToString(status);
+      }
+    }
+
+    retval = true;
+  }
+
+  return retval;
+}
+
+
+bool MIOpenSupport::DoFusedConvolutionBiasActivation(
+    Stream* stream, const dnn::BatchDescriptor& conv_input_descriptor,
+    const DeviceMemory<float>& conv_input_data,
+    const dnn::FilterDescriptor& filter_descriptor,
+    const DeviceMemory<float>& filter_data,
+    const dnn::ConvolutionDescriptor& convolution_descriptor,
+    const dnn::BatchDescriptor& bias_descriptor,
+    const DeviceMemory<float>& bias_data, dnn::ActivationMode activation_mode,
+    const dnn::BatchDescriptor& output_descriptor,
+    DeviceMemory<float>* output_data,
+    dnn::ProfileResult* output_profile_result) {
+  return DoFusedConvolutionBiasActivationImpl<float>(
+      stream, dnn::DataType::kFloat, conv_input_descriptor, conv_input_data,
+      filter_descriptor, filter_data, convolution_descriptor, bias_descriptor,
+      bias_data, activation_mode, output_descriptor, output_data,
+      output_profile_result);
+}
+
+template <typename T, typename U>
+bool MIOpenSupport::DoFusedBatchNormActivationInferenceImpl(
+    Stream* stream,
+    dnn::DataType miopen_type,  // Actually miopenDataType_t.
+    const dnn::BatchDescriptor& x_descriptor, const DeviceMemory<T>& x_data,
+    const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+    const DeviceMemory<U>& scale_data, const DeviceMemory<U>& offset_data,
+    const DeviceMemory<U>& mean_data, const DeviceMemory<U>& variance_data,
+    double epsilon, dnn::ActivationMode activation_mode,
+    DeviceMemory<T>* y_data, dnn::ProfileResult* output_profile_result) {
+  auto miopen = miopen_->GetHandle(parent_, stream);
+ 
+  ASSIGN_OR_RETURN_FALSE(auto x_nd, scope(x_descriptor, ToMIOpenDataType(miopen_type)));
+  ASSIGN_OR_RETURN_FALSE(auto scale_offset_mean_variance_nd,
+	  scope(scale_offset_mean_variance_descriptor, ToMIOpenDataType(miopen_type)));
+
+  ASSIGN_OR_RETURN_FALSE(auto activation_desc, ScopedActivationDescriptor::Create(activation_mode));
+
+  auto fusion_plan = ScopedFusionPlanBatchNormActivationInference(
+            miopen.handle(), x_nd.handle(),
+	    scale_offset_mean_variance_nd.handle(),
+            activation_desc);
+
+  bool retval = false;
+
+  if (fusion_plan.CompilationSucceeded()) {
+    const bool is_profiling = output_profile_result != nullptr;
+
+    miopenStatus_t status = miopenStatusSuccess;
+
+    if (status == miopenStatusSuccess) {
+      fusion_plan.SetBatchNormInferenceArgs(
+          scale_data.opaque(), offset_data.opaque(), mean_data.opaque(),
+          variance_data.opaque(), epsilon);
+    }
+
+    if (status == miopenStatusSuccess) {
+      status = fusion_plan.SetActivationForwardArgs(activation_desc);
+    }
+
+    if (status == miopenStatusSuccess) {
+      status = fusion_plan.Execute(x_nd.handle(), x_data.opaque(),
+                                   x_nd.handle(), y_data->opaque());
+    }
+
+    if (status != miopenStatusSuccess) {
+      // Silently return when we are profiling.
+      if (!is_profiling) {
+        LOG(FATAL) << "failed to enqueue fused-convolution on stream: "
+                   << ToString(status);
+      }
+    }
+
+    retval = true;
+  }
+
+  return retval;
+}
+
+bool MIOpenSupport::DoFusedBatchNormActivationInference(
+    Stream* stream, const dnn::BatchDescriptor& x_descriptor,
+    const DeviceMemory<float>& x_data,
+    const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+    const DeviceMemory<float>& scale_data,
+    const DeviceMemory<float>& offset_data,
+    const DeviceMemory<float>& mean_data,
+    const DeviceMemory<float>& variance_data, double epsilon,
+    dnn::ActivationMode activation_mode, DeviceMemory<float>* y_data,
+    dnn::ProfileResult* output_profile_result) {
+  return DoFusedBatchNormActivationInferenceImpl<float, float>(
+      stream, dnn::DataType::kFloat, x_descriptor, x_data,
+      scale_offset_mean_variance_descriptor, scale_data, offset_data, mean_data,
+      variance_data, epsilon, activation_mode, y_data, output_profile_result);
+}
+
+bool MIOpenSupport::DoFusedBatchNormActivationInference(
+    Stream* stream, const dnn::BatchDescriptor& x_descriptor,
+    const DeviceMemory<Eigen::half>& x_data,
+    const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+    const DeviceMemory<float>& scale_data,
+    const DeviceMemory<float>& offset_data,
+    const DeviceMemory<float>& mean_data,
+    const DeviceMemory<float>& variance_data, double epsilon,
+    dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y_data,
+    dnn::ProfileResult* output_profile_result) {
+  return DoFusedBatchNormActivationInferenceImpl<Eigen::half, float>(
+      stream, dnn::DataType::kHalf, x_descriptor, x_data,
+      scale_offset_mean_variance_descriptor, scale_data, offset_data, mean_data,
+      variance_data, epsilon, activation_mode, y_data, output_profile_result);
+}
+
+template <typename T, typename U>
+bool MIOpenSupport::DoFusedBatchNormActivationForwardImpl(
+    Stream* stream,
+    dnn::DataType miopen_type,  // Actually miopenDataType_t.
+    const dnn::BatchDescriptor& x_descriptor, const DeviceMemory<T>& x_data,
+    const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+    const DeviceMemory<U>& scale_data, const DeviceMemory<U>& offset_data,
+    double epsilon, dnn::ActivationMode activation_mode,
+    DeviceMemory<T>* y_data, DeviceMemory<U>* batch_mean_data,
+    DeviceMemory<U>* batch_var_data, DeviceMemory<U>* saved_mean_data,
+    DeviceMemory<U>* saved_var_data,
+    dnn::ProfileResult* output_profile_result) {
+  auto miopen = miopen_->GetHandle(parent_, stream);
+
+  ASSIGN_OR_RETURN_FALSE(auto x_nd, scope(x_descriptor, ToMIOpenDataType(miopen_type)));
+
+  ASSIGN_OR_RETURN_FALSE(auto scale_offset_mean_variance_nd,
+	  scope(scale_offset_mean_variance_descriptor, ToMIOpenDataType(miopen_type)));
+
+  ASSIGN_OR_RETURN_FALSE(auto activation_desc, ScopedActivationDescriptor::Create(activation_mode));
+
+  auto fusion_plan = ScopedFusionPlanBatchNormActivationForward(
+            miopen.handle(), x_nd.handle(),
+	    scale_offset_mean_variance_nd.handle(),
+            activation_desc);
+
+  bool retval = false;
+
+  if (fusion_plan.CompilationSucceeded()) {
+     const bool is_profiling = output_profile_result != nullptr;
+   
+    miopenStatus_t status = miopenStatusSuccess;
+
+    if (status == miopenStatusSuccess) {
+      fusion_plan.SetBatchNormForwardArgs(
+          scale_data.opaque(), offset_data.opaque(), batch_mean_data->opaque(),
+          batch_var_data->opaque(), saved_mean_data->opaque(),
+          saved_var_data->opaque(), epsilon);
+    }
+
+    if (status == miopenStatusSuccess) {
+      status = fusion_plan.SetActivationForwardArgs(activation_desc);
+    }
+
+    if (status == miopenStatusSuccess) {
+      status = fusion_plan.Execute(x_nd.handle(), x_data.opaque(),
+                                   x_nd.handle(), y_data->opaque());
+    }
+
+    if (status != miopenStatusSuccess) {
+      // Silently return when we are profiling.
+      if (!is_profiling) {
+        LOG(FATAL) << "failed to enqueue fused-convolution on stream: "
+                   << ToString(status);
+      }
+    }
+
+    retval = true;
+  }
+
+  return retval;
+}
+
+bool MIOpenSupport::DoFusedBatchNormActivationForward(
+    Stream* stream, const dnn::BatchDescriptor& x_descriptor,
+    const DeviceMemory<float>& x_data,
+    const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+    const DeviceMemory<float>& scale_data,
+    const DeviceMemory<float>& offset_data, double epsilon,
+    dnn::ActivationMode activation_mode, DeviceMemory<float>* y_data,
+    DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
+    DeviceMemory<float>* saved_mean_data, DeviceMemory<float>* saved_var_data,
+    dnn::ProfileResult* output_profile_result) {
+  return DoFusedBatchNormActivationForwardImpl<float, float>(
+      stream, dnn::DataType::kFloat, x_descriptor, x_data,
+      scale_offset_mean_variance_descriptor, scale_data, offset_data, epsilon,
+      activation_mode, y_data, batch_mean_data, batch_var_data, saved_mean_data,
+      saved_var_data, output_profile_result);
+}
+
+bool MIOpenSupport::DoFusedBatchNormActivationForward(
+    Stream* stream, const dnn::BatchDescriptor& x_descriptor,
+    const DeviceMemory<Eigen::half>& x_data,
+    const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+    const DeviceMemory<float>& scale_data,
+    const DeviceMemory<float>& offset_data, double epsilon,
+    dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y_data,
+    DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
+    DeviceMemory<float>* saved_mean_data, DeviceMemory<float>* saved_var_data,
+    dnn::ProfileResult* output_profile_result) {
+  return DoFusedBatchNormActivationForwardImpl<Eigen::half, float>(
+      stream, dnn::DataType::kHalf, x_descriptor, x_data,
+      scale_offset_mean_variance_descriptor, scale_data, offset_data, epsilon,
+      activation_mode, y_data, batch_mean_data, batch_var_data, saved_mean_data,
+      saved_var_data, output_profile_result);
+}
+
+template <typename T, typename U>
+bool MIOpenSupport::DoFusedBatchNormActivationBackwardImpl(
+    Stream* stream,
+    dnn::DataType miopen_type,  // Actually miopenDataType_t.
+    const dnn::BatchDescriptor& y_act_backprop_descriptor,
+    const DeviceMemory<T>& y_act_backprop_data,
+    const DeviceMemory<T>& y_act_data, dnn::ActivationMode activation_mode,
+    const DeviceMemory<T>& x_bn_data,
+    const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+    const DeviceMemory<U>& scale_data, const DeviceMemory<U>& offset_data,
+    const DeviceMemory<U>& saved_mean_data,
+    const DeviceMemory<U>& saved_var_data, DeviceMemory<T>* x_bn_backprop_data,
+    DeviceMemory<U>* scale_backprop_data, DeviceMemory<U>* offset_backprop_data,
+    dnn::ProfileResult* output_profile_result) {
+  auto miopen = miopen_->GetHandle(parent_, stream);
+
+  ASSIGN_OR_RETURN_FALSE(auto y_act_backprop_nd, scope(y_act_backprop_descriptor,
+			  ToMIOpenDataType(miopen_type)));
+
+  ASSIGN_OR_RETURN_FALSE(auto scale_offset_mean_variance_nd,
+	  scope(scale_offset_mean_variance_descriptor, ToMIOpenDataType(miopen_type)));
+
+  ASSIGN_OR_RETURN_FALSE(auto activation_desc, ScopedActivationDescriptor::Create(activation_mode));
+
+  auto fusion_plan = ScopedFusionPlanBatchNormActivationBackward(
+            miopen.handle(), y_act_backprop_nd.handle(),
+	    scale_offset_mean_variance_nd.handle(),
+            activation_desc);
+
+
+  bool retval = false;
+
+  if (fusion_plan.CompilationSucceeded()) {
+    const bool is_profiling = output_profile_result != nullptr;
+
+    miopenStatus_t status = miopenStatusSuccess;
+
+    if (status == miopenStatusSuccess) {
+      fusion_plan.SetBatchNormBackwardArgs(
+          x_bn_data.opaque(), scale_data.opaque(), offset_data.opaque(),
+          saved_mean_data.opaque(), saved_var_data.opaque(),
+          scale_backprop_data->opaque(), offset_backprop_data->opaque());
+    }
+
+    if (status == miopenStatusSuccess) {
+      status = fusion_plan.SetActivationBackwardArgs(activation_desc,
+                                                     y_act_data.opaque());
+    }
+
+    if (status == miopenStatusSuccess) {
+      status = fusion_plan.Execute(
+          y_act_backprop_nd.handle(), y_act_backprop_data.opaque(),
+          y_act_backprop_nd.handle(), x_bn_backprop_data->opaque());
+    }
+
+    if (status != miopenStatusSuccess) {
+      // Silently return when we are profiling.
+      if (!is_profiling) {
+        LOG(FATAL) << "failed to enqueue fused-convolution on stream: "
+                   << ToString(status);
+      }
+    }
+
+    retval = true;
+  }
+
+  return retval;
+}
+
+bool MIOpenSupport::DoFusedBatchNormActivationBackward(
+    Stream* stream, const dnn::BatchDescriptor& y_act_backprop_descriptor,
+    const DeviceMemory<float>& y_act_backprop_data,
+    const DeviceMemory<float>& y_act_data, dnn::ActivationMode activation_mode,
+    const DeviceMemory<float>& x_bn_data,
+    const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+    const DeviceMemory<float>& scale_data,
+    const DeviceMemory<float>& offset_data,
+    const DeviceMemory<float>& saved_mean_data,
+    const DeviceMemory<float>& saved_var_data,
+    DeviceMemory<float>* x_bn_backprop_data,
+    DeviceMemory<float>* scale_backprop_data,
+    DeviceMemory<float>* offset_backprop_data,
+    dnn::ProfileResult* output_profile_result) {
+  return DoFusedBatchNormActivationBackwardImpl<float, float>(
+      stream, dnn::DataType::kFloat, y_act_backprop_descriptor, y_act_backprop_data,
+      y_act_data, activation_mode, x_bn_data,
+      scale_offset_mean_variance_descriptor, scale_data, offset_data,
+      saved_mean_data, saved_var_data, x_bn_backprop_data, scale_backprop_data,
+      offset_backprop_data, output_profile_result);
+}
+
+bool MIOpenSupport::DoFusedBatchNormActivationBackward(
+    Stream* stream, const dnn::BatchDescriptor& y_act_backprop_descriptor,
+    const DeviceMemory<Eigen::half>& y_act_backprop_data,
+    const DeviceMemory<Eigen::half>& y_act_data,
+    dnn::ActivationMode activation_mode,
+    const DeviceMemory<Eigen::half>& x_bn_data,
+    const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+    const DeviceMemory<float>& scale_data,
+    const DeviceMemory<float>& offset_data,
+    const DeviceMemory<float>& saved_mean_data,
+    const DeviceMemory<float>& saved_var_data,
+    DeviceMemory<Eigen::half>* x_bn_backprop_data,
+    DeviceMemory<float>* scale_backprop_data,
+    DeviceMemory<float>* offset_backprop_data,
+    dnn::ProfileResult* output_profile_result) {
+  return DoFusedBatchNormActivationBackwardImpl<Eigen::half, float>(
+      stream, dnn::DataType::kHalf, y_act_backprop_descriptor, y_act_backprop_data,
+      y_act_data, activation_mode, x_bn_data,
+      scale_offset_mean_variance_descriptor, scale_data, offset_data,
+      saved_mean_data, saved_var_data, x_bn_backprop_data, scale_backprop_data,
+      offset_backprop_data, output_profile_result);
+}
+
 bool UseNhwcLayoutForRocm() {
 #if TF_ROCM_VERSION >= 50100
   static bool is_enabled = [] {

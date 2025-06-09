@@ -410,6 +410,7 @@ cc_library(
     deps = [
         ":data_type",
         ":device_memory",
+	":dnn",
         ":numeric_options",
         ":scratch_allocator",
         ":stream",

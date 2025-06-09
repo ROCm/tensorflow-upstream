@@ -45,7 +45,6 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/numeric_options.h"
 #include "xla/stream_executor/scratch_allocator.h"
-#include "xla/stream_executor/stream.h"
 #include "tsl/platform/logging.h"
 #include "tsl/protobuf/dnn.pb.h"
 
@@ -55,6 +54,7 @@ struct half;
 
 namespace stream_executor {
 
+class Stream;
 namespace dnn {
 
 // Specifies an index to use when accessing specific spatial dimensions.
@@ -2207,6 +2207,106 @@ class DnnSupport {
   // avoid redundant cudnnSetStream calls without risking problems when a stream
   // is destroyed and a new stream later created in the same memory.
   virtual void NotifyStreamDestroyed(Stream* stream) {}
+virtual bool DoFusedConvolutionBiasActivation(
+      Stream* stream, const dnn::BatchDescriptor& conv_input_descriptor,
+      const DeviceMemory<float>& conv_input_data,
+      const dnn::FilterDescriptor& filter_descriptor,
+      const DeviceMemory<float>& filter_data,
+      const dnn::ConvolutionDescriptor& convolution_descriptor,
+      const dnn::BatchDescriptor& bias_descriptor,
+      const DeviceMemory<float>& bias_data, dnn::ActivationMode activation_mode,
+      const dnn::BatchDescriptor& output_descriptor,
+      DeviceMemory<float>* output_data,
+      dnn::ProfileResult* output_profile_result) {
+    return false;
+  }
+virtual bool DoFusedBatchNormActivationInference(
+      Stream* stream, const dnn::BatchDescriptor& x_descriptor,
+      const DeviceMemory<float>& x_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data,
+      const DeviceMemory<float>& mean_data,
+      const DeviceMemory<float>& variance_data, double epsilon,
+      dnn::ActivationMode activation_mode, DeviceMemory<float>* y_data,
+      dnn::ProfileResult* output_profile_result) {
+    return false;
+  }
+
+  virtual bool DoFusedBatchNormActivationInference(
+      Stream* stream, const dnn::BatchDescriptor& x_descriptor,
+      const DeviceMemory<Eigen::half>& x_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data,
+      const DeviceMemory<float>& mean_data,
+      const DeviceMemory<float>& variance_data, double epsilon,
+      dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y_data,
+      dnn::ProfileResult* output_profile_result) {
+    return false;
+  }
+
+virtual bool DoFusedBatchNormActivationForward(
+      Stream* stream, const dnn::BatchDescriptor& x_descriptor,
+      const DeviceMemory<float>& x_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data, double epsilon,
+      dnn::ActivationMode activation_mode, DeviceMemory<float>* y_data,
+      DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
+      DeviceMemory<float>* saved_mean_data, DeviceMemory<float>* saved_var_data,
+      dnn::ProfileResult* output_profile_result) {
+    return false;
+  }
+
+  virtual bool DoFusedBatchNormActivationForward(
+      Stream* stream, const dnn::BatchDescriptor& x_descriptor,
+      const DeviceMemory<Eigen::half>& x_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data, double epsilon,
+      dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y_data,
+      DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
+      DeviceMemory<float>* saved_mean_data, DeviceMemory<float>* saved_var_data,
+      dnn::ProfileResult* output_profile_result) {
+    return false;
+  }
+virtual bool DoFusedBatchNormActivationBackward(
+      Stream* stream, const dnn::BatchDescriptor& y_act_backprop_descriptor,
+      const DeviceMemory<float>& y_act_backprop_data,
+      const DeviceMemory<float>& y_act_data,
+      dnn::ActivationMode activation_mode, const DeviceMemory<float>& x_bn_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data,
+      const DeviceMemory<float>& saved_mean_data,
+      const DeviceMemory<float>& saved_var_data,
+      DeviceMemory<float>* x_bn_backprop_data,
+      DeviceMemory<float>* scale_backprop_data,
+      DeviceMemory<float>* offset_backprop_data,
+      dnn::ProfileResult* output_profile_result) {
+    return false;
+  }
+
+  virtual bool DoFusedBatchNormActivationBackward(
+      Stream* stream, const dnn::BatchDescriptor& y_act_backprop_descriptor,
+      const DeviceMemory<Eigen::half>& y_act_backprop_data,
+      const DeviceMemory<Eigen::half>& y_act_data,
+      dnn::ActivationMode activation_mode,
+      const DeviceMemory<Eigen::half>& x_bn_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data,
+      const DeviceMemory<float>& saved_mean_data,
+      const DeviceMemory<float>& saved_var_data,
+      DeviceMemory<Eigen::half>* x_bn_backprop_data,
+      DeviceMemory<float>* scale_backprop_data,
+      DeviceMemory<float>* offset_backprop_data,
+      dnn::ProfileResult* output_profile_result) {
+    return false;
+  }
+
+
 
  protected:
   // Returns whether status is 'ok', and potentially logs the error.
@@ -2240,7 +2340,6 @@ class DnnSupport {
     *scratch_memory = {};
     return absl::OkStatus();
   }
-
   DnnSupport(const DnnSupport&) = delete;
   void operator=(const DnnSupport&) = delete;
 };

@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/event.h"
@@ -192,6 +193,10 @@ class Stream {
     return absl::InternalError("Bad destination size.");
   }
 
+  virtual void SetErrorAndLogNoDnnSupport() {
+    LOG(WARNING) << "attempting to perform DNN operation using StreamExecutor "
+                    "without DNN support";
+  }
   // Entrain onto the stream: a memcpy to a GPU destination from a GPU source
   // of the given target size. gpu_src/dst must be pointers to GPU memory and
   // peer access must be enabled between their owning StreamExecutors.
@@ -304,6 +309,110 @@ class Stream {
     return absl::UnimplementedError(
         "This stream does not support EventBasedTimers.");
   }
+
+// Fused Convolution+Bias+Activation (float)
+  virtual Stream& ThenFusedConvolutionBiasActivation(
+      const dnn::BatchDescriptor& conv_input_descriptor,
+      const DeviceMemory<float>& conv_input_data,
+      const dnn::FilterDescriptor& filter_descriptor,
+      const DeviceMemory<float>& filter_data,
+      const dnn::ConvolutionDescriptor& convolution_descriptor,
+      const dnn::BatchDescriptor& bias_descriptor,
+      const DeviceMemory<float>& bias_data, dnn::ActivationMode activation_mode,
+      const dnn::BatchDescriptor& output_descriptor,
+      DeviceMemory<float>* output_data){
+    return *this;
+  }
+
+  // Fused BatchNorm+Activation (inference) (float)
+  virtual Stream& ThenFusedBatchNormActivationInference(
+      const dnn::BatchDescriptor& x_descriptor,
+      const DeviceMemory<float>& x_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data,
+      const DeviceMemory<float>& mean_data,
+      const DeviceMemory<float>& variance_data, double epsilon,
+      dnn::ActivationMode activation_mode, DeviceMemory<float>* y_data){
+    return *this;
+  }
+
+  // Fused BatchNorm+Activation (inference) (Eigen::half)
+  virtual Stream& ThenFusedBatchNormActivationInference(
+      const dnn::BatchDescriptor& x_descriptor,
+      const DeviceMemory<Eigen::half>& x_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data,
+      const DeviceMemory<float>& mean_data,
+      const DeviceMemory<float>& variance_data, double epsilon,
+      dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y_data){
+    return *this;
+  }
+  // Fused BatchNorm+Activation (training-fwd) (float)
+  virtual Stream& ThenFusedBatchNormActivationForward(
+      const dnn::BatchDescriptor& x_descriptor,
+      const DeviceMemory<float>& x_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data, double epsilon,
+      dnn::ActivationMode activation_mode, DeviceMemory<float>* y_data,
+      DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
+      DeviceMemory<float>* saved_mean_data,
+      DeviceMemory<float>* saved_var_data){
+    return *this;
+  }
+
+  // Fused BatchNorm+Activation (training-fwd) (Eigen::half)
+  virtual Stream& ThenFusedBatchNormActivationForward(
+      const dnn::BatchDescriptor& x_descriptor,
+      const DeviceMemory<Eigen::half>& x_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data, double epsilon,
+      dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y_data,
+      DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
+      DeviceMemory<float>* saved_mean_data,
+      DeviceMemory<float>* saved_var_data){
+    return *this;
+  }
+
+  // Fused BatchNorm+Activation (training-bwd) (float)
+  virtual Stream& ThenFusedBatchNormActivationBackward(
+      const dnn::BatchDescriptor& y_act_backprop_descriptor,
+      const DeviceMemory<float>& y_act_backprop_data,
+      const DeviceMemory<float>& y_act_data,
+      dnn::ActivationMode activation_mode, const DeviceMemory<float>& x_bn_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data,
+      const DeviceMemory<float>& saved_mean_data,
+      const DeviceMemory<float>& saved_var_data,
+      DeviceMemory<float>* x_bn_backprop_data,
+      DeviceMemory<float>* scale_backprop_data,
+      DeviceMemory<float>* offset_backprop_data){
+    return *this;
+  }
+
+  // Fused BatchNorm+Activation (training-bwd) (Eigen::half)
+  virtual Stream& ThenFusedBatchNormActivationBackward(
+      const dnn::BatchDescriptor& y_act_backprop_descriptor,
+      const DeviceMemory<Eigen::half>& y_act_backprop_data,
+      const DeviceMemory<Eigen::half>& y_act_data,
+      dnn::ActivationMode activation_mode,
+      const DeviceMemory<Eigen::half>& x_bn_data,
+      const dnn::BatchDescriptor& scale_offset_mean_variance_descriptor,
+      const DeviceMemory<float>& scale_data,
+      const DeviceMemory<float>& offset_data,
+      const DeviceMemory<float>& saved_mean_data,
+      const DeviceMemory<float>& saved_var_data,
+      DeviceMemory<Eigen::half>* x_bn_backprop_data,
+      DeviceMemory<float>* scale_backprop_data,
+      DeviceMemory<float>* offset_backprop_data){
+    return *this;
+  }
+
+
 };
 
 template <typename... Params, typename... Args>
