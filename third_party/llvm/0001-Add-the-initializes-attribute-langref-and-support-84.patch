@@ -1,0 +1,1308 @@
+From 3cf0244b2b7bb2afa8f13e87cbf2b3d506f61d2b Mon Sep 17 00:00:00 2001
+From: Haopeng Liu <153236845+haopliu@users.noreply.github.com>
+Date: Fri, 21 Jun 2024 12:09:00 -0700
+Subject: [PATCH 1/2] Add the 'initializes' attribute langref and support
+ (#84803)
+
+We propose adding a new LLVM attribute,
+`initializes((Lo1,Hi1),(Lo2,Hi2),...)`, which expresses the notion of
+memory space (i.e., intervals, in bytes) that the argument pointing to
+is initialized in the function.
+
+Will commit the attribute inferring in the follow-up PRs.
+
+https://discourse.llvm.org/t/rfc-llvm-new-initialized-parameter-attribute-for-improved-interprocedural-dse/77337
+---
+ llvm/docs/LangRef.rst                         | 21 ++++
+ llvm/include/llvm/AsmParser/LLParser.h        |  1 +
+ llvm/include/llvm/Bitcode/LLVMBitCodes.h      |  1 +
+ llvm/include/llvm/IR/Attributes.h             | 24 +++++
+ llvm/include/llvm/IR/Attributes.td            |  6 ++
+ llvm/include/llvm/IR/ConstantRangeList.h      | 93 ++++++++++++++++++
+ llvm/lib/AsmParser/LLParser.cpp               | 49 ++++++++++
+ llvm/lib/Bitcode/Reader/BitcodeReader.cpp     | 49 +++++++++-
+ llvm/lib/Bitcode/Writer/BitcodeWriter.cpp     | 25 +++--
+ llvm/lib/IR/AttributeImpl.h                   | 53 +++++++++-
+ llvm/lib/IR/Attributes.cpp                    | 90 ++++++++++++++++-
+ llvm/lib/IR/CMakeLists.txt                    |  1 +
+ llvm/lib/IR/ConstantRangeList.cpp             | 95 ++++++++++++++++++
+ llvm/lib/IR/LLVMContextImpl.cpp               |  3 +
+ llvm/lib/IR/LLVMContextImpl.h                 |  8 ++
+ llvm/lib/IR/Verifier.cpp                      |  9 ++
+ llvm/lib/Transforms/Utils/CodeExtractor.cpp   |  1 +
+ .../initializes-attribute-invalid.ll          | 71 ++++++++++++++
+ llvm/test/Bitcode/attributes.ll               |  5 +
+ llvm/test/Verifier/initializes-attr.ll        | 36 +++++++
+ llvm/unittests/IR/CMakeLists.txt              |  1 +
+ llvm/unittests/IR/ConstantRangeListTest.cpp   | 97 +++++++++++++++++++
+ llvm/utils/TableGen/Attributes.cpp            | 11 ++-
+ 23 files changed, 730 insertions(+), 20 deletions(-)
+ mode change 100644 => 100755 llvm/include/llvm/Bitcode/LLVMBitCodes.h
+ create mode 100644 llvm/include/llvm/IR/ConstantRangeList.h
+ create mode 100644 llvm/lib/IR/ConstantRangeList.cpp
+ create mode 100644 llvm/test/Assembler/initializes-attribute-invalid.ll
+ create mode 100644 llvm/test/Verifier/initializes-attr.ll
+ create mode 100644 llvm/unittests/IR/ConstantRangeListTest.cpp
+
+diff --git a/llvm/docs/LangRef.rst b/llvm/docs/LangRef.rst
+index c58f7f7140e4..5e8d66704f06 100644
+--- a/llvm/docs/LangRef.rst
++++ b/llvm/docs/LangRef.rst
+@@ -1625,6 +1625,27 @@ Currently, only the following parameter attributes are defined:
+     ``readonly`` or a ``memory`` attribute that does not contain
+     ``argmem: write``.
+ 
++``initializes((Lo1, Hi1), ...)``
++    This attribute indicates that the function initializes the ranges of the
++    pointer parameter's memory, ``[%p+LoN, %p+HiN)``. Initialization of memory
++    means the first memory access is a non-volatile, non-atomic write. The
++    write must happen before the function returns. If the function unwinds,
++    the write may not happen.
++
++    This attribute only holds for the memory accessed via this pointer
++    parameter. Other arbitrary accesses to the same memory via other pointers
++    are allowed.
++
++    The ``writable`` or ``dereferenceable`` attribute do not imply the
++    ``initializes`` attribute. The ``initializes`` attribute does not imply
++    ``writeonly`` since ``initializes`` allows reading from the pointer
++    after writing.
++
++    This attribute is a list of constant ranges in ascending order with no
++    overlapping or consecutive list elements. ``LoN/HiN`` are 64-bit integers,
++    and negative values are allowed in case the argument points partway into
++    an allocation. An empty list is not allowed.
++
+ ``dead_on_unwind``
+     At a high level, this attribute indicates that the pointer argument is dead
+     if the call unwinds, in the sense that the caller will not depend on the
+diff --git a/llvm/include/llvm/AsmParser/LLParser.h b/llvm/include/llvm/AsmParser/LLParser.h
+index b2dcdfad0a04..639be08e7600 100644
+--- a/llvm/include/llvm/AsmParser/LLParser.h
++++ b/llvm/include/llvm/AsmParser/LLParser.h
+@@ -373,6 +373,7 @@ namespace llvm {
+                                     std::vector<unsigned> &FwdRefAttrGrps,
+                                     bool inAttrGrp, LocTy &BuiltinLoc);
+     bool parseRangeAttr(AttrBuilder &B);
++    bool parseInitializesAttr(AttrBuilder &B);
+     bool parseRequiredTypeAttr(AttrBuilder &B, lltok::Kind AttrToken,
+                                Attribute::AttrKind AttrKind);
+ 
+diff --git a/llvm/include/llvm/Bitcode/LLVMBitCodes.h b/llvm/include/llvm/Bitcode/LLVMBitCodes.h
+old mode 100644
+new mode 100755
+index 9999aee61528..cdd52f06243c
+--- a/llvm/include/llvm/Bitcode/LLVMBitCodes.h
++++ b/llvm/include/llvm/Bitcode/LLVMBitCodes.h
+@@ -754,6 +754,7 @@ enum AttributeKindCodes {
+   ATTR_KIND_CORO_ONLY_DESTROY_WHEN_COMPLETE = 90,
+   ATTR_KIND_DEAD_ON_UNWIND = 91,
+   ATTR_KIND_RANGE = 92,
++  ATTR_KIND_INITIALIZES = 94,
+ };
+ 
+ enum ComdatSelectionKindCodes {
+diff --git a/llvm/include/llvm/IR/Attributes.h b/llvm/include/llvm/IR/Attributes.h
+index dd1195571489..5a80a072dbbd 100644
+--- a/llvm/include/llvm/IR/Attributes.h
++++ b/llvm/include/llvm/IR/Attributes.h
+@@ -38,6 +38,7 @@ class AttributeImpl;
+ class AttributeListImpl;
+ class AttributeSetNode;
+ class ConstantRange;
++class ConstantRangeList;
+ class FoldingSetNodeID;
+ class Function;
+ class LLVMContext;
+@@ -107,6 +108,10 @@ public:
+   static bool isConstantRangeAttrKind(AttrKind Kind) {
+     return Kind >= FirstConstantRangeAttr && Kind <= LastConstantRangeAttr;
+   }
++  static bool isConstantRangeListAttrKind(AttrKind Kind) {
++    return Kind >= FirstConstantRangeListAttr &&
++           Kind <= LastConstantRangeListAttr;
++  }
+ 
+   static bool canUseAsFnAttr(AttrKind Kind);
+   static bool canUseAsParamAttr(AttrKind Kind);
+@@ -131,6 +136,8 @@ public:
+   static Attribute get(LLVMContext &Context, AttrKind Kind, Type *Ty);
+   static Attribute get(LLVMContext &Context, AttrKind Kind,
+                        const ConstantRange &CR);
++  static Attribute get(LLVMContext &Context, AttrKind Kind,
++                       ArrayRef<ConstantRange> Val);
+ 
+   /// Return a uniquified Attribute object that has the specific
+   /// alignment set.
+@@ -189,6 +196,9 @@ public:
+   /// Return true if the attribute is a ConstantRange attribute.
+   bool isConstantRangeAttribute() const;
+ 
++  /// Return true if the attribute is a ConstantRangeList attribute.
++  bool isConstantRangeListAttribute() const;
++
+   /// Return true if the attribute is any kind of attribute.
+   bool isValid() const { return pImpl; }
+ 
+@@ -226,6 +236,10 @@ public:
+   /// attribute to be a ConstantRange attribute.
+   const ConstantRange &getValueAsConstantRange() const;
+ 
++  /// Return the attribute's value as a ConstantRange array. This requires the
++  /// attribute to be a ConstantRangeList attribute.
++  ArrayRef<ConstantRange> getValueAsConstantRangeList() const;
++
+   /// Returns the alignment field of an attribute as a byte alignment
+   /// value.
+   MaybeAlign getAlignment() const;
+@@ -267,6 +281,9 @@ public:
+   /// Returns the value of the range attribute.
+   const ConstantRange &getRange() const;
+ 
++  /// Returns the value of the initializes attribute.
++  ArrayRef<ConstantRange> getInitializes() const;
++
+   /// The Attribute is converted to a string of equivalent mnemonic. This
+   /// is, presumably, for writing out the mnemonics for the assembly writer.
+   std::string getAsString(bool InAttrGrp = false) const;
+@@ -1222,6 +1239,13 @@ public:
+   /// Add range attribute.
+   AttrBuilder &addRangeAttr(const ConstantRange &CR);
+ 
++  /// Add a ConstantRangeList attribute with the given ranges.
++  AttrBuilder &addConstantRangeListAttr(Attribute::AttrKind Kind,
++                                        ArrayRef<ConstantRange> Val);
++
++  /// Add initializes attribute.
++  AttrBuilder &addInitializesAttr(const ConstantRangeList &CRL);
++
+   ArrayRef<Attribute> attrs() const { return Attrs; }
+ 
+   bool operator==(const AttrBuilder &B) const;
+diff --git a/llvm/include/llvm/IR/Attributes.td b/llvm/include/llvm/IR/Attributes.td
+index cef8b17769f0..f35ea40b5e94 100644
+--- a/llvm/include/llvm/IR/Attributes.td
++++ b/llvm/include/llvm/IR/Attributes.td
+@@ -47,6 +47,9 @@ class ComplexStrAttr<string S, list<AttrProperty> P> : Attr<S, P>;
+ /// ConstantRange attribute.
+ class ConstantRangeAttr<string S, list<AttrProperty> P> : Attr<S, P>;
+ 
++/// ConstantRangeList attribute.
++class ConstantRangeListAttr<string S, list<AttrProperty> P> : Attr<S, P>;
++
+ /// Target-independent enum attributes.
+ 
+ /// Alignment of parameter (5 bits) stored as log2 of alignment with +1 bias.
+@@ -112,6 +115,9 @@ def FnRetThunkExtern : EnumAttr<"fn_ret_thunk_extern", [FnAttr]>;
+ /// Pass structure in an alloca.
+ def InAlloca : TypeAttr<"inalloca", [ParamAttr]>;
+ 
++/// Pointer argument memory is initialized.
++def Initializes : ConstantRangeListAttr<"initializes", [ParamAttr]>;
++
+ /// Source said inlining was desirable.
+ def InlineHint : EnumAttr<"inlinehint", [FnAttr]>;
+ 
+diff --git a/llvm/include/llvm/IR/ConstantRangeList.h b/llvm/include/llvm/IR/ConstantRangeList.h
+new file mode 100644
+index 000000000000..f696bd6cc6a3
+--- /dev/null
++++ b/llvm/include/llvm/IR/ConstantRangeList.h
+@@ -0,0 +1,93 @@
++//===- ConstantRangeList.h - A list of constant ranges ----------*- C++ -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++//
++// Represent a list of signed ConstantRange and do NOT support wrap around the
++// end of the numeric range. Ranges in the list are ordered and not overlapping.
++// Ranges should have the same bitwidth. Each range's lower should be less than
++// its upper.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef LLVM_IR_CONSTANTRANGELIST_H
++#define LLVM_IR_CONSTANTRANGELIST_H
++
++#include "llvm/ADT/APInt.h"
++#include "llvm/IR/ConstantRange.h"
++#include "llvm/Support/Debug.h"
++#include <cstddef>
++#include <cstdint>
++
++namespace llvm {
++
++class raw_ostream;
++
++/// This class represents a list of constant ranges.
++class [[nodiscard]] ConstantRangeList {
++  SmallVector<ConstantRange, 2> Ranges;
++
++public:
++  ConstantRangeList() = default;
++  ConstantRangeList(ArrayRef<ConstantRange> RangesRef) {
++    assert(isOrderedRanges(RangesRef));
++    for (const ConstantRange &R : RangesRef) {
++      assert(R.getBitWidth() == getBitWidth());
++      Ranges.push_back(R);
++    }
++  }
++
++  // Return true if the ranges are non-overlapping and increasing.
++  static bool isOrderedRanges(ArrayRef<ConstantRange> RangesRef);
++  static std::optional<ConstantRangeList>
++  getConstantRangeList(ArrayRef<ConstantRange> RangesRef);
++
++  ArrayRef<ConstantRange> rangesRef() const { return Ranges; }
++  SmallVectorImpl<ConstantRange>::iterator begin() { return Ranges.begin(); }
++  SmallVectorImpl<ConstantRange>::iterator end() { return Ranges.end(); }
++  SmallVectorImpl<ConstantRange>::const_iterator begin() const {
++    return Ranges.begin();
++  }
++  SmallVectorImpl<ConstantRange>::const_iterator end() const {
++    return Ranges.end();
++  }
++  ConstantRange getRange(unsigned i) const { return Ranges[i]; }
++
++  /// Return true if this list contains no members.
++  bool empty() const { return Ranges.empty(); }
++
++  /// Get the bit width of this ConstantRangeList.
++  uint32_t getBitWidth() const { return 64; }
++
++  /// Return the number of ranges in this ConstantRangeList.
++  size_t size() const { return Ranges.size(); }
++
++  /// Insert a new range to Ranges and keep the list ordered.
++  void insert(const ConstantRange &NewRange);
++  void insert(int64_t Lower, int64_t Upper) {
++    insert(ConstantRange(APInt(64, Lower, /*isSigned=*/true),
++                         APInt(64, Upper, /*isSigned=*/true)));
++  }
++
++  /// Return true if this range list is equal to another range list.
++  bool operator==(const ConstantRangeList &CRL) const {
++    return Ranges == CRL.Ranges;
++  }
++  bool operator!=(const ConstantRangeList &CRL) const {
++    return !operator==(CRL);
++  }
++
++  /// Print out the ranges to a stream.
++  void print(raw_ostream &OS) const;
++
++#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
++  void dump() const;
++#endif
++};
++
++} // end namespace llvm
++
++#endif // LLVM_IR_CONSTANTRANGELIST_H
+diff --git a/llvm/lib/AsmParser/LLParser.cpp b/llvm/lib/AsmParser/LLParser.cpp
+index df0827996396..b7960409b6b4 100644
+--- a/llvm/lib/AsmParser/LLParser.cpp
++++ b/llvm/lib/AsmParser/LLParser.cpp
+@@ -25,6 +25,7 @@
+ #include "llvm/IR/CallingConv.h"
+ #include "llvm/IR/Comdat.h"
+ #include "llvm/IR/ConstantRange.h"
++#include "llvm/IR/ConstantRangeList.h"
+ #include "llvm/IR/Constants.h"
+ #include "llvm/IR/DebugInfoMetadata.h"
+ #include "llvm/IR/DerivedTypes.h"
+@@ -1628,6 +1629,8 @@ bool LLParser::parseEnumAttribute(Attribute::AttrKind Attr, AttrBuilder &B,
+   }
+   case Attribute::Range:
+     return parseRangeAttr(B);
++  case Attribute::Initializes:
++    return parseInitializesAttr(B);
+   default:
+     B.addAttribute(Attr);
+     Lex.Lex();
+@@ -3099,6 +3102,52 @@ bool LLParser::parseRangeAttr(AttrBuilder &B) {
+   return false;
+ }
+ 
++/// parseInitializesAttr
++///   ::= initializes((Lo1,Hi1),(Lo2,Hi2),...)
++bool LLParser::parseInitializesAttr(AttrBuilder &B) {
++  Lex.Lex();
++
++  auto ParseAPSInt = [&](APInt &Val) {
++    if (Lex.getKind() != lltok::APSInt)
++      return tokError("expected integer");
++    Val = Lex.getAPSIntVal().extend(64);
++    Lex.Lex();
++    return false;
++  };
++
++  if (parseToken(lltok::lparen, "expected '('"))
++    return true;
++
++  SmallVector<ConstantRange, 2> RangeList;
++  // Parse each constant range.
++  do {
++    APInt Lower, Upper;
++    if (parseToken(lltok::lparen, "expected '('"))
++      return true;
++
++    if (ParseAPSInt(Lower) || parseToken(lltok::comma, "expected ','") ||
++        ParseAPSInt(Upper))
++      return true;
++
++    if (Lower == Upper)
++      return tokError("the range should not represent the full or empty set!");
++
++    if (parseToken(lltok::rparen, "expected ')'"))
++      return true;
++
++    RangeList.push_back(ConstantRange(Lower, Upper));
++  } while (EatIfPresent(lltok::comma));
++
++  if (parseToken(lltok::rparen, "expected ')'"))
++    return true;
++
++  auto CRLOrNull = ConstantRangeList::getConstantRangeList(RangeList);
++  if (!CRLOrNull.has_value())
++    return tokError("Invalid (unordered or overlapping) range list");
++  B.addInitializesAttr(*CRLOrNull);
++  return false;
++}
++
+ /// parseOptionalOperandBundles
+ ///    ::= /*empty*/
+ ///    ::= '[' OperandBundle [, OperandBundle ]* ']'
+diff --git a/llvm/lib/Bitcode/Reader/BitcodeReader.cpp b/llvm/lib/Bitcode/Reader/BitcodeReader.cpp
+index aee627bbde0b..8791082682fe 100644
+--- a/llvm/lib/Bitcode/Reader/BitcodeReader.cpp
++++ b/llvm/lib/Bitcode/Reader/BitcodeReader.cpp
+@@ -30,6 +30,7 @@
+ #include "llvm/IR/CallingConv.h"
+ #include "llvm/IR/Comdat.h"
+ #include "llvm/IR/Constant.h"
++#include "llvm/IR/ConstantRangeList.h"
+ #include "llvm/IR/Constants.h"
+ #include "llvm/IR/DataLayout.h"
+ #include "llvm/IR/DebugInfo.h"
+@@ -836,10 +837,10 @@ private:
+   }
+ 
+   Expected<ConstantRange> readConstantRange(ArrayRef<uint64_t> Record,
+-                                            unsigned &OpNum) {
+-    if (Record.size() - OpNum < 3)
++                                            unsigned &OpNum,
++                                            unsigned BitWidth) {
++    if (Record.size() - OpNum < 2)
+       return error("Too few records for range");
+-    unsigned BitWidth = Record[OpNum++];
+     if (BitWidth > 64) {
+       unsigned LowerActiveWords = Record[OpNum];
+       unsigned UpperActiveWords = Record[OpNum++] >> 32;
+@@ -859,6 +860,14 @@ private:
+     }
+   }
+ 
++  Expected<ConstantRange>
++  readBitWidthAndConstantRange(ArrayRef<uint64_t> Record, unsigned &OpNum) {
++    if (Record.size() - OpNum < 1)
++      return error("Too few records for range");
++    unsigned BitWidth = Record[OpNum++];
++    return readConstantRange(Record, OpNum, BitWidth);
++  }
++
+   /// Upgrades old-style typeless byval/sret/inalloca attributes by adding the
+   /// corresponding argument's pointee type. Also upgrades intrinsics that now
+   /// require an elementtype attribute.
+@@ -2172,6 +2181,8 @@ static Attribute::AttrKind getAttrFromCode(uint64_t Code) {
+     return Attribute::DeadOnUnwind;
+   case bitc::ATTR_KIND_RANGE:
+     return Attribute::Range;
++  case bitc::ATTR_KIND_INITIALIZES:
++    return Attribute::Initializes;
+   }
+ }
+ 
+@@ -2350,12 +2361,39 @@ Error BitcodeReader::parseAttributeGroupBlock() {
+           if (!Attribute::isConstantRangeAttrKind(Kind))
+             return error("Not a ConstantRange attribute");
+ 
+-          Expected<ConstantRange> MaybeCR = readConstantRange(Record, i);
++          Expected<ConstantRange> MaybeCR =
++              readBitWidthAndConstantRange(Record, i);
+           if (!MaybeCR)
+             return MaybeCR.takeError();
+           i--;
+ 
+           B.addConstantRangeAttr(Kind, MaybeCR.get());
++        } else if (Record[i] == 8) {
++          Attribute::AttrKind Kind;
++
++          i++;
++          if (Error Err = parseAttrKind(Record[i++], &Kind))
++            return Err;
++          if (!Attribute::isConstantRangeListAttrKind(Kind))
++            return error("Not a constant range list attribute");
++
++          SmallVector<ConstantRange, 2> Val;
++          if (i + 2 > e)
++            return error("Too few records for constant range list");
++          unsigned RangeSize = Record[i++];
++          unsigned BitWidth = Record[i++];
++          for (unsigned Idx = 0; Idx < RangeSize; ++Idx) {
++            Expected<ConstantRange> MaybeCR =
++                readConstantRange(Record, i, BitWidth);
++            if (!MaybeCR)
++              return MaybeCR.takeError();
++            Val.push_back(MaybeCR.get());
++          }
++          i--;
++
++          if (!ConstantRangeList::isOrderedRanges(Val))
++            return error("Invalid (unordered or overlapping) range list");
++          B.addConstantRangeListAttr(Kind, Val);
+         } else {
+           return error("Invalid attribute group entry");
+         }
+@@ -3370,7 +3408,8 @@ Error BitcodeReader::parseConstants() {
+         (void)InRangeIndex;
+       } else if (BitCode == bitc::CST_CODE_CE_GEP_WITH_INRANGE) {
+         Flags = Record[OpNum++];
+-        Expected<ConstantRange> MaybeInRange = readConstantRange(Record, OpNum);
++        Expected<ConstantRange> MaybeInRange =
++            readBitWidthAndConstantRange(Record, OpNum);
+         if (!MaybeInRange)
+           return MaybeInRange.takeError();
+         InRange = MaybeInRange.get();
+diff --git a/llvm/lib/Bitcode/Writer/BitcodeWriter.cpp b/llvm/lib/Bitcode/Writer/BitcodeWriter.cpp
+index 7d39c0db79fb..a0c3de013dfd 100644
+--- a/llvm/lib/Bitcode/Writer/BitcodeWriter.cpp
++++ b/llvm/lib/Bitcode/Writer/BitcodeWriter.cpp
+@@ -33,6 +33,7 @@
+ #include "llvm/IR/BasicBlock.h"
+ #include "llvm/IR/Comdat.h"
+ #include "llvm/IR/Constant.h"
++#include "llvm/IR/ConstantRangeList.h"
+ #include "llvm/IR/Constants.h"
+ #include "llvm/IR/DebugInfoMetadata.h"
+ #include "llvm/IR/DebugLoc.h"
+@@ -865,6 +866,8 @@ static uint64_t getAttrKindEncoding(Attribute::AttrKind Kind) {
+     return bitc::ATTR_KIND_DEAD_ON_UNWIND;
+   case Attribute::Range:
+     return bitc::ATTR_KIND_RANGE;
++  case Attribute::Initializes:
++    return bitc::ATTR_KIND_INITIALIZES;
+   case Attribute::EndAttrKinds:
+     llvm_unreachable("Can not encode end-attribute kinds marker.");
+   case Attribute::None:
+@@ -896,9 +899,10 @@ static void emitWideAPInt(SmallVectorImpl<uint64_t> &Vals, const APInt &A) {
+ }
+ 
+ static void emitConstantRange(SmallVectorImpl<uint64_t> &Record,
+-                              const ConstantRange &CR) {
++                              const ConstantRange &CR, bool EmitBitWidth) {
+   unsigned BitWidth = CR.getBitWidth();
+-  Record.push_back(BitWidth);
++  if (EmitBitWidth)
++    Record.push_back(BitWidth);
+   if (BitWidth > 64) {
+     Record.push_back(CR.getLower().getActiveWords() |
+                      (uint64_t(CR.getUpper().getActiveWords()) << 32));
+@@ -949,11 +953,20 @@ void ModuleBitcodeWriter::writeAttributeGroupTable() {
+         Record.push_back(getAttrKindEncoding(Attr.getKindAsEnum()));
+         if (Ty)
+           Record.push_back(VE.getTypeID(Attr.getValueAsType()));
+-      } else {
+-        assert(Attr.isConstantRangeAttribute());
++      } else if (Attr.isConstantRangeAttribute()) {
+         Record.push_back(7);
+         Record.push_back(getAttrKindEncoding(Attr.getKindAsEnum()));
+-        emitConstantRange(Record, Attr.getValueAsConstantRange());
++        emitConstantRange(Record, Attr.getValueAsConstantRange(),
++                          /*EmitBitWidth=*/true);
++      } else {
++        assert(Attr.isConstantRangeListAttribute());
++        Record.push_back(8);
++        Record.push_back(getAttrKindEncoding(Attr.getKindAsEnum()));
++        ArrayRef<ConstantRange> Val = Attr.getValueAsConstantRangeList();
++        Record.push_back(Val.size());
++        Record.push_back(Val[0].getBitWidth());
++        for (auto &CR : Val)
++          emitConstantRange(Record, CR, /*EmitBitWidth=*/false);
+       }
+     }
+ 
+@@ -2785,7 +2798,7 @@ void ModuleBitcodeWriter::writeConstants(unsigned FirstVal, unsigned LastVal,
+         Record.push_back(getOptimizationFlags(GO));
+         if (std::optional<ConstantRange> Range = GO->getInRange()) {
+           Code = bitc::CST_CODE_CE_GEP_WITH_INRANGE;
+-          emitConstantRange(Record, *Range);
++          emitConstantRange(Record, *Range, /*EmitBitWidth=*/true);
+         }
+         for (unsigned i = 0, e = CE->getNumOperands(); i != e; ++i) {
+           Record.push_back(VE.getTypeID(C->getOperand(i)->getType()));
+diff --git a/llvm/lib/IR/AttributeImpl.h b/llvm/lib/IR/AttributeImpl.h
+index dc5b80b6da68..b9441729b48c 100644
+--- a/llvm/lib/IR/AttributeImpl.h
++++ b/llvm/lib/IR/AttributeImpl.h
+@@ -21,6 +21,7 @@
+ #include "llvm/ADT/StringRef.h"
+ #include "llvm/IR/Attributes.h"
+ #include "llvm/IR/ConstantRange.h"
++#include "llvm/IR/ConstantRangeList.h"
+ #include "llvm/Support/TrailingObjects.h"
+ #include <cassert>
+ #include <cstddef>
+@@ -48,6 +49,7 @@ protected:
+     StringAttrEntry,
+     TypeAttrEntry,
+     ConstantRangeAttrEntry,
++    ConstantRangeListAttrEntry,
+   };
+ 
+   AttributeImpl(AttrEntryKind KindID) : KindID(KindID) {}
+@@ -64,6 +66,9 @@ public:
+   bool isConstantRangeAttribute() const {
+     return KindID == ConstantRangeAttrEntry;
+   }
++  bool isConstantRangeListAttribute() const {
++    return KindID == ConstantRangeListAttrEntry;
++  }
+ 
+   bool hasAttribute(Attribute::AttrKind A) const;
+   bool hasAttribute(StringRef Kind) const;
+@@ -79,6 +84,8 @@ public:
+ 
+   const ConstantRange &getValueAsConstantRange() const;
+ 
++  ArrayRef<ConstantRange> getValueAsConstantRangeList() const;
++
+   /// Used when sorting the attributes.
+   bool operator<(const AttributeImpl &AI) const;
+ 
+@@ -91,8 +98,10 @@ public:
+       Profile(ID, getKindAsString(), getValueAsString());
+     else if (isTypeAttribute())
+       Profile(ID, getKindAsEnum(), getValueAsType());
+-    else
++    else if (isConstantRangeAttribute())
+       Profile(ID, getKindAsEnum(), getValueAsConstantRange());
++    else
++      Profile(ID, getKindAsEnum(), getValueAsConstantRangeList());
+   }
+ 
+   static void Profile(FoldingSetNodeID &ID, Attribute::AttrKind Kind) {
+@@ -124,6 +133,16 @@ public:
+     CR.getLower().Profile(ID);
+     CR.getUpper().Profile(ID);
+   }
++
++  static void Profile(FoldingSetNodeID &ID, Attribute::AttrKind Kind,
++                      ArrayRef<ConstantRange> Val) {
++    ID.AddInteger(Kind);
++    ID.AddInteger(Val.size());
++    for (auto &CR : Val) {
++      CR.getLower().Profile(ID);
++      CR.getUpper().Profile(ID);
++    }
++  }
+ };
+ 
+ static_assert(std::is_trivially_destructible<AttributeImpl>::value,
+@@ -222,6 +241,38 @@ public:
+   const ConstantRange &getConstantRangeValue() const { return CR; }
+ };
+ 
++class ConstantRangeListAttributeImpl final
++    : public EnumAttributeImpl,
++      private TrailingObjects<ConstantRangeListAttributeImpl, ConstantRange> {
++  friend TrailingObjects;
++
++  unsigned Size;
++  size_t numTrailingObjects(OverloadToken<ConstantRange>) const { return Size; }
++
++public:
++  ConstantRangeListAttributeImpl(Attribute::AttrKind Kind,
++                                 ArrayRef<ConstantRange> Val)
++      : EnumAttributeImpl(ConstantRangeListAttrEntry, Kind), Size(Val.size()) {
++    assert(Size > 0);
++    ConstantRange *TrailingCR = getTrailingObjects<ConstantRange>();
++    std::uninitialized_copy(Val.begin(), Val.end(), TrailingCR);
++  }
++
++  ~ConstantRangeListAttributeImpl() {
++    ConstantRange *TrailingCR = getTrailingObjects<ConstantRange>();
++    for (unsigned I = 0; I != Size; ++I)
++      TrailingCR[I].~ConstantRange();
++  }
++
++  ArrayRef<ConstantRange> getConstantRangeListValue() const {
++    return ArrayRef(getTrailingObjects<ConstantRange>(), Size);
++  }
++
++  static size_t totalSizeToAlloc(ArrayRef<ConstantRange> Val) {
++    return TrailingObjects::totalSizeToAlloc<ConstantRange>(Val.size());
++  }
++};
++
+ class AttributeBitSet {
+   /// Bitset with a bit for each available attribute Attribute::AttrKind.
+   uint8_t AvailableAttrs[12] = {};
+diff --git a/llvm/lib/IR/Attributes.cpp b/llvm/lib/IR/Attributes.cpp
+index c8d6bdd42387..799726c1d88d 100644
+--- a/llvm/lib/IR/Attributes.cpp
++++ b/llvm/lib/IR/Attributes.cpp
+@@ -25,6 +25,7 @@
+ #include "llvm/Config/llvm-config.h"
+ #include "llvm/IR/AttributeMask.h"
+ #include "llvm/IR/ConstantRange.h"
++#include "llvm/IR/ConstantRangeList.h"
+ #include "llvm/IR/Function.h"
+ #include "llvm/IR/LLVMContext.h"
+ #include "llvm/IR/Type.h"
+@@ -191,6 +192,43 @@ Attribute Attribute::get(LLVMContext &Context, Attribute::AttrKind Kind,
+   return Attribute(PA);
+ }
+ 
++Attribute Attribute::get(LLVMContext &Context, Attribute::AttrKind Kind,
++                         ArrayRef<ConstantRange> Val) {
++  assert(Attribute::isConstantRangeListAttrKind(Kind) &&
++         "Not a ConstantRangeList attribute");
++  LLVMContextImpl *pImpl = Context.pImpl;
++  FoldingSetNodeID ID;
++  ID.AddInteger(Kind);
++  ID.AddInteger(Val.size());
++  for (auto &CR : Val) {
++    CR.getLower().Profile(ID);
++    CR.getUpper().Profile(ID);
++  }
++
++  void *InsertPoint;
++  AttributeImpl *PA = pImpl->AttrsSet.FindNodeOrInsertPos(ID, InsertPoint);
++
++  if (!PA) {
++    // If we didn't find any existing attributes of the same shape then create a
++    // new one and insert it.
++    // ConstantRangeListAttributeImpl is a dynamically sized class and cannot
++    // use SpecificBumpPtrAllocator. Instead, we use normal Alloc for
++    // allocation and record the allocated pointer in
++    // `ConstantRangeListAttributes`. LLVMContext destructor will call the
++    // destructor of the allocated pointer explicitly.
++    void *Mem = pImpl->Alloc.Allocate(
++        ConstantRangeListAttributeImpl::totalSizeToAlloc(Val),
++        alignof(ConstantRangeListAttributeImpl));
++    PA = new (Mem) ConstantRangeListAttributeImpl(Kind, Val);
++    pImpl->AttrsSet.InsertNode(PA, InsertPoint);
++    pImpl->ConstantRangeListAttributes.push_back(
++        reinterpret_cast<ConstantRangeListAttributeImpl *>(PA));
++  }
++
++  // Return the Attribute that we found or created.
++  return Attribute(PA);
++}
++
+ Attribute Attribute::getWithAlignment(LLVMContext &Context, Align A) {
+   assert(A <= llvm::Value::MaximumAlignment && "Alignment too large.");
+   return get(Context, Alignment, A.value());
+@@ -317,10 +355,14 @@ bool Attribute::isConstantRangeAttribute() const {
+   return pImpl && pImpl->isConstantRangeAttribute();
+ }
+ 
++bool Attribute::isConstantRangeListAttribute() const {
++  return pImpl && pImpl->isConstantRangeListAttribute();
++}
++
+ Attribute::AttrKind Attribute::getKindAsEnum() const {
+   if (!pImpl) return None;
+   assert((isEnumAttribute() || isIntAttribute() || isTypeAttribute() ||
+-          isConstantRangeAttribute()) &&
++          isConstantRangeAttribute() || isConstantRangeListAttribute()) &&
+          "Invalid attribute type to get the kind as an enum!");
+   return pImpl->getKindAsEnum();
+ }
+@@ -366,6 +408,12 @@ const ConstantRange &Attribute::getValueAsConstantRange() const {
+   return pImpl->getValueAsConstantRange();
+ }
+ 
++ArrayRef<ConstantRange> Attribute::getValueAsConstantRangeList() const {
++  assert(isConstantRangeListAttribute() &&
++         "Invalid attribute type to get the value as a ConstantRangeList!");
++  return pImpl->getValueAsConstantRangeList();
++}
++
+ bool Attribute::hasAttribute(AttrKind Kind) const {
+   return (pImpl && pImpl->hasAttribute(Kind)) || (!pImpl && Kind == None);
+ }
+@@ -450,6 +498,12 @@ const ConstantRange &Attribute::getRange() const {
+   return pImpl->getValueAsConstantRange();
+ }
+ 
++ArrayRef<ConstantRange> Attribute::getInitializes() const {
++  assert(hasAttribute(Attribute::Initializes) &&
++         "Trying to get initializes attr from non-ConstantRangeList attribute");
++  return pImpl->getValueAsConstantRangeList();
++}
++
+ static const char *getModRefStr(ModRefInfo MR) {
+   switch (MR) {
+   case ModRefInfo::NoModRef:
+@@ -616,6 +670,17 @@ std::string Attribute::getAsString(bool InAttrGrp) const {
+     return Result;
+   }
+ 
++  if (hasAttribute(Attribute::Initializes)) {
++    std::string Result;
++    raw_string_ostream OS(Result);
++    ConstantRangeList CRL = getInitializes();
++    OS << "initializes(";
++    CRL.print(OS);
++    OS << ")";
++    OS.flush();
++    return Result;
++  }
++
+   // Convert target-dependent attributes to strings of the form:
+   //
+   //   "kind"
+@@ -706,7 +771,7 @@ bool AttributeImpl::hasAttribute(StringRef Kind) const {
+ 
+ Attribute::AttrKind AttributeImpl::getKindAsEnum() const {
+   assert(isEnumAttribute() || isIntAttribute() || isTypeAttribute() ||
+-         isConstantRangeAttribute());
++         isConstantRangeAttribute() || isConstantRangeListAttribute());
+   return static_cast<const EnumAttributeImpl *>(this)->getEnumKind();
+ }
+ 
+@@ -741,6 +806,12 @@ const ConstantRange &AttributeImpl::getValueAsConstantRange() const {
+       ->getConstantRangeValue();
+ }
+ 
++ArrayRef<ConstantRange> AttributeImpl::getValueAsConstantRangeList() const {
++  assert(isConstantRangeListAttribute());
++  return static_cast<const ConstantRangeListAttributeImpl *>(this)
++      ->getConstantRangeListValue();
++}
++
+ bool AttributeImpl::operator<(const AttributeImpl &AI) const {
+   if (this == &AI)
+     return false;
+@@ -755,6 +826,8 @@ bool AttributeImpl::operator<(const AttributeImpl &AI) const {
+     assert(!AI.isEnumAttribute() && "Non-unique attribute");
+     assert(!AI.isTypeAttribute() && "Comparison of types would be unstable");
+     assert(!AI.isConstantRangeAttribute() && "Unclear how to compare ranges");
++    assert(!AI.isConstantRangeListAttribute() &&
++           "Unclear how to compare range list");
+     // TODO: Is this actually needed?
+     assert(AI.isIntAttribute() && "Only possibility left");
+     return getValueAsInt() < AI.getValueAsInt();
+@@ -1959,6 +2032,16 @@ AttrBuilder &AttrBuilder::addRangeAttr(const ConstantRange &CR) {
+   return addConstantRangeAttr(Attribute::Range, CR);
+ }
+ 
++AttrBuilder &
++AttrBuilder::addConstantRangeListAttr(Attribute::AttrKind Kind,
++                                      ArrayRef<ConstantRange> Val) {
++  return addAttribute(Attribute::get(Ctx, Kind, Val));
++}
++
++AttrBuilder &AttrBuilder::addInitializesAttr(const ConstantRangeList &CRL) {
++  return addConstantRangeListAttr(Attribute::Initializes, CRL.rangesRef());
++}
++
+ AttrBuilder &AttrBuilder::merge(const AttrBuilder &B) {
+   // TODO: Could make this O(n) as we're merging two sorted lists.
+   for (const auto &I : B.attrs())
+@@ -2047,7 +2130,8 @@ AttributeMask AttributeFuncs::typeIncompatible(Type *Ty,
+           .addAttribute(Attribute::Dereferenceable)
+           .addAttribute(Attribute::DereferenceableOrNull)
+           .addAttribute(Attribute::Writable)
+-          .addAttribute(Attribute::DeadOnUnwind);
++          .addAttribute(Attribute::DeadOnUnwind)
++          .addAttribute(Attribute::Initializes);
+     if (ASK & ASK_UNSAFE_TO_DROP)
+       Incompatible.addAttribute(Attribute::Nest)
+           .addAttribute(Attribute::SwiftError)
+diff --git a/llvm/lib/IR/CMakeLists.txt b/llvm/lib/IR/CMakeLists.txt
+index 20f169913087..6b3224e22ffb 100644
+--- a/llvm/lib/IR/CMakeLists.txt
++++ b/llvm/lib/IR/CMakeLists.txt
+@@ -9,6 +9,7 @@ add_llvm_component_library(LLVMCore
+   Comdat.cpp
+   ConstantFold.cpp
+   ConstantRange.cpp
++  ConstantRangeList.cpp
+   Constants.cpp
+   ConvergenceVerifier.cpp
+   Core.cpp
+diff --git a/llvm/lib/IR/ConstantRangeList.cpp b/llvm/lib/IR/ConstantRangeList.cpp
+new file mode 100644
+index 000000000000..2cc483d4e496
+--- /dev/null
++++ b/llvm/lib/IR/ConstantRangeList.cpp
+@@ -0,0 +1,95 @@
++//===- ConstantRangeList.cpp - ConstantRangeList implementation -----------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#include "llvm/IR/ConstantRangeList.h"
++#include <cstddef>
++
++using namespace llvm;
++
++bool ConstantRangeList::isOrderedRanges(ArrayRef<ConstantRange> RangesRef) {
++  if (RangesRef.empty())
++    return true;
++  auto Range = RangesRef[0];
++  if (Range.getLower().sge(Range.getUpper()))
++    return false;
++  for (unsigned i = 1; i < RangesRef.size(); i++) {
++    auto CurRange = RangesRef[i];
++    auto PreRange = RangesRef[i - 1];
++    if (CurRange.getLower().sge(CurRange.getUpper()) ||
++        CurRange.getLower().sle(PreRange.getUpper()))
++      return false;
++  }
++  return true;
++}
++
++std::optional<ConstantRangeList>
++ConstantRangeList::getConstantRangeList(ArrayRef<ConstantRange> RangesRef) {
++  if (!isOrderedRanges(RangesRef))
++    return std::nullopt;
++  return ConstantRangeList(RangesRef);
++}
++
++void ConstantRangeList::insert(const ConstantRange &NewRange) {
++  if (NewRange.isEmptySet())
++    return;
++  assert(!NewRange.isFullSet() && "Do not support full set");
++  assert(NewRange.getLower().slt(NewRange.getUpper()));
++  assert(getBitWidth() == NewRange.getBitWidth());
++  // Handle common cases.
++  if (empty() || Ranges.back().getUpper().slt(NewRange.getLower())) {
++    Ranges.push_back(NewRange);
++    return;
++  }
++  if (NewRange.getUpper().slt(Ranges.front().getLower())) {
++    Ranges.insert(Ranges.begin(), NewRange);
++    return;
++  }
++
++  auto LowerBound = lower_bound(
++      Ranges, NewRange, [](const ConstantRange &a, const ConstantRange &b) {
++        return a.getLower().slt(b.getLower());
++      });
++  if (LowerBound != Ranges.end() && LowerBound->contains(NewRange))
++    return;
++
++  // Slow insert.
++  SmallVector<ConstantRange, 2> ExistingTail(LowerBound, Ranges.end());
++  Ranges.erase(LowerBound, Ranges.end());
++  // Merge consecutive ranges.
++  if (!Ranges.empty() && NewRange.getLower().sle(Ranges.back().getUpper())) {
++    APInt NewLower = Ranges.back().getLower();
++    APInt NewUpper =
++        APIntOps::smax(NewRange.getUpper(), Ranges.back().getUpper());
++    Ranges.back() = ConstantRange(NewLower, NewUpper);
++  } else {
++    Ranges.push_back(NewRange);
++  }
++  for (auto Iter = ExistingTail.begin(); Iter != ExistingTail.end(); Iter++) {
++    if (Ranges.back().getUpper().slt(Iter->getLower())) {
++      Ranges.push_back(*Iter);
++    } else {
++      APInt NewLower = Ranges.back().getLower();
++      APInt NewUpper =
++          APIntOps::smax(Iter->getUpper(), Ranges.back().getUpper());
++      Ranges.back() = ConstantRange(NewLower, NewUpper);
++    }
++  }
++}
++
++void ConstantRangeList::print(raw_ostream &OS) const {
++  interleaveComma(Ranges, OS, [&](ConstantRange CR) {
++    OS << "(" << CR.getLower() << ", " << CR.getUpper() << ")";
++  });
++}
++
++#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
++LLVM_DUMP_METHOD void ConstantRangeList::dump() const {
++  print(dbgs());
++  dbgs() << '\n';
++}
++#endif
+diff --git a/llvm/lib/IR/LLVMContextImpl.cpp b/llvm/lib/IR/LLVMContextImpl.cpp
+index 72fedd8d6739..0a376179d609 100644
+--- a/llvm/lib/IR/LLVMContextImpl.cpp
++++ b/llvm/lib/IR/LLVMContextImpl.cpp
+@@ -91,6 +91,9 @@ LLVMContextImpl::~LLVMContextImpl() {
+   // Destroy MDNodes.
+   for (MDNode *I : DistinctMDNodes)
+     I->deleteAsSubclass();
++
++  for (auto *ConstantRangeListAttribute : ConstantRangeListAttributes)
++    ConstantRangeListAttribute->~ConstantRangeListAttributeImpl();
+ #define HANDLE_MDNODE_LEAF_UNIQUABLE(CLASS)                                    \
+   for (CLASS * I : CLASS##s)                                                   \
+     delete I;
+diff --git a/llvm/lib/IR/LLVMContextImpl.h b/llvm/lib/IR/LLVMContextImpl.h
+index 392e0d16f176..5f8df87149f0 100644
+--- a/llvm/lib/IR/LLVMContextImpl.h
++++ b/llvm/lib/IR/LLVMContextImpl.h
+@@ -57,6 +57,7 @@ class AttributeListImpl;
+ class AttributeSetNode;
+ class BasicBlock;
+ class ConstantRangeAttributeImpl;
++class ConstantRangeListAttributeImpl;
+ struct DiagnosticHandler;
+ class DbgMarker;
+ class ElementCount;
+@@ -1534,6 +1535,13 @@ public:
+   // them on context teardown.
+   std::vector<MDNode *> DistinctMDNodes;
+ 
++  // ConstantRangeListAttributeImpl is a TrailingObjects/ArrayRef of
++  // ConstantRange. Since this is a dynamically sized class, it's not
++  // possible to use SpecificBumpPtrAllocator. Instead, we use normal Alloc
++  // for allocation and record all allocated pointers in this vector. In the
++  // LLVMContext destructor, call the destuctors of everything in the vector.
++  std::vector<ConstantRangeListAttributeImpl *> ConstantRangeListAttributes;
++
+   DenseMap<Type *, std::unique_ptr<ConstantAggregateZero>> CAZConstants;
+ 
+   using ArrayConstantsTy = ConstantUniqueMap<ConstantArray>;
+diff --git a/llvm/lib/IR/Verifier.cpp b/llvm/lib/IR/Verifier.cpp
+index 684e54444621..170b7d3591f7 100644
+--- a/llvm/lib/IR/Verifier.cpp
++++ b/llvm/lib/IR/Verifier.cpp
+@@ -72,6 +72,7 @@
+ #include "llvm/IR/Comdat.h"
+ #include "llvm/IR/Constant.h"
+ #include "llvm/IR/ConstantRange.h"
++#include "llvm/IR/ConstantRangeList.h"
+ #include "llvm/IR/Constants.h"
+ #include "llvm/IR/ConvergenceVerifier.h"
+ #include "llvm/IR/DataLayout.h"
+@@ -2058,6 +2059,14 @@ void Verifier::verifyParameterAttrs(AttributeSet Attrs, Type *Ty,
+     }
+   }
+ 
++  if (Attrs.hasAttribute(Attribute::Initializes)) {
++    auto Inits = Attrs.getAttribute(Attribute::Initializes).getInitializes();
++    Check(!Inits.empty(), "Attribute 'initializes' does not support empty list",
++          V);
++    Check(ConstantRangeList::isOrderedRanges(Inits),
++          "Attribute 'initializes' does not support unordered ranges", V);
++  }
++
+   if (Attrs.hasAttribute(Attribute::NoFPClass)) {
+     uint64_t Val = Attrs.getAttribute(Attribute::NoFPClass).getValueAsInt();
+     Check(Val != 0, "Attribute 'nofpclass' must have at least one test bit set",
+diff --git a/llvm/lib/Transforms/Utils/CodeExtractor.cpp b/llvm/lib/Transforms/Utils/CodeExtractor.cpp
+index f2672b8e9118..9cf7f700bda5 100644
+--- a/llvm/lib/Transforms/Utils/CodeExtractor.cpp
++++ b/llvm/lib/Transforms/Utils/CodeExtractor.cpp
+@@ -1000,6 +1000,7 @@ Function *CodeExtractor::constructFunction(const ValueSet &inputs,
+       case Attribute::Writable:
+       case Attribute::DeadOnUnwind:
+       case Attribute::Range:
++      case Attribute::Initializes:
+       //  These are not really attributes.
+       case Attribute::None:
+       case Attribute::EndAttrKinds:
+diff --git a/llvm/test/Assembler/initializes-attribute-invalid.ll b/llvm/test/Assembler/initializes-attribute-invalid.ll
+new file mode 100644
+index 000000000000..5413d2454844
+--- /dev/null
++++ b/llvm/test/Assembler/initializes-attribute-invalid.ll
+@@ -0,0 +1,71 @@
++; RUN: split-file %s %t
++; RUN: not llvm-as < %s %t/outer_left_parenthesis.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=OUTER-LEFT
++; RUN: not llvm-as < %s %t/inner_left_parenthesis.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INNER-LEFT
++; RUN: not llvm-as < %s %t/inner_right_parenthesis.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INNER-RIGHT
++; RUN: not llvm-as < %s %t/outer_right_parenthesis.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=OUTER-RIGHT
++; RUN: not llvm-as < %s %t/integer.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTEGER
++; RUN: not llvm-as < %s %t/lower_equal_upper.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOWER-EQUAL-UPPER
++; RUN: not llvm-as < %s %t/inner_comma.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INNER-COMMA
++; RUN: not llvm-as < %s %t/outer_comma.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=OUTER-COMMA
++; RUN: not llvm-as < %s %t/empty1.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=EMPTY1
++; RUN: not llvm-as < %s %t/empty2.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=EMPTY2
++
++;--- outer_left_parenthesis.ll
++; OUTER-LEFT: expected '('
++define void @foo(ptr initializes 0, 4 %a) {
++  ret void
++}
++
++;--- inner_left_parenthesis.ll
++; INNER-LEFT: expected '('
++define void @foo(ptr initializes(0, 4 %a) {
++  ret void
++}
++
++;--- inner_right_parenthesis.ll
++; INNER-RIGHT: expected ')'
++define void @foo(ptr initializes((0, 4 %a) {
++  ret void
++}
++
++;--- outer_right_parenthesis.ll
++; OUTER-RIGHT: expected ')'
++define void @foo(ptr initializes((0, 4) %a) {
++  ret void
++}
++
++;--- integer.ll
++; INTEGER: expected integer
++define void @foo(ptr initializes((0.5, 4)) %a) {
++  ret void
++}
++
++;--- lower_equal_upper.ll
++; LOWER-EQUAL-UPPER: the range should not represent the full or empty set!
++define void @foo(ptr initializes((4, 4)) %a) {
++  ret void
++}
++
++;--- inner_comma.ll
++; INNER-COMMA: expected ','
++define void @foo(ptr initializes((0 4)) %a) {
++  ret void
++}
++
++;--- outer_comma.ll
++; OUTER-COMMA: expected ')'
++define void @foo(ptr initializes((0, 4) (8, 12)) %a) {
++  ret void
++}
++
++;--- empty1.ll
++; EMPTY1: expected '('
++define void @foo(ptr initializes() %a) {
++  ret void
++}
++
++;--- empty2.ll
++; EMPTY2: expected integer
++define void @foo(ptr initializes(()) %a) {
++  ret void
++}
+diff --git a/llvm/test/Bitcode/attributes.ll b/llvm/test/Bitcode/attributes.ll
+index 0c753e58d435..f4dc9b984982 100644
+--- a/llvm/test/Bitcode/attributes.ll
++++ b/llvm/test/Bitcode/attributes.ll
+@@ -541,6 +541,11 @@ define void @wide_range_attribute(i128 range(i128 618970019642690137449562111, 6
+   ret void
+ }
+ 
++; CHECK: define void @initializes(ptr initializes((-4, 0), (4, 8)) %a)
++define void @initializes(ptr initializes((-4, 0), (4, 8)) %a) {
++  ret void
++}
++
+ ; CHECK: attributes #0 = { noreturn }
+ ; CHECK: attributes #1 = { nounwind }
+ ; CHECK: attributes #2 = { memory(none) }
+diff --git a/llvm/test/Verifier/initializes-attr.ll b/llvm/test/Verifier/initializes-attr.ll
+new file mode 100644
+index 000000000000..b097bbd890a1
+--- /dev/null
++++ b/llvm/test/Verifier/initializes-attr.ll
+@@ -0,0 +1,36 @@
++; RUN: split-file %s %t
++; RUN: not llvm-as < %s %t/lower_greater_than_upper1.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=Lower-GT-Upper1
++; RUN: not llvm-as < %s %t/lower_greater_than_upper2.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=Lower-GT-Upper2
++; RUN: not llvm-as < %s %t/descending_order.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=DescOrder
++; RUN: not llvm-as < %s %t/overlapping1.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=Overlapping1
++; RUN: not llvm-as < %s %t/overlapping2.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=Overlapping2
++
++;--- lower_greater_than_upper1.ll
++; Lower-GT-Upper1: error: Invalid (unordered or overlapping) range list
++define void @lower_greater_than_upper1(ptr initializes((4, 0)) %a) {
++  ret void
++}
++
++;--- lower_greater_than_upper2.ll
++; Lower-GT-Upper2: error: Invalid (unordered or overlapping) range list
++define void @lower_greater_than_upper2(ptr initializes((0, 4), (8, 6)) %a) {
++  ret void
++}
++
++;--- descending_order.ll
++; DescOrder: error: Invalid (unordered or overlapping) range list
++define void @descending_order(ptr initializes((8, 12), (0, 4)) %a) {
++  ret void
++}
++
++;--- overlapping1.ll
++; Overlapping1: error: Invalid (unordered or overlapping) range list
++define void @overlapping1(ptr initializes((0, 4), (4, 8)) %a) {
++  ret void
++}
++
++;--- overlapping2.ll
++; Overlapping2: error: Invalid (unordered or overlapping) range list
++define void @overlapping2(ptr initializes((0, 4), (2, 8)) %a) {
++  ret void
++}
+diff --git a/llvm/unittests/IR/CMakeLists.txt b/llvm/unittests/IR/CMakeLists.txt
+index a03b0711ba33..633166221c69 100644
+--- a/llvm/unittests/IR/CMakeLists.txt
++++ b/llvm/unittests/IR/CMakeLists.txt
+@@ -17,6 +17,7 @@ add_llvm_unittest(IRTests
+   BasicBlockDbgInfoTest.cpp
+   CFGBuilder.cpp
+   ConstantRangeTest.cpp
++  ConstantRangeListTest.cpp
+   ConstantsTest.cpp
+   DataLayoutTest.cpp
+   DebugInfoTest.cpp
+diff --git a/llvm/unittests/IR/ConstantRangeListTest.cpp b/llvm/unittests/IR/ConstantRangeListTest.cpp
+new file mode 100644
+index 000000000000..144b5ccdc1fc
+--- /dev/null
++++ b/llvm/unittests/IR/ConstantRangeListTest.cpp
+@@ -0,0 +1,97 @@
++//===- ConstantRangeListTest.cpp - ConstantRangeList tests ----------------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#include "llvm/IR/ConstantRangeList.h"
++#include "gtest/gtest.h"
++
++using namespace llvm;
++
++namespace {
++
++using ConstantRangeListTest = ::testing::Test;
++
++TEST_F(ConstantRangeListTest, Basics) {
++  ConstantRangeList CRL1a;
++  CRL1a.insert(0, 12);
++  EXPECT_FALSE(CRL1a.empty());
++
++  ConstantRangeList CRL1b;
++  CRL1b.insert(0, 4);
++  CRL1b.insert(4, 8);
++  CRL1b.insert(8, 12);
++  EXPECT_TRUE(CRL1a == CRL1b);
++
++  ConstantRangeList CRL1c;
++  CRL1c.insert(0, 4);
++  CRL1c.insert(8, 12);
++  CRL1c.insert(4, 8);
++  EXPECT_TRUE(CRL1a == CRL1c);
++
++  ConstantRangeList CRL2;
++  CRL2.insert(-4, 0);
++  CRL2.insert(8, 12);
++  EXPECT_TRUE(CRL1a != CRL2);
++}
++
++TEST_F(ConstantRangeListTest, getConstantRangeList) {
++  SmallVector<ConstantRange, 2> Empty;
++  EXPECT_TRUE(ConstantRangeList::getConstantRangeList(Empty).has_value());
++
++  SmallVector<ConstantRange, 2> Valid;
++  Valid.push_back(ConstantRange(APInt(64, 0, true), APInt(64, 4, true)));
++  Valid.push_back(ConstantRange(APInt(64, 8, true), APInt(64, 12, true)));
++  EXPECT_TRUE(ConstantRangeList::getConstantRangeList(Valid).has_value());
++
++  SmallVector<ConstantRange, 2> Invalid1;
++  Invalid1.push_back(ConstantRange(APInt(64, 4, true), APInt(64, 0, true)));
++  EXPECT_EQ(ConstantRangeList::getConstantRangeList(Invalid1), std::nullopt);
++
++  SmallVector<ConstantRange, 2> Invalid2;
++  Invalid2.push_back(ConstantRange(APInt(64, 0, true), APInt(64, 4, true)));
++  Invalid2.push_back(ConstantRange(APInt(64, 12, true), APInt(64, 8, true)));
++  EXPECT_EQ(ConstantRangeList::getConstantRangeList(Invalid2), std::nullopt);
++
++  SmallVector<ConstantRange, 2> Invalid3;
++  Invalid3.push_back(ConstantRange(APInt(64, 0, true), APInt(64, 4, true)));
++  Invalid3.push_back(ConstantRange(APInt(64, 4, true), APInt(64, 8, true)));
++  EXPECT_EQ(ConstantRangeList::getConstantRangeList(Invalid3), std::nullopt);
++
++  SmallVector<ConstantRange, 2> Invalid4;
++  Invalid4.push_back(ConstantRange(APInt(64, 0, true), APInt(64, 12, true)));
++  Invalid4.push_back(ConstantRange(APInt(64, 8, true), APInt(64, 16, true)));
++  EXPECT_EQ(ConstantRangeList::getConstantRangeList(Invalid4), std::nullopt);
++}
++
++TEST_F(ConstantRangeListTest, Insert) {
++  ConstantRangeList CRL;
++  CRL.insert(0, 4);
++  CRL.insert(8, 12);
++  // No overlap, left
++  CRL.insert(-8, -4);
++  // No overlap, right
++  CRL.insert(16, 20);
++  // No overlap, middle
++  CRL.insert(13, 15);
++  // Overlap with left
++  CRL.insert(-6, -2);
++  // Overlap with right
++  CRL.insert(5, 9);
++  // Overlap with left and right
++  CRL.insert(14, 18);
++  // Overlap cross ranges
++  CRL.insert(2, 14);
++  // An existing range
++  CRL.insert(0, 20);
++
++  ConstantRangeList Expected;
++  Expected.insert(-8, -2);
++  Expected.insert(0, 20);
++  EXPECT_TRUE(CRL == Expected);
++}
++
++} // anonymous namespace
+diff --git a/llvm/utils/TableGen/Attributes.cpp b/llvm/utils/TableGen/Attributes.cpp
+index d9fc7834416c..c50316985ef0 100644
+--- a/llvm/utils/TableGen/Attributes.cpp
++++ b/llvm/utils/TableGen/Attributes.cpp
+@@ -53,7 +53,8 @@ void Attributes::emitTargetIndependentNames(raw_ostream &OS) {
+   };
+ 
+   // Emit attribute enums in the same order llvm::Attribute::operator< expects.
+-  Emit({"EnumAttr", "TypeAttr", "IntAttr", "ConstantRangeAttr"},
++  Emit({"EnumAttr", "TypeAttr", "IntAttr", "ConstantRangeAttr",
++        "ConstantRangeListAttr"},
+        "ATTRIBUTE_ENUM");
+   Emit({"StrBoolAttr"}, "ATTRIBUTE_STRBOOL");
+   Emit({"ComplexStrAttr"}, "ATTRIBUTE_COMPLEXSTR");
+@@ -64,8 +65,8 @@ void Attributes::emitTargetIndependentNames(raw_ostream &OS) {
+   OS << "#ifdef GET_ATTR_ENUM\n";
+   OS << "#undef GET_ATTR_ENUM\n";
+   unsigned Value = 1; // Leave zero for AttrKind::None.
+-  for (StringRef KindName :
+-       {"EnumAttr", "TypeAttr", "IntAttr", "ConstantRangeAttr"}) {
++  for (StringRef KindName : {"EnumAttr", "TypeAttr", "IntAttr",
++                             "ConstantRangeAttr", "ConstantRangeListAttr"}) {
+     OS << "First" << KindName << " = " << Value << ",\n";
+     for (auto *A : Records.getAllDerivedDefinitions(KindName)) {
+       OS << A->getName() << " = " << Value << ",\n";
+@@ -119,8 +120,8 @@ void Attributes::emitAttributeProperties(raw_ostream &OS) {
+   OS << "#ifdef GET_ATTR_PROP_TABLE\n";
+   OS << "#undef GET_ATTR_PROP_TABLE\n";
+   OS << "static const uint8_t AttrPropTable[] = {\n";
+-  for (StringRef KindName :
+-       {"EnumAttr", "TypeAttr", "IntAttr", "ConstantRangeAttr"}) {
++  for (StringRef KindName : {"EnumAttr", "TypeAttr", "IntAttr",
++                             "ConstantRangeAttr", "ConstantRangeListAttr"}) {
+     for (auto *A : Records.getAllDerivedDefinitions(KindName)) {
+       OS << "0";
+       for (Init *P : *A->getValueAsListInit("Properties"))
+-- 
+2.34.1
+
