@@ -1,0 +1,349 @@
+From ec4c13da06abd4dc42b9e6d3a071d76ea9a555f8 Mon Sep 17 00:00:00 2001
+From: elhewaty <mohamedatef1698@gmail.com>
+Date: Tue, 15 Oct 2024 12:11:25 +0300
+Subject: [PATCH 2/2] [IR] Add `samesign` flag to icmp instruction (#111419)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Inspired by
+﻿https://discourse.llvm.org/t/rfc-signedness-independent-icmps/81423
+---
+ llvm/docs/LangRef.rst                         |  4 +++
+ llvm/include/llvm/AsmParser/LLToken.h         |  1 +
+ llvm/include/llvm/Bitcode/LLVMBitCodes.h      |  4 +++
+ llvm/include/llvm/IR/Instructions.h           | 11 +++++++
+ .../Utils/ScalarEvolutionExpander.h           |  0
+ llvm/lib/AsmParser/LLLexer.cpp                |  1 +
+ llvm/lib/AsmParser/LLParser.cpp               | 10 +++++--
+ llvm/lib/Bitcode/Reader/BitcodeReader.cpp     |  9 ++++--
+ llvm/lib/Bitcode/Writer/BitcodeWriter.cpp     |  3 ++
+ llvm/lib/IR/AsmWriter.cpp                     |  3 ++
+ llvm/lib/IR/Instruction.cpp                   | 12 ++++++++
+ .../Utils/ScalarEvolutionExpander.cpp         |  0
+ llvm/test/Assembler/flags.ll                  | 12 ++++++++
+ llvm/test/Bitcode/flags.ll                    |  4 +++
+ llvm/test/Transforms/InstCombine/freeze.ll    | 11 +++++++
+ llvm/test/Transforms/SimplifyCFG/HoistCode.ll | 30 +++++++++++++++++++
+ 16 files changed, 110 insertions(+), 5 deletions(-)
+ mode change 100644 => 100755 llvm/include/llvm/Transforms/Utils/ScalarEvolutionExpander.h
+ mode change 100644 => 100755 llvm/lib/Transforms/Utils/ScalarEvolutionExpander.cpp
+
+diff --git a/llvm/docs/LangRef.rst b/llvm/docs/LangRef.rst
+index 5e8d66704f06..b9397b35f452 100644
+--- a/llvm/docs/LangRef.rst
++++ b/llvm/docs/LangRef.rst
+@@ -12153,6 +12153,7 @@ Syntax:
+ ::
+ 
+       <result> = icmp <cond> <ty> <op1>, <op2>   ; yields i1 or <N x i1>:result
++      <result> = icmp samesign <cond> <ty> <op1>, <op2>   ; yields i1 or <N x i1>:result
+ 
+ Overview:
+ """""""""
+@@ -12222,6 +12223,9 @@ If the operands are integer vectors, then they are compared element by
+ element. The result is an ``i1`` vector with the same number of elements
+ as the values being compared. Otherwise, the result is an ``i1``.
+ 
++If the ``samesign`` keyword is present and the operands are not of the
++same sign then the result is a :ref:`poison value <poisonvalues>`.
++
+ Example:
+ """"""""
+ 
+diff --git a/llvm/include/llvm/AsmParser/LLToken.h b/llvm/include/llvm/AsmParser/LLToken.h
+index 69821c22dcd6..6da217377270 100644
+--- a/llvm/include/llvm/AsmParser/LLToken.h
++++ b/llvm/include/llvm/AsmParser/LLToken.h
+@@ -114,6 +114,7 @@ enum Kind {
+   kw_disjoint,
+   kw_inbounds,
+   kw_nneg,
++  kw_samesign,
+   kw_inrange,
+   kw_addrspace,
+   kw_section,
+diff --git a/llvm/include/llvm/Bitcode/LLVMBitCodes.h b/llvm/include/llvm/Bitcode/LLVMBitCodes.h
+index cdd52f06243c..96d367306ed6 100755
+--- a/llvm/include/llvm/Bitcode/LLVMBitCodes.h
++++ b/llvm/include/llvm/Bitcode/LLVMBitCodes.h
+@@ -534,6 +534,10 @@ enum GetElementPtrOptionalFlags {
+   GEP_NUW = 2,
+ };
+ 
++/// ICmpOptionalFlags - Flags for serializing
++/// ICmpOptionalFlags's SubclassOptionalData contents.
++enum ICmpOptionalFlags { ICMP_SAME_SIGN = 0 };
++
+ /// Encoded AtomicOrdering values.
+ enum AtomicOrderingCodes {
+   ORDERING_NOTATOMIC = 0,
+diff --git a/llvm/include/llvm/IR/Instructions.h b/llvm/include/llvm/IR/Instructions.h
+index 8d7c2b0c957d..a846c9df003c 100644
+--- a/llvm/include/llvm/IR/Instructions.h
++++ b/llvm/include/llvm/IR/Instructions.h
+@@ -1272,6 +1272,8 @@ class ICmpInst: public CmpInst {
+            "Invalid operand types for ICmp instruction");
+   }
+ 
++  enum { SameSign = (1 << 0) };
++
+ protected:
+   // Note: Instruction needs to be a friend here to call cloneImpl.
+   friend class Instruction;
+@@ -1362,6 +1364,15 @@ public:
+   /// Return the unsigned version of the predicate.
+   static Predicate getUnsignedPredicate(Predicate pred);
+ 
++  void setSameSign(bool B = true) {
++    SubclassOptionalData = (SubclassOptionalData & ~SameSign) | (B * SameSign);
++  }
++
++  /// An icmp instruction, which can be marked as "samesign", indicating that
++  /// the two operands have the same sign. This means that we can convert
++  /// "slt" to "ult" and vice versa, which enables more optimizations.
++  bool hasSameSign() const { return SubclassOptionalData & SameSign; }
++
+   /// Return true if this predicate is either EQ or NE.  This also
+   /// tests for commutativity.
+   static bool isEquality(Predicate P) {
+diff --git a/llvm/include/llvm/Transforms/Utils/ScalarEvolutionExpander.h b/llvm/include/llvm/Transforms/Utils/ScalarEvolutionExpander.h
+old mode 100644
+new mode 100755
+diff --git a/llvm/lib/AsmParser/LLLexer.cpp b/llvm/lib/AsmParser/LLLexer.cpp
+index d3ab306904da..8837bfe594d3 100644
+--- a/llvm/lib/AsmParser/LLLexer.cpp
++++ b/llvm/lib/AsmParser/LLLexer.cpp
+@@ -571,6 +571,7 @@ lltok::Kind LLLexer::LexIdentifier() {
+   KEYWORD(disjoint);
+   KEYWORD(inbounds);
+   KEYWORD(nneg);
++  KEYWORD(samesign);
+   KEYWORD(inrange);
+   KEYWORD(addrspace);
+   KEYWORD(section);
+diff --git a/llvm/lib/AsmParser/LLParser.cpp b/llvm/lib/AsmParser/LLParser.cpp
+index b7960409b6b4..a7274f18450d 100644
+--- a/llvm/lib/AsmParser/LLParser.cpp
++++ b/llvm/lib/AsmParser/LLParser.cpp
+@@ -6949,8 +6949,14 @@ int LLParser::parseInstruction(Instruction *&Inst, BasicBlock *BB,
+   case lltok::kw_and:
+   case lltok::kw_xor:
+     return parseLogical(Inst, PFS, KeywordVal);
+-  case lltok::kw_icmp:
+-    return parseCompare(Inst, PFS, KeywordVal);
++  case lltok::kw_icmp: {
++    bool SameSign = EatIfPresent(lltok::kw_samesign);
++    if (parseCompare(Inst, PFS, KeywordVal))
++      return true;
++    if (SameSign)
++      cast<ICmpInst>(Inst)->setSameSign();
++    return false;
++  }
+   case lltok::kw_fcmp: {
+     FastMathFlags FMF = EatFastMathFlagsIfPresent();
+     int Res = parseCompare(Inst, PFS, KeywordVal);
+diff --git a/llvm/lib/Bitcode/Reader/BitcodeReader.cpp b/llvm/lib/Bitcode/Reader/BitcodeReader.cpp
+index 8791082682fe..5ef674ef188a 100644
+--- a/llvm/lib/Bitcode/Reader/BitcodeReader.cpp
++++ b/llvm/lib/Bitcode/Reader/BitcodeReader.cpp
+@@ -5435,9 +5435,6 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
+       if (IsFP && Record.size() > OpNum+1)
+         FMF = getDecodedFastMathFlags(Record[++OpNum]);
+ 
+-      if (OpNum+1 != Record.size())
+-        return error("Invalid record");
+-
+       if (IsFP) {
+         if (!CmpInst::isFPPredicate(PredVal))
+           return error("Invalid fcmp predicate");
+@@ -5446,8 +5443,14 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
+         if (!CmpInst::isIntPredicate(PredVal))
+           return error("Invalid icmp predicate");
+         I = new ICmpInst(PredVal, LHS, RHS);
++        if (Record.size() > OpNum + 1 &&
++            (Record[++OpNum] & (1 << bitc::ICMP_SAME_SIGN)))
++          cast<ICmpInst>(I)->setSameSign();
+       }
+ 
++      if (OpNum + 1 != Record.size())
++        return error("Invalid record");
++
+       ResTypeID = getVirtualTypeID(I->getType()->getScalarType());
+       if (LHS->getType()->isVectorTy())
+         ResTypeID = getVirtualTypeID(I->getType(), ResTypeID);
+diff --git a/llvm/lib/Bitcode/Writer/BitcodeWriter.cpp b/llvm/lib/Bitcode/Writer/BitcodeWriter.cpp
+index a0c3de013dfd..63d53194e5ab 100644
+--- a/llvm/lib/Bitcode/Writer/BitcodeWriter.cpp
++++ b/llvm/lib/Bitcode/Writer/BitcodeWriter.cpp
+@@ -1684,6 +1684,9 @@ static uint64_t getOptimizationFlags(const Value *V) {
+       Flags |= 1 << bitc::GEP_NUSW;
+     if (GEP->hasNoUnsignedWrap())
+       Flags |= 1 << bitc::GEP_NUW;
++  } else if (const auto *ICmp = dyn_cast<ICmpInst>(V)) {
++    if (ICmp->hasSameSign())
++      Flags |= 1 << bitc::ICMP_SAME_SIGN;
+   }
+ 
+   return Flags;
+diff --git a/llvm/lib/IR/AsmWriter.cpp b/llvm/lib/IR/AsmWriter.cpp
+index 8b1a21f962b0..13c4233bb6aa 100644
+--- a/llvm/lib/IR/AsmWriter.cpp
++++ b/llvm/lib/IR/AsmWriter.cpp
+@@ -1433,6 +1433,9 @@ static void WriteOptimizationInfo(raw_ostream &Out, const User *U) {
+       Out << " nuw";
+     if (TI->hasNoSignedWrap())
+       Out << " nsw";
++  } else if (const auto *ICmp = dyn_cast<ICmpInst>(U)) {
++    if (ICmp->hasSameSign())
++      Out << " samesign";
+   }
+ }
+ 
+diff --git a/llvm/lib/IR/Instruction.cpp b/llvm/lib/IR/Instruction.cpp
+index 29272e627a1d..25285daaabb1 100644
+--- a/llvm/lib/IR/Instruction.cpp
++++ b/llvm/lib/IR/Instruction.cpp
+@@ -453,6 +453,10 @@ void Instruction::dropPoisonGeneratingFlags() {
+     cast<TruncInst>(this)->setHasNoUnsignedWrap(false);
+     cast<TruncInst>(this)->setHasNoSignedWrap(false);
+     break;
++
++  case Instruction::ICmp:
++    cast<ICmpInst>(this)->setSameSign(false);
++    break;
+   }
+ 
+   if (isa<FPMathOperator>(this)) {
+@@ -666,6 +670,10 @@ void Instruction::copyIRFlags(const Value *V, bool IncludeWrapFlags) {
+   if (auto *NNI = dyn_cast<PossiblyNonNegInst>(V))
+     if (isa<PossiblyNonNegInst>(this))
+       setNonNeg(NNI->hasNonNeg());
++
++  if (auto *SrcICmp = dyn_cast<ICmpInst>(V))
++    if (auto *DestICmp = dyn_cast<ICmpInst>(this))
++      DestICmp->setSameSign(SrcICmp->hasSameSign());
+ }
+ 
+ void Instruction::andIRFlags(const Value *V) {
+@@ -707,6 +715,10 @@ void Instruction::andIRFlags(const Value *V) {
+   if (auto *NNI = dyn_cast<PossiblyNonNegInst>(V))
+     if (isa<PossiblyNonNegInst>(this))
+       setNonNeg(hasNonNeg() && NNI->hasNonNeg());
++
++  if (auto *SrcICmp = dyn_cast<ICmpInst>(V))
++    if (auto *DestICmp = dyn_cast<ICmpInst>(this))
++      DestICmp->setSameSign(DestICmp->hasSameSign() && SrcICmp->hasSameSign());
+ }
+ 
+ const char *Instruction::getOpcodeName(unsigned OpCode) {
+diff --git a/llvm/lib/Transforms/Utils/ScalarEvolutionExpander.cpp b/llvm/lib/Transforms/Utils/ScalarEvolutionExpander.cpp
+old mode 100644
+new mode 100755
+diff --git a/llvm/test/Assembler/flags.ll b/llvm/test/Assembler/flags.ll
+index 7d2aafa005e7..b0d58287c64a 100644
+--- a/llvm/test/Assembler/flags.ll
++++ b/llvm/test/Assembler/flags.ll
+@@ -318,6 +318,18 @@ define <2 x i32> @test_trunc_both_reversed_vector(<2 x i64> %a) {
+   ret <2 x i32> %res
+ }
+ 
++define i1 @test_icmp_samesign(i32 %a, i32 %b) {
++  ; CHECK: %res = icmp samesign ult i32 %a, %b
++  %res = icmp samesign ult i32 %a, %b
++  ret i1 %res
++}
++
++define <2 x i1> @test_icmp_samesign2(<2 x i32> %a, <2 x i32> %b) {
++  ; CHECK: %res = icmp samesign ult <2 x i32> %a, %b
++  %res = icmp samesign ult <2 x i32> %a, %b
++  ret <2 x i1> %res
++}
++
+ define ptr @gep_nuw(ptr %p, i64 %idx) {
+ ; CHECK: %gep = getelementptr nuw i8, ptr %p, i64 %idx
+   %gep = getelementptr nuw i8, ptr %p, i64 %idx
+diff --git a/llvm/test/Bitcode/flags.ll b/llvm/test/Bitcode/flags.ll
+index fd56694ccceb..99988c9ba3d3 100644
+--- a/llvm/test/Bitcode/flags.ll
++++ b/llvm/test/Bitcode/flags.ll
+@@ -30,6 +30,8 @@ second:                                           ; preds = %first
+   %tsv = trunc nsw <2 x i32> %aa to <2 x i16>
+   %tusv = trunc nuw nsw <2 x i32> %aa to <2 x i16>
+   %tv = trunc <2 x i32> %aa to <2 x i16>
++  %ii = icmp samesign ult i32 %a, %z
++  %iv = icmp samesign ult <2 x i32> %aa, %aa
+   unreachable
+ 
+ first:                                                    ; preds = %entry
+@@ -53,5 +55,7 @@ first:                                                    ; preds = %entry
+   %ttsv = trunc nsw <2 x i32> %aa to <2 x i16>
+   %ttusv = trunc nuw nsw <2 x i32> %aa to <2 x i16>
+   %ttv = trunc <2 x i32> %aa to <2 x i16>
++  %icm = icmp samesign ult i32 %a, %zz
++  %icv = icmp samesign ult <2 x i32> %aa, %aa
+   br label %second
+ }
+diff --git a/llvm/test/Transforms/InstCombine/freeze.ll b/llvm/test/Transforms/InstCombine/freeze.ll
+index 5fedb1f85750..23785eba0555 100644
+--- a/llvm/test/Transforms/InstCombine/freeze.ll
++++ b/llvm/test/Transforms/InstCombine/freeze.ll
+@@ -1182,6 +1182,17 @@ define ptr @propagate_drop_flags_gep_nuw(ptr %p) {
+   ret ptr %gep.fr
+ }
+ 
++define i1 @propagate_drop_flags_icmp(i32 %a, i32 %b) {
++; CHECK-LABEL: @propagate_drop_flags_icmp(
++; CHECK-NEXT:    [[A_FR:%.*]] = freeze i32 [[A:%.*]]
++; CHECK-NEXT:    [[RET:%.*]] = icmp ult i32 [[A_FR]], 3
++; CHECK-NEXT:    ret i1 [[RET]]
++;
++  %ret = icmp samesign ult i32 %a, 3
++  %ret.fr = freeze i1 %ret
++  ret i1 %ret.fr
++}
++
+ declare i32 @llvm.umax.i32(i32 %a, i32 %b)
+ 
+ define i32 @freeze_call_with_range_attr(i32 %a) {
+diff --git a/llvm/test/Transforms/SimplifyCFG/HoistCode.ll b/llvm/test/Transforms/SimplifyCFG/HoistCode.ll
+index e6a255a4b8f0..fe0b48028a3b 100644
+--- a/llvm/test/Transforms/SimplifyCFG/HoistCode.ll
++++ b/llvm/test/Transforms/SimplifyCFG/HoistCode.ll
+@@ -275,3 +275,33 @@ F:
+   %gep2 = getelementptr nuw i8, ptr %p, i64 1
+   ret ptr %gep2
+ }
++
++define i1 @hoist_icmp_flags_preserve(i1 %C, i32 %x, i32 %y) {
++; CHECK-LABEL: @hoist_icmp_flags_preserve(
++; CHECK-NEXT:  common.ret:
++; CHECK-NEXT:    [[Z1:%.*]] = icmp samesign ult i32 [[X:%.*]], [[Y:%.*]]
++; CHECK-NEXT:    ret i1 [[Z1]]
++;
++  br i1 %C, label %T, label %F
++T:
++  %z1 = icmp samesign ult i32 %x, %y
++  ret i1 %z1
++F:
++  %z2 = icmp samesign ult i32 %x, %y
++  ret i1 %z2
++}
++
++define i1 @hoist_icmp_flags_drop(i1 %C, i32 %x, i32 %y) {
++; CHECK-LABEL: @hoist_icmp_flags_drop(
++; CHECK-NEXT:  common.ret:
++; CHECK-NEXT:    [[Z1:%.*]] = icmp ult i32 [[X:%.*]], [[Y:%.*]]
++; CHECK-NEXT:    ret i1 [[Z1]]
++;
++  br i1 %C, label %T, label %F
++T:
++  %z1 = icmp ult i32 %x, %y
++  ret i1 %z1
++F:
++  %z2 = icmp samesign ult i32 %x, %y
++  ret i1 %z2
++}
+-- 
+2.34.1
+

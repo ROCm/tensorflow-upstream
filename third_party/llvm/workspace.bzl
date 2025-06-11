@@ -22,6 +22,8 @@ def repo(name):
             "//third_party/llvm:mathextras.patch",
             "//third_party/llvm:toolchains.patch",
             "//third_party/llvm:zstd.patch",
+            "//third_party/llvm:0001-Add-the-initializes-attribute-langref-and-support-84.patch",
+            "//third_party/llvm:0002-IR-Add-samesign-flag-to-icmp-instruction-111419.patch",
         ],
         link_files = {"//third_party/llvm:run_lit.sh": "mlir/run_lit.sh"},
     )
