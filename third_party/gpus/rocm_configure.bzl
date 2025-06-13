@@ -736,6 +736,9 @@ def _create_local_rocm_repository(repository_ctx):
             "%{rocrand_runtime_path}": rocm_config.rocm_paths["ROCRAND"] + "/lib",
             "%{crosstool_verbose}": _crosstool_verbose(repository_ctx),
             "%{gcc_host_compiler_path}": str(cc),
+            "%{rocm_amdgpu_targets}": ",".join(
+                ["\"%s\"" % c for c in rocm_config.amdgpu_targets],
+            ),
             "%{crosstool_clang}": "1" if _is_clang_enabled(repository_ctx) else "0",
         },
     )
