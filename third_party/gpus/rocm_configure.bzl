@@ -467,7 +467,7 @@ def _genrule(src_dir, genrule_name, command, outs):
     )
 
 def _compute_rocm_extra_copts(repository_ctx, amdgpu_targets):
-    amdgpu_target_flags = ["--amdgpu-target=" +
+    amdgpu_target_flags = ["--offload-arch=" +
                            amdgpu_target for amdgpu_target in amdgpu_targets]
     return str(amdgpu_target_flags)
 
@@ -680,6 +680,9 @@ def _create_local_rocm_repository(repository_ctx):
             "%{hip_runtime_library}": "amdhip64",
             "%{crosstool_verbose}": _crosstool_verbose(repository_ctx),
             "%{gcc_host_compiler_path}": str(cc),
+            "%{rocm_amdgpu_targets}": ",".join(
+                ["\"%s\"" % c for c in rocm_config.amdgpu_targets],
+            ),
             "%{crosstool_clang}": "1" if _is_clang_enabled(repository_ctx) else "0",
         },
     )
