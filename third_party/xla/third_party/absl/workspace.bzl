@@ -46,5 +46,7 @@ def repo():
         urls = tf_mirror_urls("https://github.com/abseil/abseil-cpp/archive/{commit}.tar.gz".format(commit = ABSL_COMMIT)),
         patch_file = [
             "//third_party/absl:nvidia_jetson.patch",
+            "//third_party/absl:build_dll.patch",
+            "//third_party/absl:nullability_macros.patch",
         ],
     )

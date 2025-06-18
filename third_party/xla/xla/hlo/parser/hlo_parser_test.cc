@@ -37,14 +37,15 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/parser/hlo_lexer.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
-#include "xla/protobuf_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
@@ -54,6 +55,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
 
@@ -65,12 +67,12 @@ namespace m = ::xla::match;
 using ::absl::string_view;
 using ::testing::ElementsAre;
 using ::testing::HasSubstr;
+using ::tsl::proto_testing::EqualsProto;
 
 struct TestData {
   std::string test_name;
   std::string module_string;
   int64_t replica_count = 1;
-  bool enable_verification = true;
 };
 
 std::string TestDataToString(const ::testing::TestParamInfo<TestData>& data) {
@@ -2689,106 +2691,20 @@ ENTRY test {
   ROOT root = f32[10,10]{1,0} sqrt(broadcast.anon)
 })"
 },
-
-{
-"SparseShape",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(D,C)})->f32[10,10]{1,0:D(D,C)}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)} parameter(0)
-})",
-},
-
-{
-"SparseShapeWithIndexPrimitiveType",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)#(u32)} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(D,C)#(u32)})->f32[10,10]{1,0:D(D,C)#(u32)}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)#(u32)} parameter(0)
-})",
-},
-
-{
-"SparseShapeWithPointerPrimitiveType",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)*(u32)} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(D,C)*(u32)})->f32[10,10]{1,0:D(D,C)*(u32)}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)*(u32)} parameter(0)
-})",
-},
-
-{
-"SparseShapeWithPhysicalShape",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(D,C)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))})->f32[10,10]{1,0:D(D,C)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))} parameter(0)
-})",
-},
-
-{
-"SparseShapeFull",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)#(u64)*(u32)S(42)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(D,C)#(u64)*(u32)S(42)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))})->f32[10,10]{1,0:D(D,C)#(u64)*(u32)S(42)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)#(u64)*(u32)S(42)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))} parameter(0)
-})",
-},
-
-{
-"SparseCOO",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C+,S)} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(C+,S)})->f32[10,10]{1,0:D(C+,S)}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C+,S)} parameter(0)
-})",
-},
-
-{
-"SparseCOOUnordered",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C+~,S~)} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(C+~,S~)})->f32[10,10]{1,0:D(C+~,S~)}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C+~,S~)} parameter(0)
-})",
-},
 });
   // clang-format on
+}
+
+absl::StatusOr<std::unique_ptr<HloModule>> ParseAndReturnVerifiedModule(
+    absl::string_view name, absl::string_view hlo_text,
+    const HloModuleConfig& config) {
+  auto verified_module = std::make_unique<VerifiedHloModule>(
+      std::string(name), config,
+      /*verifier_layout_sensitive=*/false,
+      /*allow_mixed_precision_in_hlo_verifier=*/true,
+      ShapeUtil::ByteSizeOfElements);
+  TF_RETURN_IF_ERROR(verified_module->ParseHloStringAndVerifyModule(hlo_text));
+  return verified_module;
 }
 
 // The test class for those tests defined above which round-trip through the
@@ -2809,28 +2725,31 @@ class HloParameterizedParserTest
     : public ::testing::Test,
       public ::testing::WithParamInterface<TestData> {
  protected:
-  // Expects "ToString(ParseHloModule(std::string)) == string", that is, parses
-  // the string, asserts that it succeeded, stringifies the parsed module, and
-  // checks that it equals the original string.
+  absl::StatusOr<std::unique_ptr<HloModule>> ParseAndReturnVerifiedModule(
+      absl::string_view hlo_text) {
+    HloModuleConfig config;
+    config.set_replica_count(GetParam().replica_count);
+    return xla::ParseAndReturnVerifiedModule(
+        ::testing::UnitTest::GetInstance()->current_test_info()->name(),
+        hlo_text, config);
+  }
+
+  // Expects "ToString(ParseHloModule(ToString(ParseHloModule(std::string)))) ==
+  // string", that is, parses the string, asserts that it succeeded, stringifies
+  // the parsed module, parses this string to ensure that the default ToString()
+  // version is parsable, then stringifies the newly parsed module with
+  // appropriate options for original tests, and checks that it equals the
+  // original string.
   void ExpectEqual() {
     VLOG(3) << "Running HloParameterizedParserTest with short_form = "
             << short_form << ", proto_round_trip = " << proto_round_trip;
-    std::unique_ptr<HloModule> module;
     const std::string& original = GetParam().module_string;
-    HloModuleConfig config;
-    config.set_replica_count(GetParam().replica_count);
-    if (GetParam().enable_verification) {
-      auto verified_module = std::make_unique<VerifiedHloModule>(
-          GetParam().test_name, config,
-          /*verifier_layout_sensitive=*/false,
-          /*allow_mixed_precision_in_hlo_verifier=*/true,
-          ShapeUtil::ByteSizeOfElements);
-      TF_ASSERT_OK(verified_module->ParseHloStringAndVerifyModule(original));
-      module = std::move(verified_module);
-    } else {
-      TF_ASSERT_OK_AND_ASSIGN(module,
-                              ParseAndReturnUnverifiedModule(original, config));
-    }
+    TF_ASSERT_OK_AND_ASSIGN(auto module,
+                            ParseAndReturnVerifiedModule(original));
+    TF_ASSERT_OK_AND_ASSIGN(
+        module, ParseAndReturnVerifiedModule(module->ToString(
+                    HloPrintOptions().set_print_large_constants(true))));
+
     if (proto_round_trip) {
       TF_ASSERT_OK_AND_ASSIGN(module, HloModule::CreateFromProto(
                                           module->ToProto(), module->config()));
@@ -2838,15 +2757,16 @@ class HloParameterizedParserTest
     if (short_form) {
       EXPECT_EQ(original, module->ToString(HloPrintOptions::ShortParsable()));
     } else {
-      EXPECT_EQ(
-          original,
-          module->ToString(HloPrintOptions().set_print_large_constants(true)));
+      EXPECT_EQ(original,
+                module->ToString(HloPrintOptions()
+                                     .set_print_operand_shape(true)
+                                     .set_print_large_constants(true)));
     }
     for (HloComputation* computation : module->computations()) {
       for (HloInstruction* instr : computation->instructions()) {
         if (instr->opcode() == HloOpcode::kWhile) {
-          EXPECT_EQ(instr->while_body()->WhileCallInstruction(), instr);
-          EXPECT_TRUE(instr->while_body()->IsWhileBodyComputation());
+          EXPECT_EQ(instr->while_body()->GetUniqueCaller(HloOpcode::kWhile),
+                    instr);
         }
       }
     }
@@ -2883,13 +2803,10 @@ INSTANTIATE_TEST_SUITE_P(HloParserTestSuccessInstantiation,
 class HloNonRoundtripParserTest
     : public ::testing::TestWithParam<NonRoundtripTestData> {};
 TEST_P(HloNonRoundtripParserTest, Run) {
-  auto module = std::make_unique<VerifiedHloModule>(
-      GetParam().test_name, HloModuleConfig{},
-      /*verifier_layout_sensitive=*/false,
-      /*allow_mixed_precision_in_hlo_verifier=*/true,
-      ShapeUtil::ByteSizeOfElements);
-  TF_ASSERT_OK(
-      module->ParseHloStringAndVerifyModule(GetParam().input_module_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(GetParam().test_name,
+                                                GetParam().input_module_string,
+                                                HloModuleConfig()));
   EXPECT_EQ(absl::StripAsciiWhitespace(GetParam().output_module_string),
             absl::StripAsciiWhitespace(
                 module->ToString(HloPrintOptions::ShortParsable())));
@@ -2906,16 +2823,11 @@ class HloParserTest : public ::testing::Test {
     EXPECT_TRUE(absl::StrContains(s, expected))
         << "'" << s << "' does not contain '" << expected << "'";
   }
-  absl::StatusOr<std::unique_ptr<VerifiedHloModule>>
-  ParseAndReturnVerifiedModule(absl::string_view hlo_text) {
-    auto module = std::make_unique<VerifiedHloModule>(
+  absl::StatusOr<std::unique_ptr<HloModule>> ParseAndReturnVerifiedModule(
+      absl::string_view hlo_text) {
+    return xla::ParseAndReturnVerifiedModule(
         ::testing::UnitTest::GetInstance()->current_test_info()->name(),
-        HloModuleConfig(),
-        /*verifier_layout_sensitive=*/false,
-        /*allow_mixed_precision_in_hlo_verifier=*/true,
-        ShapeUtil::ByteSizeOfElements);
-    TF_RETURN_IF_ERROR(module->ParseHloStringAndVerifyModule(hlo_text));
-    return std::move(module);
+        hlo_text, HloModuleConfig());
   }
 };
 
@@ -4143,7 +4055,7 @@ TEST_F(HloParserTest, ParseUnknownSharding) {
 
 TEST_F(HloParserTest, ParseFrontendAttributes) {
   const std::string original =
-      R"({attr_a="test_a",attr_b="b",attr_c="s64",attr_d="a/b"})";
+      R"({attr_a="test_a",attr_b="b",attr_c={type="s64"},attr_d="a=\"b/c\""})";
   TF_ASSERT_OK_AND_ASSIGN(FrontendAttributes frontend_attributes,
                           ParseFrontendAttributes(original));
   EXPECT_EQ(FrontendAttributesToString(frontend_attributes), original);
@@ -4786,17 +4698,6 @@ TEST_F(HloParserTest, ParseDynamicTuple) {
       << "actual:   " << ShapeUtil::HumanString(actual);
 }
 
-TEST_F(HloParserTest, ParseInvalidDimLevel) {
-  constexpr absl::string_view shape_string = "f32[123]{0:D(D+~)}";
-  absl::StatusOr<Shape> result = ParseShape(shape_string);
-  ASSERT_THAT(
-      result.status(),
-      tsl::testing::StatusIs(
-          tsl::error::INVALID_ARGUMENT,
-          testing::HasSubstr(
-              "invalid DimLevelType/unique/ordered combination in shape")));
-}
-
 TEST_F(HloParserTest, NegativeParameterNumber) {
   const std::string hlo_string = "par0 = f32[3,5] parameter(-1)";
   auto result = ParseAndReturnUnverifiedModule(hlo_string);
@@ -5208,31 +5109,6 @@ ENTRY test {
                   HasSubstr("expected a DimLevelType abbreviation")));
 }
 
-TEST_F(HloParserTest, InvalidDimLevelTypeCount) {
-  const std::string original = R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C)} parameter(0)
-})";
-  EXPECT_THAT(
-      ParseAndReturnUnverifiedModule(original).status(),
-      tsl::testing::StatusIs(
-          tsl::error::INVALID_ARGUMENT,
-          HasSubstr("Dimensions size is 2, but dim level types size is 1")));
-}
-
-TEST_F(HloParserTest, RejectSparseTiles) {
-  const std::string original = R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)T(128,8)} parameter(0)
-})";
-  EXPECT_THAT(ParseAndReturnUnverifiedModule(original).status(),
-              tsl::testing::StatusIs(
-                  tsl::error::INVALID_ARGUMENT,
-                  HasSubstr("Layout has tiles, but is for a sparse array")));
-}
-
 TEST_F(HloParserTest, RejectDensePhysicalShape) {
   const std::string original = R"(HloModule test
 
@@ -5571,11 +5447,11 @@ ENTRY %Entry (p0: f32[10]) -> f32[20] {
   ROOT %async-done.1 = f32[20]{0} async-done(((f32[10]{0}), f32[20]{0}, s32[]) %async-start.1)
 }
   )";
-  EXPECT_THAT(ParseAndReturnUnverifiedModule(hlo_string).status(),
-              tsl::testing::StatusIs(
-                  tsl::error::INVALID_ARGUMENT,
-                  HasSubstr("Computation async_wrapped is already referenced "
-                            "by another async op")));
+  EXPECT_THAT(
+      ParseAndReturnUnverifiedModule(hlo_string).status(),
+      tsl::testing::StatusIs(tsl::error::INVALID_ARGUMENT,
+                             HasSubstr("Computation async_wrapped is called by "
+                                       "more than one async op")));
 }
 
 TEST_F(HloParserTest, AsyncUpdateWrongComputation) {
@@ -5822,8 +5698,7 @@ TEST_F(HloParserTest, TranscendentalAccuracyMode) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(hlo_string));
   auto* unary = module->entry_computation()->root_instruction();
-  EXPECT_TRUE(protobuf_util::ProtobufEquals(unary->result_accuracy(),
-                                            expected_result_accuracy));
+  EXPECT_THAT(unary->result_accuracy(), EqualsProto(expected_result_accuracy));
 }
 
 TEST_F(HloParserTest, TranscendentalAccuracyModeError) {
@@ -5859,8 +5734,7 @@ TEST_F(HloParserTest, TranscendentalAccuracyRtol) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(hlo_string));
   auto* unary = module->entry_computation()->root_instruction();
-  EXPECT_TRUE(protobuf_util::ProtobufEquals(unary->result_accuracy(),
-                                            expected_result_accuracy));
+  EXPECT_THAT(unary->result_accuracy(), EqualsProto(expected_result_accuracy));
 }
 
 TEST_F(HloParserTest, TranscendentalResultAccuracyInvalidName) {
@@ -5904,9 +5778,9 @@ TEST_F(HloParserTest, TranscendentalAccuracyNoConfig) {
                           ParseAndReturnUnverifiedModule(hlo_string));
   ResultAccuracy default_result_accuracy;
   default_result_accuracy.set_mode(ResultAccuracy::DEFAULT);
-  EXPECT_TRUE(protobuf_util::ProtobufEquals(
+  EXPECT_THAT(
       module->entry_computation()->root_instruction()->result_accuracy(),
-      default_result_accuracy));
+      EqualsProto(default_result_accuracy));
 }
 
 TEST_F(HloParserTest, TranscendentalAccuracyInvalidOp) {
@@ -5959,21 +5833,19 @@ TEST_F(HloParserTest,
   EXPECT_EQ(wrapped_instr->statistics_viz().statistics(1).stat_name(),
             "stat-2");
   EXPECT_EQ(wrapped_instr->statistics_viz().statistics(1).stat_val(), 44);
-  EXPECT_EQ(OriginalValueToString(*wrapped_instr->original_value()),
-            "{\"v3\"}");
+  EXPECT_EQ(wrapped_instr->original_value()->ToString(), "{\"v3\"}");
   // Check the async-start and async-done instructions.
   HloInstruction* async_done = m->entry_computation()->root_instruction();
   HloInstruction* async_start = async_done->async_chain_start();
-  EXPECT_EQ(async_start->metadata().DebugString(),
-            wrapped_instr->metadata().DebugString());
+  EXPECT_THAT(async_start->metadata(), EqualsProto(wrapped_instr->metadata()));
   EXPECT_EQ(async_start->raw_backend_config_string(),
             wrapped_instr->raw_backend_config_string());
-  EXPECT_EQ(async_start->frontend_attributes().DebugString(),
-            wrapped_instr->frontend_attributes().DebugString());
-  EXPECT_EQ(async_start->statistics_viz().DebugString(),
-            wrapped_instr->statistics_viz().DebugString());
-  EXPECT_EQ(OriginalValueToString(*async_done->original_value()),
-            OriginalValueToString(*wrapped_instr->original_value()));
+  EXPECT_THAT(async_start->frontend_attributes(),
+              EqualsProto(wrapped_instr->frontend_attributes()));
+  EXPECT_THAT(async_start->statistics_viz(),
+              EqualsProto(wrapped_instr->statistics_viz()));
+  EXPECT_EQ(async_done->original_value()->ToString(),
+            wrapped_instr->original_value()->ToString());
 }
 
 TEST_F(HloParserTest, ResultAccuracyToProto) {
@@ -5993,6 +5865,39 @@ TEST_F(HloParserTest, ResultAccuracyToProto) {
   EXPECT_TRUE(exp_hlo_inst_proto.has_result_accuracy());
   EXPECT_EQ(exp_hlo_inst_proto.result_accuracy().tolerance().rtol(), 0.5);
   EXPECT_EQ(exp_hlo_inst_proto.result_accuracy().tolerance().atol(), 1.0);
+}
+
+TEST_F(HloParserTest, ParseBufferEmptyElement) {
+  std::string shape_string = "b()";
+  auto result = ParseShape(shape_string);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(), "expected primitive type");
+}
+
+TEST_F(HloParserTest, ParseBufferMoreThanOneElement) {
+  std::string shape_string = "b(s32[], f32[])";
+  auto result = ParseShape(shape_string);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects ')' at the end of buffer shape");
+}
+
+TEST_F(HloParserTest, ParseBufferScalar) {
+  std::string shape_string = "b(s32[])";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape(shape_string));
+  Shape expected = ShapeUtil::MakeValidatedBufferShape(S32, {}).value();
+  ASSERT_TRUE(ShapeUtil::Equal(expected, actual))
+      << "expected: " << ShapeUtil::HumanString(expected)
+      << "actual:   " << ShapeUtil::HumanString(actual);
+}
+
+TEST_F(HloParserTest, ParseBufferArray) {
+  std::string shape_string = "b(f32[8,16]{1,0})";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape(shape_string));
+  Shape expected = ShapeUtil::MakeValidatedBufferShape(F32, {8, 16}).value();
+  ASSERT_TRUE(ShapeUtil::Equal(expected, actual))
+      << "expected: " << ShapeUtil::HumanString(expected)
+      << "actual:   " << ShapeUtil::HumanString(actual);
 }
 
 }  // namespace

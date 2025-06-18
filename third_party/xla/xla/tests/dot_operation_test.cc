@@ -17,6 +17,7 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/strings/str_cat.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -505,7 +506,13 @@ std::vector<DotTestParam> CreateDotTestParameters() {
 XLA_TEST_P(ParametricDotTest, TestF16) { TestImpl<Eigen::half>(); }
 #endif
 XLA_TEST_P(ParametricDotTest, TestF32) { TestImpl<float>(); }
-XLA_TEST_P(ParametricDotTest, OVERSIZE_ON_GRM(TestF64)) { TestImpl<double>(); }
+XLA_TEST_P(ParametricDotTest, TestF64) {
+  if (test::HasModifiers({test::kGrm})) {
+    // Oversize.
+    GTEST_SKIP();
+  }
+  TestImpl<double>();
+}
 XLA_TEST_P(ParametricDotTest, TestC64) { TestImpl<std::complex<float>>(); }
 #ifndef XLA_BACKEND_DOES_NOT_SUPPORT_COMPLEX128
 XLA_TEST_P(ParametricDotTest, TestC128) { TestImpl<std::complex<double>>(); }
@@ -2047,36 +2054,6 @@ ENTRY SmallIntegerDot {
   arg0 = s4[20,2] parameter(0)
   arg1 = s4[2,20] parameter(1)
   ROOT dot = s4[20,20] dot(arg0, arg1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-)";
-
-  EXPECT_TRUE(RunAndCompare(hlo_string, ErrorSpec{0, 0}));
-}
-
-XLA_TEST_F(DotOperationTextTest, DISABLED_ON_GPU(PackedNibbleDot)) {
-  absl::string_view hlo_string =
-      R"(
-HloModule SmallIntegerDot
-
-ENTRY SmallIntegerDot {
-  arg0 = s8[20,55] parameter(0)
-  arg1 = s8[55,20] parameter(1)
-  ROOT dot = s32[20,20] dot(arg0, arg1), lhs_contracting_dims={1}, rhs_contracting_dims={0}, operand_precision={PACKED_NIBBLE, PACKED_NIBBLE}
-}
-)";
-
-  EXPECT_TRUE(RunAndCompare(hlo_string, ErrorSpec{0, 0}));
-}
-
-XLA_TEST_F(DotOperationTextTest, UnsignedPackedNibbleDot) {
-  absl::string_view hlo_string =
-      R"(
-HloModule SmallIntegerDot
-
-ENTRY SmallIntegerDot {
-  arg0 = u8[3,11,21] parameter(0)
-  arg1 = u8[55,21,3] parameter(1)
-  ROOT dot = u32[3,11,55] dot(arg0, arg1), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={2}, rhs_contracting_dims={1}, operand_precision={PACKED_NIBBLE, PACKED_NIBBLE}
 }
 )";
 

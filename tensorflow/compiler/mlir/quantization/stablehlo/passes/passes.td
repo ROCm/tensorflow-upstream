@@ -45,7 +45,8 @@ def ReplaceStablehloOpsInMainFunctionWithXlaCallModuleOpsPass : Pass<"stablehlo-
   let description = [{
      Replaces the StableHLO ops in the main function block with
      tf.XlaCallModuleOps as separate subgraphs. Wires them back to the main
-     function block to be compatible with SavedModel structure.
+     function block to be compatible with SavedModel structure. Functions with
+     _no_xla_call_module attribute are skipped.
   }];
 }
 
@@ -149,6 +150,15 @@ def ConvertXlaCallModuleOpToBfloat16Pass : Pass<"stablehlo-convert-xla-call-modu
     "TF::TensorFlowDialect",
     "mlir::quant::QuantDialect",
     "mlir::shape::ShapeDialect",
+    "mlir::stablehlo::StablehloDialect",
+  ];
+}
+
+def ConvertShapeToStablehloWithConstraintsPass : Pass<"stablehlo-convert-shape-to-stablehlo-with-constraints", "mlir::func::FuncOp"> {
+  let summary = "Convert shape.cstr_broadcastable to stablehlo.custom_call @shape_assertion";
+  let dependentDialects = [
+    "mlir::shape::ShapeDialect",
+    "mlir::tensor::TensorDialect",
     "mlir::stablehlo::StablehloDialect",
   ];
 }

@@ -1,633 +1,786 @@
-diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir b/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir
---- stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir
-+++ stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir
-@@ -4,10 +4,10 @@
- // CHECK-LABEL: @add
- func.func @add(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>> {
--  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 13>}
--  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 11>}
-+  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 13>}
-+  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 11>}
-   // CHECK: %[[V2:.+]] = stablehlo.add %[[V0]], %[[V1]] : tensor<2x2xi32>
--  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_zp = 0 : i32, multiplier = array<i32: 1073741824>, output_zp = -1 : i32, per_channel = false, scale32 = true, shift = array<i8: 50>}
-+  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_unsigned = false, input_zp = 0 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = -1 : i32, per_channel = false, scale32 = true, shift = array<i8: 50>}
-   // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-1>>
-   %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>)
-             -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>>
-@@ -18,10 +18,10 @@
- // CHECK-LABEL: @sub
- func.func @sub(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>> {
--  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 13>}
--  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 11>}
-+  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 13>}
-+  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 11>}
-   // CHECK: %[[V2:.+]] = stablehlo.subtract %[[V0]], %[[V1]] : tensor<2x2xi32>
--  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_zp = 0 : i32, multiplier = array<i32: 1073741824>, output_zp = -1 : i32, per_channel = false, scale32 = true, shift = array<i8: 50>}
-+  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_unsigned = false, input_zp = 0 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = -1 : i32, per_channel = false, scale32 = true, shift = array<i8: 50>}
-   // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-1>>
-   %0 = "stablehlo.subtract"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>)
-             -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>>
-@@ -32,10 +32,10 @@
- // CHECK-LABEL: @mul
- func.func @mul(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>> {
--  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 30>}
--  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 30>}
-+  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 30>}
-+  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 30>}
-   // CHECK: %[[V2:.+]] = stablehlo.multiply %[[V0]], %[[V1]] : tensor<2x2xi32>
--  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_zp = 0 : i32, multiplier = array<i32: 1717986918>, output_zp = -1 : i32, per_channel = false, scale32 = true, shift = array<i8: 37>}
-+  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_unsigned = false, input_zp = 0 : i32, multiplier = array<i32: 1717986918>, output_unsigned = false, output_zp = -1 : i32, per_channel = false, scale32 = true, shift = array<i8: 37>}
-   // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-1>>
-   %0 = "stablehlo.multiply"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>)
-             -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>>
-@@ -46,10 +46,10 @@
- // CHECK-LABEL: @div
- func.func @div(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>> {
--  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 30>}
--  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_zp = -2 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 30>}
-+  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 30>}
-+  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_unsigned = false, input_zp = -2 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 30>}
-   // CHECK: %[[V2:.+]] = stablehlo.divide %[[V0]], %[[V1]] : tensor<2x2xi32>
--  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_zp = 0 : i32, multiplier = array<i32: 1717986918>, output_zp = -3 : i32, per_channel = false, scale32 = true, shift = array<i8: 37>}
-+  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_unsigned = false, input_zp = 0 : i32, multiplier = array<i32: 1717986918>, output_unsigned = false, output_zp = -3 : i32, per_channel = false, scale32 = true, shift = array<i8: 37>}
-   // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-3>>
-   %0 = "stablehlo.divide"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>)
-             -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>>
-@@ -60,10 +60,10 @@
- // CHECK-LABEL: @max
- func.func @max(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>> {
--  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 12>}
--  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_zp = -2 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 10>}
-+  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 12>}
-+  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_unsigned = false, input_zp = -2 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 10>}
-   // CHECK: %[[V2:.+]] = stablehlo.maximum %[[V0]], %[[V1]] : tensor<2x2xi32>
--  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_zp = 0 : i32, multiplier = array<i32: 1073741824>, output_zp = -3 : i32, per_channel = false, scale32 = true, shift = array<i8: 51>}
-+  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_unsigned = false, input_zp = 0 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = -3 : i32, per_channel = false, scale32 = true, shift = array<i8: 51>}
-   // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-3>>
-   %0 = "stablehlo.maximum"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>)
-             -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>>
-@@ -74,10 +74,10 @@
- // CHECK-LABEL: @min
- func.func @min(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>> {
--  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 12>}
--  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_zp = -2 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 10>}
-+  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 12>}
-+  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_unsigned = false, input_zp = -2 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 10>}
-   // CHECK: %[[V2:.+]] = stablehlo.minimum %[[V0]], %[[V1]] : tensor<2x2xi32>
--  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_zp = 0 : i32, multiplier = array<i32: 1073741824>, output_zp = -3 : i32, per_channel = false, scale32 = true, shift = array<i8: 51>}
-+  // CHECK: %[[V3:.+]] = tosa.rescale %[[V2]] {double_round = false, input_unsigned = false, input_zp = 0 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = -3 : i32, per_channel = false, scale32 = true, shift = array<i8: 51>}
-   // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-3>>
-   %0 = "stablehlo.minimum"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>)
-             -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>>
-@@ -87,9 +87,9 @@
- // -----
- // CHECK-LABEL: @abs
- func.func @abs(%arg0 : tensor<20x20x!quant.uniform<i8:f32, 0.025:-1>>) -> tensor<20x20x!quant.uniform<i8:f32, 1.5e-01:-128>> {
--  // CHECK: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 30>}
-+  // CHECK: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 30>}
-   // CHECK: %[[V1:.+]] = stablehlo.abs %[[V0]] : tensor<20x20xi32>
--  // CHECK: %[[V3:.+]] = tosa.rescale %[[V1]] {double_round = false, input_zp = 0 : i32, multiplier = array<i32: 1431655765>, output_zp = -128 : i32, per_channel = false, scale32 = true, shift = array<i8: 33>}
-+  // CHECK: %[[V3:.+]] = tosa.rescale %[[V1]] {double_round = false, input_unsigned = false, input_zp = 0 : i32, multiplier = array<i32: 1431655765>, output_unsigned = false, output_zp = -128 : i32, per_channel = false, scale32 = true, shift = array<i8: 33>}
-   // CHECK: return %[[V3]] : tensor<20x20x!quant.uniform<i8:f32, 1.500000e-01:-128>>
-   %0 = "stablehlo.abs"(%arg0) : (tensor<20x20x!quant.uniform<i8:f32, 0.025:-1>>) -> tensor<20x20x!quant.uniform<i8:f32, 1.5e-01:-128>>
-   return %0 : tensor<20x20x!quant.uniform<i8:f32, 1.5e-01:-128>>
-@@ -99,8 +99,8 @@
- // CHECK-LABEL: @compareGE
- func.func @compareGE(%arg0 : tensor<20x20x!quant.uniform<i8:f32, 0.025:-1>>,
-                    %arg1 : tensor<20x20x!quant.uniform<i8:f32, 0.075:-2>>) -> tensor<20x20xi1> {
--  // CHECK: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 12>}
--  // CHECK: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_zp = -2 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 10>}
-+  // CHECK: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 12>}
-+  // CHECK: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_unsigned = false, input_zp = -2 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 10>}
-   // CHECK: %[[V2:.+]] = stablehlo.compare GE, %[[V0]], %[[V1]], TOTALORDER :
-   // CHECK: return %[[V2]]
-   %0 = stablehlo.compare GE, %arg0, %arg1, TOTALORDER : (tensor<20x20x!quant.uniform<i8:f32, 0.025:-1>>, tensor<20x20x!quant.uniform<i8:f32, 0.075:-2>>) -> tensor<20x20xi1>
-@@ -111,8 +111,8 @@
- // CHECK-LABEL: @compareLT
- func.func @compareLT(%arg0 : tensor<20x20x!quant.uniform<i16:f32, 0.025:-1>>,
-                    %arg1 : tensor<20x20x!quant.uniform<i16:f32, 0.075:-2>>) -> tensor<20x20xi1> {
--  // CHECK: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 17>}
--  // CHECK: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_zp = -2 : i32, multiplier = array<i32: 1073741824>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 15>}
-+  // CHECK: %[[V0:.+]] = tosa.rescale %arg0 {double_round = false, input_unsigned = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 17>}
-+  // CHECK: %[[V1:.+]] = tosa.rescale %arg1 {double_round = false, input_unsigned = false, input_zp = -2 : i32, multiplier = array<i32: 1073741824>, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 15>}
-   // CHECK: %[[V2:.+]] = stablehlo.compare LT, %[[V0]], %[[V1]], TOTALORDER :
-   // CHECK: return %[[V2]]
-   %0 = stablehlo.compare LT, %arg0, %arg1, TOTALORDER : (tensor<20x20x!quant.uniform<i16:f32, 0.025:-1>>, tensor<20x20x!quant.uniform<i16:f32, 0.075:-2>>) -> tensor<20x20xi1>
-diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_tosa_rescale_to_stablehlo.mlir b/stablehlo/stablehlo/conversions/tosa/tests/legalize_tosa_rescale_to_stablehlo.mlir
---- stablehlo/stablehlo/conversions/tosa/tests/legalize_tosa_rescale_to_stablehlo.mlir
-+++ stablehlo/stablehlo/conversions/tosa/tests/legalize_tosa_rescale_to_stablehlo.mlir
-@@ -3,7 +3,7 @@
- // -----
- // CHECK-LABEL: @rescale
- func.func @rescale(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>) -> tensor<2x2xi32> {
--  %0 = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 13>} :
-+  %0 = tosa.rescale %arg0 {double_round = false, input_zp = -1 : i32, multiplier = array<i32: 1431655765>, input_unsigned = false, output_unsigned = false, output_zp = 0 : i32, per_channel = false, scale32 = true, shift = array<i8: 13>} :
-             (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>) -> tensor<2x2xi32>
- 
-   // convert input quantized type to storage type
-diff --ruN a/stablehlo/stablehlo/conversions/tosa/transforms/StablehloQuantLegalizeToTosaRescale.cpp b/stablehlo/stablehlo/conversions/tosa/transforms/StablehloQuantLegalizeToTosaRescale.cpp
---- stablehlo/stablehlo/conversions/tosa/transforms/StablehloQuantLegalizeToTosaRescale.cpp
-+++ stablehlo/stablehlo/conversions/tosa/transforms/StablehloQuantLegalizeToTosaRescale.cpp
-@@ -52,7 +52,9 @@
-       rewriter.getDenseI32ArrayAttr({multiplier}),
-       rewriter.getDenseI8ArrayAttr({static_cast<int8_t>(shift)}),
-       rewriter.getBoolAttr(scale32), rewriter.getBoolAttr(doubleRound),
--      rewriter.getBoolAttr(perChannel));
-+      rewriter.getBoolAttr(perChannel),
-+      /*input_unsigned=*/rewriter.getBoolAttr(false),
-+      /*output_unsigned=*/rewriter.getBoolAttr(false));
- 
-   return rescale_op.getResult();
+diff --ruN a/stablehlo/stablehlo/dialect/VhloAttrs.td b/stablehlo/stablehlo/dialect/VhloAttrs.td
+--- stablehlo/stablehlo/dialect/VhloAttrs.td
++++ stablehlo/stablehlo/dialect/VhloAttrs.td
+@@ -45,14 +45,6 @@
+ def VHLO_ArrayAttrV1 : VHLO_AttrDef<"ArrayV1", "0.9.0", "current"> {
+   let mnemonic = "array_v1";
+   let parameters = (ins ArrayRefParameter<"mlir::Attribute">:$value);
+-  let genVerifyDecl = 1;
+-  let extraClassDefinition = [{
+-    LogicalResult ArrayV1Attr::verify(
+-        llvm::function_ref<mlir::InFlightDiagnostic ()> errFn, ArrayRef<mlir::Attribute> value) {
+-      if (!allFromVhlo(value)) return errFn() << "expected array of VHLO attriutes";
+-      return success();
+-    }
+-  }];
+   let assemblyFormat = "`<` custom<AttributeArray>($value) `>`";
  }
-diff --ruN a/stablehlo/stablehlo/dialect/Base.cpp b/stablehlo/stablehlo/dialect/Base.cpp
---- stablehlo/stablehlo/dialect/Base.cpp
-+++ stablehlo/stablehlo/dialect/Base.cpp
-@@ -680,6 +680,7 @@
-           {{bf16, bf16, f32, 1}, KnownDotAlgorithm::BF16_BF16_F32},
-           {{bf16, bf16, f32, 3}, KnownDotAlgorithm::BF16_BF16_F32_X3},
-           {{bf16, bf16, f32, 6}, KnownDotAlgorithm::BF16_BF16_F32_X6},
-+          {{bf16, bf16, f32, 9}, KnownDotAlgorithm::BF16_BF16_F32_X9},
-           {{tf32, tf32, f32, 1}, KnownDotAlgorithm::TF32_TF32_F32},
-           {{tf32, tf32, f32, 3}, KnownDotAlgorithm::TF32_TF32_F32_X3},
-           {{f32, f32, f32, 1}, KnownDotAlgorithm::F32_F32_F32},
-diff --ruN a/stablehlo/stablehlo/dialect/Base.h b/stablehlo/stablehlo/dialect/Base.h
---- stablehlo/stablehlo/dialect/Base.h
-+++ stablehlo/stablehlo/dialect/Base.h
-@@ -260,6 +260,7 @@
-   TF32_TF32_F32_X3 = 10,
-   F32_F32_F32 = 11,
-   F64_F64_F64 = 12,
-+  BF16_BF16_F32_X9 = 13,
+ 
+@@ -75,9 +67,9 @@
+     LogicalResult DictionaryV1Attr::verify(
+         llvm::function_ref<mlir::InFlightDiagnostic ()> errFn,
+         ArrayRef<std::pair<mlir::Attribute, mlir::Attribute>> value) {
+-      for (auto & entry : value)
+-        if (!isFromVhlo(entry.first) || !isFromVhlo(entry.second))
+-          errFn() << "expected VHLO attribute";
++      for (auto & entry : value) {
++        if (!isFromVhlo(entry.first)) errFn() << "expected VHLO key attribute";
++      }
+       return success();
+     }
+   }];
+diff --ruN a/stablehlo/stablehlo/dialect/VhloTypes.h b/stablehlo/stablehlo/dialect/VhloTypes.h
+--- stablehlo/stablehlo/dialect/VhloTypes.h
++++ stablehlo/stablehlo/dialect/VhloTypes.h
+@@ -27,20 +27,23 @@
+ namespace mlir {
+ namespace vhlo {
+ 
+-class VhloTypeConverterBase : public TypeConverter {
+- public:
+-  VhloTypeConverterBase() : TypeConverter(){};
+-
+-  virtual ~VhloTypeConverterBase() = default;
+-
+-  virtual Attribute convertEncoding(Attribute attr) const = 0;
+-};
+ 
+ // This class is used to manage conversions between VHLO and Builtin
+ // dialects.
+-class VhloTypeConverter : public VhloTypeConverterBase {
++class VhloTypeConverter : public TypeConverter {
+  public:
+-  VhloTypeConverter() : VhloTypeConverterBase() {}
++  VhloTypeConverter() : TypeConverter(), allowOtherDialects(false) {}
++  VhloTypeConverter(bool allowOtherDialects)
++      : TypeConverter(), allowOtherDialects(allowOtherDialects) {}
++
++  virtual ~VhloTypeConverter() = default;
++
++  virtual Attribute convertEncoding(Attribute attr) const = 0;
++
++  Attribute convertUnknownAttribute(Attribute attr) const {
++    if (allowOtherDialects) return attr;
++    return {};
++  }
+ 
+   // A subclass can call this method to add conversions from VHLO -> Builtin
+   // types. Note that conversions are applied in reverse order, with the most
+@@ -58,6 +61,9 @@
+ 
+   // Mark unrealized casts as legal. Useful for dialect mixing.
+   void addUnrealizedMaterializations();
++
++ private:
++  bool allowOtherDialects;
  };
  
- FailureOr<KnownDotAlgorithm> getKnownDotAlgorithm(
-diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.cpp b/stablehlo/stablehlo/dialect/ChloOps.cpp
---- stablehlo/stablehlo/dialect/ChloOps.cpp
-+++ stablehlo/stablehlo/dialect/ChloOps.cpp
-@@ -710,31 +710,6 @@
-   return success();
+ // Autogenerated VHLO type printers and parsers.
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo_mixed.mlir b/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo_mixed.mlir
+--- stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo_mixed.mlir
++++ stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo_mixed.mlir
+@@ -5,15 +5,9 @@
+ // about what constitutes a good test! The CHECK should be
+ // minimized and named to reflect the test intent.
+ 
+-// NOTE: Assertions have been autogenerated by utils/generate-test-checks.py
+-
+-// The script is designed to make adding checks to
+-// a test case fast, it is *not* designed to be authoritative
+-// minimized and named to reflect the test intent.
+-
+-// RUN: stablehlo-opt %s --stablehlo-legalize-to-vhlo=allow-other-dialects | FileCheck %s
++// RUN: stablehlo-opt %s --stablehlo-legalize-to-vhlo=allow-other-dialects --mlir-print-local-scope | FileCheck %s
+ // RUN: stablehlo-opt %s > %t.0
+-// RUN: stablehlo-opt %s --stablehlo-legalize-to-vhlo=allow-other-dialects | stablehlo-opt --vhlo-legalize-to-stablehlo > %t.1
++// RUN: stablehlo-translate %s --serialize --target=1.0.0 --allow-other-dialects | stablehlo-translate --deserialize | stablehlo-opt > %t.1
+ // RUN: diff %t.0 %t.1
+ 
+ // CHECK-LABEL:   vhlo.func_v1 @op_other(
+@@ -26,6 +20,34 @@
+ func.func @op_other(%arg0: tensor<f32>) -> tensor<f32> {
+   %0 = arith.addf %arg0, %arg0 : tensor<f32>
+   return %0 : tensor<f32>
++}
++
++// -----
++
++// CHECK-LABEL:   vhlo.func_v1 @func_attributes(
++// CHECK-SAME:                                  %[[VAL_0:[0-9]+|[a-zA-Z$._-][a-zA-Z0-9$._-]*]]: !vhlo.tensor_v1<!vhlo.f32_v1>) -> (!vhlo.tensor_v1<!vhlo.f32_v1>) {
++// CHECK:           "vhlo.return_v1"(%[[VAL_0]]) : (!vhlo.tensor_v1<!vhlo.f32_v1>) -> ()
++// CHECK:          } {arg_attrs = #vhlo.array_v1<[]>, builtin.map = affine_map<(d0) -> (d0)>, mhlo.sharding = #vhlo.string_v1<"{replicated}">, res_attrs = #vhlo.array_v1<[]>, sym_visibility = #vhlo.string_v1<"">}
++func.func @func_attributes(%arg0: tensor<f32>) -> tensor<f32> attributes {
++  mhlo.sharding = "{replicated}",
++  builtin.map = affine_map<(d0) -> (d0)>
++} {
++  return %arg0 : tensor<f32>
++}
++
++// -----
++
++// CHECK-LABEL:   vhlo.func_v1 @func_mixed_attributes(
++// CHECK-SAME:                                        %[[VAL_0:[0-9]+|[a-zA-Z$._-][a-zA-Z0-9$._-]*]]: !vhlo.tensor_v1<!vhlo.f32_v1>) -> (!vhlo.tensor_v1<!vhlo.f32_v1>) {
++// CHECK:           "vhlo.return_v1"(%[[VAL_0]]) : (!vhlo.tensor_v1<!vhlo.f32_v1>) -> ()
++// CHECK:         }
++// CHECK-SAME:    vhlo.mixed_array = #vhlo.array_v1<[affine_map<(d0) -> (d0)>, #vhlo.string_v1<"STR_ATTR">]>
++// CHECK-SAME:    vhlo.mixed_dict = #vhlo.dict_v1<{#vhlo.string_v1<"affine_map"> = affine_map<(d0) -> (d0)>, #vhlo.string_v1<"str_attr"> = #vhlo.string_v1<"STR_ATTR">}
++func.func @func_mixed_attributes(%arg0: tensor<f32>) -> tensor<f32> attributes {
++  vhlo.mixed_array = [affine_map<(d0) -> (d0)>, "STR_ATTR"],
++  vhlo.mixed_dict = {affine_map = affine_map<(d0) -> (d0)>, str_attr = "STR_ATTR"}
++} {
++  return %arg0 : tensor<f32>
  }
  
--LogicalResult RaggedDotOp::inferReturnTypes(
--    MLIRContext*, std::optional<Location>, ValueRange operands,
--    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
--    SmallVectorImpl<Type>& inferredReturnTypes) {
--  RaggedDotOp::Adaptor op(operands, attributes, properties, regions);
--
--  auto rankedLhsType = cast<RankedTensorType>(op.getLhs().getType());
--  auto rankedRhsType = cast<RankedTensorType>(op.getRhs().getType());
--  auto rankedGroupSizesType =
--      cast<RankedTensorType>(op.getGroupSizes().getType());
--  auto raggedDotDimNums = op.getRaggedDotDimensionNumbers();
--
--  inferredReturnTypes.push_back(RankedTensorType::get(
--      inferRaggedDotOutputDimensions(
--          rankedLhsType, rankedRhsType, rankedGroupSizesType,
--          raggedDotDimNums.getLhsBatchingDimensions(),
--          raggedDotDimNums.getRhsBatchingDimensions(),
--          raggedDotDimNums.getLhsContractingDimensions(),
--          raggedDotDimNums.getRhsContractingDimensions(),
--          raggedDotDimNums.getLhsRaggedDimensions(),
--          raggedDotDimNums.getRhsGroupDimensions()),
--      rankedLhsType.getElementType()));
--  return success();
+ // -----
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_attributes_invalid.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_attributes_invalid.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_attributes_invalid.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_attributes_invalid.mlir
+@@ -1,17 +1,8 @@
+ // RUN: stablehlo-opt --vhlo-to-version=target=1.9.0 -verify-diagnostics --split-input-file %s
+ 
+-func.func @invalid_array_element() -> () attributes {
+-  // expected-error @+1 {{expected array of VHLO attriutes}}
+-  vhlo.attr = #vhlo.array_v1<[#stablehlo<precision DEFAULT>]>
+-} {
+-  return
 -}
 -
- //===----------------------------------------------------------------------===//
- // TopKOp
- //===----------------------------------------------------------------------===//
-diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.td b/stablehlo/stablehlo/dialect/ChloOps.td
---- stablehlo/stablehlo/dialect/ChloOps.td
-+++ stablehlo/stablehlo/dialect/ChloOps.td
-@@ -856,8 +856,7 @@
-   let hasCustomAssemblyFormat = 1;
+-// -----
+-
+ func.func @invalid_dict_element_value() -> () attributes {
+-  // expected-error @+1 {{expected VHLO attribute}}
+-  vhlo.attr = #vhlo.dict_v1<{#vhlo.string_v1<"attr1"> = 3 : i32}>
++  // expected-error @+1 {{expected VHLO key attribute}}
++  vhlo.attr = #vhlo.dict_v1<{"attr1" = #vhlo.array_v1<[]>}>
+ } {
+   return
+ }
+diff --ruN a/stablehlo/stablehlo/tools/StablehloTranslateMain.cpp b/stablehlo/stablehlo/tools/StablehloTranslateMain.cpp
+--- stablehlo/stablehlo/tools/StablehloTranslateMain.cpp
++++ stablehlo/stablehlo/tools/StablehloTranslateMain.cpp
+@@ -76,6 +76,11 @@
+     "target", llvm::cl::desc("Target version for serialization"),
+     llvm::cl::init(""));
+ 
++llvm::cl::opt<bool> allowOtherDialectsOption(
++    "allow-other-dialects",
++    llvm::cl::desc("Allow mixed dialect in serialization"),
++    llvm::cl::init(false));
++
+ llvm::cl::opt<std::string> argsOption(
+     "args", llvm::cl::desc("Arguments to pass to the interpreter"),
+     llvm::cl::init(""));
+@@ -317,7 +322,8 @@
+           return module.emitError("failed to strip debuginfo");
+       }
+ 
+-      return stablehlo::serializePortableArtifact(module, targetVersion, os);
++      return stablehlo::serializePortableArtifact(
++          module, targetVersion, os, allowOtherDialectsOption.getValue());
+     },
+     [](DialectRegistry &registry) {
+       mlir::registerAllDialects(registry);
+diff --ruN a/stablehlo/stablehlo/transforms/Passes.h b/stablehlo/stablehlo/transforms/Passes.h
+--- stablehlo/stablehlo/transforms/Passes.h
++++ stablehlo/stablehlo/transforms/Passes.h
+@@ -35,6 +35,7 @@
+ #include "mlir/Transforms/DialectConversion.h"
+ #include "stablehlo/dialect/StablehloOps.h"
+ #include "stablehlo/dialect/Version.h"
++#include "stablehlo/dialect/VhloTypes.h"
+ 
+ namespace mlir {
+ namespace stablehlo {
+@@ -54,17 +55,17 @@
+ // Populates StableHLO ops to VHLO ops rewriting patterns.
+ void populateStablehloToVhloPatterns(MLIRContext *context,
+                                      RewritePatternSet *patterns,
+-                                     TypeConverter *converter);
++                                     vhlo::VhloTypeConverter *converter);
+ 
+ // Populates VHLO ops to StableHLO ops rewriting patterns.
+ void populateVhloToStablehloPatterns(MLIRContext *context,
+                                      RewritePatternSet *patterns,
+-                                     TypeConverter *converter);
++                                     vhlo::VhloTypeConverter *converter);
+ 
+ // Populates VHLO downgrade rewriting patterns.
+ void populateVhloToVersionPatterns(MLIRContext *context,
+                                    RewritePatternSet *patterns,
+-                                   TypeConverter *converter);
++                                   vhlo::VhloTypeConverter *converter);
+ 
+ /// Collection of rewrite patterns for lowering of CHLO ops to StableHLO and
+ /// Shape ops.
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
+--- stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
++++ stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
+@@ -57,7 +57,7 @@
+ class StablehloToVhloTypeConverter : public vhlo::VhloTypeConverter {
+  public:
+   StablehloToVhloTypeConverter(bool allowOtherDialects)
+-      : vhlo::VhloTypeConverter() {
++      : vhlo::VhloTypeConverter(allowOtherDialects) {
+     LLVM_DEBUG(
+         llvm::dbgs()
+         << "[StablehloToVhloTypeConverter] Creating with allowOtherDialects: "
+@@ -82,7 +82,15 @@
+       return vhlo::TokenV1Type::get(token.getContext());
+     });
+     addBuiltinToVhloConversions();
+-    if (allowOtherDialects) addUnrealizedMaterializations();
++    if (allowOtherDialects) {
++      addUnrealizedMaterializations();
++
++      // Attribute conversion fallback uses the type converter.
++      addTypeAttributeConversion(
++          [](Type, Attribute attr) -> TypeConverter::AttributeConversionResult {
++            return attr;
++          });
++    }
+   }
+ 
+   Attribute convertEncoding(Attribute attr) const final {
+@@ -114,7 +122,7 @@
+   return vhlo::Name##Version##Attr::get(attr.getContext(), vhloValue.value())
+ 
+ Attribute convertGeneric(Attribute stablehloAttr,
+-                         const TypeConverter* typeConverter) {
++                         const vhlo::VhloTypeConverter* typeConverter) {
+   LLVM_DEBUG(llvm::dbgs() << "Convert generic: " << stablehloAttr << '\n');
+ 
+   // Handle StableHLO attributes.
+@@ -241,6 +249,10 @@
+     return vhlo::TypeV1Attr::get(attr.getContext(), vhloType);
+   }
+ 
++  // Fall back to type converter for unknown attributes.
++  auto unknownAttr = typeConverter->convertUnknownAttribute(stablehloAttr);
++  if (unknownAttr) return unknownAttr;
++
+   LLVM_DEBUG(llvm::dbgs() << "Failed to convert: " << stablehloAttr << '\n');
+   return {};  // Failed to convert attribute.
+ }
+@@ -268,13 +280,15 @@
+ Attribute convertBool(const ConversionPattern& pattern, int64_t stablehloDim) {
+   auto stablehloType = IntegerType::get(pattern.getContext(), 1);
+   auto stablehloAttr = IntegerAttr::get(stablehloType, stablehloDim);
+-  return convertGeneric(stablehloAttr, pattern.getTypeConverter());
++  return convertGeneric(stablehloAttr,
++                        pattern.getTypeConverter<vhlo::VhloTypeConverter>());
  }
  
--def CHLO_RaggedDotOp : CHLO_Op<"ragged_dot",
--    [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
-+def CHLO_RaggedDotOp : CHLO_Op<"ragged_dot", [Pure]> {
-   string summary = "Computes a matmul over a single ragged dimension";
- 
-   string description = [{
-diff --ruN a/stablehlo/stablehlo/integrations/c/ChloAttributes.cpp b/stablehlo/stablehlo/integrations/c/ChloAttributes.cpp
---- stablehlo/stablehlo/integrations/c/ChloAttributes.cpp
-+++ stablehlo/stablehlo/integrations/c/ChloAttributes.cpp
-@@ -66,3 +66,127 @@
-   return wrap(mlir::chlo::stringifyComparisonType(
-       llvm::cast<mlir::chlo::ComparisonTypeAttr>(unwrap(attr)).getValue()));
+ Attribute convertInt(const ConversionPattern& pattern, int64_t stablehloDim) {
+   auto stablehloType = IntegerType::get(pattern.getContext(), 64);
+   auto stablehloAttr = IntegerAttr::get(stablehloType, stablehloDim);
+-  return convertGeneric(stablehloAttr, pattern.getTypeConverter());
++  return convertGeneric(stablehloAttr,
++                        pattern.getTypeConverter<vhlo::VhloTypeConverter>());
  }
-+
-+//===----------------------------------------------------------------------===//
-+// RaggedDotDimensionNumbers
-+//===----------------------------------------------------------------------===//
-+
-+MlirAttribute chloRaggedDotDimensionNumbersGet(
-+    MlirContext ctx, intptr_t nLhsBatchingDimensions,
-+    const int64_t *lhsBatchingDimensions, intptr_t nRhsBatchingDimensions,
-+    const int64_t *rhsBatchingDimensions, intptr_t nLhsContractingDimensions,
-+    const int64_t *lhsContractingDimensions, intptr_t nRhsContractingDimensions,
-+    const int64_t *rhsContractingDimensions, intptr_t nLhsRaggedDimensions,
-+    const int64_t *lhsRaggedDimensions, intptr_t nRhsGroupDimensions,
-+    const int64_t *rhsGroupDimensions) {
-+  return wrap(mlir::chlo::RaggedDotDimensionNumbersAttr::get(
-+      unwrap(ctx),
-+      llvm::ArrayRef(lhsBatchingDimensions, nLhsBatchingDimensions),
-+      llvm::ArrayRef(rhsBatchingDimensions, nRhsBatchingDimensions),
-+      llvm::ArrayRef(lhsContractingDimensions, nLhsContractingDimensions),
-+      llvm::ArrayRef(rhsContractingDimensions, nRhsContractingDimensions),
-+      llvm::ArrayRef(lhsRaggedDimensions, nLhsRaggedDimensions),
-+      llvm::ArrayRef(rhsGroupDimensions, nRhsGroupDimensions)));
-+}
-+
-+bool chloAttributeIsARaggedDotDimensionNumbers(MlirAttribute attr) {
-+  return llvm::isa<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr));
-+}
-+
-+intptr_t chloRaggedDotDimensionNumbersGetLhsBatchingDimensionsSize(
-+    MlirAttribute attr) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getLhsBatchingDimensions()
-+      .size();
-+}
-+
-+int64_t chloRaggedDotDimensionNumbersGetLhsBatchingDimensionsElem(
-+    MlirAttribute attr, intptr_t pos) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getLhsBatchingDimensions()[pos];
-+}
-+
-+intptr_t chloRaggedDotDimensionNumbersGetRhsBatchingDimensionsSize(
-+    MlirAttribute attr) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getRhsBatchingDimensions()
-+      .size();
-+}
-+
-+int64_t chloRaggedDotDimensionNumbersGetRhsBatchingDimensionsElem(
-+    MlirAttribute attr, intptr_t pos) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getRhsBatchingDimensions()[pos];
-+}
-+
-+intptr_t chloRaggedDotDimensionNumbersGetLhsContractingDimensionsSize(
-+    MlirAttribute attr) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getLhsContractingDimensions()
-+      .size();
-+}
-+
-+int64_t chloRaggedDotDimensionNumbersGetLhsContractingDimensionsElem(
-+    MlirAttribute attr, intptr_t pos) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getLhsContractingDimensions()[pos];
-+}
-+
-+intptr_t chloRaggedDotDimensionNumbersGetRhsContractingDimensionsSize(
-+    MlirAttribute attr) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getRhsContractingDimensions()
-+      .size();
-+}
-+
-+int64_t chloRaggedDotDimensionNumbersGetRhsContractingDimensionsElem(
-+    MlirAttribute attr, intptr_t pos) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getRhsContractingDimensions()[pos];
-+}
-+
-+intptr_t chloRaggedDotDimensionNumbersGetLhsRaggedDimensionsSize(
-+    MlirAttribute attr) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getLhsRaggedDimensions()
-+      .size();
-+}
-+
-+int64_t chloRaggedDotDimensionNumbersGetLhsRaggedDimensionsElem(
-+    MlirAttribute attr, intptr_t pos) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getLhsRaggedDimensions()[pos];
-+}
-+
-+intptr_t chloRaggedDotDimensionNumbersGetRhsGroupDimensionsSize(
-+    MlirAttribute attr) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getRhsGroupDimensions()
-+      .size();
-+}
-+
-+int64_t chloRaggedDotDimensionNumbersGetRhsGroupDimensionsElem(
-+    MlirAttribute attr, intptr_t pos) {
-+  return llvm::cast<mlir::chlo::RaggedDotDimensionNumbersAttr>(unwrap(attr))
-+      .getRhsGroupDimensions()[pos];
-+}
-+
-+//===----------------------------------------------------------------------===//
-+// PrecisionAttr
-+//===----------------------------------------------------------------------===//
-+
-+MlirAttribute chloPrecisionAttrGet(MlirContext ctx, MlirStringRef value) {
-+  std::optional<mlir::chlo::Precision> precision =
-+      mlir::chlo::symbolizePrecision(unwrap(value));
-+  if (!precision) llvm::report_fatal_error("Invalid value.");
-+  return wrap(mlir::chlo::PrecisionAttr::get(unwrap(ctx), precision.value()));
-+}
-+
-+bool chloAttributeIsAPrecisionAttr(MlirAttribute attr) {
-+  return llvm::isa<mlir::chlo::PrecisionAttr>(unwrap(attr));
-+}
-+
-+MlirStringRef chloPrecisionAttrGetValue(MlirAttribute attr) {
-+  return wrap(mlir::chlo::stringifyPrecision(
-+      llvm::cast<mlir::chlo::PrecisionAttr>(unwrap(attr)).getValue()));
-+}
-diff --ruN a/stablehlo/stablehlo/integrations/c/ChloAttributes.h b/stablehlo/stablehlo/integrations/c/ChloAttributes.h
---- stablehlo/stablehlo/integrations/c/ChloAttributes.h
-+++ stablehlo/stablehlo/integrations/c/ChloAttributes.h
-@@ -47,6 +47,70 @@
- MLIR_CAPI_EXPORTED MlirStringRef
- chloComparisonTypeAttrGetValue(MlirAttribute attr);
  
-+//===----------------------------------------------------------------------===//
-+// RaggedDotDimensionNumbers
-+//===----------------------------------------------------------------------===//
-+
-+MLIR_CAPI_EXPORTED MlirAttribute chloRaggedDotDimensionNumbersGet(
-+    MlirContext ctx,                                                        //
-+    intptr_t nLhsBatchingDimensions, const int64_t *lhsBatchingDimensions,  //
-+    intptr_t nRhsBatchingDimensions, const int64_t *rhsBatchingDimensions,  //
-+    intptr_t nLhsContractingDimensions,                                     //
-+    const int64_t *lhsContractingDimensions,                                //
-+    intptr_t nRhsContractingDimensions,                                     //
-+    const int64_t *rhsContractingDimensions,                                //
-+    intptr_t nLhsRaggedDimensions,                                          //
-+    const int64_t *lhsRaggedDimensions,                                     //
-+    intptr_t nRhsGroupDimensions,                                           //
-+    const int64_t *rhsGroupDimensions);
-+
-+MLIR_CAPI_EXPORTED bool chloAttributeIsARaggedDotDimensionNumbers(
-+    MlirAttribute attr);
-+
-+MLIR_CAPI_EXPORTED intptr_t
-+chloRaggedDotDimensionNumbersGetLhsBatchingDimensionsSize(MlirAttribute attr);
-+MLIR_CAPI_EXPORTED int64_t
-+chloRaggedDotDimensionNumbersGetLhsBatchingDimensionsElem(MlirAttribute attr,
-+                                                          intptr_t pos);
-+MLIR_CAPI_EXPORTED intptr_t
-+chloRaggedDotDimensionNumbersGetRhsBatchingDimensionsSize(MlirAttribute attr);
-+MLIR_CAPI_EXPORTED int64_t
-+chloRaggedDotDimensionNumbersGetRhsBatchingDimensionsElem(MlirAttribute attr,
-+                                                          intptr_t pos);
-+MLIR_CAPI_EXPORTED intptr_t
-+chloRaggedDotDimensionNumbersGetLhsContractingDimensionsSize(
-+    MlirAttribute attr);
-+MLIR_CAPI_EXPORTED int64_t
-+chloRaggedDotDimensionNumbersGetLhsContractingDimensionsElem(MlirAttribute attr,
-+                                                             intptr_t pos);
-+MLIR_CAPI_EXPORTED intptr_t
-+chloRaggedDotDimensionNumbersGetRhsContractingDimensionsSize(
-+    MlirAttribute attr);
-+MLIR_CAPI_EXPORTED int64_t
-+chloRaggedDotDimensionNumbersGetRhsContractingDimensionsElem(MlirAttribute attr,
-+                                                             intptr_t pos);
-+MLIR_CAPI_EXPORTED intptr_t
-+chloRaggedDotDimensionNumbersGetLhsRaggedDimensionsSize(MlirAttribute attr);
-+MLIR_CAPI_EXPORTED int64_t
-+chloRaggedDotDimensionNumbersGetLhsRaggedDimensionsElem(MlirAttribute attr,
-+                                                        intptr_t pos);
-+MLIR_CAPI_EXPORTED intptr_t
-+chloRaggedDotDimensionNumbersGetRhsGroupDimensionsSize(MlirAttribute attr);
-+MLIR_CAPI_EXPORTED int64_t
-+chloRaggedDotDimensionNumbersGetRhsGroupDimensionsElem(MlirAttribute attr,
-+                                                       intptr_t pos);
-+
-+//===----------------------------------------------------------------------===//
-+// PrecisionAttr
-+//===----------------------------------------------------------------------===//
-+
-+MLIR_CAPI_EXPORTED MlirAttribute chloPrecisionAttrGet(MlirContext ctx,
-+                                                      MlirStringRef value);
-+
-+MLIR_CAPI_EXPORTED bool chloAttributeIsAPrecisionAttr(MlirAttribute attr);
-+
-+MLIR_CAPI_EXPORTED MlirStringRef chloPrecisionAttrGetValue(MlirAttribute attr);
-+
- #ifdef __cplusplus
+ Attribute convertInts(const ConversionPattern& pattern,
+@@ -282,7 +296,8 @@
+   auto stablehloType = RankedTensorType::get(
+       stablehloDims.size(), IntegerType::get(pattern.getContext(), 64));
+   auto stablehloAttr = DenseIntElementsAttr::get(stablehloType, stablehloDims);
+-  return convertGeneric(stablehloAttr, pattern.getTypeConverter());
++  return convertGeneric(stablehloAttr,
++                        pattern.getTypeConverter<vhlo::VhloTypeConverter>());
  }
- #endif
-diff --ruN a/stablehlo/stablehlo/integrations/python/ChloModule.cpp b/stablehlo/stablehlo/integrations/python/ChloModule.cpp
---- stablehlo/stablehlo/integrations/python/ChloModule.cpp
-+++ stablehlo/stablehlo/integrations/python/ChloModule.cpp
-@@ -21,6 +21,20 @@
- namespace nb = nanobind;
  
- namespace {
-+
-+// Returns a vector containing integers extracted from an attribute using the
-+// two provided callbacks.
-+std::vector<int64_t> attributePropertyVector(
-+    MlirAttribute attr, llvm::function_ref<intptr_t(MlirAttribute)> sizeFn,
-+    llvm::function_ref<int64_t(MlirAttribute, intptr_t)> getFn) {
-+  std::vector<int64_t> result;
-+  intptr_t size = sizeFn(attr);
-+  result.reserve(size);
-+  for (intptr_t i = 0; i < size; ++i) {
-+    result.push_back(getFn(attr, i));
-+  }
-+  return result;
-+}
- 
- auto toPyString(MlirStringRef mlirStringRef) {
-   return nb::str(mlirStringRef.data, mlirStringRef.length);
-@@ -79,4 +93,88 @@
-       .def_property_readonly("value", [](MlirAttribute self) {
-         return toPyString(chloComparisonTypeAttrGetValue(self));
-       });
-+
-+  mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-+      m, "RaggedDotDimensionNumbers", chloAttributeIsARaggedDotDimensionNumbers)
-+      .def_classmethod(
-+          "get",
-+          [](nb::object cls, const std::vector<int64_t> &lhsBatchingDims,
-+             const std::vector<int64_t> &rhsBatchingDims,
-+             const std::vector<int64_t> &lhsContractingDims,
-+             const std::vector<int64_t> &rhsContractingDims,
-+             const std::vector<int64_t> &lhsRaggedDims,
-+             const std::vector<int64_t> &rhsGroupDims, MlirContext ctx) {
-+            return cls(chloRaggedDotDimensionNumbersGet(
-+                ctx, lhsBatchingDims.size(), lhsBatchingDims.data(),
-+                rhsBatchingDims.size(), rhsBatchingDims.data(),
-+                lhsContractingDims.size(), lhsContractingDims.data(),
-+                rhsContractingDims.size(), rhsContractingDims.data(),
-+                lhsRaggedDims.size(), lhsRaggedDims.data(), rhsGroupDims.size(),
-+                rhsGroupDims.data()));
-+          },
-+          nb::arg("cls"), nb::arg("lhs_batching_dimensions"),
-+          nb::arg("rhs_batching_dimensions"),
-+          nb::arg("lhs_contracting_dimensions"),
-+          nb::arg("rhs_contracting_dimensions"),
-+          nb::arg("lhs_ragged_dimensions"), nb::arg("rhs_group_dimensions"),
-+          nb::arg("context").none() = nb::none(),
-+          "Creates a RaggedDotDimensionNumbers attribute with the given "
-+          "dimension configuration.")
-+      .def_property_readonly(
-+          "lhs_batching_dimensions",
-+          [](MlirAttribute self) {
-+            return attributePropertyVector(
-+                self, chloRaggedDotDimensionNumbersGetLhsBatchingDimensionsSize,
-+                chloRaggedDotDimensionNumbersGetLhsBatchingDimensionsElem);
-+          })
-+      .def_property_readonly(
-+          "rhs_batching_dimensions",
-+          [](MlirAttribute self) {
-+            return attributePropertyVector(
-+                self, chloRaggedDotDimensionNumbersGetRhsBatchingDimensionsSize,
-+                chloRaggedDotDimensionNumbersGetRhsBatchingDimensionsElem);
-+          })
-+      .def_property_readonly(
-+          "lhs_contracting_dimensions",
-+          [](MlirAttribute self) {
-+            return attributePropertyVector(
-+                self,
-+                chloRaggedDotDimensionNumbersGetLhsContractingDimensionsSize,
-+                chloRaggedDotDimensionNumbersGetLhsContractingDimensionsElem);
-+          })
-+      .def_property_readonly(
-+          "rhs_contracting_dimensions",
-+          [](MlirAttribute self) {
-+            return attributePropertyVector(
-+                self,
-+                chloRaggedDotDimensionNumbersGetRhsContractingDimensionsSize,
-+                chloRaggedDotDimensionNumbersGetRhsContractingDimensionsElem);
-+          })
-+      .def_property_readonly(
-+          "lhs_ragged_dimensions",
-+          [](MlirAttribute self) {
-+            return attributePropertyVector(
-+                self, chloRaggedDotDimensionNumbersGetLhsRaggedDimensionsSize,
-+                chloRaggedDotDimensionNumbersGetLhsRaggedDimensionsElem);
-+          })
-+      .def_property_readonly("rhs_group_dimensions", [](MlirAttribute self) {
-+        return attributePropertyVector(
-+            self, chloRaggedDotDimensionNumbersGetRhsGroupDimensionsSize,
-+            chloRaggedDotDimensionNumbersGetRhsGroupDimensionsElem);
-+      });
-+
-+  mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-+      m, "PrecisionAttr", chloAttributeIsAPrecisionAttr)
-+      .def_classmethod(
-+          "get",
-+          [](nb::object cls, const std::string &value, MlirContext ctx) {
-+            return cls(chloPrecisionAttrGet(
-+                ctx, mlirStringRefCreate(value.c_str(), value.size())));
-+          },
-+          nb::arg("cls"), nb::arg("value"),
-+          nb::arg("context").none() = nb::none(),
-+          "Creates a Precision attribute with the given value.")
-+      .def_property_readonly("value", [](MlirAttribute self) {
-+        return toPyString(chloPrecisionAttrGetValue(self));
-+      });
+ Attribute convertSymbol(const ConversionPattern& pattern,
+@@ -290,7 +305,7 @@
+   auto stablehloSymbolAttr = dyn_cast<FlatSymbolRefAttr>(stablehloAttr);
+   if (!stablehloSymbolAttr) return {};
+   return convertGeneric(stablehloSymbolAttr.getAttr(),
+-                        pattern.getTypeConverter());
++                        pattern.getTypeConverter<vhlo::VhloTypeConverter>());
  }
-diff --ruN a/stablehlo/stablehlo/integrations/python/tests/chlo.py b/stablehlo/stablehlo/integrations/python/tests/chlo.py
---- stablehlo/stablehlo/integrations/python/tests/chlo.py
-+++ stablehlo/stablehlo/integrations/python/tests/chlo.py
-@@ -42,3 +42,30 @@
-   assert attr is not None
-   assert str(attr) == ("#chlo<comparison_type FLOAT>")
-   assert attr.value == "FLOAT"
+ 
+ SpecialResult convertChannelHandle(const ConversionPattern& pattern,
+@@ -445,15 +460,15 @@
+   vhloAttrs.emplace_back(
+       StringAttr::get(pattern.getContext(), "lhs_precision_type"),
+       convertGeneric(TypeAttr::get(attr.getLhsPrecisionType()),
+-                     pattern.getTypeConverter()));
++                     pattern.getTypeConverter<vhlo::VhloTypeConverter>()));
+   vhloAttrs.emplace_back(
+       StringAttr::get(pattern.getContext(), "rhs_precision_type"),
+       convertGeneric(TypeAttr::get(attr.getRhsPrecisionType()),
+-                     pattern.getTypeConverter()));
++                     pattern.getTypeConverter<vhlo::VhloTypeConverter>()));
+   vhloAttrs.emplace_back(
+       StringAttr::get(pattern.getContext(), "accumulation_type"),
+       convertGeneric(TypeAttr::get(attr.getAccumulationType()),
+-                     pattern.getTypeConverter()));
++                     pattern.getTypeConverter<vhlo::VhloTypeConverter>()));
+ 
+   // Components
+   auto vhloLhsComponentCount = convertInt(pattern, attr.getLhsComponentCount());
+@@ -712,7 +727,9 @@
+   auto addDefaultAttr = [&](StringRef vhloName, Attribute stablehloAttr) {
+     vhloAttrs.emplace_back(
+         StringAttr::get(pattern.getContext(), vhloName),
+-        convertGeneric(stablehloAttr, pattern.getTypeConverter()));
++        convertGeneric(
++            stablehloAttr,
++            pattern.template getTypeConverter<vhlo::VhloTypeConverter>()));
+   };
+   if constexpr (std::is_same<StablehloOpTy, func::FuncOp>::value) {
+     if (!stablehloOp.getSymVisibilityAttr())
+@@ -987,8 +1004,9 @@
+         case SpecialResult::SPECIAL_FAILURE:
+           return failure();
+         case SpecialResult::NOT_SPECIAL:
+-          auto vhloAttr = convertGeneric(stablehloAttr.getValue(),
+-                                         this->getTypeConverter());
++          auto vhloAttr = convertGeneric(
++              stablehloAttr.getValue(),
++              this->template getTypeConverter<vhlo::VhloTypeConverter>());
+           if (!vhloAttr) return failure();
+           vhloAttrs.push_back({stablehloAttr.getName(), vhloAttr});
+           break;
+@@ -1075,14 +1093,14 @@
+   }
+ 
+  private:
+-  std::shared_ptr<StablehloToVhloTypeConverter> converter;
++  std::shared_ptr<vhlo::VhloTypeConverter> converter;
+   FrozenRewritePatternSet patterns;
+   std::shared_ptr<ConversionTarget> target;
+ };
+ 
+ void populateStablehloToVhloPatterns(MLIRContext* context,
+                                      RewritePatternSet* patterns,
+-                                     TypeConverter* converter) {
++                                     vhlo::VhloTypeConverter* converter) {
+   populateStablehloToVhloPatterns<
+ #define GET_OP_LIST
+ #include "stablehlo/dialect/StablehloOps.cpp.inc"
+diff --ruN a/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp b/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
+--- stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
++++ stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
+@@ -57,7 +57,10 @@
+ 
+ class VhloToStablehloTypeConverter : public vhlo::VhloTypeConverter {
+  public:
+-  VhloToStablehloTypeConverter() : vhlo::VhloTypeConverter() {
++  // Safe to allow other dialects since the StableHLO->VHLO conversion guards
++  // the legality of types / attributes.
++  VhloToStablehloTypeConverter()
++      : vhlo::VhloTypeConverter(/*allowOtherDialects=*/true) {
+     addConversion([](Type type) -> Type { return type; });
+     addConversion([](vhlo::TokenV1Type token) -> Type {
+       LLVM_DEBUG(llvm::dbgs() << "Converting TokenType\n");
+@@ -90,7 +93,7 @@
+   return stablehlo::Name##Attr::get(attr.getContext(), stablehloValue.value())
+ 
+ Attribute convertGeneric(Attribute vhloAttr,
+-                         const TypeConverter* typeConverter) {
++                         const vhlo::VhloTypeConverter* typeConverter) {
+   LLVM_DEBUG(llvm::dbgs() << "Converting attr " << vhloAttr);
+   if (auto vhloAttrs = dyn_cast<vhlo::ArrayV1Attr>(vhloAttr)) {
+     SmallVector<Attribute> stablehloAttrs;
+@@ -189,6 +192,10 @@
+     // All VHLO attributes must have counterparts in StableHLO.
+     return {};
+   }
 +
-+
-+@run
-+def test_ragged_dot_dimension_numbers():
-+  attr = chlo.RaggedDotDimensionNumbers.get(
-+      lhs_batching_dimensions=[0],
-+      rhs_batching_dimensions=[1],
-+      lhs_contracting_dimensions=[2],
-+      rhs_contracting_dimensions=[2],
-+      lhs_ragged_dimensions=[1],
-+      rhs_group_dimensions=[0],
-+  )
-+  assert attr is not None
-+  assert str(attr) == (
-+      "#chlo.ragged_dot<lhs_batching_dimensions = [0], "
-+      "rhs_batching_dimensions = [1], "
-+      "lhs_contracting_dimensions = [2], "
-+      "rhs_contracting_dimensions = [2], "
-+      "lhs_ragged_dimensions = [1], "
-+      "rhs_group_dimensions = [0]>"
-+  )
-+  assert attr.lhs_batching_dimensions == [0]
-+  assert attr.rhs_batching_dimensions == [1]
-+  assert attr.lhs_contracting_dimensions == [2]
-+  assert attr.rhs_contracting_dimensions == [2]
-+  assert attr.lhs_ragged_dimensions == [1]
-+  assert attr.rhs_group_dimensions == [0]
++  // Fall back to type converter for unknown attributes.
++  auto unknownAttr = typeConverter->convertUnknownAttribute(vhloAttr);
++  if (unknownAttr) return unknownAttr;
+ 
+   // This should be unreachable unless program is a mix of VHLO and other
+   // dialects, e.g. due to user edits to textual assembly format.
+@@ -229,7 +236,7 @@
+ }
+ 
+ LogicalResult convertTypeAttr(Attribute vhloAttr, Type& result,
+-                              const TypeConverter* typeConverter) {
++                              const vhlo::VhloTypeConverter* typeConverter) {
+   auto stablehloAttr = convertGeneric(vhloAttr, typeConverter);
+   if (!stablehloAttr || !isa<TypeAttr>(stablehloAttr)) return failure();
+   result = cast<TypeAttr>(stablehloAttr).getValue();
+@@ -244,7 +251,7 @@
+ }
+ 
+ LogicalResult convertInts(Attribute vhloAttr,
+-                          const TypeConverter* typeConverter,
++                          const vhlo::VhloTypeConverter* typeConverter,
+                           SmallVector<int64_t>& result) {
+   auto vhloTensorAttr = dyn_cast<vhlo::TensorV1Attr>(vhloAttr);
+   if (!vhloTensorAttr) return failure();
+@@ -256,7 +263,7 @@
+ }
+ 
+ Attribute convertSymbol(Attribute vhloAttr,
+-                        const TypeConverter* typeConverter) {
++                        const vhlo::VhloTypeConverter* typeConverter) {
+   auto vhloStringAttr = dyn_cast<vhlo::StringV1Attr>(vhloAttr);
+   if (!vhloStringAttr) return {};
+   auto stablehloStringAttr = dyn_cast_or_null<StringAttr>(
+@@ -267,7 +274,7 @@
+ 
+ template <typename OpType>
+ Attribute convertChannelHandle(OpType vhloOp,
+-                               const TypeConverter* typeConverter) {
++                               const vhlo::VhloTypeConverter* typeConverter) {
+   int64_t channelId, channelType;
+   if (failed(convertInt(vhloOp.getChannelId(), channelId)) ||
+       failed(convertInt(vhloOp.getChannelType(), channelType)))
+@@ -277,7 +284,7 @@
+ }
+ 
+ Attribute convertChannelId(Attribute vhloAttr,
+-                           const TypeConverter* typeConverter) {
++                           const vhlo::VhloTypeConverter* typeConverter) {
+   int64_t channelId;
+   if (failed(convertInt(vhloAttr, channelId))) return {};
+   return stablehlo::ChannelHandleAttr::get(vhloAttr.getContext(), channelId,
+@@ -285,8 +292,8 @@
+ }
+ 
+ template <typename OpType>
+-Attribute convertConvDimensionNumbers(OpType vhloOp,
+-                                      const TypeConverter* typeConverter) {
++Attribute convertConvDimensionNumbers(
++    OpType vhloOp, const vhlo::VhloTypeConverter* typeConverter) {
+   int64_t stablehloInputBatchDimension, stablehloInputFeatureDimension;
+   SmallVector<int64_t> stablehloInputSpatialDimensions;
+   int64_t stablehloKernelInputFeatureDimension,
+@@ -323,7 +330,7 @@
+ }
+ 
+ Attribute convertCustomCallCalledComputations(
+-    Attribute vhloAttr, const TypeConverter* typeConverter) {
++    Attribute vhloAttr, const vhlo::VhloTypeConverter* typeConverter) {
+   if (auto vhloArrayAttr = dyn_cast<vhlo::ArrayV1Attr>(vhloAttr)) {
+     SmallVector<Attribute> stablehloAttrs;
+     for (auto vhloAttr : vhloArrayAttr.getValue()) {
+@@ -336,8 +343,8 @@
+   return {};
+ }
+ 
+-FailureOr<Attribute> convertDotAlgorithm(vhlo::DotGeneralOpV2 vhloOp,
+-                                         const TypeConverter* typeConverter) {
++FailureOr<Attribute> convertDotAlgorithm(
++    vhlo::DotGeneralOpV2 vhloOp, const vhlo::VhloTypeConverter* typeConverter) {
+   Type lhsPrecisionType, rhsPrecisionType, accumulationType;
+   if (isNoneType(vhloOp.getLhsComponentCount())) {
+     // All must be nonetype
+@@ -373,8 +380,8 @@
+       numPrimitiveOperations, allowImpreciseAccumulation);
+ }
+ 
+-Attribute convertDotDimensionNumbers(vhlo::DotGeneralOpV2 vhloOp,
+-                                     const TypeConverter* typeConverter) {
++Attribute convertDotDimensionNumbers(
++    vhlo::DotGeneralOpV2 vhloOp, const vhlo::VhloTypeConverter* typeConverter) {
+   SmallVector<int64_t> stablehloLhsBatchingDimensions,
+       stablehloRhsBatchingDimensions, stablehloLhsContractingDimensions,
+       stablehloRhsContractingDimensions;
+@@ -394,13 +401,13 @@
+ }
+ 
+ Attribute convertFuncCallee(Attribute vhloAttr,
+-                            const TypeConverter* typeConverter) {
++                            const vhlo::VhloTypeConverter* typeConverter) {
+   return convertSymbol(vhloAttr, typeConverter);
+ }
+ 
+ template <typename OpType>
+-Attribute convertGatherDimensionNumbers(OpType vhloOp,
+-                                        const TypeConverter* typeConverter) {
++Attribute convertGatherDimensionNumbers(
++    OpType vhloOp, const vhlo::VhloTypeConverter* typeConverter) {
+   SmallVector<int64_t> stablehloOffsetDims, stablehloCollapsedSliceDims,
+       stablehloOperandBatchingDims, stablehloStartIndicesBatchingDims,
+       stablehloStartIndexMap;
+@@ -423,8 +430,8 @@
+       stablehloStartIndexMap, stablehloIndexVectorDim);
+ }
+ 
+-Attribute convertScatterDimensionNumbers(vhlo::ScatterOpV2 vhloOp,
+-                                         const TypeConverter* typeConverter) {
++Attribute convertScatterDimensionNumbers(
++    vhlo::ScatterOpV2 vhloOp, const vhlo::VhloTypeConverter* typeConverter) {
+   SmallVector<int64_t> stablehloUpdateWindowDims, stablehloInsertedWindowDims,
+       stablehloInputBatchingDims, stablehloScatterIndicesBatchingDims,
+       stablehloScatterDimsToOperandDims;
+@@ -463,10 +470,11 @@
+                              VhloOpTy vhloOp,
+                              SmallVector<NamedAttribute>& vhloAttrs,
+                              SmallVector<NamedAttribute>& stablehloAttrs) {
++  auto typeConverter =
++      pattern.template getTypeConverter<vhlo::VhloTypeConverter>();
+   if constexpr (std::is_same<VhloOpTy, vhlo::ConvolutionOpV1>::value ||
+                 std::is_same<VhloOpTy, vhlo::DynamicConvOpV2>::value) {
+-    auto stablehloAttr =
+-        convertConvDimensionNumbers(vhloOp, pattern.getTypeConverter());
++    auto stablehloAttr = convertConvDimensionNumbers(vhloOp, typeConverter);
+     if (!stablehloAttr) return failure();
+     stablehloAttrs.emplace_back(
+         StringAttr::get(pattern.getContext(), "dimension_numbers"),
+@@ -480,7 +488,7 @@
+   if constexpr (std::is_same<VhloOpTy, vhlo::DotGeneralOpV2>::value) {
+     // Dot Dimension Numbers
+     auto stablehloDotDimAttr =
+-        convertDotDimensionNumbers(vhloOp, pattern.getTypeConverter());
++        convertDotDimensionNumbers(vhloOp, typeConverter);
+     if (!stablehloDotDimAttr) return failure();
+     stablehloAttrs.emplace_back(
+         StringAttr::get(pattern.getContext(), "dot_dimension_numbers"),
+@@ -489,8 +497,7 @@
+                "lhs_contracting_dimensions", "rhs_contracting_dimensions");
+ 
+     // Dot Algorithm
+-    auto stablehloDotAlgorithmAttr =
+-        convertDotAlgorithm(vhloOp, pattern.getTypeConverter());
++    auto stablehloDotAlgorithmAttr = convertDotAlgorithm(vhloOp, typeConverter);
+     if (failed(stablehloDotAlgorithmAttr)) return failure();
+     if (stablehloDotAlgorithmAttr.value())
+       stablehloAttrs.emplace_back(
+@@ -503,8 +510,7 @@
+   }
+   if constexpr (std::is_same<VhloOpTy, vhlo::DynamicGatherOpV2>::value ||
+                 std::is_same<VhloOpTy, vhlo::GatherOpV2>::value) {
+-    auto stablehloAttr =
+-        convertGatherDimensionNumbers(vhloOp, pattern.getTypeConverter());
++    auto stablehloAttr = convertGatherDimensionNumbers(vhloOp, typeConverter);
+     if (!stablehloAttr) return failure();
+     stablehloAttrs.emplace_back(
+         StringAttr::get(pattern.getContext(), "dimension_numbers"),
+@@ -514,8 +520,7 @@
+                "start_index_map", "index_vector_dim");
+   }
+   if constexpr (std::is_same<VhloOpTy, vhlo::ScatterOpV2>::value) {
+-    auto stablehloAttr =
+-        convertScatterDimensionNumbers(vhloOp, pattern.getTypeConverter());
++    auto stablehloAttr = convertScatterDimensionNumbers(vhloOp, typeConverter);
+     if (!stablehloAttr) return failure();
+     stablehloAttrs.emplace_back(
+         StringAttr::get(pattern.getContext(), "scatter_dimension_numbers"),
+@@ -526,8 +531,7 @@
+   }
+   if constexpr (std::is_same<VhloOpTy, vhlo::RecvOpV1>::value ||
+                 std::is_same<VhloOpTy, vhlo::SendOpV1>::value) {
+-    auto stablehloAttr =
+-        convertChannelHandle(vhloOp, pattern.getTypeConverter());
++    auto stablehloAttr = convertChannelHandle(vhloOp, typeConverter);
+     if (!stablehloAttr) return failure();
+     stablehloAttrs.emplace_back(
+         StringAttr::get(pattern.getContext(), "channel_handle"), stablehloAttr);
+@@ -537,7 +541,7 @@
+ }
+ 
+ template <typename T, typename DenseArrayAttr>
+-SpecialResult convertDenseArray(const TypeConverter* typeConverter,
++SpecialResult convertDenseArray(const vhlo::VhloTypeConverter* typeConverter,
+                                 StringAttr vhloName, Attribute vhloAttr,
+                                 SmallVector<NamedAttribute>& stablehloAttrs) {
+   auto tensorAttr = dyn_cast<vhlo::TensorV1Attr>(vhloAttr);
+@@ -556,15 +560,15 @@
+ }
+ 
+ SpecialResult convertDenseBoolArray(
+-    const TypeConverter* typeConverter, StringAttr vhloName, Attribute vhloAttr,
+-    SmallVector<NamedAttribute>& stablehloAttrs) {
++    const vhlo::VhloTypeConverter* typeConverter, StringAttr vhloName,
++    Attribute vhloAttr, SmallVector<NamedAttribute>& stablehloAttrs) {
+   return convertDenseArray<bool, DenseBoolArrayAttr>(typeConverter, vhloName,
+                                                      vhloAttr, stablehloAttrs);
+ }
+ 
+ SpecialResult convertDenseI64Array(
+-    const TypeConverter* typeConverter, StringAttr vhloName, Attribute vhloAttr,
+-    SmallVector<NamedAttribute>& stablehloAttrs) {
++    const vhlo::VhloTypeConverter* typeConverter, StringAttr vhloName,
++    Attribute vhloAttr, SmallVector<NamedAttribute>& stablehloAttrs) {
+   return convertDenseArray<int64_t, DenseI64ArrayAttr>(
+       typeConverter, vhloName, vhloAttr, stablehloAttrs);
+ }
+@@ -575,7 +579,8 @@
+                              SmallVector<NamedAttribute>& stablehloAttrs) {
+   StringAttr stablehloName = vhloName;
+   Attribute stablehloAttr;
+-  auto typeConverter = pattern.getTypeConverter();
++  auto typeConverter =
++      pattern.template getTypeConverter<vhlo::VhloTypeConverter>();
+ 
+   if constexpr (std::is_same<VhloOpTy, vhlo::AllGatherOpV2>::value ||
+                 std::is_same<VhloOpTy, vhlo::AllReduceOpV2>::value ||
+@@ -585,7 +590,7 @@
+                 std::is_same<VhloOpTy, vhlo::CollectiveBroadcastOpV1>::value) {
+     if (vhloName == "channel_id") {
+       stablehloName = StringAttr::get(pattern.getContext(), "channel_handle");
+-      stablehloAttr = convertChannelId(vhloAttr, pattern.getTypeConverter());
++      stablehloAttr = convertChannelId(vhloAttr, typeConverter);
+       if (!stablehloAttr) return specialFailure();
+     }
+     if (vhloName == "use_global_device_ids") {
+@@ -597,20 +602,20 @@
+   }
+   if constexpr (std::is_same<VhloOpTy, vhlo::CustomCallOpV1>::value) {
+     if (vhloName == "called_computations") {
+-      stablehloAttr = convertCustomCallCalledComputations(
+-          vhloAttr, pattern.getTypeConverter());
++      stablehloAttr =
++          convertCustomCallCalledComputations(vhloAttr, typeConverter);
+       if (!stablehloAttr) return specialFailure();
+     }
+   }
+   if constexpr (std::is_same<VhloOpTy, vhlo::CompositeOpV1>::value) {
+     if (vhloName == "decomposition") {
+-      stablehloAttr = convertSymbol(vhloAttr, pattern.getTypeConverter());
++      stablehloAttr = convertSymbol(vhloAttr, typeConverter);
+       if (!stablehloAttr) return specialFailure();
+     }
+   }
+   if constexpr (std::is_same<VhloOpTy, vhlo::CallOpV1>::value) {
+     if (vhloName == "callee") {
+-      stablehloAttr = convertFuncCallee(vhloAttr, pattern.getTypeConverter());
++      stablehloAttr = convertFuncCallee(vhloAttr, typeConverter);
+       if (!stablehloAttr) return specialFailure();
+     }
+   }
+@@ -760,8 +765,8 @@
+ template <typename T>
+ bool isSplatTensor(const ConversionPattern& pattern, Attribute vhloAttr,
+                    T splatValue) {
+-  auto attr = dyn_cast_or_null<DenseElementsAttr>(
+-      convertGeneric(vhloAttr, pattern.getTypeConverter()));
++  auto attr = dyn_cast_or_null<DenseElementsAttr>(convertGeneric(
++      vhloAttr, pattern.getTypeConverter<vhlo::VhloTypeConverter>()));
+   return attr && attr.isSplat() &&
+          attr.template getSplatValue<T>() == splatValue;
+ }
+@@ -977,8 +982,9 @@
+         case SpecialResult::SPECIAL_FAILURE:
+           return failure();
+         case SpecialResult::NOT_SPECIAL:
+-          auto stablehloAttr =
+-              convertGeneric(vhloAttr.getValue(), this->getTypeConverter());
++          auto stablehloAttr = convertGeneric(
++              vhloAttr.getValue(),
++              this->template getTypeConverter<vhlo::VhloTypeConverter>());
+           if (!stablehloAttr) return failure();
+           stablehloAttrs.push_back({vhloAttr.getName(), stablehloAttr});
+           break;
+@@ -1056,7 +1062,7 @@
+ template <typename... StablehloOpTypes>
+ void populateVhloToStablehloPatterns(MLIRContext* context,
+                                      RewritePatternSet* patterns,
+-                                     TypeConverter* converter) {
++                                     vhlo::VhloTypeConverter* converter) {
+   patterns
+       ->add<VhloToStablehloOpConverter<StablehloToVhloOp<StablehloOpTypes>>...>(
+           *converter, context);
+@@ -1104,7 +1110,7 @@
+ 
+ void populateVhloToStablehloPatterns(MLIRContext* context,
+                                      RewritePatternSet* patterns,
+-                                     TypeConverter* converter) {
++                                     vhlo::VhloTypeConverter* converter) {
+   populateVhloToStablehloPatterns<
+ #define GET_OP_LIST
+ #include "stablehlo/dialect/StablehloOps.cpp.inc"
 diff --ruN a/stablehlo/stablehlo/transforms/VhloToVersion.cpp b/stablehlo/stablehlo/transforms/VhloToVersion.cpp
 --- stablehlo/stablehlo/transforms/VhloToVersion.cpp
 +++ stablehlo/stablehlo/transforms/VhloToVersion.cpp
-@@ -27,7 +27,6 @@
- #include "mlir/IR/BuiltinAttributes.h"
- #include "mlir/IR/BuiltinTypes.h"
- #include "mlir/IR/Diagnostics.h"
--#include "mlir/IR/Location.h"
- #include "mlir/IR/PatternMatch.h"
- #include "mlir/IR/Region.h"
- #include "mlir/IR/Types.h"
-@@ -187,31 +186,6 @@
-   return success();
+@@ -56,15 +56,23 @@
+ 
+ // Currently there are no type-to-version conversions so this class
+ // simply validates that all types are from the VHLO dialect.
+-class VhloToVersionConverter : public TypeConverter {
++class VhloToVersionConverter : public VhloTypeConverter {
+  public:
+-  VhloToVersionConverter() : TypeConverter() {
+-    addConversion([](Type type) -> Type {
+-      if (llvm::isa<vhlo::VhloDialect>(type.getDialect())) return type;
+-      LLVM_DEBUG(llvm::dbgs() << "Invalid type: " << type << '\n');
+-      return {};
++  // Safe to allow other dialects since the StableHLO->VHLO conversion guards
++  // the legality of types / attributes.
++  VhloToVersionConverter() : VhloTypeConverter(/*allowOtherDialects=*/true) {
++    addConversion([&](Type type) -> Type {
++      if (llvm::isa<vhlo::VhloDialect>(type.getDialect())) {
++        // Once a type becomes versioned we will check the version here.
++        return type;
++      }
++
++      LLVM_DEBUG(llvm::dbgs() << "Not VHLO type, allowed: " << type << '\n');
++      return type;
+     });
+   }
++
++  Attribute convertEncoding(Attribute attr) const override { return attr; };
+ };
+ 
+ // Check user-specified target version. Emit error if invalid.
+@@ -111,6 +119,10 @@
+ LogicalResult isLegalType(Type type, const Version& targetVersion);
+ 
+ LogicalResult isLegalAttribute(const Attribute& attr, Version targetVersion) {
++  // StableHLO->VHLO conversion guards the legality of types / attributes.
++  // Other dialect types that make it past that step are valid here.
++  if (!mlir::isa<vhlo::VhloDialect>(attr.getDialect())) return success();
++
+   auto attrInterface = dyn_cast<VersionedAttrInterface>(attr);
+   if (!attrInterface || !isLegalVersion(attrInterface, targetVersion)) {
+     LLVM_DEBUG(llvm::dbgs() << "failed to legalize attribute " << attr
+@@ -119,10 +131,11 @@
+   }
+ 
+   // Recursively check attrs if VHLO attr is a container
+-  if (auto arrAttr = dyn_cast<ArrayV1Attr>(attr))
++  if (auto arrAttr = dyn_cast<ArrayV1Attr>(attr)) {
+     return success(llvm::all_of(arrAttr.getValue(), [&](Attribute ele) {
+       return succeeded(isLegalAttribute(ele, targetVersion));
+     }));
++  }
+   if (auto arrAttr = dyn_cast<DictionaryV1Attr>(attr)) {
+     return success(llvm::all_of(
+         arrAttr.getValue(), [&](std::pair<Attribute, Attribute> entry) {
+@@ -146,6 +159,10 @@
  }
  
--bool isLegalLocation(Location loc, const Version& targetVersion) {
--  // FileLineColRange locations are a forward incompatibility in upstream MLIR
--  // just before v1.8.4 was tagged. Conservatively use 1.9.0 since StableHLO
--  // passes require major versions for incompats.
--  //
--  // Support for downgrading these locations exists in
--  // StablehloCompatibilityExpanderPass.
--  bool isLegal = true;
--  loc->walk([&](Location childLoc) -> WalkResult {
--    if (auto fileLineColLoc = dyn_cast<FileLineColRange>(childLoc)) {
--      static const Version kFileLineColLocMinVersion = Version(1, 9, 0);
--      if (!isStrictFileLineColLoc(childLoc) &&
--          targetVersion < kFileLineColLocMinVersion) {
--        LLVM_DEBUG(llvm::dbgs() << "failed to legalize location " << childLoc
--                                << " to version " << targetVersion << '\n');
--        isLegal = false;
--        return WalkResult::interrupt();
--      }
--    }
--    return WalkResult::advance();
--  });
--
--  return isLegal;
--}
--
+ LogicalResult isLegalType(Type type, const Version& targetVersion) {
++  // StableHLO->VHLO conversion guards the legality of types / attributes.
++  // Other dialect types that make it past that step are valid here.
++  if (!mlir::isa<vhlo::VhloDialect>(type.getDialect())) return success();
++
+   // All valid VHLO types must have versioned type interface.
+   auto typeInterface = dyn_cast<VersionedTypeInterface>(type);
+   if (!typeInterface || !isLegalVersion(typeInterface, targetVersion)) {
+@@ -170,10 +187,11 @@
+       return failure();
+     return isLegalType(ranked.getElementType(), targetVersion);
+   }
+-  if (auto tuple = dyn_cast<TupleV1Type>(type))
++  if (auto tuple = dyn_cast<TupleV1Type>(type)) {
+     return success(llvm::all_of(tuple.getTypes(), [&](Type ele) {
+       return succeeded(isLegalType(ele, targetVersion));
+     }));
++  }
+   if (auto quant = dyn_cast<UniformQuantizedV1Type>(type))
+     return success(
+         succeeded(isLegalType(quant.getStorageType(), targetVersion)) &&
+@@ -213,7 +231,7 @@
  bool isLegalOperation(Operation* op, const Version& targetVersion) {
    // Validate op
    auto opInterface = dyn_cast<VersionedOpInterface>(op);
-@@ -234,7 +208,6 @@
-     return succeeded(isLegalAttribute(attr.getValue(), targetVersion));
-   };
-   if (!llvm::all_of(op->getAttrs(), isLegalAttrFn)) return false;
--  LLVM_DEBUG(llvm::dbgs() << "Legal op attributes for target. " << op << '\n');
+-  if (!opInterface) return false;
++  if (!opInterface) return true;
+   if (!isLegalVersion(opInterface, targetVersion)) return false;
+   LLVM_DEBUG(llvm::dbgs() << "Legal op version for target. " << op << '\n');
  
-   // Validate types
-   auto isLegalTypeFn = [&](Type t) {
-@@ -243,11 +216,6 @@
-   if (!llvm::all_of(op->getOperandTypes(), isLegalTypeFn) ||
-       !llvm::all_of(op->getResultTypes(), isLegalTypeFn))
-     return false;
--  LLVM_DEBUG(llvm::dbgs() << "Legal op types for target. " << op << '\n');
--
--  // Validate location
--  if (!isLegalLocation(op->getLoc(), targetVersion)) return false;
--  LLVM_DEBUG(llvm::dbgs() << "Legal op location for target. " << op << '\n');
- 
-   return true;
- }
+@@ -454,7 +472,7 @@
+ namespace stablehlo {
+ void populateVhloToVersionPatterns(MLIRContext* context,
+                                    RewritePatternSet* patterns,
+-                                   TypeConverter* converter) {
++                                   vhlo::VhloTypeConverter* converter) {
+   vhlo::populateWithGenerated(*patterns);
+   patterns->add<vhlo::ScatterOpV1ToV2, vhlo::ScatterOpV2ToV1>(context);
+   patterns->add<vhlo::AllReduceOpV1ToV2, vhlo::AllReduceOpV2ToV1>(context);
 

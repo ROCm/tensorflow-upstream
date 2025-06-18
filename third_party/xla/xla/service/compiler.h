@@ -73,8 +73,13 @@ class AotCompilationResult {
   }
 
   virtual absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
-      Compiler* compiler, const se::StreamExecutor* executor) const {
+      Compiler* compiler, const se::StreamExecutor* executor) const&& {
     return Unimplemented("LoadExecutable unimplemented.");
+  }
+
+  virtual absl::StatusOr<std::unique_ptr<BufferAssignment>> buffer_assignment()
+      const {
+    return Unimplemented("buffer_assignment unimplemented.");
   }
 
   // Returns the optimized HLO module if one was computed and the implementation
@@ -282,7 +287,8 @@ class Compiler {
   // The Compiler class also serves as a point to register compiler objects
   // for the various platforms.
 
-  using CompilerFactory = std::function<std::unique_ptr<Compiler>()>;
+  using CompilerFactory =
+      std::function<absl::StatusOr<std::unique_ptr<Compiler>>()>;
 
   // Registers the compiler singleton for the platform. This is assumed to
   // be a singleton, so no ownership is transferred.
@@ -293,7 +299,8 @@ class Compiler {
 
   // Returns the compiler singleton pointer if it is available for the given
   // platform, or an error status if it is not.
-  static absl::StatusOr<Compiler*> GetForPlatform(const se::Platform* platform);
+  static absl::StatusOr<std::unique_ptr<Compiler>> GetForPlatform(
+      const se::Platform* platform);
 
   // Returns a function that computes the size in bytes of the logical
   // buffer that contains a shape.
@@ -324,7 +331,7 @@ class Compiler {
       absl::string_view filename_prefix) const;
 
   virtual absl::StatusOr<std::unique_ptr<Executable>> DeserializeExecutable(
-      absl::Nonnull<const tsl::protobuf::Message*> serialized) const {
+      const absl::string_view serialized) const {
     return Unimplemented("DeserializeExecutable unimplemented");
   }
 

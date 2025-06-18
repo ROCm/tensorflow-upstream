@@ -21,18 +21,32 @@ limitations under the License.
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
 #include "stablehlo/transforms/Passes.h"  // from @stablehlo
 #include "tensorflow/compiler/mlir/quantization/stablehlo/passes/bridge/passes.h"
-#include "tensorflow/compiler/mlir/quantization/stablehlo/passes/passes.h"
+#include "tensorflow/compiler/mlir/quantization/stablehlo/passes/tf_passes.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/quantization_config.pb.h"
-#include "tensorflow/compiler/mlir/quantization/tensorflow/passes/passes.h"
+#include "tensorflow/compiler/mlir/quantization/tensorflow/passes/tf_passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 
 namespace mlir::quant::stablehlo {
 
+using ::mlir::tf_quant::stablehlo::
+    createConvertShapeToStablehloWithConstraintsPass;
+using ::mlir::tf_quant::stablehlo::createDeferActivationTransposePass;
+using ::mlir::tf_quant::stablehlo::createFoldConstantTransposePass;
+using ::mlir::tf_quant::stablehlo::CreateLiftQuantizableSpotsAsFunctionsPass;
+using ::mlir::tf_quant::stablehlo::createNchwConvolutionToNhwcPass;
+using ::mlir::tf_quant::stablehlo::
+    createReplaceStablehloOpsInMainFunctionWithXlaCallModuleOpsPass;
+using ::mlir::tf_quant::stablehlo::createRestoreFunctionNamePass;
+using ::mlir::tf_quant::stablehlo::createUnwrapXlaCallModuleOpPass;
+using ::mlir::tf_quant::stablehlo::QuantizeCompositeFunctionsPassOptions;
 using ::stablehlo::quantization::CalibrationOptions;
 using ::stablehlo::quantization::DebuggerConfig;
 using ::stablehlo::quantization::PipelineConfig;
 using ::stablehlo::quantization::QuantizationSpecs;
+using tf_quant::CreateAddDumpTensorOpPass;
+using tf_quant::CreateConvertCustomAggregationOpToQuantStatsPass;
+using tf_quant::CreateInsertCustomAggregationOpsPass;
 
 void AddPreCalibrationPasses(OpPassManager& pm,
                              const CalibrationOptions& calibration_options,
@@ -116,15 +130,13 @@ void AddXlaCallModuleOpDeserializationPasses(OpPassManager& pm) {
 }
 
 void AddShapeLegalizationPasses(OpPassManager& pm) {
-  pm.addPass(mhlo::createStablehloLegalizeToHloPass());
+  // TODO: We may need to make a parent pass here that does
+  // shape->StableHLO+cstr because the stablehlo pass requires that the ops made
+  // by cstr are legal.
   pm.addNestedPass<func::FuncOp>(
-      mhlo::createShapeLegalizeToHloPass(/*legalizeConstraints=*/true));
-  // The following 2 passes are used to clean up the spurious UnrealizedCast ops
-  // and shape.assuming regions leftover from the ShapeLegalizeToHlo pass. See
-  // pass definition for details.
+      createConvertShapeToStablehloWithConstraintsPass());
   pm.addPass(createReconcileUnrealizedCastsPass());
   pm.addNestedPass<func::FuncOp>(mlir::createCanonicalizerPass());
-  pm.addPass(mhlo::createHloLegalizeToStablehloPass());
 }
 
 void AddStablehloQuantToIntPasses(OpPassManager& pm) {

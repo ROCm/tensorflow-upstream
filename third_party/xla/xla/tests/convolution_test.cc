@@ -23,6 +23,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
@@ -1681,7 +1682,10 @@ ENTRY Test {
   EXPECT_TRUE(RunAndCompare(kHlo, ErrorSpec{0.001}));
 }
 
-XLA_TEST_F(ConvolutionHloTest, DISABLED_ON_GPU(ConvolveC64Forward)) {
+XLA_TEST_F(ConvolutionHloTest, ConvolveC64Forward) {
+  if (test::DeviceIs(test::kGpu)) {
+    GTEST_SKIP();
+  }
   constexpr char kHlo[] = R"(
 HloModule TestModule
 
@@ -1765,22 +1769,6 @@ ENTRY Test {
      dim_labels=01bf_o01i->f01b
 })";
   EXPECT_TRUE(RunAndCompare(kHlo, ErrorSpec{0.01, 0.01}));
-}
-
-// CUDNN does not support s8->s32 convs
-XLA_TEST_F(ConvolutionHloTest, DISABLED_ON_GPU(PackedNibbleConvolve)) {
-  constexpr char kHlo[] = R"(
-HloModule TestModule
-
-ENTRY Test {
-  %lhs = s8[5,11,11,7] parameter(1)
-  %rhs = s8[3,3,7,7] parameter(0)
-  ROOT %convolution = s32[5,11,11,7] convolution(lhs, rhs),
-     window={size=3x3 pad=1_1x1_1},
-     dim_labels=b01f_01io->b01f,
-     operand_precision={PACKED_NIBBLE,PACKED_NIBBLE}
-})";
-  EXPECT_TRUE(RunAndCompare(kHlo, ErrorSpec{0, 0}));
 }
 
 XLA_TEST_F(ConvolutionHloTest, SwappedOperandConvolveWithStride) {

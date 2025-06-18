@@ -5,7 +5,7 @@
 
 load("@com_github_grpc_grpc//bazel:generate_cc.bzl", "generate_cc")
 load("@com_google_protobuf//:protobuf.bzl", "proto_gen")
-load("@local_xla//third_party/py/rules_pywrap:pywrap.bzl", "use_pywrap_rules")
+load("@local_xla//third_party/py/rules_pywrap:pywrap.default.bzl", "use_pywrap_rules")
 load(
     "@local_xla//xla/tsl:tsl.bzl",
     "clean_dep",
@@ -13,6 +13,7 @@ load(
     "if_tsl_link_protobuf",
 )
 load("@local_xla//xla/tsl/platform:build_config_root.bzl", "if_static")
+load("@rules_python//python:py_library.bzl", "py_library")
 
 # IMPORTANT: Do not remove this load statement. We rely on that //xla/tsl doesn't exist in g3
 # to prevent g3 .bzl files from loading this file.
@@ -137,7 +138,7 @@ def pyx_library(
         shared_objects.append(shared_object_name)
 
     # Now create a py_library with these shared objects as data.
-    native.py_library(
+    py_library(
         name = name,
         srcs = py_srcs,
         deps = py_deps,
@@ -453,7 +454,7 @@ def py_proto_library(
     if default_runtime and not default_runtime in py_libs + deps:
         py_libs = py_libs + [default_runtime]
 
-    native.py_library(
+    py_library(
         name = name,
         srcs = outs + py_extra_srcs,
         deps = py_libs + deps,
@@ -591,7 +592,7 @@ def tf_proto_library_py(
             visibility = ["//visibility:public"],
             deps = [s + "_genproto" for s in py_deps],
         )
-        native.py_library(
+        py_library(
             name = py_name,
             deps = py_deps + [clean_dep("@com_google_protobuf//:protobuf_python")],
             testonly = testonly,
@@ -835,12 +836,9 @@ def strict_cc_test(
       linkstatic: Whether to link statically.
       shuffle_tests: Whether to shuffle the test cases.
       args: The arguments to pass to the test.
-      fail_if_no_test_linked: Whether to fail if no tests are linked. Unimplemented in OSS as
-          --gtest_fail_if_no_test_linked is not available in the OSS build as of 2025-02-27.
+      fail_if_no_test_linked: Whether to fail if no tests are linked.
       **kwargs: Other arguments to pass to the test.
     """
-
-    _ = fail_if_no_test_linked  # buildifier: disable=unused-variable
 
     if args == None:
         args = []
@@ -848,6 +846,12 @@ def strict_cc_test(
     if shuffle_tests:
         # Shuffle tests to avoid test ordering dependencies.
         args = args + ["--gtest_shuffle"]
+
+    if fail_if_no_test_linked:
+        # Fail if no tests are linked.
+        # This is to avoid having a test target that does not run any tests.
+        # This can happen if the test's link options are not set correctly.
+        args = args + ["--gtest_fail_if_no_test_linked"]
 
     native.cc_test(
         name = name,

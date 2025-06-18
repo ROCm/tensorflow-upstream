@@ -18,15 +18,19 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/hlo/testlib/test.h"
 #include "xla/service/test_compilation_environment.pb.h"
-#include "xla/test.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/protobuf.h"
 
 namespace xla {
+
+using ::tsl::testing::StatusIs;
 
 // In order to use TestCompilationEnvironment* with CompilationEnvironments, we
 // must define ProcessNewEnv for them.
@@ -131,6 +135,27 @@ TEST_F(CompilationEnvironmentsTest, MultipleMutableEnvs) {
             201);
 }
 
+TEST_F(CompilationEnvironmentsTest, ReplaceExistingEnv) {
+  CompilationEnvironments envs;
+  auto env1 = std::make_unique<TestCompilationEnvironment1>();
+  env1->set_some_flag(5);
+  TF_ASSERT_OK(envs.AddEnv(std::move(env1)));
+  EXPECT_EQ(envs.GetEnv<TestCompilationEnvironment1>().some_flag(), 5);
+  {
+    auto env2 = std::make_unique<TestCompilationEnvironment1>();
+    env2->set_some_flag(6);
+    ASSERT_THAT(envs.AddEnv(std::move(env2)),
+                StatusIs(absl::StatusCode::kAlreadyExists));
+  }
+  envs.DeleteEnv<TestCompilationEnvironment1>();
+  {
+    auto env2 = std::make_unique<TestCompilationEnvironment1>();
+    env2->set_some_flag(6);
+    TF_ASSERT_OK(envs.AddEnv(std::move(env2)));
+    EXPECT_EQ(envs.GetEnv<TestCompilationEnvironment1>().some_flag(), 6);
+  }
+}
+
 TEST_F(CompilationEnvironmentsTest, CopyConstructor) {
   // Setup envs with 2 environments
   auto envs = std::make_unique<CompilationEnvironments>();
@@ -217,6 +242,21 @@ TEST_F(CompilationEnvironmentsTest, EnvTypePresenceCheck) {
   EXPECT_TRUE(envs.HasEnv<TestCompilationEnvironment1>());
 }
 
+TEST_F(CompilationEnvironmentsTest, InitializeAllKnownEnvs) {
+  CompilationEnvironments envs;
+  auto env1 = std::make_unique<TestCompilationEnvironment1>();
+  env1->set_some_flag(400);
+  TF_ASSERT_OK(envs.AddEnv(std::move(env1)));
+  EXPECT_TRUE(envs.HasEnv<TestCompilationEnvironment1>());
+  EXPECT_EQ(envs.GetMutableEnv<TestCompilationEnvironment1>().some_flag(), 400);
+  TF_ASSERT_OK(envs.InitializeAllKnownEnvs());
+  EXPECT_TRUE(envs.HasEnv<TestCompilationEnvironment1>());
+  EXPECT_EQ(envs.GetEnv<TestCompilationEnvironment1>().some_flag(), 400);
+  EXPECT_TRUE(envs.HasEnv<TestCompilationEnvironment2>());
+  EXPECT_EQ(envs.GetEnv<TestCompilationEnvironment2>().some_other_flag(), 200);
+  EXPECT_TRUE(envs.HasEnv<TestCompilationEnvironment3>());
+  EXPECT_EQ(envs.GetEnv<TestCompilationEnvironment3>().a_third_flag(), 300);
+}
 }  // namespace
 }  // namespace test
 }  // namespace xla

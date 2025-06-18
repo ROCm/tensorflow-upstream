@@ -44,22 +44,24 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/collectives/async_collective_creator.h"
 #include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/layout.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/flag_utils.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/analytical_latency_estimator.h"
+#include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/sol_latency_estimator.h"
-#include "xla/service/gpu/transforms/async_collective_annotator.h"
+#include "xla/service/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/service/gpu/transforms/pgle_accuracy_checker.h"
-#include "xla/service/gpu/transforms/schedule_postprocessing.h"
 #include "xla/service/gpu/transforms/scheduling_instruction_annotator.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/latency_hiding_scheduler.h"
@@ -260,32 +262,6 @@ HloInstructionSequence PostprocessorToScheduleSyncCollectives(
   return result;
 }
 
-SchedulerConfig MakeGPUSchedulerConfig(uint64_t memory_limit,
-                                       int64_t overlap_limit) {
-  SchedulerConfig config;
-  config.all_reduce_overlap_limit = 1;
-  config.collective_broadcast_overlap_limit = 1;
-  config.collective_permute_overlap_limit = 1;
-  config.use_real_cost_model = false;
-  config.aggressive_scheduling_policies = true;
-  config.schedule_send_recvs = true;
-  config.memory_limit = memory_limit;
-  config.parallel_collective_overlap_limit = overlap_limit;
-
-  CHECK(config.collective_broadcast_overlap_limit <=
-        config.parallel_collective_overlap_limit);
-  CHECK(config.all_to_all_overlap_limit <=
-        config.parallel_collective_overlap_limit);
-  CHECK(config.all_gather_overlap_limit <=
-        config.parallel_collective_overlap_limit);
-  CHECK(config.all_reduce_overlap_limit <=
-        config.parallel_collective_overlap_limit);
-  CHECK(config.reduce_scatter_overlap_limit <=
-        config.parallel_collective_overlap_limit);
-
-  return config;
-}
-
 namespace {
 ProfiledInstructionsProto FilterWithFingerprint(
     const ProfiledInstructionsProto& profile, absl::string_view fingerprint) {
@@ -397,6 +373,8 @@ std::optional<ProfiledInstructionsProto> ProfileFromPath(
     LOG(ERROR) << "Tried but failed to parse PGLE proto from "
                << (as_text ? "text" : "binary") << " file '" << path
                << "'. Error message: " << s.message();
+  } else {
+    LOG(ERROR) << "PGLE profile file does not exist: " << path;
   }
   return std::nullopt;
 }
@@ -507,17 +485,26 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
   }
 
   if (options.xla_gpu_enable_analytical_latency_estimator()) {
-    LOG(INFO) << "Using analytical latency estimator";
+    VLOG(1) << "Using analytical latency estimator";
     return std::make_unique<AnalyticalLatencyEstimator>(
         config, std::move(gpu_latency_estimator), gpu_device_info,
         ShapeSizeBytesFunction(pointer_size), module.entry_computation());
   }
 
   if (options.xla_gpu_enable_analytical_sol_latency_estimator()) {
-    LOG(INFO) << "Using Speed-of-Light (SoL) analytical latency estimator";
-    return std::make_unique<SolLatencyEstimator>(
+    VLOG(1) << "Using Speed-of-Light (SoL) analytical latency estimator";
+    auto cost_analysis =
+        std::make_unique<GpuHloCostAnalysis>(GpuHloCostAnalysis::Options{
+            ShapeSizeBytesFunction(pointer_size),
+            /*per_second_rates=*/{},
+            /*min_latencies_seconds=*/{},
+            /*count_multiple_input_accesses=*/true,
+        });
+    CHECK_OK(module.entry_computation()->Accept(cost_analysis.get()));
+    return *SolLatencyEstimator::Create(
         config, std::move(gpu_latency_estimator), gpu_device_info,
-        ShapeSizeBytesFunction(pointer_size), module.entry_computation());
+        ShapeSizeBytesFunction(pointer_size), module.entry_computation(),
+        std::move(cost_analysis));
   }
   return gpu_latency_estimator;
 }
@@ -564,6 +551,7 @@ LegalizeSchedulingAnnotations::Config SchedulingAnnotationsConfig() {
 absl::Status RunLatencyHidingSchedulerPasses(
     HloModule* module, int pointer_size, absl::string_view fingerprint,
     uint64_t memory_limit, const se::DeviceDescription& gpu_device_info) {
+  tsl::profiler::TraceMe traceme("RunLatencyHidingSchedulerPasses");
   HloPassPipeline pipeline("latency-hiding-scheduler");
   const DebugOptions& options = module->config().debug_options();
   pipeline.AddPass<LegalizeSchedulingAnnotations>(
@@ -588,78 +576,14 @@ absl::Status RunLatencyHidingSchedulerPasses(
       shape_size_in_bytes, async_tracker.get(), estimator.get(), config,
       /*target_scheduling_rule=*/nullptr,
       /*early_target_scheduling_rule=*/nullptr,
-      /*post_processing_fn=*/nullptr,
-      /*scheduling_instruction_crosses_overlap_limit=*/
-      GpuScheduleCrossesOverlapLimit);
+      /*post_processing_fn=*/nullptr);
 
   pipeline.AddPass<LatencyHidingScheduler>(
       std::move(estimator), std::move(async_tracker), std::move(scheduler_core),
       shape_size_in_bytes);
   pipeline.AddPass<SchedulingInstructionAnnotator>();
-  pipeline.AddPass<SchedulePostprocessing>();
 
   return pipeline.Run(module).status();
-}
-
-// Compute the device memory limit to be used by passes like scheduler and
-// HLO rematerialization.
-uint64_t GetSchedulerMemoryLimit(const HloModule& module,
-                                 const se::DeviceDescription& gpu_device_info,
-                                 int pointer_size) {
-  // There is a "base" value which is either specified in HloModuleConfig
-  // (this value should take into account the fact that we need to leave some
-  // memory free for allocations that happen outside of XLA's allocator) or
-  // obtained from GPU device info (we scale down this value to leave some
-  // space for these outside XLA's allocator allocation).
-  //
-  // From that base value, subtract any input and output sizes (assuming they
-  // are live throughout the execution) and then apply a slop factor.
-  const uint64_t base_limit =
-      module.config().device_memory_size() != 0
-          ? module.config().device_memory_size()
-          : gpu_device_info.device_memory_size() * 80 / 100;
-
-  // Create size function that only counts device memory
-  auto get_device_shape_size =
-      gpu::ShapeSizeBytesFunction(pointer_size,
-                                  /*memory_space=*/Layout::kDefaultMemorySpace);
-
-  // Find the total size of inputs and outputs.
-  uint64_t total_io_size = 0;
-  for (HloInstruction* param :
-       module.entry_computation()->parameter_instructions()) {
-    ShapeUtil::ForEachSubshape(
-        param->shape(),
-        [&](const Shape& subshape, const ShapeIndex& /*index*/) {
-          total_io_size += get_device_shape_size(subshape);
-        });
-  }
-  ShapeUtil::ForEachSubshape(
-      module.result_shape(),
-      [&](const Shape& subshape, const ShapeIndex& /*index*/) {
-        total_io_size += get_device_shape_size(subshape);
-      });
-
-  // If any inputs and outputs are aliased, do not double count them.
-  module.input_output_alias_config().ForEachAlias(
-      [&](const ShapeIndex& output_index,
-          const HloInputOutputAliasConfig::Alias&) {
-        const Shape& subshape =
-            ShapeUtil::GetSubshape(module.result_shape(), output_index);
-        total_io_size -= get_device_shape_size(subshape);
-      });
-
-  uint64_t limit = 0;
-  if (total_io_size > base_limit) {
-    LOG(ERROR) << "The byte size of input/output arguments (" << total_io_size
-               << ") exceeds the base limit (" << base_limit
-               << "). This indicates an error in the calculation!";
-  } else {
-    limit = (base_limit - total_io_size) *
-            module.config().debug_options().xla_gpu_memory_limit_slop_factor() /
-            100;
-  }
-  return limit;
 }
 
 bool IsLHSEnabled(const HloModule& module, absl::string_view fingerprint) {
@@ -746,7 +670,7 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
 absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
     HloModule* module, int64_t pointer_size,
     const se::DeviceDescription& gpu_device_info) {
-  tsl::profiler::TraceMe traceme("GpuCompiler::CompileToBackendResult");
+  tsl::profiler::TraceMe traceme("ScheduleGpuModule");
 
   // Tag the module with its 128 bit fingerprint. The fingerprint should include
   // instruction name with ids.
@@ -792,9 +716,8 @@ absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
     }
     return ShapeUtil::ByteSizeOf(shape, pointer_size);
   };
-  ModuleSchedulerAlgorithm algorithm = ComputationSchedulerToModuleScheduler(
-      DefaultMemoryScheduler, PostProcessSchedule);
-  return ScheduleModule(module, size_func, algorithm,
+  return ScheduleModule(module,
+                        DefaultMemoryScheduler(size_func, PostProcessSchedule),
                         /*execution_threads=*/{}, peak_memory_bytes);
 }
 
@@ -802,6 +725,90 @@ HloInstructionSequence PostProcessSchedule(
     const HloInstructionSequence& input) {
   HloInstructionSequence result = PostprocessorToScheduleSyncCollectives(input);
   return PostprocessorToScheduleAsEarlyOrLateAsPossible(result);
+}
+
+uint64_t GetSchedulerMemoryLimit(const HloModule& module,
+                                 const se::DeviceDescription& gpu_device_info,
+                                 int pointer_size) {
+  // There is a "base" value which is either specified in HloModuleConfig
+  // (this value should take into account the fact that we need to leave some
+  // memory free for allocations that happen outside of XLA's allocator) or
+  // obtained from GPU device info (we scale down this value to leave some
+  // space for these outside XLA's allocator allocation).
+  //
+  // From that base value, subtract any input and output sizes (assuming they
+  // are live throughout the execution) and then apply a slop factor.
+  const uint64_t base_limit =
+      module.config().device_memory_size() != 0
+          ? module.config().device_memory_size()
+          : gpu_device_info.device_memory_size() * 80 / 100;
+
+  // Create size function that only counts device memory
+  auto get_device_shape_size =
+      gpu::ShapeSizeBytesFunction(pointer_size,
+                                  /*memory_space=*/Layout::kDefaultMemorySpace);
+
+  // Find the total size of inputs and outputs.
+  uint64_t total_io_size = 0;
+  for (HloInstruction* param :
+       module.entry_computation()->parameter_instructions()) {
+    ShapeUtil::ForEachSubshape(
+        param->shape(),
+        [&](const Shape& subshape, const ShapeIndex& /*index*/) {
+          total_io_size += get_device_shape_size(subshape);
+        });
+  }
+  ShapeUtil::ForEachSubshape(
+      module.result_shape(),
+      [&](const Shape& subshape, const ShapeIndex& /*index*/) {
+        total_io_size += get_device_shape_size(subshape);
+      });
+
+  // If any inputs and outputs are aliased, do not double count them.
+  module.input_output_alias_config().ForEachAlias(
+      [&](const ShapeIndex& output_index,
+          const HloInputOutputAliasConfig::Alias&) {
+        const Shape& subshape =
+            ShapeUtil::GetSubshape(module.result_shape(), output_index);
+        total_io_size -= get_device_shape_size(subshape);
+      });
+
+  if (total_io_size > base_limit) {
+    LOG(ERROR) << "The byte size of input/output arguments (" << total_io_size
+               << ") exceeds the base limit (" << base_limit
+               << "). This indicates an error in the calculation!";
+    return 0;
+  }
+
+  return (base_limit - total_io_size) *
+         module.config().debug_options().xla_gpu_memory_limit_slop_factor() /
+         100;
+}
+
+SchedulerConfig MakeGPUSchedulerConfig(uint64_t memory_limit,
+                                       int64_t overlap_limit) {
+  SchedulerConfig config;
+  config.all_reduce_overlap_limit = 1;
+  config.collective_broadcast_overlap_limit = 1;
+  config.collective_permute_overlap_limit = 1;
+  config.use_real_cost_model = false;
+  config.aggressive_scheduling_policies = true;
+  config.schedule_send_recvs = true;
+  config.memory_limit = memory_limit;
+  config.parallel_collective_overlap_limit = overlap_limit;
+
+  CHECK(config.collective_broadcast_overlap_limit <=
+        config.parallel_collective_overlap_limit);
+  CHECK(config.all_to_all_overlap_limit <=
+        config.parallel_collective_overlap_limit);
+  CHECK(config.all_gather_overlap_limit <=
+        config.parallel_collective_overlap_limit);
+  CHECK(config.all_reduce_overlap_limit <=
+        config.parallel_collective_overlap_limit);
+  CHECK(config.reduce_scatter_overlap_limit <=
+        config.parallel_collective_overlap_limit);
+
+  return config;
 }
 
 }  // namespace gpu

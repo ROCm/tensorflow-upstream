@@ -16,13 +16,13 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <ostream>
 #include <string>
 #include <utility>
 
+#include "absl/base/nullability.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
@@ -43,8 +43,10 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {
@@ -78,7 +80,7 @@ absl::StatusOr<Communicator*> Thunk::CollectiveCliques::GetComm(
   return *communicator;
 }
 
-absl::StatusOr<bool> Thunk::CollectiveCliques::is_local_clique(
+absl::StatusOr<bool> Thunk::CollectiveCliques::peer_access_enabled(
     const GpuCliqueKey& clique_key) const {
   // Check that we locked access to a clique for `clique_key`.
   auto clique = cliques_map_.find(clique_key);
@@ -87,19 +89,7 @@ absl::StatusOr<bool> Thunk::CollectiveCliques::is_local_clique(
                                             clique_key.ToString()));
   }
 
-  return (*clique->second)->IsLocal();
-}
-
-absl::StatusOr<size_t> Thunk::CollectiveCliques::num_communicators(
-    const GpuCliqueKey& clique_key) const {
-  // Check that we locked access to a clique for `clique_key`.
-  auto clique = cliques_map_.find(clique_key);
-  if (clique == cliques_map_.end()) {
-    return absl::NotFoundError(absl::StrCat("No clique found for clique key: ",
-                                            clique_key.ToString()));
-  }
-
-  return (*clique->second)->num_communicators();
+  return (*clique->second)->peer_access_enabled();
 }
 
 //===----------------------------------------------------------------------===//
@@ -198,11 +188,6 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                            ? run_options.run_options()
                                  .gpu_executable_run_options()
                                  ->enable_mock_collectives()
-                           : false,
-                       run_options.run_options().gpu_executable_run_options()
-                           ? run_options.run_options()
-                                 .gpu_executable_run_options()
-                                 ->requires_exclusive_lock_on_gpu()
                            : false);
 }
 
@@ -226,8 +211,7 @@ Thunk::ExecuteParams::ExecuteParams(
     SendDeviceMemoryFunction* send_device_memory_function,
     RecvDeviceMemoryFunction* recv_device_memory_function,
     const ffi::ExecutionContext* ffi_execution_context,
-    ExecutionStreamIdMap additional_compute_streams, bool mock_collectives,
-    bool requires_exclusive_lock_on_gpu)
+    ExecutionStreamIdMap additional_compute_streams, bool mock_collectives)
     : buffer_allocations(buffer_allocations),
       stream(stream),
       command_buffer_trace_stream(command_buffer_trace_stream),
@@ -239,8 +223,7 @@ Thunk::ExecuteParams::ExecuteParams(
       recv_device_memory_function(recv_device_memory_function),
       ffi_execution_context(ffi_execution_context),
       additional_compute_streams(additional_compute_streams),
-      mock_collectives(mock_collectives),
-      requires_exclusive_lock_on_gpu(requires_exclusive_lock_on_gpu) {}
+      mock_collectives(mock_collectives) {}
 
 //===----------------------------------------------------------------------===//
 
@@ -249,64 +232,67 @@ Thunk::ExecuteParams::ExecuteParams(
   case Thunk::x: \
     return #x
   switch (kind) {
-    CASE(kDynamicSlice);
+    // # go/keep-sorted start
+    CASE(kAllGather);
+    CASE(kAllGatherDone);
+    CASE(kAllGatherStart);
+    CASE(kAllReduce);
+    CASE(kAllReduceDone);
+    CASE(kAllReduceStart);
+    CASE(kAllToAll);
+    CASE(kAllToAllDone);
+    CASE(kAllToAllStart);
     CASE(kCholesky);
+    CASE(kCollectiveBroadcast);
+    CASE(kCollectiveBroadcastDone);
+    CASE(kCollectiveBroadcastStart);
+    CASE(kCollectiveKernel);
+    CASE(kCollectivePermute);
+    CASE(kCollectivePermuteDone);
+    CASE(kCollectivePermuteStart);
     CASE(kCommandBuffer);
     CASE(kConditional);
     CASE(kConvolution);
     CASE(kConvolutionReorder);
     CASE(kCopy);
     CASE(kCopyDone);
+    CASE(kCuDnn);
     CASE(kCubSort);
     CASE(kCublasLtMatmul);
     CASE(kCustomCall);
     CASE(kCustomKernel);
-    CASE(kNcclAllGather);
-    CASE(kNcclAllGatherStart);
-    CASE(kNcclAllGatherDone);
-    CASE(kNcclAllReduce);
-    CASE(kNcclAllReduceStart);
-    CASE(kNcclAllReduceDone);
-    CASE(kNcclCollectiveBroadcast);
-    CASE(kNcclCollectiveBroadcastStart);
-    CASE(kNcclCollectiveBroadcastDone);
-    CASE(kNcclCollectivePermute);
-    CASE(kNcclCollectivePermuteStart);
-    CASE(kNcclCollectivePermuteDone);
-    CASE(kNcclGroupStart);
-    CASE(kNcclGroupDone);
-    CASE(kNcclReduceScatter);
-    CASE(kNcclReduceScatterStart);
-    CASE(kNcclReduceScatterDone);
-    CASE(kNcclAllToAll);
-    CASE(kNcclAllToAllStart);
-    CASE(kNcclAllToAllDone);
-    CASE(kNcclSend);
-    CASE(kNcclSendDone);
-    CASE(kNcclRaggedAllToAll);
-    CASE(kNcclRaggedAllToAllStart);
-    CASE(kNcclRaggedAllToAllDone);
-    CASE(kNcclRecv);
-    CASE(kNcclRecvDone);
+    CASE(kDynamicSlice);
     CASE(kFft);
     CASE(kGemm);
+    CASE(kGroupDone);
+    CASE(kGroupStart);
+    CASE(kHostRecv);
+    CASE(kHostRecvDone);
+    CASE(kHostSend);
+    CASE(kHostSendDone);
     CASE(kInfeed);
     CASE(kKernel);
     CASE(kMemset32BitValue);
     CASE(kMemzero);
     CASE(kNorm);
     CASE(kOutfeed);
-    CASE(kSend);
-    CASE(kSendDone);
     CASE(kPartitionId);
-    CASE(kReplicaId);
+    CASE(kRaggedAllToAll);
+    CASE(kRaggedAllToAllDone);
+    CASE(kRaggedAllToAllStart);
     CASE(kRecv);
     CASE(kRecvDone);
+    CASE(kReduceScatter);
+    CASE(kReduceScatterDone);
+    CASE(kReduceScatterStart);
+    CASE(kReplicaId);
+    CASE(kSend);
+    CASE(kSendDone);
     CASE(kSequential);
     CASE(kTriangularSolve);
-    CASE(kWhile);
     CASE(kWaitForStreams);
-    CASE(kCuDnn);
+    CASE(kWhile);
+    // # go/keep-sorted end
   }
 }
 
@@ -328,9 +314,19 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
 }
 
 bool IsReductionCollective(Thunk::Kind kind) {
-  return kind == Thunk::kNcclAllReduce || kind == Thunk::kNcclAllReduceStart ||
-         kind == Thunk::kNcclReduceScatter ||
-         kind == Thunk::kNcclReduceScatterStart;
+  return kind == Thunk::kAllReduce || kind == Thunk::kAllReduceStart ||
+         kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart;
+}
+
+absl::StatusOr<Thunk::ThunkInfo> Thunk::ThunkInfo::FromProto(
+    const ThunkInfoProto& proto) {
+  TF_RET_CHECK(proto.execution_stream_id() >= 0)
+      << "The thunk execution stream ID must be non-negative, but got "
+      << proto.execution_stream_id() << ".";
+  Thunk::ThunkInfo thunk_info;
+  thunk_info.profile_annotation = proto.profile_annotation();
+  thunk_info.execution_stream_id = proto.execution_stream_id();
+  return thunk_info;
 }
 
 Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
@@ -348,33 +344,35 @@ Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
 
 bool Thunk::IsCollective() const {
   switch (kind()) {
-    case kNcclAllGather:
-    case kNcclAllGatherStart:
-    case kNcclAllGatherDone:
-    case kNcclAllReduce:
-    case kNcclAllReduceStart:
-    case kNcclAllReduceDone:
-    case kNcclCollectiveBroadcast:
-    case kNcclCollectiveBroadcastStart:
-    case kNcclCollectiveBroadcastDone:
-    case kNcclCollectivePermute:
-    case kNcclCollectivePermuteStart:
-    case kNcclCollectivePermuteDone:
-    case kNcclReduceScatter:
-    case kNcclReduceScatterStart:
-    case kNcclReduceScatterDone:
-    case kNcclAllToAll:
-    case kNcclAllToAllStart:
-    case kNcclAllToAllDone:
-    case kNcclRaggedAllToAll:
-    case kNcclRaggedAllToAllStart:
-    case kNcclRaggedAllToAllDone:
-    case kNcclSend:
-    case kNcclSendDone:
-    case kNcclRecv:
-    case kNcclRecvDone:
-    case kNcclGroupStart:
-    case kNcclGroupDone:
+    // go/keep-sorted start
+    case kAllGather:
+    case kAllGatherDone:
+    case kAllGatherStart:
+    case kAllReduce:
+    case kAllReduceDone:
+    case kAllReduceStart:
+    case kAllToAll:
+    case kAllToAllDone:
+    case kAllToAllStart:
+    case kCollectiveBroadcast:
+    case kCollectiveBroadcastDone:
+    case kCollectiveBroadcastStart:
+    case kCollectivePermute:
+    case kCollectivePermuteDone:
+    case kCollectivePermuteStart:
+    case kGroupDone:
+    case kGroupStart:
+    case kRaggedAllToAll:
+    case kRaggedAllToAllDone:
+    case kRaggedAllToAllStart:
+    case kRecv:
+    case kRecvDone:
+    case kReduceScatter:
+    case kReduceScatterDone:
+    case kReduceScatterStart:
+    case kSend:
+    case kSendDone:
+      // go/keep-sorted end
       return true;
     default:
       return false;
@@ -385,5 +383,20 @@ void Thunk::ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const {
   fn(this);
 }
 
+absl::StatusOr<ThunkProto> Thunk::ToProto() const {
+  ThunkProto proto;
+  proto.mutable_thunk_info()->set_execution_stream_id(
+      execution_stream_id_.value());
+  proto.mutable_thunk_info()->set_profile_annotation(profile_annotation_);
+  return proto;
+}
+
+absl::StatusOr<GpuCollectives* absl_nonnull> Thunk::GetGpuCollectives(
+    CollectiveExecuteParams const& params) {
+  if (params.collectives == nullptr) {
+    return Internal("Collectives API is not provided");
+  }
+  return params.collectives;
+}
 }  // namespace gpu
 }  // namespace xla

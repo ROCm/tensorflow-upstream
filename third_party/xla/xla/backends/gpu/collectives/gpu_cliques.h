@@ -22,6 +22,7 @@ limitations under the License.
 #include <memory>
 
 #include "absl/container/btree_map.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -65,8 +66,12 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
     GpuCollectives* collectives, se::StreamExecutor* device, RunId run_id,
     const GpuCliqueKey& clique_key,
     const GpuCollectives::CliqueIdCallback& clique_id_callback, RankId rank,
-    size_t num_local_participants, const AcquiredCliquesMap& acquired_cliques,
-    int64_t max_nchannels = 0);
+    const AcquiredCliquesMap& acquired_cliques, int64_t max_nchannels = 0);
+
+// Aborts and invalidates all cliques that have been created via
+// AcquireGpuClique. Subsequent calls to AcquireGpuClique will return new
+// cliques.
+absl::Status AbortAllCliques();
 
 }  // namespace xla::gpu
 

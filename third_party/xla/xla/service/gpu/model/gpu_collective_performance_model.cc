@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
-#include <vector>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -29,10 +28,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 
 #if GOOGLE_CUDA
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
 #endif  // GOOGLE_CUDA
 namespace xla {
@@ -136,7 +137,7 @@ float GpuPerformanceWithCollectiveModel::GetNvlinkBw(
 }
 
 /*static*/ bool GpuPerformanceWithCollectiveModel::InitNvml() {
-#if GOOGLE_CUDA && (defined(PLATFORM_POSIX) || defined(PLATFORM_GOOGLE))
+#if GOOGLE_CUDA && defined(PLATFORM_POSIX) && !defined(PLATFORM_GOOGLE)
   void* libhandle = dlopen("libnvidia-ml.so.1", RTLD_NOW);
   CHECK(libhandle != nullptr) << "Failed to open libnvidia-ml.so.1";
 
@@ -151,9 +152,22 @@ float GpuPerformanceWithCollectiveModel::GetNvlinkBw(
       {(void**)&xla_nvmlDeviceGetHandleByIndex, "nvmlDeviceGetHandleByIndex"},
       {(void**)&xla_nvmlDeviceGetNvLinkCapability,
        "nvmlDeviceGetNvLinkCapability"},
+      {(void**)&xla_nvmlSystemGetNVMLVersion, "nvmlSystemGetNVMLVersion"},
   };
+#if GOOGLE_CUDA && CUDA_VERSION >= 12040
+  symbols.push_back({(void**)&xla_nvmlDeviceGetHandleByPciBusId_v2,
+                     "nvmlDeviceGetHandleByPciBusId_v2"});
+  symbols.push_back({(void**)&xla_nvmlDeviceGetGpuFabricInfoV,
+                     "nvmlDeviceGetGpuFabricInfoV"});
+#endif  // CUDA_VERSION >= 12040
   for (SymbolEntry se : symbols) {
     *se.functor = dlsym(libhandle, se.name);
+    if (*se.functor == nullptr) {
+      const char* dlsym_error = dlerror();
+      if (dlsym_error) {
+        VLOG(0) << "Error: " << dlsym_error;
+      }
+    }
   }
   nvmlReturn_t init_result = xla_nvmlInit();
   return init_result == NVML_SUCCESS;

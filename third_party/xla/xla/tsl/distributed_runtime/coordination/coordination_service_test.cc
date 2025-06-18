@@ -44,18 +44,20 @@ limitations under the License.
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
+#include "xla/tsl/util/proto/proto_matchers.h"
 #include "tsl/platform/random.h"
 
 namespace tsl {
 namespace {
+
 using ::testing::Each;
-using ::testing::Eq;
-using ::testing::EqualsProto;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
+using ::testing::Matcher;
 using ::testing::UnorderedElementsAre;
-using ::testing::UnorderedPointwise;
+using ::testing::UnorderedElementsAreArray;
 using ::testing::status::StatusIs;
+using ::tsl::proto_testing::EqualsProto;
 
 using tensorflow::CoordinatedJob;
 using tensorflow::CoordinatedTask;
@@ -121,6 +123,7 @@ class TestCoordinationClient : public CoordinationClient {
   UNIMPLEMENTED(ResetTask);
   UNIMPLEMENTED(ReportErrorToService);
   UNIMPLEMENTED(GetTaskState);
+  UNIMPLEMENTED(GetJobState);
   UNIMPLEMENTED(InsertKeyValue);
   UNIMPLEMENTED(TryGetKeyValue);
   UNIMPLEMENTED(GetKeyValueDir);
@@ -190,12 +193,12 @@ class CoordinationBarrierTest : public ::testing::Test {
     }
     CoordinationServiceConfig config = GetCoordinationServiceConfig(num_tasks);
 
-    coord_service_ = CoordinationServiceInterface::EnableCoordinationService(
-        Env::Default(), config, std::move(client_cache));
+    coord_service_ = CoordinationService::Create(Env::Default(), config,
+                                                 std::move(client_cache));
     // Register the tasks.
     for (int i = 0; i < num_tasks; ++i) {
       absl::Status s =
-          coord_service_->RegisterTask(tasks_[i], /*incarnation=*/0);
+          coord_service_->RegisterTask(tasks_[i], /*incarnation=*/i);
       if (!s.ok()) {
         LOG(FATAL) << "RegisterTask() failed in CoordinationBarrierTest(): "
                    << s;
@@ -203,11 +206,18 @@ class CoordinationBarrierTest : public ::testing::Test {
     }
   }
 
-  CoordinationServiceInterface* GetCoordinationService() {
-    return coord_service_.get();
+  CoordinationService* GetCoordinationService() { return coord_service_.get(); }
+  CoordinatedTask GetTask(int i) const { return tasks_[i]; }
+  const std::vector<CoordinatedTask>& GetTasks() const { return tasks_; }
+
+  // Returns a vector of matchers to match the tasks.
+  std::vector<Matcher<CoordinatedTask>> GetTaskMatchers() const {
+    std::vector<Matcher<CoordinatedTask>> matchers;
+    for (const auto& task : tasks_) {
+      matchers.push_back(EqualsProto(task));
+    }
+    return matchers;
   }
-  CoordinatedTask GetTask(int i) { return tasks_[i]; }
-  const std::vector<CoordinatedTask>& GetTasks() { return tasks_; }
 
   // TODO(b/286141652) Refactor this method into a util file.
   std::string GetTaskName(const CoordinatedTask& task) {
@@ -224,7 +234,7 @@ class CoordinationBarrierTest : public ::testing::Test {
   }
 
  private:
-  std::unique_ptr<CoordinationServiceInterface> coord_service_;
+  std::unique_ptr<CoordinationService> coord_service_;
   std::vector<CoordinatedTask> tasks_;
   std::vector<std::unique_ptr<TestCoordinationClient>> clients_;
 };
@@ -273,8 +283,8 @@ class CoordinateTwoTasksTest : public ::testing::Test {
       config.set_allow_new_incarnation_to_reconnect(true);
     }
     // Init service.
-    coord_service_ = CoordinationServiceInterface::EnableCoordinationService(
-        Env::Default(), config, std::move(client_cache));
+    coord_service_ = CoordinationService::Create(Env::Default(), config,
+                                                 std::move(client_cache));
   }
 
   CoordinatedTask task_0_;
@@ -285,7 +295,7 @@ class CoordinateTwoTasksTest : public ::testing::Test {
   const uint64_t incarnation_1_ = random::New64();
   const uint64_t incarnation_1_new_ = random::New64();
   TestCoordinationClient client_1_;
-  std::unique_ptr<CoordinationServiceInterface> coord_service_;
+  std::unique_ptr<CoordinationService> coord_service_;
 };
 
 // Construct fake device protos.
@@ -363,9 +373,9 @@ TEST(CoordinationServiceTest, TestCoordinatedJobs) {
   client_cache->AddTask("/job:worker/replica:0/task:1", &wi1);
   TestCoordinationClient ei;
   client_cache->AddTask("/job:evaluator/replica:0/task:0", &ei);
-  std::unique_ptr<CoordinationServiceInterface> coord_service =
-      CoordinationServiceInterface::EnableCoordinationService(
-          Env::Default(), config, std::move(client_cache));
+  std::unique_ptr<CoordinationService> coord_service =
+      CoordinationService::Create(Env::Default(), config,
+                                  std::move(client_cache));
 
   // Each coordinated task registers and waits for other tasks.
   absl::Notification register_chief;
@@ -407,10 +417,9 @@ TEST(CoordinationServiceTest, RegisterTask_AlreadyConnected_Succeeds) {
   CoordinatedTask task_0;
   task_0.set_job_name("worker");
   task_0.set_task_id(0);
-  std::unique_ptr<CoordinationServiceInterface> coord_service =
-      CoordinationServiceInterface::EnableCoordinationService(
-          Env::Default(), config,
-          /*cache=*/nullptr);
+  std::unique_ptr<CoordinationService> coord_service =
+      CoordinationService::Create(Env::Default(), config,
+                                  /*cache=*/nullptr);
   // Task connects to coordination service.
   ASSERT_OK(coord_service->RegisterTask(task_0, /*incarnation=*/0));
 
@@ -428,10 +437,9 @@ TEST(CoordinationServiceTest,
   CoordinatedTask task_0;
   task_0.set_job_name("worker");
   task_0.set_task_id(0);
-  std::unique_ptr<CoordinationServiceInterface> coord_service =
-      CoordinationServiceInterface::EnableCoordinationService(
-          Env::Default(), config,
-          /*cache=*/nullptr);
+  std::unique_ptr<CoordinationService> coord_service =
+      CoordinationService::Create(Env::Default(), config,
+                                  /*cache=*/nullptr);
   // Task connects to coordination service.
   ASSERT_OK(coord_service->RegisterTask(task_0, /*incarnation=*/0));
 
@@ -450,10 +458,9 @@ TEST(CoordinationServiceTest, RegisterTask_AlreadyInError_Fails) {
   CoordinatedTask task_0;
   task_0.set_job_name("worker");
   task_0.set_task_id(0);
-  std::unique_ptr<CoordinationServiceInterface> coord_service =
-      CoordinationServiceInterface::EnableCoordinationService(
-          Env::Default(), config,
-          /*cache=*/nullptr);
+  std::unique_ptr<CoordinationService> coord_service =
+      CoordinationService::Create(Env::Default(), config,
+                                  /*cache=*/nullptr);
   // Task connects to coordination service.
   ASSERT_OK(coord_service->RegisterTask(task_0, /*incarnation=*/0));
   // Arbitrarily set task to be in error.
@@ -622,6 +629,62 @@ TEST_F(CoordinateTwoTasksTest, TestTaskRestart) {
   EXPECT_THAT(client_0_.GetStatus(), StatusIs(absl::StatusCode::kAborted));
 }
 
+TEST_F(CoordinateTwoTasksTest, GetJobStateSucceeds) {
+  // This test calls GetJobState on two successfully connected tasks.
+  EnableCoordinationService();
+  ASSERT_OK(coord_service_->RegisterTask(task_0_, incarnation_0_));
+  ASSERT_OK(coord_service_->RegisterTask(task_1_, incarnation_1_));
+
+  std::vector<tensorflow::CoordinatedTaskStateInfo> want(2);
+  *want[0].mutable_task() = task_0_;
+  want[0].set_incarnation(incarnation_0_);
+  want[0].set_state(tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED);
+  *want[1].mutable_task() = task_1_;
+  want[1].set_incarnation(incarnation_1_);
+  want[1].set_state(tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED);
+  EXPECT_THAT(coord_service_->GetJobState("worker"),
+              UnorderedElementsAre(EqualsProto(want[0]), EqualsProto(want[1])));
+}
+
+TEST_F(CoordinateTwoTasksTest, GetJobStateReturnsDisconnected) {
+  // This test calls GetJobState on one successfully connected task and one
+  // disconnected task.
+  EnableCoordinationService();
+  ASSERT_OK(coord_service_->RegisterTask(task_0_, incarnation_0_));
+  ASSERT_OK(coord_service_->RegisterTask(task_1_, incarnation_1_));
+  ASSERT_OK(coord_service_->ResetTask(task_1_));
+
+  std::vector<tensorflow::CoordinatedTaskStateInfo> want(2);
+  *want[0].mutable_task() = task_0_;
+  want[0].set_incarnation(incarnation_0_);
+  want[0].set_state(tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED);
+  *want[1].mutable_task() = task_1_;
+  want[1].set_incarnation(incarnation_1_);
+  want[1].set_state(tensorflow::CoordinatedTaskState::TASKSTATE_DISCONNECTED);
+  EXPECT_THAT(coord_service_->GetJobState("worker"),
+              UnorderedElementsAre(EqualsProto(want[0]), EqualsProto(want[1])));
+}
+
+TEST_F(CoordinateTwoTasksTest, GetJobStateReturnsNewIncarnation) {
+  // This test calls GetJobState after one task has restarted with a new
+  // incarnation.
+  EnableCoordinationService();
+  ASSERT_OK(coord_service_->RegisterTask(task_0_, incarnation_0_));
+  ASSERT_OK(coord_service_->RegisterTask(task_1_, incarnation_1_));
+  ASSERT_OK(coord_service_->ResetTask(task_1_));
+  ASSERT_OK(coord_service_->RegisterTask(task_1_, incarnation_1_ + 1));
+
+  std::vector<tensorflow::CoordinatedTaskStateInfo> want(2);
+  *want[0].mutable_task() = task_0_;
+  want[0].set_incarnation(incarnation_0_);
+  want[0].set_state(tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED);
+  *want[1].mutable_task() = task_1_;
+  want[1].set_incarnation(incarnation_1_ + 1);
+  want[1].set_state(tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED);
+  EXPECT_THAT(coord_service_->GetJobState("worker"),
+              UnorderedElementsAre(EqualsProto(want[0]), EqualsProto(want[1])));
+}
+
 TEST_F(CoordinateTwoTasksTest, InsertKeyValue_Duplicate_Fail) {
   EnableCoordinationService();
   ASSERT_OK(coord_service_->InsertKeyValue("key0", "original_value"));
@@ -659,9 +722,9 @@ TEST_F(CoordinateTwoTasksTest, TestSetGetValues) {
 
   // Get simple key
   absl::Notification n1;
-  absl::StatusOr<std::string_view> ret;
+  absl::StatusOr<absl::string_view> ret;
   coord_service_->GetKeyValueAsync(
-      "key0", [&](const absl::StatusOr<std::string_view>& status_or_value) {
+      "key0", [&](const absl::StatusOr<absl::string_view>& status_or_value) {
         ret = status_or_value;
         n1.Notify();
       });
@@ -672,7 +735,7 @@ TEST_F(CoordinateTwoTasksTest, TestSetGetValues) {
   absl::Notification n2;
   coord_service_->GetKeyValueAsync(
       "path//to///key1////",
-      [&](const absl::StatusOr<std::string_view>& status_or_value) {
+      [&](const absl::StatusOr<absl::string_view>& status_or_value) {
         ret = status_or_value;
         n2.Notify();
       });
@@ -684,7 +747,7 @@ TEST_F(CoordinateTwoTasksTest, TestSetGetValues) {
   // Get key that is not available
   absl::Notification n3;
   coord_service_->GetKeyValueAsync(
-      "key0", [&](const absl::StatusOr<std::string_view>& status_or_value) {
+      "key0", [&](const absl::StatusOr<absl::string_view>& status_or_value) {
         ret = status_or_value;
         n3.Notify();
       });
@@ -704,7 +767,7 @@ TEST_F(CoordinateTwoTasksTest, TestSetGetValues) {
       // service shutdown. Hence, we use a shared pointer for notification so
       // that the it will not be deallocated before the pending callback is
       // cleaned up.
-      [n4](const absl::StatusOr<std::string_view>& status_or_value) {
+      [n4](const absl::StatusOr<absl::string_view>& status_or_value) {
         n4->Notify();
       });
   EXPECT_FALSE(n4->HasBeenNotified());
@@ -714,9 +777,9 @@ TEST(CoordinationServiceTest, TryGetKeyValue) {
   const CoordinationServiceConfig config =
       GetCoordinationServiceConfig(/*num_tasks=*/1);
   auto client_cache = std::make_unique<TestCoordinationClientCache>();
-  std::unique_ptr<CoordinationServiceInterface> coord_service =
-      CoordinationServiceInterface::EnableCoordinationService(
-          Env::Default(), config, std::move(client_cache));
+  std::unique_ptr<CoordinationService> coord_service =
+      CoordinationService::Create(Env::Default(), config,
+                                  std::move(client_cache));
 
   // Try to get nonexistent key.
   absl::StatusOr<std::string> result =
@@ -828,9 +891,9 @@ TEST(CoordinationServiceTest, ListClusterDevices_TfDevice) {
   task_2.set_task_id(2);
   absl::Status status = absl::OkStatus();
   auto client_cache = std::make_unique<TestCoordinationClientCache>();
-  std::unique_ptr<CoordinationServiceInterface> coord_service =
-      CoordinationServiceInterface::EnableCoordinationService(
-          Env::Default(), config, std::move(client_cache));
+  std::unique_ptr<CoordinationService> coord_service =
+      CoordinationService::Create(Env::Default(), config,
+                                  std::move(client_cache));
   absl::Notification n;
   // Map fake devices to each task.
   DeviceInfo local_devices_0;
@@ -854,6 +917,7 @@ TEST(CoordinationServiceTest, ListClusterDevices_TfDevice) {
   coord_service->WaitForAllTasks(task_2, local_devices_2, [&](absl::Status s) {
     ASSERT_OK(s);
     // Gather the cluster device info.
+    coord_service->state_mu_.AssertHeld();
     cluster_devices = coord_service->ListClusterDevices();
     n.Notify();
   });
@@ -884,9 +948,9 @@ TEST(CoordinationServiceTest, ListClusterDevices_XlaDevice) {
   task_2.set_task_id(2);
   absl::Status status = absl::OkStatus();
   auto client_cache = std::make_unique<TestCoordinationClientCache>();
-  std::unique_ptr<CoordinationServiceInterface> coord_service =
-      CoordinationServiceInterface::EnableCoordinationService(
-          Env::Default(), config, std::move(client_cache));
+  std::unique_ptr<CoordinationService> coord_service =
+      CoordinationService::Create(Env::Default(), config,
+                                  std::move(client_cache));
   coord_service->SetDeviceAggregationFunction(
       [](const DeviceInfo& raw_global_devices) {
         TestDeviceList global_device_list;
@@ -929,6 +993,7 @@ TEST(CoordinationServiceTest, ListClusterDevices_XlaDevice) {
   coord_service->WaitForAllTasks(task_2, local_devices_2, [&](absl::Status s) {
     ASSERT_OK(s);
     // Gather the cluster device info.
+    coord_service->state_mu_.AssertHeld();
     cluster_devices = coord_service->ListClusterDevices();
     n.Notify();
   });
@@ -963,9 +1028,9 @@ TEST(CoordinationServiceTest, ListClusterDevices_DevicesAreNotAddedTwice) {
   absl::Status status = absl::OkStatus();
   absl::Status initial_wait_for_all_tasks_status;
   auto client_cache = std::make_unique<TestCoordinationClientCache>();
-  std::unique_ptr<CoordinationServiceInterface> coord_service =
-      CoordinationServiceInterface::EnableCoordinationService(
-          Env::Default(), config, std::move(client_cache));
+  std::unique_ptr<CoordinationService> coord_service =
+      CoordinationService::Create(Env::Default(), config,
+                                  std::move(client_cache));
   absl::Notification n;
   // Map fake devices to each task.
   DeviceInfo local_devices_0;
@@ -992,6 +1057,7 @@ TEST(CoordinationServiceTest, ListClusterDevices_DevicesAreNotAddedTwice) {
                                   &cluster_devices, &n](absl::Status s) {
                                    ASSERT_OK(s);
                                    // Gather the cluster device info.
+                                   coord_service->state_mu_.AssertHeld();
                                    cluster_devices =
                                        coord_service->ListClusterDevices();
                                    n.Notify();
@@ -2071,9 +2137,9 @@ TEST(CoordinationServiceTest, RecoverableAndNonRecoverableTasks) {
   worker_job->set_name("worker");
   worker_job->set_num_tasks(2);
 
-  std::unique_ptr<CoordinationServiceInterface> coord_service =
-      CoordinationServiceInterface::EnableCoordinationService(
-          Env::Default(), config, /*cache=*/nullptr);
+  std::unique_ptr<CoordinationService> coord_service =
+      CoordinationService::Create(Env::Default(), config,
+                                  /*cache=*/nullptr);
 
   // Each coordinated task registers and polls for errors.
   ASSERT_OK(coord_service->RegisterTask(chief, /*incarnation=*/0));
@@ -2419,9 +2485,11 @@ TEST_F(GetAliveTasksTest, SuccessfulGetAliveTasks) {
   // This test has three tasks successfully call GetAliveTasks.
   absl::BlockingCounter finished(3);
   auto done = [&](const absl::Status& status,
-                  const std::vector<CoordinatedTask>& alive_tasks) {
+                  const std::vector<CoordinatedTask>& alive_tasks,
+                  const std::vector<uint64_t>& incarnations) {
     EXPECT_OK(status);
-    EXPECT_THAT(alive_tasks, UnorderedPointwise(EqualsProto(), GetTasks()));
+    EXPECT_THAT(alive_tasks, UnorderedElementsAreArray(GetTaskMatchers()));
+    EXPECT_EQ(incarnations, (std::vector<uint64_t>{0, 1, 2}));
     finished.DecrementCount();
   };
   GetCoordinationService()->GetAliveTasksAsync(GetTask(0), GetTasks(), done);
@@ -2435,10 +2503,12 @@ TEST_F(GetAliveTasksTest, FailedTaskBeforeCallingGetAliveTasks) {
   // 0 and 1 call GetAliveTasks on tasks [0, 1, 2], which should return [0, 1].
   absl::BlockingCounter finished(2);
   auto done = [&](const absl::Status& status,
-                  const std::vector<CoordinatedTask>& alive_tasks) {
+                  const std::vector<CoordinatedTask>& alive_tasks,
+                  const std::vector<uint64_t>& incarnations) {
     EXPECT_OK(status);
-    EXPECT_THAT(alive_tasks,
-                UnorderedPointwise(EqualsProto(), {GetTask(0), GetTask(1)}));
+    EXPECT_THAT(alive_tasks, UnorderedElementsAre(EqualsProto(GetTask(0)),
+                                                  EqualsProto(GetTask(1))));
+    EXPECT_EQ(incarnations, (std::vector<uint64_t>{0, 1}));
     finished.DecrementCount();
   };
   ASSERT_OK(GetCoordinationService()->ReportTaskError(
@@ -2454,10 +2524,12 @@ TEST_F(GetAliveTasksTest, FailedTaskAfterCallingGetAliveTasks) {
   // cause GetAliveTasks to return [0, 1].
   absl::BlockingCounter finished(2);
   auto done = [&](const absl::Status& status,
-                  const std::vector<CoordinatedTask>& alive_tasks) {
+                  const std::vector<CoordinatedTask>& alive_tasks,
+                  const std::vector<uint64_t>& incarnations) {
     EXPECT_OK(status);
-    EXPECT_THAT(alive_tasks,
-                UnorderedPointwise(EqualsProto(), {GetTask(0), GetTask(1)}));
+    EXPECT_THAT(alive_tasks, UnorderedElementsAre(EqualsProto(GetTask(0)),
+                                                  EqualsProto(GetTask(1))));
+    EXPECT_EQ(incarnations, (std::vector<uint64_t>{0, 1}));
     finished.DecrementCount();
   };
   GetCoordinationService()->GetAliveTasksAsync(GetTask(0), GetTasks(), done);
@@ -2476,9 +2548,12 @@ TEST_F(GetAliveTasksTest, ConcurrentGetAliveTasks) {
   std::vector tasks_01{GetTask(0), GetTask(1)};
   absl::BlockingCounter finished_01(2);
   auto done_01 = [&](const absl::Status& status,
-                     const std::vector<CoordinatedTask>& alive_tasks) {
+                     const std::vector<CoordinatedTask>& alive_tasks,
+                     const std::vector<uint64_t>& incarnations) {
     EXPECT_OK(status);
-    EXPECT_THAT(alive_tasks, UnorderedPointwise(EqualsProto(), tasks_01));
+    EXPECT_THAT(alive_tasks, UnorderedElementsAre(EqualsProto(tasks_01[0]),
+                                                  EqualsProto(tasks_01[1])));
+    EXPECT_EQ(incarnations, (std::vector<uint64_t>{0, 1}));
     finished_01.DecrementCount();
   };
 
@@ -2486,9 +2561,12 @@ TEST_F(GetAliveTasksTest, ConcurrentGetAliveTasks) {
   std::vector tasks_12{GetTask(1), GetTask(2)};
   absl::BlockingCounter finished_12(2);
   auto done_12 = [&](const absl::Status& status,
-                     const std::vector<CoordinatedTask>& alive_tasks) {
+                     const std::vector<CoordinatedTask>& alive_tasks,
+                     const std::vector<uint64_t>& incarnations) {
     EXPECT_OK(status);
-    EXPECT_THAT(alive_tasks, UnorderedPointwise(EqualsProto(), tasks_12));
+    EXPECT_THAT(alive_tasks, UnorderedElementsAre(EqualsProto(tasks_12[0]),
+                                                  EqualsProto(tasks_12[1])));
+    EXPECT_EQ(incarnations, (std::vector<uint64_t>{1, 2}));
     finished_12.DecrementCount();
   };
 
@@ -2506,12 +2584,13 @@ TEST_F(GetAliveTasksTest, CallingGetAliveTasksWithoutBeingAMember) {
   // included in the specified set of tasks. This should return an error.
   absl::BlockingCounter finished(3);
   auto done = [&](const absl::Status& status,
-                  const std::vector<CoordinatedTask>&) {
+                  const std::vector<CoordinatedTask>&,
+                  const std::vector<uint64_t>&) {
     EXPECT_THAT(status, StatusIs(absl::StatusCode::kInvalidArgument));
     finished.DecrementCount();
   };
 
-  CoordinationServiceInterface* s = GetCoordinationService();
+  CoordinationService* s = GetCoordinationService();
   s->GetAliveTasksAsync(GetTask(0), {GetTask(1), GetTask(2)}, done);
   s->GetAliveTasksAsync(GetTask(1), {GetTask(0), GetTask(2)}, done);
   s->GetAliveTasksAsync(GetTask(2), {GetTask(0), GetTask(1)}, done);
@@ -2523,9 +2602,10 @@ TEST_F(GetAliveTasksTest, RedundantGetAliveTasks) {
   // tasks call GetAliveTasks multiple times.
   absl::BlockingCounter finished(6);
   auto done = [&](const absl::Status& status,
-                  const std::vector<CoordinatedTask>& alive_tasks) {
+                  const std::vector<CoordinatedTask>& alive_tasks,
+                  const std::vector<uint64_t>&) {
     EXPECT_OK(status);
-    EXPECT_THAT(alive_tasks, UnorderedPointwise(EqualsProto(), GetTasks()));
+    EXPECT_THAT(alive_tasks, UnorderedElementsAreArray(GetTaskMatchers()));
     finished.DecrementCount();
   };
   GetCoordinationService()->GetAliveTasksAsync(GetTask(0), GetTasks(), done);

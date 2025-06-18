@@ -842,9 +842,20 @@ class BatchFunctionOpConversion
     llvm::SmallVector<mlir::Type, 4> result_types(
         op->getNumResults(), rewriter.getType<mlrt::compiler::FutureType>());
 
-    rewriter.replaceOpWithNewOp<tf_mlrt::BatchFunctionOp>(
-        op, result_types, adaptor.getOperands(), node_def.device(),
-        op.getFAttr(), node_def_text);
+    if (auto custom_device =
+            op->getAttrOfType<mlir::StringAttr>(kTfMlrtCustomDevice)) {
+      mlir::Value device =
+          CreateCustomDevice(op->getLoc(), custom_device.getValue(), rewriter);
+      if (!device) return op->emitWarning("Failed to create custom device.");
+
+      rewriter.replaceOpWithNewOp<tf_mlrt::BatchFunctionWithDeviceOp>(
+          op, result_types, device, adaptor.getOperands(), node_def.device(),
+          op.getFAttr(), node_def_text);
+    } else {
+      rewriter.replaceOpWithNewOp<tf_mlrt::BatchFunctionOp>(
+          op, result_types, adaptor.getOperands(), node_def.device(),
+          op.getFAttr(), node_def_text);
+    }
 
     return mlir::success();
   }
@@ -1059,8 +1070,6 @@ class TfToMlrtConversionPass
 
     type_converter_.addTargetMaterialization(future_to_tensor_materialization);
     type_converter_.addSourceMaterialization(future_to_tensor_materialization);
-    type_converter_.addArgumentMaterialization(
-        future_to_tensor_materialization);
 
     if (use_tpu_host_allocator_for_inputs_.hasValue()) {
       options_.use_tpu_host_allocator_for_inputs =

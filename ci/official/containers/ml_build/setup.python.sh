@@ -28,7 +28,7 @@ if [[ ${VERSION} == "python3.13-nogil" ]]; then
   cat >pythons.txt <<EOF
 $VERSION
 EOF
-elif [[ ${VERSION} == "python3.13" || ${VERSION} == "python3.12" ]]; then
+elif [[ ${VERSION} == "python3.14" || ${VERSION} == "python3.13" || ${VERSION} == "python3.12" ]]; then
   cat >pythons.txt <<EOF
 $VERSION
 $VERSION-dev
@@ -43,7 +43,24 @@ $VERSION-distutils
 EOF
 fi
 
-/setup.packages.sh pythons.txt
+if [[ ${VERSION} == "python3.14" ]]; then
+  # Build python 3.14.0a6 from source now. This is a temporary solution until
+  # the astral python standalone build repo release supports for 3.14.0b1.
+  # TODO(kanglan): Remove this once python 3.14.0b1 is available in astral
+  # python standalone build repo and the rules_python patch is updated.
+  apt update && apt install -y libssl-dev zlib1g-dev libbz2-dev libreadline-dev libncurses5-dev libffi-dev liblzma-dev
+  wget https://www.python.org/ftp/python/3.14.0/Python-3.14.0a6.tar.xz
+  tar -xf Python-3.14.0a6.tar.xz
+  pushd Python-3.14.0a6
+  mkdir -p /python314-0a6
+  CC=clang-18 CXX=clang++-18 ./configure --prefix /python314-0a6 --with-ensurepip=install
+  make -j$(nproc)
+  make install -j$(nproc)
+  ln -s /python314-0a6/bin/python3 /usr/bin/python3.14
+  popd
+else
+  /setup.packages.sh pythons.txt
+fi
 
 # Re-link pyconfig.h from x86_64-linux-gnu into the devtoolset directory
 # for any Python version present
@@ -72,7 +89,8 @@ wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 --tries=5 
 # For Python 3.13t, do not install twine as it does not have pre-built wheels
 # for this Python version and building it from source fails. We only need twine
 # to be present on the system Python which in this case is 3.12.
-if [[ ${VERSION} == "python3.13-nogil" ]]; then
+# Same reason for Python 3.140a7.
+if [[ ${VERSION} == "python3.13-nogil" || ${VERSION} == "python3.14" ]]; then
   grep -v "twine" $REQUIREMENTS > requirements_without_twine.txt
   REQUIREMENTS=requirements_without_twine.txt
 fi

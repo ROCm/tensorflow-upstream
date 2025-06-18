@@ -538,6 +538,11 @@ cc_library(
     hdrs = ["conv_ops_gpu.h"],
 )
 
+cc_library(
+    name = "pooling_ops_gpu_hdrs",
+    hdrs = ["maxpooling_op_gpu.h"],
+)
+
 # We keep this target only because some contrib/ targets depend on it. The
 # reason why the contrib/ targets can't depend on gpu_utils is that, some
 # of the targets are tf_custom_op_library. tf_custom_op_library forbids the
@@ -7173,6 +7178,7 @@ cc_library(
         "//tensorflow/core/framework:tensor_shape_proto_cc",
         "//tensorflow/core/framework:types_proto_cc",
         "//tensorflow/core/lib/png:png_io",
+        "//tensorflow/core/lib/webp:webp_io",
         "//tensorflow/core/platform:strong_hash",
         "//tensorflow/core/platform:types",
         "//tensorflow/core/protobuf:autotuning_proto_cc",

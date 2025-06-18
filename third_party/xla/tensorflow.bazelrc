@@ -86,6 +86,10 @@ build --enable_platform_specific_config
 # TODO(mihaimaruseac): Document this option or remove if no longer needed
 build --config=short_logs
 
+# Precompiling results in some action conflicts. Disable it for now until
+# the problematic targets are fixed.
+build --@rules_python//python/config_settings:precompile=force_disabled
+
 # TF now has `cc_shared_library` targets, so it needs the experimental flag
 # TODO(rostam): Remove when `cc_shared_library` is enabled by default
 common --experimental_cc_shared_library
@@ -123,6 +127,7 @@ build:macos --features=archive_param_file
 # Settings for MacOS on ARM CPUs.
 build:macos_arm64 --cpu=darwin_arm64
 build:macos_arm64 --macos_minimum_os=11.0
+build:macos_arm64 --platforms=@build_bazel_apple_support//configs/platforms:darwin_arm64
 
 # Config to use a mostly-static build and disable modular op registration
 # support (this will revert to loading TensorFlow with RTLD_GLOBAL in Python).
@@ -157,13 +162,15 @@ build:mkl_aarch64 -c opt
 build:mkl_aarch64_threadpool --define=build_with_mkl_aarch64=true
 build:mkl_aarch64_threadpool -c opt
 
+# Default CUDA and CUDNN versions.
+build:cuda_version --repo_env=HERMETIC_CUDA_VERSION="12.6.3"
+build:cuda_version --repo_env=HERMETIC_CUDNN_VERSION="9.3.0"
+
 # CUDA: This config refers to building CUDA op kernels with nvcc.
 build:cuda --repo_env TF_NEED_CUDA=1
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
-# Default CUDA and CUDNN versions.
-build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.5.1"
-build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.3.0"
+build:cuda --config=cuda_version
 # This flag is needed to include CUDA libraries.
 build:cuda --@local_config_cuda//cuda:include_cuda_libs=true
 
@@ -193,8 +200,7 @@ build:cuda_clang --linkopt="-lm"
 
 # Set up compilation CUDA version and paths and use the CUDA Clang toolchain.
 build:cuda_clang_official --config=cuda_clang
-build:cuda_clang_official --repo_env=HERMETIC_CUDA_VERSION="12.5.1"
-build:cuda_clang_official --repo_env=HERMETIC_CUDNN_VERSION="9.3.0"
+build:cuda_clang_official --config=cuda_version
 build:cuda_clang_official --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 build:cuda_clang_official --crosstool_top="@local_config_cuda//crosstool:toolchain"
 
@@ -205,15 +211,25 @@ build:cuda_nvcc --@local_config_cuda//:cuda_compiler=nvcc
 # Old config for backward compatibility
 build:nvcc_clang --config=cuda_nvcc
 
-# Debug config
+# Debug config. Enables Bazel's 'dbg' compilation mode, build with debugging enabled
 build:dbg -c dbg
-# Only include debug info for files under xla/, to reduce the size of the debug
-# info in the binary. This is because if the debug sections in the ELF binary
-# are too large, errors can occur. See https://github.com/tensorflow/tensorflow/issues/48919.
-# Users can still include debug info for a specific kernel, e.g. with:
+# Compiling all dependencies with debug info can cause linker failures
+# and significantly increase binary size.
+# The following setting disables debug info (-g0) for all files,
+# except those under the xla/* path. This helps reduce the size of debug sections
+# in the ELF binary, which can otherwise become too large and lead to errors.
+# For more details, see: https://github.com/tensorflow/tensorflow/issues/48919.
 build:dbg --per_file_copt=+.*,-xla.*@-g0
 # AWS SDK must be compiled in release mode. see: https://github.com/tensorflow/tensorflow/issues/37498
 build:dbg --copt -DDEBUG_BUILD
+
+build:asan --strip=never
+build:asan --copt -fsanitize=address
+build:asan --copt -DADDRESS_SANITIZER
+build:asan --copt -O1
+build:asan --copt -g
+build:asan --copt -fno-omit-frame-pointer
+build:asan --linkopt -fsanitize=address
 
 build:rocm_base --copt=-Wno-gnu-offsetof-extensions
 build:rocm_base --crosstool_top=@local_config_rocm//crosstool:toolchain
@@ -236,6 +252,7 @@ build:rocm_clang_official --linkopt="-fuse-ld=lld"
 build:rocm_clang_official --host_linkopt="-fuse-ld=lld"
 
 build:rocm_ci --config=rocm_clang_official
+
 build:rocm_ci_hermetic --config=rocm_clang_official
 build:rocm_ci_hermetic --repo_env="OS=ubuntu_22.04"
 build:rocm_ci_hermetic --repo_env="ROCM_VERSION=6.2.0"
@@ -358,20 +375,31 @@ build:avx_linux --copt=-mavx
 build:avx_linux --host_copt=-mavx
 build:avx_win --copt=/arch:AVX
 
-build:windows_x86_cpu_2022 --crosstool_top="//tools/toolchains/win2022/20241118:toolchain"
-build:windows_x86_cpu_2022 --extra_toolchains="//tools/toolchains/win2022/20241118:cc-toolchain-x64_windows-clang-cl"
-build:windows_x86_cpu_2022 --extra_execution_platforms="//tools/toolchains/win2022:windows_ltsc2022_clang"
-build:windows_x86_cpu_2022 --host_platform="//tools/toolchains/win2022:windows_ltsc2022_clang"
-build:windows_x86_cpu_2022 --platforms="//tools/toolchains/win2022:windows_ltsc2022_clang"
-build:windows_x86_cpu_2022 --copt=/clang:-Weverything
-build:windows_x86_cpu_2022 --host_copt=/clang:-Weverything
-build:windows_x86_cpu_2022 --compiler=clang-cl
-build:windows_x86_cpu_2022 --linkopt=/FORCE:MULTIPLE
-build:windows_x86_cpu_2022 --host_linkopt=/FORCE:MULTIPLE
-test:windows_x86_cpu_2022 --linkopt=/FORCE:MULTIPLE
-test:windows_x86_cpu_2022 --host_linkopt=/FORCE:MULTIPLE
-test:windows_x86_cpu_2022 --action_env=PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.PY;.PYW
-test:windows_x86_cpu_2022 --build_tests_only --keep_going --test_output=errors --verbose_failures=true --test_summary=short
+build:win_clang_base --@com_google_protobuf//:use_dlls=True
+build:win_clang_base --@com_google_absl//absl:use_dlls
+build:win_clang_base --linkopt=/demangle:no --host_linkopt=/demangle:no
+build:win_clang_base --linkopt=/errorlimit:0 --host_linkopt=/errorlimit:0
+build:win_clang_base --copt=/clang:-Weverything
+build:win_clang_base --host_copt=/clang:-Weverything
+build:win_clang_base --compiler=clang-cl
+build:win_clang_base --linkopt=/FORCE:MULTIPLE
+build:win_clang_base --host_linkopt=/FORCE:MULTIPLE
+build:win_clang_base --action_env=PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.PY;.PYW
+test:win_clang_base --linkopt=/FORCE:MULTIPLE
+test:win_clang_base --host_linkopt=/FORCE:MULTIPLE
+test:win_clang_base --build_tests_only --keep_going --test_output=errors --verbose_failures=true --test_summary=short
+
+build:win_clang --config=win_clang_base
+build:win_clang --extra_toolchains=@local_config_cc//:cc-toolchain-x64_windows-clang-cl
+build:win_clang --extra_execution_platforms=//tensorflow/tools/toolchains/win:x64_windows-clang-cl
+build:win_clang --host_platform=//tensorflow/tools/toolchains/win:x64_windows-clang-cl
+
+build:windows_x86_cpu_2022 --config=win_clang_base
+build:windows_x86_cpu_2022 --crosstool_top="//tensorflow/tools/toolchains/win2022/20241118:toolchain"
+build:windows_x86_cpu_2022 --extra_toolchains="//tensorflow/tools/toolchains/win2022/20241118:cc-toolchain-x64_windows-clang-cl"
+build:windows_x86_cpu_2022 --extra_execution_platforms="//tensorflow/tools/toolchains/win2022:windows_ltsc2022_clang"
+build:windows_x86_cpu_2022 --host_platform="//tensorflow/tools/toolchains/win2022:windows_ltsc2022_clang"
+build:windows_x86_cpu_2022 --platforms="//tensorflow/tools/toolchains/win2022:windows_ltsc2022_clang"
 
 # Options to build TensorFlow 1.x or 2.x.
 # TODO(kanglan): Change v2's define to default behavior
@@ -440,8 +468,15 @@ build:rbe_linux_cpu --python_path="/usr/bin/python3"
 # These you may need to change for your own GCP project.
 common:rbe_linux_cpu --remote_instance_name=projects/tensorflow-testing/instances/default_instance
 
+# Download CUDA/CUDNN redistributions to preserve the repositories cache between
+# CPU and GPU builds.
+# TODO(ybaturina): Uncomment when RBE is ready to support this.
+# build:rbe_linux_cpu --repo_env USE_CUDA_REDISTRIBUTIONS=1
+# build:rbe_linux_cpu --config=cuda_version
+
 build:rbe_linux_cuda --config=cuda_clang_official
 build:rbe_linux_cuda --config=rbe_linux_cpu
+build:rbe_linux_cuda --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
 # For Remote build execution -- GPU configuration
 build:rbe_linux_cuda --repo_env=REMOTE_GPU_TESTING=1
 
@@ -469,8 +504,10 @@ build:elinux --crosstool_top=@local_config_embedded_arm//:toolchain
 build:elinux --host_crosstool_top=@bazel_tools//tools/cpp:toolchain
 build:elinux_aarch64 --config=elinux
 build:elinux_aarch64 --cpu=aarch64
+build:elinux_aarch64 --platforms=@org_tensorflow//tensorflow/tools/toolchains/linux:linux_aarch64
 build:elinux_armhf --config=elinux
 build:elinux_armhf --cpu=armhf
+build:elinux_armhf --platforms=@org_tensorflow//tensorflow/tools/toolchains/linux:linux_armhf
 build:elinux_armhf --copt -mfp16-format=ieee
 
 # Config-specific options should come above this line.
@@ -494,6 +531,7 @@ build:release_macos_x86 --config=release_macos_base
 # Build with the AVX instruction set when on macOS x86
 build:release_macos_x86 --config=avx_linux
 build:release_macos_x86 --cpu=darwin
+build:release_macos_x86 --platforms=@build_bazel_apple_support//configs/platforms:darwin_x86_64
 # Target Catalina as the minimum compatible OS version
 build:release_macos_x86 --macos_minimum_os=10.15
 build:release_macos_x86 --macos_sdk_version=10.15
@@ -501,6 +539,7 @@ build:release_macos_x86 --macos_sdk_version=10.15
 # Build configs for macOS Arm64
 build:release_macos_arm64 --config=release_macos_base
 build:release_macos_arm64 --cpu=darwin_arm64
+build:release_macos_arm64 --platforms=@build_bazel_apple_support//configs/platforms:darwin_arm64
 build:release_macos_arm64 --define=tensorflow_mkldnn_contraction_kernel=0
 # Target Moneterey as the minimum compatible OS version
 build:release_macos_arm64 --macos_minimum_os=12.0

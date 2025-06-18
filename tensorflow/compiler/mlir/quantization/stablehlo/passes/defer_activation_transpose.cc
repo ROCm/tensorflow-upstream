@@ -17,6 +17,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/base/nullability.h"
+#include "llvm/Support/LogicalResult.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
@@ -47,7 +48,7 @@ using ::mlir::stablehlo::TransposeOp;
 
 // Returns `success()` if `op` is a `TransposeOp` with permutation attribute
 // equivalent to `permuation`.
-LogicalResult IsTransposeOpWithPermuation(absl::Nullable<Operation*> op,
+LogicalResult IsTransposeOpWithPermuation(Operation* absl_nullable op,
                                           const ArrayRef<int64_t> permutation) {
   auto transpose_op = dyn_cast_or_null<TransposeOp>(op);
   return success(transpose_op != nullptr && transpose_op.getPermutation() ==
@@ -89,8 +90,8 @@ void DeferRhsTransposeForBinaryOp(OpT op, PatternRewriter& rewriter) {
 // "Climbs up" the `op` if `op` is a `BraodcastInDimOp` and returns the defining
 // op of its operand. Returns `op` otherwise. May return `nullptr` when the
 // `BroadcastInDimOp`'s operand is a block argument.
-absl::Nullable<Operation*> SkipUpwardsOptionalBroadcastInDimOp(
-    absl::Nonnull<Operation*> op) {
+Operation* absl_nullable SkipUpwardsOptionalBroadcastInDimOp(
+    Operation* absl_nonnull op) {
   if (auto broadcast_in_dim_op = dyn_cast_or_null<BroadcastInDimOp>(op);
       broadcast_in_dim_op != nullptr) {
     return broadcast_in_dim_op.getOperand().getDefiningOp();
@@ -100,9 +101,10 @@ absl::Nullable<Operation*> SkipUpwardsOptionalBroadcastInDimOp(
 
 class DeferActivationTransposeForAddOp : public OpRewritePattern<AddOp> {
  public:
-  using OpRewritePattern<AddOp>::OpRewritePattern;
+  using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult match(AddOp op) const override {
+  LogicalResult matchAndRewrite(AddOp op,
+                                PatternRewriter& rewriter) const override {
     // Only supports the case for 2D convolution.
     const Value lhs = op.getOperand(0);
     if (!HasRankOf(lhs, /*rank=*/4)) return failure();
@@ -119,12 +121,13 @@ class DeferActivationTransposeForAddOp : public OpRewritePattern<AddOp> {
     }
 
     // Match LHS permutation that converts: NHWC -> NCHW.
-    return IsTransposeOpWithPermuation(lhs.getDefiningOp(),
-                                       kNhwcToNchwPermutation);
-  }
+    if (IsTransposeOpWithPermuation(lhs.getDefiningOp(), kNhwcToNchwPermutation)
+            .failed()) {
+      return failure();
+    }
 
-  void rewrite(AddOp op, PatternRewriter& rewriter) const override {
     DeferRhsTransposeForBinaryOp(op, rewriter);
+    return success();
   }
 };
 
@@ -135,9 +138,10 @@ class DeferActivationTransposeForAddOp : public OpRewritePattern<AddOp> {
 class DeferActivationTransposeForMaxPoolReduceWindowOp
     : public OpRewritePattern<mlir::stablehlo::ReduceWindowOp> {
  public:
-  using OpRewritePattern<mlir::stablehlo::ReduceWindowOp>::OpRewritePattern;
+  using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult match(mlir::stablehlo::ReduceWindowOp op) const override {
+  LogicalResult matchAndRewrite(mlir::stablehlo::ReduceWindowOp op,
+                                PatternRewriter& rewriter) const override {
     if (failed(MatchMaxPoolReduceWindowOp(op))) return failure();
 
     // Match only when the lhs is connected to a transpose.
@@ -146,13 +150,12 @@ class DeferActivationTransposeForMaxPoolReduceWindowOp
     if (!HasRankOf(lhs, /*rank=*/4)) return failure();
 
     // Match input permutation that converts: NHWC -> NCHW.
-    return IsTransposeOpWithPermuation(lhs.getDefiningOp(),
-                                       kNhwcToNchwPermutation);
-  }
+    if (IsTransposeOpWithPermuation(lhs.getDefiningOp(), kNhwcToNchwPermutation)
+            .failed()) {
+      return failure();
+    }
 
-  // Pushes the transpose op at the input to the result.
-  void rewrite(mlir::stablehlo::ReduceWindowOp op,
-               PatternRewriter& rewriter) const override {
+    // Pushes the transpose op at the input to the result.
     auto transpose_op = cast<TransposeOp>(op.getOperand(0).getDefiningOp());
 
     const auto result_type = mlir::cast<TensorType>(op.getResult(0).getType());
@@ -192,6 +195,7 @@ class DeferActivationTransposeForMaxPoolReduceWindowOp
         rewriter);
 
     rewriter.replaceAllUsesWith(op.getResult(0), result_transpose_op);
+    return success();
   }
 
  private:
@@ -242,9 +246,10 @@ class DeferActivationTransposeForMaxPoolReduceWindowOp
 // `transpose(maximum(%rhs, transpose(%lhs)))`.
 class DeferActivationTransposeForMaxOp : public OpRewritePattern<MaxOp> {
  public:
-  using OpRewritePattern<MaxOp>::OpRewritePattern;
+  using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult match(MaxOp op) const override {
+  LogicalResult matchAndRewrite(MaxOp op,
+                                PatternRewriter& rewriter) const override {
     Value input = op.getOperand(0);
     if (!HasRankOf(input, /*rank=*/4)) return failure();
 
@@ -255,12 +260,13 @@ class DeferActivationTransposeForMaxOp : public OpRewritePattern<MaxOp> {
       return failure();
     }
 
-    return IsTransposeOpWithPermuation(input.getDefiningOp(),
-                                       kNhwcToNchwPermutation);
-  }
-
-  void rewrite(MaxOp op, PatternRewriter& rewriter) const override {
+    if (IsTransposeOpWithPermuation(input.getDefiningOp(),
+                                    kNhwcToNchwPermutation)
+            .failed()) {
+      return failure();
+    }
     DeferRhsTransposeForBinaryOp(op, rewriter);
+    return success();
   }
 };
 

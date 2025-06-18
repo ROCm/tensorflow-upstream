@@ -46,6 +46,7 @@ limitations under the License.
 #include "mlir/Dialect/Tosa/IR/TosaOps.h"  // from @llvm-project
 #include "mlir/Dialect/Tosa/Utils/ConversionUtils.h"  // from @llvm-project
 #include "mlir/Dialect/Tosa/Utils/QuantUtils.h"  // from @llvm-project
+#include "mlir/Dialect/Tosa/Utils/ConversionUtils.h"  // from @llvm-project
 #include "mlir/Dialect/Utils/StaticValueUtils.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributeInterfaces.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
@@ -592,9 +593,6 @@ std::optional<Value> convertMultiplyOp(PatternRewriter& rewriter, Operation* op,
     return std::nullopt;
   }
 
-  if (EqualizeRanks(rewriter, op->getLoc(), input_lhs_val, input_rhs_val)
-          .failed())
-    return std::nullopt;
   input_lhs_type = dyn_cast<ShapedType>(input_lhs_val.getType());
   input_rhs_type = dyn_cast<ShapedType>(input_rhs_val.getType());
 
@@ -628,7 +626,7 @@ std::optional<Value> convertMultiplyOp(PatternRewriter& rewriter, Operation* op,
         rewriter, op, rescale_type, op1_rescale_lhs, op2_rescale_rhs);
     return buildRescale(rewriter, op, output_type, op3_mul_op1_op2.getResult(),
                         output_rescale_scale, 0, output_qtype.getZeroPoint(),
-                        true, scale32);
+                        "DOUBLE_ROUND", scale32);
   }
 
   return CreateMulOpAndInfer(rewriter, op, output_type, input_lhs_val,
@@ -669,12 +667,6 @@ std::optional<Value> convertSquaredDifferenceOp(PatternRewriter& rewriter,
     return std::nullopt;
   }
 
-  if (EqualizeRanks(rewriter, op->getLoc(), x, y)
-          .failed())
-    return std::nullopt;
-  x_type = dyn_cast<ShapedType>(x.getType());
-  y_type = dyn_cast<ShapedType>(y.getType());
-
   // If the output is I8 then we need to rescale to I32
   // Then scale back to I8
   if (result_is_qtype) {
@@ -706,14 +698,15 @@ std::optional<Value> convertSquaredDifferenceOp(PatternRewriter& rewriter,
           (twice_max_input_scale * twice_max_input_scale) /
           ((static_cast<double>(1 << LEFT_SHIFT * 2)) * result_scale);
 
-      Value x_scaled = buildRescaleToInt32(
-          rewriter, op, x,
-          x_rescale_scale * static_cast<double>(1 << LEFT_SHIFT),
-          x_qtype.getZeroPoint());
-      Value y_scaled = buildRescaleToInt32(
-          rewriter, op, y,
-          y_rescale_scale * static_cast<double>(1 << LEFT_SHIFT),
-          y_qtype.getZeroPoint());
+      Value x_shift = buildRescaleToInt32(rewriter, op, x, (1 << LEFT_SHIFT),
+                                          x_qtype.getZeroPoint());
+      Value y_shift = buildRescaleToInt32(rewriter, op, y, (1 << LEFT_SHIFT),
+                                          y_qtype.getZeroPoint());
+
+      Value x_scaled =
+          buildRescaleToInt32(rewriter, op, x_shift, x_rescale_scale, 0);
+      Value y_scaled =
+          buildRescaleToInt32(rewriter, op, y_shift, y_rescale_scale, 0);
 
       auto sub_op = CreateOpAndInfer<tosa::SubOp>(
           rewriter, op->getLoc(), rescale_type, x_scaled, y_scaled);
@@ -809,7 +802,7 @@ std::optional<Value> convertConcatV2Op(PatternRewriter& rewriter, Operation* op,
             operand_type.getShape(), result_quant_type);
         Value rescale_op = buildRescale(
             rewriter, op, rescale_type, v, operand_scale / result_scale,
-            operand_zeropoint, result_zeropoint, false, true);
+            operand_zeropoint, result_zeropoint, "SINGLE_ROUND", true);
         values_rescaled.push_back(rescale_op);
       } else {
         values_rescaled.push_back(v);
@@ -1585,7 +1578,7 @@ std::optional<Value> convertSoftmaxOp(PatternRewriter& rewriter, Operation* op,
   }
 
   // reduce_sum on last dimension
-  int32_t input_rank = input_type.getShape().size();
+  int32_t input_rank = input_type.getRank();
   ArrayRef<int64_t> logits_shape = output_type.getShape();
 
   if (mlir::isa<mlir::quant::QuantizedType>(input_type.getElementType()) &&
@@ -1618,7 +1611,7 @@ std::optional<Value> convertSoftmaxOp(PatternRewriter& rewriter, Operation* op,
       // Step 1. get x - max(x)
       Value op1_rescale_in =
           buildRescale(rewriter, op, int32_logits_type, logits_value, 1.0f,
-                       in_quant_type.getZeroPoint(), 0, false, true);
+                       in_quant_type.getZeroPoint(), 0, "SINGLE_ROUND", true);
 
       auto op2_reducemax_op1 = CreateOpAndInfer<tosa::ReduceMaxOp>(
           rewriter, op->getLoc(), int32_rsum_type, op1_rescale_in,
@@ -1643,7 +1636,7 @@ std::optional<Value> convertSoftmaxOp(PatternRewriter& rewriter, Operation* op,
 
       Value op4_rescale_op3 =
           buildRescale(rewriter, op, int16_logits_type,
-                       op3_sub_op1_op2.getResult(), 128.0, 0, 0, false, true);
+                       op3_sub_op1_op2.getResult(), 128.0, 0, 0, "SINGLE_ROUND", true);
 
       // Input is 9.7, where lower 7 bits are all zeros.
       // Output is 23 bits, where lower 7 bits should be all zeros as well,
@@ -1811,13 +1804,13 @@ std::optional<Value> convertSoftmaxOp(PatternRewriter& rewriter, Operation* op,
 
       return buildRescale(rewriter, op, output_type,
                           op28_rshift_op26_op27.getResult(), 1.0, 0,
-                          out_quant_type.getZeroPoint(), false, true);
+                          out_quant_type.getZeroPoint(), "SINGLE_ROUND", true);
 
     } else if (in_quant_type.getStorageTypeIntegralWidth() == 16) {
       // Step 1. get x - max(x)
       Value op1_rescale_in =
           buildRescale(rewriter, op, int32_logits_type, logits_value, 1.0f,
-                       in_quant_type.getZeroPoint(), 0, false, true);
+                       in_quant_type.getZeroPoint(), 0, "SINGLE_ROUND", true);
 
       auto op2_reducemax_op1 = CreateOpAndInfer<tosa::ReduceMaxOp>(
           rewriter, op->getLoc(), int32_rsum_type, op1_rescale_in,
@@ -1832,8 +1825,8 @@ std::optional<Value> convertSoftmaxOp(PatternRewriter& rewriter, Operation* op,
       auto exp_func = [](double x) -> double { return std::exp(x); };
 
       // Follow TFLite reference: tensorflow/lite/kernels/activations.cc
-      Value exp_table_const =
-          getTosaConst16bitTable(rewriter, op, exp_func, -10.0, 0);
+      Value exp_table_const = getTosaConst16bitTable<double>(
+          rewriter, op, 10.0 / 65535.0, 32767, 2.0 / 65535.0, 0, exp_func);
 
       double input_diff_scale = in_quant_type.getScale() / (10.0 / 65535.0);
 
@@ -1841,7 +1834,7 @@ std::optional<Value> convertSoftmaxOp(PatternRewriter& rewriter, Operation* op,
       Value op4_rescale_op3 = buildRescale(
           rewriter, op, int32_logits_type, op3_sub_op1_op2.getResult(),
           /*scale=*/input_diff_scale, /*input_zp=*/0, /*output_zp=*/0,
-          /*double_round=*/true, /*scale32=*/true);
+          /*rounding_mode=*/"DOUBLE_ROUND", /*scale32=*/true);
       auto op5_add_op4 = CreateOpAndInfer<tosa::AddOp>(
           rewriter, op->getLoc(), int32_logits_type, op4_rescale_op3,
           getTosaConstTensorSingleI32(rewriter, op, 32767, input_rank));
@@ -1906,8 +1899,9 @@ std::optional<Value> convertSoftmaxOp(PatternRewriter& rewriter, Operation* op,
         return 1.0 / (1.0 + x);
       };
 
-      Value one_over_one_plus_x_table_const = getTosaConst16bitTable(
-          rewriter, op, one_over_one_plus_x_func, 0.0, 1.0);
+      Value one_over_one_plus_x_table_const = getTosaConst16bitTable<double>(
+          rewriter, op, 1.0 / 65535.0, -32768, 2.0 / 65535.0, 0,
+          one_over_one_plus_x_func);
 
       // Get (1 / sum(exp(x))) result as 23 bits (including sign bit)
       auto op17_table_op16 = CreateOpAndInfer<tosa::TableOp>(
@@ -1939,7 +1933,7 @@ std::optional<Value> convertSoftmaxOp(PatternRewriter& rewriter, Operation* op,
       return buildRescale(rewriter, op, output_type,
                           op21_rshift_op19_op20.getResult(),
                           (1.0 / out_quant_type.getScale()) * (1.0 / 32768.0),
-                          0, out_quant_type.getZeroPoint(), false, true);
+                          0, out_quant_type.getZeroPoint(), "SINGLE_ROUND", true);
     } else {
       (void)rewriter.notifyMatchFailure(op, "unknown quantization bitwidth");
       return std::nullopt;
@@ -2735,17 +2729,114 @@ std::optional<Value> convertStridedSliceOp(
   return reverseNegativeStride(rewriter, op, a4_reshape_op, strides);
 }
 
+// Helper function to perform division with floor rounding mode (rounding result
+// down) for integer type inputs.
+Value floorIntDiv(PatternRewriter& rewriter, Operation* op,
+                  ShapedType output_type, Value lhs_value, Value rhs_value) {
+  // To implement floor div int input, utilize tosa::IntDivOp (trunc div
+  // result - rounds towards zero) with the following formula elementwise:
+  // floor_value = trunc_value - ((trunc_value * rhs_value != lhs_value)
+  //                                && (sign(lhs_value) != sign(rhs_value)))
+  //
+  // a1 = intdiv(lhs_value, rhs_value); // IntDivOp return truncated result
+  // a2 = mul(lhs_value, rhs_value);
+  // a3 = mul(rhs_value, a1);
+  // a4 = eq(lhs_value, a3);
+  // a5 = not(a4); // (trunc_value * rhs_value != lhs_value)
+  // a6 = gt(zero, a2); // (sign(lhs_value) != sign(rhs_value))
+  // a7 = sub(a1, one);
+  // a8 = and(a5, a6); // (trunc_value * rhs_value != lhs_value) &&
+  //                                  (sign(lhs_value) != sign(rhs_value))
+  // a9 = select(a8, a7, a1);
+  // return a9;
+
+  ShapedType lhs_type = dyn_cast<ShapedType>(lhs_value.getType());
+  ShapedType rhs_type = dyn_cast<ShapedType>(rhs_value.getType());
+
+  ImplicitLocOpBuilder builder(op->getLoc(), rewriter);
+
+  ShapedType output_i32_type = output_type.clone(rewriter.getIntegerType(32));
+  ShapedType output_bool_type = output_type.clone(rewriter.getIntegerType(1));
+
+  Value zero =
+      getTosaConstTensorSingleI32(rewriter, op, 0, output_type.getRank());
+  Value one =
+      getTosaConstTensorSingleI32(rewriter, op, 1, output_type.getRank());
+
+  auto output_shape_value = getTosaConstShape(
+      rewriter, op->getLoc(),
+      tensorflow::ConvertMlirShapeToTF(output_type.getShape()));
+
+  Value lhs_value_casted = CreateOpAndInfer<tosa::CastOp>(
+      rewriter, op->getLoc(), lhs_type.clone(rewriter.getIntegerType(32)),
+      lhs_value);
+
+  Value lhs_value_reshaped =
+      CreateOpAndInfer<tosa::ReshapeOp>(rewriter, op->getLoc(), output_i32_type,
+                                        lhs_value_casted, output_shape_value);
+
+  Value rhs_value_casted = CreateOpAndInfer<tosa::CastOp>(
+      rewriter, op->getLoc(), rhs_type.clone(rewriter.getIntegerType(32)),
+      rhs_value);
+
+  // TOSA IntDiv requires inputs to be i32
+  auto a1_int_div_op =
+      CreateOpAndInfer<tosa::IntDivOp>(rewriter, op->getLoc(), output_i32_type,
+                                       lhs_value_casted, rhs_value_casted);
+
+  auto a1_int_div_op_casted = CreateOpAndInfer<tosa::CastOp>(
+      rewriter, op->getLoc(), output_type, a1_int_div_op.getResult());
+
+  auto a2_lhs_mul_rhs_op =
+      CreateMulOpAndInfer(rewriter, op, output_type, lhs_value, rhs_value);
+
+  auto a3_rhs_mul_a1_op = CreateMulOpAndInfer(
+      rewriter, op, output_type, rhs_value, a1_int_div_op_casted.getResult());
+
+  auto a4_lhs_eq_a3_op = CreateOpAndInfer<tosa::EqualOp>(
+      rewriter, op->getLoc(), output_bool_type, lhs_value_reshaped,
+      a3_rhs_mul_a1_op.getResult());
+
+  // (trunc_value * rhs_value != lhs_value)
+  auto a5_not_a4_op = CreateOpAndInfer<tosa::LogicalNotOp>(
+      rewriter, op->getLoc(), output_bool_type, a4_lhs_eq_a3_op.getResult());
+
+  // (sign(lhs_value) != sign(rhs_value))
+  auto a6_zero_gt_a2_op = CreateOpAndInfer<tosa::GreaterOp>(
+      rewriter, op->getLoc(), output_bool_type, zero,
+      a2_lhs_mul_rhs_op.getResult());
+
+  auto a7_a1_sub_one_op =
+      CreateOpAndInfer<tosa::SubOp>(rewriter, op->getLoc(), output_type,
+                                    a1_int_div_op_casted.getResult(), one);
+
+  // (trunc_value * rhs_value != lhs_value)
+  //                      && (sign(lhs_value) != sign(rhs_value))
+  auto a8_a5_and_a6_op = CreateOpAndInfer<tosa::LogicalAndOp>(
+      rewriter, op->getLoc(), output_bool_type, a5_not_a4_op.getResult(),
+      a6_zero_gt_a2_op.getResult());
+
+  auto a9_select_op = CreateOpAndInfer<tosa::SelectOp>(
+      rewriter, op->getLoc(), output_type, a8_a5_and_a6_op.getResult(),
+      a7_a1_sub_one_op.getResult(), a1_int_div_op_casted.getResult());
+
+  return a9_select_op.getResult();
+}
+
 // Lowers FloorDiv to a sequence of TOSA operators.
 std::optional<Value> convertFloorDivOp(PatternRewriter& rewriter, Operation* op,
                                        Value result_value, Value lhs_value,
                                        Value rhs_value) {
-  // FloorDiv lowering:
+  // FloorDiv lowering for float type:
   // floor(1/rhs * lhs)
   //
   // a1 = reciprocal(rhs);
   // a2 = mul(lhs, a1);
   // a3 = floor(a2);
   // return a3;
+  //
+  // FloorDiv lowering for integer type:
+  // See floorIntDiv() function for details
   ShapedType output_type = dyn_cast<ShapedType>(result_value.getType());
   // Not a shaped tensor output
   if (!output_type) return std::nullopt;
@@ -2753,9 +2844,7 @@ std::optional<Value> convertFloorDivOp(PatternRewriter& rewriter, Operation* op,
   Type element_type = output_type.getElementType();
 
   if (mlir::isa<IntegerType>(element_type)) {
-    return CreateOpAndInfer<tosa::IntDivOp>(rewriter, op->getLoc(), output_type,
-                                            lhs_value, rhs_value)
-        .getResult();
+    return floorIntDiv(rewriter, op, output_type, lhs_value, rhs_value);
   }
 
   auto a1_reciprocal_rhs_op = CreateOpAndInfer<tosa::ReciprocalOp>(
@@ -2921,13 +3010,12 @@ std::optional<Value> convertReduceOpCommon(
     bool is_quantized, int32_t input_scale_multiplier,
     int32_t input_scale_shift, int64_t input_zp,
     int32_t output_scale_multiplier, int32_t output_scale_shift,
-    int64_t output_zp, StringRef nan_mode = "") {
+    int64_t output_zp, bool keep_dims, StringRef nan_mode = "") {
   RankedTensorType input_type =
       dyn_cast<RankedTensorType>(input_value.getType());
   if (!input_type) return std::nullopt;
 
   ArrayRef<int64_t> input_shape = input_type.getShape();
-  ArrayRef<int64_t> output_shape = output_type.getShape();
   auto input_rank = input_shape.size();
   Location loc = op->getLoc();
 
@@ -2985,15 +3073,38 @@ std::optional<Value> convertReduceOpCommon(
   }
 
   if (is_quantized) {
+    std::string rounding_mode = IsTFLDoubleRoundingMode() ? "DOUBLE_ROUND" : "SINGLE_ROUND";
     UnrankedTensorType output_rescale_type =
         UnrankedTensorType::get(output_type.getElementType());
     val = buildRescale(rewriter, op, output_rescale_type, val,
                        output_scale_multiplier, output_scale_shift,
-                       /*input_zp=*/0, output_zp, IsTFLDoubleRoundingMode(),
+                       /*input_zp=*/0, output_zp, rounding_mode,
                        /*scale32=*/true);
   }
 
+  // If keep dims, no reshaping of the output is required
+  if (keep_dims) {
+    return val;
+  }
+
   // Squeeze out the reduced axes.
+  const auto squeeze_axes = [](llvm::ArrayRef<int64_t> in, llvm::ArrayRef<int64_t> axes) {
+    llvm::SmallVector<int64_t> sorted_axes{axes};
+    std::sort(sorted_axes.begin(), sorted_axes.end());
+    auto current_axis = sorted_axes.begin();
+
+    llvm::SmallVector<int64_t> out;
+    out.reserve(in.size() - axes.size());
+    for (const auto& [i, dim] : llvm::enumerate(in)) {
+      if (current_axis == sorted_axes.end() || i != *current_axis)
+        out.push_back(dim);
+      else
+        current_axis++;
+    }
+    return out;
+  };
+
+  const auto output_shape = squeeze_axes(input_shape, axes);
   auto output_shape_value =
       getTosaConstShape(rewriter, op->getLoc(),
                     tensorflow::ConvertMlirShapeToTF(output_shape));
@@ -3009,7 +3120,7 @@ std::optional<Value> convertReduceOpCommon(
     PatternRewriter& rewriter, Operation* op, RankedTensorType output_type,
     Value input_value, ElementsAttr axes_elems, Type reduce_element_type,
     bool is_quantized, double input_scale, int64_t input_zp,
-    double output_scale, int64_t output_zp, StringRef nan_mode = "") {
+    double output_scale, int64_t output_zp, bool keep_dims, StringRef nan_mode = "") {
   const int32_t scale_width = 32;
 
   int32_t input_scale_multiplier;
@@ -3025,7 +3136,7 @@ std::optional<Value> convertReduceOpCommon(
   return convertReduceOpCommon<T>(
       rewriter, op, output_type, input_value, axes_elems, reduce_element_type,
       is_quantized, input_scale_multiplier, input_scale_shift, input_zp,
-      output_scale_multiplier, output_scale_shift, output_zp, nan_mode);
+      output_scale_multiplier, output_scale_shift, output_zp, keep_dims, nan_mode);
 }
 
 // Lowers ReduceAll to a sequence of TOSA ops.
@@ -3033,14 +3144,15 @@ std::optional<Value> convertReduceAllOp(PatternRewriter& rewriter,
                                         Operation* op,
                                         RankedTensorType output_type,
                                         Value input_value,
-                                        ElementsAttr axes_elems) {
+                                        ElementsAttr axes_elems,
+                                        bool keep_dims) {
   RankedTensorType input_type =
       dyn_cast<RankedTensorType>(input_value.getType());
   if (!input_type) return std::nullopt;
 
   return convertReduceOpCommon<tosa::ReduceAllOp>(
       rewriter, op, output_type, input_value, axes_elems,
-      output_type.getElementType(), false, 1.0f, 0, 1.0f, 0);
+      output_type.getElementType(), false, 1.0f, 0, 1.0f, 0, keep_dims);
 }
 
 // Lowers ReduceAny to a sequence of TOSA ops.
@@ -3048,14 +3160,15 @@ std::optional<Value> convertReduceAnyOp(PatternRewriter& rewriter,
                                         Operation* op,
                                         RankedTensorType output_type,
                                         Value input_value,
-                                        ElementsAttr axes_elems) {
+                                        ElementsAttr axes_elems,
+                                        bool keep_dims) {
   RankedTensorType input_type =
       dyn_cast<RankedTensorType>(input_value.getType());
   if (!input_type) return std::nullopt;
 
   return convertReduceOpCommon<tosa::ReduceAnyOp>(
       rewriter, op, output_type, input_value, axes_elems,
-      output_type.getElementType(), false, 1.0f, 0, 1.0f, 0);
+      output_type.getElementType(), false, 1.0f, 0, 1.0f, 0, keep_dims);
 }
 
 // Lowers ReduceMin to a sequence of TOSA ops.
@@ -3064,6 +3177,7 @@ std::optional<Value> convertReduceMinOp(PatternRewriter& rewriter,
                                         RankedTensorType output_type,
                                         Value input_value,
                                         ElementsAttr axes_elems,
+                                        bool keep_dims,
                                         StringRef nan_mode) {
   RankedTensorType input_type =
       dyn_cast<RankedTensorType>(input_value.getType());
@@ -3071,7 +3185,7 @@ std::optional<Value> convertReduceMinOp(PatternRewriter& rewriter,
 
   return convertReduceOpCommon<tosa::ReduceMinOp>(
       rewriter, op, output_type, input_value, axes_elems,
-      output_type.getElementType(), false, 1.0f, 0, 1.0f, 0, nan_mode);
+      output_type.getElementType(), false, 1.0f, 0, 1.0f, 0, keep_dims, nan_mode);
 }
 
 // Lowers ReduceMax to a sequence of TOSA ops.
@@ -3080,6 +3194,7 @@ std::optional<Value> convertReduceMaxOp(PatternRewriter& rewriter,
                                         RankedTensorType output_type,
                                         Value input_value,
                                         ElementsAttr axes_elems,
+                                        bool keep_dims,
                                         StringRef nan_mode) {
   RankedTensorType input_type =
       dyn_cast<RankedTensorType>(input_value.getType());
@@ -3087,7 +3202,7 @@ std::optional<Value> convertReduceMaxOp(PatternRewriter& rewriter,
 
   return convertReduceOpCommon<tosa::ReduceMaxOp>(
       rewriter, op, output_type, input_value, axes_elems,
-      output_type.getElementType(), false, 1.0f, 0, 1.0f, 0, nan_mode);
+      output_type.getElementType(), false, 1.0f, 0, 1.0f, 0, keep_dims, nan_mode);
 }
 
 // Lowers ReduceProd to a sequence of TOSA ops.
@@ -3095,7 +3210,8 @@ std::optional<Value> convertReduceProdOp(PatternRewriter& rewriter,
                                          Operation* op,
                                          RankedTensorType output_type,
                                          Value input_value,
-                                         ElementsAttr axes_elems) {
+                                         ElementsAttr axes_elems,
+                                         bool keep_dims) {
   RankedTensorType input_type =
       dyn_cast<RankedTensorType>(input_value.getType());
   if (!input_type) return std::nullopt;
@@ -3113,7 +3229,7 @@ std::optional<Value> convertReduceProdOp(PatternRewriter& rewriter,
 
   return convertReduceOpCommon<tosa::ReduceProductOp>(
       rewriter, op, output_type, input_value, axes_elems,
-      output_type.getElementType(), false, 1.0f, 0, 1.0f, 0);
+      output_type.getElementType(), false, 1.0f, 0, 1.0f, 0, keep_dims);
 }
 
 // Lowers ReduceSum to a sequence of TOSA ops.
@@ -3121,7 +3237,8 @@ std::optional<Value> convertReduceSumOp(PatternRewriter& rewriter,
                                         Operation* op,
                                         RankedTensorType output_type,
                                         Value input_value,
-                                        ElementsAttr axes_elems) {
+                                        ElementsAttr axes_elems,
+                                        bool keep_dims) {
   RankedTensorType input_type =
       dyn_cast<RankedTensorType>(input_value.getType());
   if (!input_type) return std::nullopt;
@@ -3164,7 +3281,7 @@ std::optional<Value> convertReduceSumOp(PatternRewriter& rewriter,
 
   return convertReduceOpCommon<tosa::ReduceSumOp>(
       rewriter, op, output_type, input_value, axes_elems, reduce_element_type,
-      input_is_qtype, input_scale, input_zp, output_scale, output_zp);
+      input_is_qtype, input_scale, input_zp, output_scale, output_zp, keep_dims);
 }
 
 // Lowers ReduceMean to a sequence of TOSA ops.
@@ -3172,7 +3289,8 @@ std::optional<Value> convertReduceMeanOp(PatternRewriter& rewriter,
                                          Operation* op,
                                          RankedTensorType output_type,
                                          Value input_value,
-                                         ElementsAttr axes_elems) {
+                                         ElementsAttr axes_elems,
+                                         bool keep_dims) {
   // reduce_mean is lowered as followed for quantized types:
   // op1 = reduce_sum(input) with the 1.0/num_elements_on_reduced_axis
   // integrated to the rescale layer,
@@ -3265,7 +3383,7 @@ std::optional<Value> convertReduceMeanOp(PatternRewriter& rewriter,
   auto val = convertReduceOpCommon<tosa::ReduceSumOp>(
       rewriter, op, output_type, input_value, axes_elems, reduce_element_type,
       input_is_qtype, input_scale_multiplier, input_scale_shift, input_zp,
-      output_scale_multiplier, output_scale_shift, output_zp);
+      output_scale_multiplier, output_scale_shift, output_zp, keep_dims);
 
   if (!val.has_value()) return std::nullopt;
 
@@ -3493,7 +3611,7 @@ std::optional<Value> convertResizeOp(PatternRewriter& rewriter, Operation* op,
       // This should be the expected lowering, but is +-1 within compared to
       // TFLite reference.
       return buildRescale(rewriter, op, output_type, resize_op.getResult(),
-                          1.0 / (scale_y_n * scale_x_n), 0, 0, false,
+                          1.0 / (scale_y_n * scale_x_n), 0, 0, "SINGLE_ROUND",
                           is_scale32);
 #endif
 
@@ -3837,7 +3955,7 @@ std::optional<Value> convertConv3DCommon(
     (void)rewriter.notifyMatchFailure(op, "currently only supports NDHWC");
     return std::nullopt;
   }
-  RankedTensorType filter_type = filter.getType().cast<RankedTensorType>();
+  RankedTensorType filter_type = mlir::cast<RankedTensorType>(filter.getType());
   // Note that the kernel shape of tfl.conv_3d isn't [O, D, H, W, I] but
   // [D, H, W, I, O] which is the same as in TF.
   // Transpose filter shape from [D, H, W, I, O] to [O, D, H, W, C]
@@ -4303,6 +4421,229 @@ std::optional<Value> convertGatherNdOp(PatternRewriter& rewriter, Operation* op,
       .getResult();
 }
 
+std::optional<Value> convertScatterNdOp(PatternRewriter& rewriter,
+                                        Operation* op, Value result_value,
+                                        Value indices_value,
+                                        Value updates_value,
+                                        Value shape_value) {
+  auto const result_type = dyn_cast<RankedTensorType>(result_value.getType());
+  auto const indices_type = dyn_cast<RankedTensorType>(indices_value.getType());
+  auto const updates_type = dyn_cast<RankedTensorType>(updates_value.getType());
+  auto const shape_type = dyn_cast<RankedTensorType>(shape_value.getType());
+
+  if (!result_type || !indices_type || !updates_type || !shape_type) {
+    (void)rewriter.notifyMatchFailure(
+        op, "input/output types must be ranked tensor type");
+    return std::nullopt;
+  }
+
+  // Don't support variable indices yet since we cannot check uniqueness
+  // of indices in this case
+  Operation* indices_op = indices_value.getDefiningOp();
+  if (!indices_op || !llvm::isa<tosa::ConstOp>(indices_op)) {
+    (void)rewriter.notifyMatchFailure(op, "indices must be a constant tensor");
+    return std::nullopt;
+  }
+
+  Type indices_elmt_type = indices_type.getElementType();
+  if (!indices_elmt_type.isInteger(32)) {
+    (void)rewriter.notifyMatchFailure(op, "indices expected to be int32");
+    return std::nullopt;
+  }
+
+  // The tosa scatter operation only supports unique indices, so if there
+  // are duplicates, we cannot legalize
+  tosa::ConstOp const_indices = cast<tosa::ConstOp>(indices_op);
+  ElementsAttr const_data = const_indices.getValues();
+  if (!checkUniqueConstantScatterIndices(indices_type, result_type,
+                                         const_data)) {
+    (void)rewriter.notifyMatchFailure(op, "index values must be unique");
+    return std::nullopt;
+  }
+
+  // N: number of batches
+  // Always 1 for ScatterND
+  //
+  // Because TOSA's SCATTER operator already uses the symbol 'N' for
+  // the number of batches, we will use the symbol 'ND' to specify the
+  // number of dimensions that are sliced from input instead of'N' in
+  // the TF MLIR documentation.
+  //
+  // ND: indices.shape[-1]
+  //
+  // W: number of indices in each batch
+  // Computed as:
+  // product(indices.shape[0:-1]) (all but the last dimension)
+  //
+  // K: range of each index
+  // Computed as:
+  // product(result.shape[0:ND-1])
+  //
+  // C: number of channels for each index
+  // Computed as:
+  // product(result.shape[ND:])
+  //
+  // The updates tensor needs to be reshaped, but not transposed, to move
+  // the dimensions into [N, W, C] order.
+  //
+  // Indices needs to be put in the form of [N, W], but a simple flattening
+  // will not suffice, because the indices need to index into the [W]-shape
+  // updates vector instead.
+  //
+  // To flatten the coordinates, first reshape indices to a [W, ND] matrix,
+  // where the matrix now represents W ND-dimensional coordinates into the
+  // updates tensor.
+  //
+  // From here, we take each of the ND dimensions and multiply it with
+  // the size of the next updates dimension (or 1 for the last
+  // dimension), then sum all these together with a reduce_sum
+  // operator. This is exactly the same mathematics as one would use
+  // flatten the indices of an N-dimensional row-major array into a
+  // 1-D array in C.
+  //
+  // More precisely, do an element-wise multiply with [updates.shape[1
+  // .. ND], 1] in axis 1, then reduce_sum in axis 1 to flatten to a
+  // [W]-shaped tensor, then trivially reshape to [N=1, W] to be
+  // compatible with the SCATTER operator's shape.
+  //
+  // Then perform the tosa.SCATTER() operation.
+  //
+  // Now we have result = [N, K, C].
+  //
+  // Reshape with a single, simple reshape to the final output shape
+  // provided by shape_value.
+
+  const unsigned int input_output_rank = result_type.getShape().size();
+  const unsigned int indices_rank = indices_type.getShape().size();
+
+  const unsigned int ND = indices_type.getShape()[indices_rank - 1];
+
+  if (ND > input_output_rank) {
+    (void)rewriter.notifyMatchFailure(
+        op, "size of last dimension of indices must be <= input/output rank");
+    return std::nullopt;
+  }
+
+  // Calculate N, K, W, C.  (N is always 1)
+  auto const indices_shape_begin{indices_type.getShape().begin()};
+  auto const result_shape_begin{result_type.getShape().begin()};
+  auto const accumulate_func = [](auto const& a_, auto const& b_) {
+    return a_ * b_;
+  };
+
+  const unsigned int N = 1;
+  const unsigned int W = std::accumulate(indices_shape_begin,
+                                         indices_shape_begin + indices_rank - 1,
+                                         1, accumulate_func);
+  const unsigned int K = std::accumulate(
+      result_shape_begin, result_shape_begin + ND, 1, accumulate_func);
+  const unsigned int C = std::accumulate(result_shape_begin + ND,
+                                         result_shape_begin + input_output_rank,
+                                         1, accumulate_func);
+
+  SmallVector<int64_t, 2> tosa_indices_shape({N, W});
+  SmallVector<int64_t, 2> indices_matrix_shape({W, ND});
+  SmallVector<int64_t, 3> tosa_input_shape({N, W, C});
+  SmallVector<int64_t, 3> tosa_values_in_out_shape({N, K, C});
+
+  // Flatten the updates tensor to an [N, W] matrix.
+  auto input_shape_value =
+      getTosaConstShape(rewriter, op->getLoc(),
+                    tensorflow::ConvertMlirShapeToTF(tosa_input_shape));
+  auto tosa_input_reshape_op = CreateOpAndInfer<tosa::ReshapeOp>(
+      rewriter, op->getLoc(),
+      tensorflow::GetTypeFromTFTensorShape(tosa_input_shape,
+                                           result_type.getElementType()),
+      updates_value, input_shape_value);
+
+  // Flatten the indices tensor to an [W, ND] matrix.
+  auto indices_matrix_shape_value =
+      getTosaConstShape(rewriter, op->getLoc(),
+      tensorflow::ConvertMlirShapeToTF(indices_matrix_shape));
+  auto indices_matrix_reshape_op = CreateOpAndInfer<tosa::ReshapeOp>(
+      rewriter, op->getLoc(),
+      tensorflow::GetTypeFromTFTensorShape(indices_matrix_shape,
+                                           indices_elmt_type),
+      indices_value, indices_matrix_shape_value);
+
+  SmallVector<int32_t> flattened_coeff_vec;
+  for (int i = 1; i < ND; i++) {
+    flattened_coeff_vec.push_back(result_type.getShape()[i]);
+  }
+  flattened_coeff_vec.push_back(1);
+  for (int i = ND - 1; i > 0; i--) {
+    flattened_coeff_vec[i - 1] *= flattened_coeff_vec[i];
+  }
+  std::optional<Value> flattened_coeff_value = getConstTensor<int32_t>(
+      rewriter, op, flattened_coeff_vec,
+      {static_cast<int64_t>(flattened_coeff_vec.size())});
+
+  if (!flattened_coeff_value) {
+    (void)rewriter.notifyMatchFailure(
+        op, "failed to calculate flattened coeff value");
+    return std::nullopt;
+  }
+
+  // Multiply the coefficients by the coordinates
+  Value mul_x = indices_matrix_reshape_op.getResult();
+  Value mul_y = flattened_coeff_value.value();
+  RankedTensorType mul_type = tensorflow::GetTypeFromTFTensorShape(
+      indices_matrix_shape, indices_type.getElementType());
+  if (EqualizeRanks(rewriter, op->getLoc(), mul_x, mul_y).failed()) {
+    (void)rewriter.notifyMatchFailure(
+        op, "failed to broadcast coefficients over the coordinates");
+    return std::nullopt;
+  }
+  auto flattened_indices_mul_op = CreateMulOpAndInfer(
+      rewriter, op, mul_type, mul_x, mul_y);
+
+  // Sum up the products of the coefficients and coordinates
+  auto flattened_indices_reduce_op = CreateOpAndInfer<tosa::ReduceSumOp>(
+      rewriter, op->getLoc(),
+      tensorflow::GetTypeFromTFTensorShape(tosa_indices_shape,
+                                           indices_type.getElementType()),
+      flattened_indices_mul_op.getResult(), rewriter.getI32IntegerAttr(1));
+
+  // And reshape to [N, W]
+  auto tosa_indices_shape_value =
+      getTosaConstShape(rewriter, op->getLoc(),
+                    tensorflow::ConvertMlirShapeToTF(tosa_indices_shape));
+  auto tosa_indices_reshape_op = CreateOpAndInfer<tosa::ReshapeOp>(
+      rewriter, op->getLoc(),
+      tensorflow::GetTypeFromTFTensorShape(tosa_indices_shape,
+                                           indices_type.getElementType()),
+      flattened_indices_reduce_op.getResult(), tosa_indices_shape_value);
+
+  // Scatter_nd has no input tensor, use a zero tensor
+  Type const_element_type = updates_type.getElementType();
+  auto const_type =
+      RankedTensorType::get(tosa_values_in_out_shape, const_element_type);
+  if (mlir::isa<mlir::quant::QuantizedType>(const_element_type)) {
+    auto quant_type = dyn_cast<mlir::quant::QuantizedType>(const_element_type);
+    const_element_type = quant_type.getStorageType();
+  }
+  auto const_storage_type =
+      RankedTensorType::get(tosa_values_in_out_shape, const_element_type);
+  auto const_attr = DenseElementsAttr::get(
+      const_storage_type, rewriter.getZeroAttr(const_element_type));
+  Value tosa_values_in =
+      rewriter.create<tosa::ConstOp>(op->getLoc(), const_type, const_attr);
+
+  // Now the scatter op itself
+  auto tosa_scatter_op = CreateOpAndInfer<tosa::ScatterOp>(
+      rewriter, op->getLoc(), result_type, tosa_values_in,
+      tosa_indices_reshape_op.getResult(), tosa_input_reshape_op.getResult());
+
+  // Finally, reshape back to the expected output shape.
+  auto reshape_shape_value =
+      getTosaConstShape(rewriter, op->getLoc(),
+                    tensorflow::ConvertMlirShapeToTF(result_type.getShape()));
+  return CreateOpAndInfer<tosa::ReshapeOp>(rewriter, op->getLoc(), result_type,
+                                           tosa_scatter_op.getResult(),
+                                           reshape_shape_value)
+      .getResult();
+}
+
 // Lowers OneHot operator to a sequence of TOSA ops.
 std::optional<Value> convertOneHotOp(PatternRewriter& rewriter, Operation* op,
                                      Value result_value, Value indices_value,
@@ -4661,7 +5002,7 @@ std::optional<Value> convertBroadcastToOp(PatternRewriter& rewriter,
 // Lowers cast operator to a sequence of TOSA ops.
 std::optional<Value> convertCastOp(PatternRewriter& rewriter, Operation* op,
                                    Value input, RankedTensorType output_type) {
-  auto input_type = input.getType().cast<ShapedType>();
+  auto input_type = mlir::cast<ShapedType>(input.getType());
   auto input_element_type = input_type.getElementType();
   Value cast_input = input;
 

@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/transforms/simplifiers/float_normalization.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -35,18 +36,18 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
 
-class FloatSupportTest : public HloTestBase {
+class FloatSupportTest : public HloHardwareIndependentTestBase {
  protected:
   FloatSupportTest()
-      : HloTestBase(/*verifier_layout_sensitive=*/false,
-                    /*allow_mixed_precision_in_hlo_verifier=*/true) {}
+      : HloHardwareIndependentTestBase(
+            /*verifier_layout_sensitive=*/false,
+            /*allow_mixed_precision_in_hlo_verifier=*/true) {}
 
   bool Normalize(HloModule* module, se::GpuComputeCapability cc,
                  PrimitiveType low_precision_type,
@@ -299,6 +300,46 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kHloModule));
   EXPECT_FALSE(Normalize(module.get(), cc, BF16, F32));
+}
+
+TEST_F(FloatSupportTest, Bf16MinimumIsOnlyNormalizedPreAmpere) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule m
+
+ENTRY main {
+  p0 = bf16[] parameter(0)
+  p1 = bf16[] parameter(1)
+  ROOT r = bf16[] minimum(p0, p1)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloModule));
+  EXPECT_FALSE(
+      Normalize(module.get(), se::CudaComputeCapability::Hopper(), BF16, F32));
+  EXPECT_FALSE(
+      Normalize(module.get(), se::CudaComputeCapability::Ampere(), BF16, F32));
+  EXPECT_TRUE(
+      Normalize(module.get(), se::CudaComputeCapability::Volta(), BF16, F32));
+}
+
+TEST_F(FloatSupportTest, Bf16MaximumIsOnlyNormalizedPreAmpere) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule m
+
+ENTRY main {
+  p0 = bf16[] parameter(0)
+  p1 = bf16[] parameter(1)
+  ROOT r = bf16[] maximum(p0, p1)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloModule));
+  EXPECT_FALSE(
+      Normalize(module.get(), se::CudaComputeCapability::Hopper(), BF16, F32));
+  EXPECT_FALSE(
+      Normalize(module.get(), se::CudaComputeCapability::Ampere(), BF16, F32));
+  EXPECT_TRUE(
+      Normalize(module.get(), se::CudaComputeCapability::Volta(), BF16, F32));
 }
 
 TEST_F(FloatSupportTest,

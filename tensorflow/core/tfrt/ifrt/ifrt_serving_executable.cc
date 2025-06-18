@@ -52,7 +52,7 @@ limitations under the License.
 #include "tensorflow/compiler/tf2xla/shape_util.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-#include "xla/hlo/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
+#include "xla/hlo/translate/stablehlo.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -258,8 +258,7 @@ IfrtServingExecutable::Create(
   return executable;
 }
 
-absl::StatusOr<tsl::RCReference<xla::ifrt::Array>>
-IfrtServingExecutable::ConvertTensorToArray(
+absl::StatusOr<xla::ifrt::ArrayRef> IfrtServingExecutable::ConvertTensorToArray(
     const tensorflow::Tensor& tensor,
     const xla::ifrt::DeviceListRef& device_list,
     const xla::OpSharding& sharding) {
@@ -446,8 +445,9 @@ IfrtServingExecutable::CreateExecutableSynchronously(
                                    "before_ifrt_serialization");
   TF_ASSIGN_OR_RETURN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_hlo_module,
-      xla::ConvertHloToMlirHlo(*module_copy->getContext(),
-                               &tf2hlo_result.hlo_module_proto));
+      ::xla::ConvertHloToStablehloWithOptions(
+          *module_copy->getContext(), &tf2hlo_result.hlo_module_proto,
+          /*import_all_computations=*/false));
 
   if (VLOG_IS_ON(1)) {
     tensorflow::DumpMlirOpToFile("ifrt_after_bridge_phase2",
@@ -512,19 +512,18 @@ IfrtServingExecutable::CreateExecutableSynchronously(
   }
   auto hlo_program =
       std::make_unique<xla::ifrt::HloProgram>(mlir_hlo_module.get());
-  std::unique_ptr<xla::ifrt::LoadedExecutable> ifrt_executable;
   SharedCachedExecutableBundle executable_bundle =
       std::make_shared<CachedExecutableBundle>();
 
   TF_ASSIGN_OR_RETURN(
-      ifrt_executable,
+      xla::ifrt::LoadedExecutableRef ifrt_executable,
       persistent_compilation_cache_->LookupLoadedExecutableOrCreate(
           std::move(hlo_program), assigned_device_list_, xla_compile_options,
           loaded_host_callbacks, ifrt_client_.get(),
           [&](std::unique_ptr<xla::ifrt::Program> program,
               std::unique_ptr<xla::ifrt::CompileOptions> options)
-              -> absl::StatusOr<std::unique_ptr<xla::ifrt::LoadedExecutable>> {
-            return ifrt_client_->GetDefaultCompiler()->Compile(
+              -> absl::StatusOr<xla::ifrt::LoadedExecutableRef> {
+            return ifrt_client_->GetDefaultCompiler()->CompileAndLoad(
                 std::move(program), std::move(options));
           }));
 
@@ -679,7 +678,7 @@ absl::StatusOr<std::vector<tensorflow::Tensor>> IfrtServingExecutable::Execute(
 
   VLOG(2) << "Completed AsyncLoadIfrtArray";
 
-  std::vector<tsl::RCReference<xla::ifrt::Array>> args;
+  std::vector<xla::ifrt::ArrayRef> args;
   args.reserve(inputs.size());
   int variable_index = 0;
   for (int i = 0; i < inputs.size(); i++) {
@@ -702,7 +701,7 @@ absl::StatusOr<std::vector<tensorflow::Tensor>> IfrtServingExecutable::Execute(
       TF_ASSIGN_OR_RETURN(
           auto loaded_variable,
           ifrt_loaded_variable_registry_.GetLoadedVariable(key));
-      TF_ASSIGN_OR_RETURN(tsl::RCReference<xla::ifrt::Array> single_array,
+      TF_ASSIGN_OR_RETURN(xla::ifrt::ArrayRef single_array,
                           loaded_variable.array.Await());
       args.push_back(std::move(single_array));
       variable_index++;
@@ -756,8 +755,7 @@ absl::StatusOr<std::vector<tensorflow::Tensor>> IfrtServingExecutable::Execute(
   output_futures.reserve(execution_result.outputs.size());
   for (int i = 0; i < execution_result.outputs.size(); ++i) {
     tensorflow::TensorShape tensor_shape;
-    const tsl::RCReference<xla::ifrt::Array>& array_for_copy =
-        execution_result.outputs[i];
+    const xla::ifrt::ArrayRef& array_for_copy = execution_result.outputs[i];
     const tpu::TPUCompileMetadataProto::Retval& metadata_retval =
         executable_bundle->compile_metadata.retvals()[i];
 

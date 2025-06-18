@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
@@ -48,6 +49,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/IR/ValueRange.h"  // from @llvm-project
 #include "mlir/IR/Verifier.h"  // from @llvm-project
+#include "mlir/IR/Visitors.h"  // from @llvm-project
 #include "mlir/Parser/Parser.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
@@ -88,10 +90,11 @@ constexpr int kVersionStartSupportDisabledChecks = 6;
 constexpr int kVersionStartSupportShapeAssertions = 7;
 constexpr int kVersionStartSupportUsesShapePolymorphismAttr = 8;
 constexpr int kVersionStartSupportEffects = 9;
+constexpr int kVersionStartSupportShardyPartitioner = 10;
 constexpr int kVersionMinimumSupported = kVersionStartStableHloCompatibility;
 
 // This should match xla.py:call_module_maximum_supported_version
-constexpr int kVersionMaximumSupported = kVersionStartSupportEffects;
+constexpr int kVersionMaximumSupported = kVersionStartSupportShardyPartitioner;
 
 constexpr llvm::StringRef kDisabledCheckPlatform = "platform";
 
@@ -187,7 +190,7 @@ absl::Status XlaCallModuleLoader::SetPlatformIndex(
       platform_index_arg.getLoc(), const_attr);
   platform_index_arg.replaceAllUsesWith(platform_index_op);
 
-  main_.eraseArgument(0);
+  CHECK(llvm::succeeded(main_.eraseArgument(0)));
   platform_index_arg_set_ = true;
   return absl::OkStatus();
 }
@@ -267,8 +270,11 @@ absl::Status XlaCallModuleLoader::RefineDynamicShapes(
 
     // Get static MLIR Type from xla Shape.
     const xla::Shape &xla_shape = input_shapes[next_actual_input++];
-    std::vector<int64_t> xla_dimensions(xla_shape.dimensions().begin(),
-                                        xla_shape.dimensions().end());
+    std::vector<int64_t> xla_dimensions;
+    if (xla_shape.IsArray()) {
+      xla_dimensions = std::vector<int64_t>(xla_shape.dimensions().begin(),
+                                            xla_shape.dimensions().end());
+    }
     TF_ASSIGN_OR_RETURN(
         mlir::Type element_type,
         ConvertPrimitiveTypeToMlirType(xla_shape.element_type(), builder));
@@ -399,9 +405,15 @@ absl::Status XlaCallModuleLoader::LoadModule(
   }
 
   // Parse the StableHLO/VHLO bytecode
-  module_ = mlir::stablehlo::deserializePortableArtifact(module_str, context_);
-  if (!module_) {
-    return absl::InvalidArgumentError("Cannot deserialize computation");
+  {
+    mlir::StatusScopedDiagnosticHandler diag_handler(context_);
+    module_ =
+        mlir::stablehlo::deserializePortableArtifact(module_str, context_);
+    if (!module_) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Cannot deserialize computation: ",
+                       diag_handler.ConsumeStatus().ToString()));
+    }
   }
   VLOG(3) << "Parsed serialized module (version = " << version
           << ", platforms = [" << absl::StrJoin(platforms, ", ")
@@ -451,9 +463,9 @@ absl::Status XlaCallModuleLoader::LoadModule(
   return absl::OkStatus();
 }
 
-absl::Status XlaCallModuleLoader::ValidateDialect() {
+absl::Status XlaCallModuleLoader::ValidateXlaCallModuleInvariants() {
   mlir::StatusScopedDiagnosticHandler diag_handler(module_->getContext());
-  bool moduleHasUnsupportedDialects = false;
+  bool moduleValidationFailed = false;
 
   module_->walk([&](mlir::Operation *op) {
     // StableHLO programs created by jax2tf only contain operations
@@ -461,14 +473,25 @@ absl::Status XlaCallModuleLoader::ValidateDialect() {
     if (!llvm::isa<mlir::BuiltinDialect, mlir::chlo::ChloDialect,
                    mlir::func::FuncDialect, mlir::stablehlo::StablehloDialect>(
             op->getDialect())) {
-      moduleHasUnsupportedDialects = true;
       op->emitOpError() << "is an op from an unsupported dialect";
+      moduleValidationFailed = true;
+    }
+    // `shape_assertion` custom calls must have side effects. We check this here
+    // because a pure `shape_assertion` is likely to be removed by MLIR's
+    // dead-code elimination, preventing us from detecting the issue later.
+    if (auto customCallOp = llvm::dyn_cast<mlir::stablehlo::CustomCallOp>(op)) {
+      if (!customCallOp.getHasSideEffect() &&
+          customCallOp.getCallTargetName() == "shape_assertion") {
+        op->emitOpError() << "`shape_assertion` custom calls must set "
+                             "`has_side_effect = true`.";
+        moduleValidationFailed = true;
+      }
     }
   });
 
-  if (moduleHasUnsupportedDialects) {
+  if (moduleValidationFailed) {
     return absl::InvalidArgumentError(
-        absl::StrCat("Module has unsupported dialects: ",
+        absl::StrCat("XlaCallModule failed validation: ",
                      diag_handler.ConsumeStatus().ToString()));
   }
   return absl::OkStatus();
@@ -481,18 +504,14 @@ absl::Status XlaCallModuleLoader::ValidateStaticShapes() {
 absl::Status XlaCallModuleLoader::PrepareStablehloForLowering() {
   mlir::StatusScopedDiagnosticHandler diag_handler(module_->getContext());
 
-  // TODO (b/393390051): Migrate required passes to StableHLO.
+  // TODO (b/410057228): Replace MHLO canonicalization with StableHLO.
+  // This code requires MHLO CaseOp canonicalization to remove unreachable
+  // branches, else `tf.call_tf_function` inlining can fail.
   mlir::PassManager pm(module_->getContext());
-  applyTensorflowAndCLOptions(pm);
   pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
-  pm.addNestedPass<mlir::func::FuncOp>(
-      mlir::mhlo::createChloLegalizeToHloPass());
   pm.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
-  // In order to export to XLA, we must sink constants to control flow
-  // regions, since XLA uses functional control flow.
-  pm.addNestedPass<mlir::func::FuncOp>(
-      mlir::mhlo::createSinkConstantsToControlFlowPass());
   pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
+
   if (failed(pm.run(*module_))) {
     return absl::InternalError(
         absl::StrCat("MHLO->HLO lowering passes failed: ",
@@ -500,7 +519,7 @@ absl::Status XlaCallModuleLoader::PrepareStablehloForLowering() {
   }
 
   if (VLOG_IS_ON(5)) {
-    DumpMlirOpToFile("xla_call_module.after_mhlo_lowering", *module_);
+    DumpMlirOpToFile("xla_call_module.after_canonicalization", *module_);
   }
 
   return absl::OkStatus();

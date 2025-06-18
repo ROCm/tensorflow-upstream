@@ -3,7 +3,7 @@ load(
     "if_rocm_is_configured",
 )
 load(
-    "//xla:xla.bzl",
+    "//xla:xla.default.bzl",
     "xla_cc_binary",
     "xla_cc_test",
 )
@@ -70,6 +70,7 @@ cc_library(
         "//xla/ffi:execution_context",
         "//xla/ffi:type_id_registry",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -165,6 +166,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@local_tsl//tsl/platform:casts",
     ],
 )
 
@@ -212,7 +214,6 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
-        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
@@ -222,6 +223,7 @@ cc_library(
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt:pjrt_layout",
         "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/framework:allocator",
@@ -301,9 +303,12 @@ cc_library(
         ":pjrt_c_api_memory_descriptions_extension_hdrs",
         ":pjrt_c_api_wrapper_impl",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
     ],
 )
@@ -322,8 +327,14 @@ cc_library(
 # PJRT CPU plugin.
 xla_cc_binary(
     name = "pjrt_c_api_cpu_plugin.so",
+    additional_linker_inputs = [
+        ":pjrt_c_api_cpu_version_script.lds",
+    ],
     linkopts = if_macos(
-        [],
+        [
+            "-Wl,-exported_symbol,_GetPjrtApi",
+            "-Wl,-undefined,error",
+        ],
         [
             "-Wl,--version-script,$(location :pjrt_c_api_cpu_version_script.lds)",
             "-Wl,--no-undefined",
@@ -338,7 +349,6 @@ xla_cc_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":pjrt_c_api_cpu",
-        ":pjrt_c_api_cpu_version_script.lds",
     ],
 )
 
@@ -379,9 +389,10 @@ cc_library(
         "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:gpu_topology",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
-        "//xla/pjrt/gpu:se_gpu_pjrt_compiler",  # To register GPU AOT compiler
+        "//xla/pjrt/gpu:se_gpu_pjrt_compiler",  # buildcleaner: keep to register GPU AOT compiler
         "//xla/python:custom_call_batch_partitioner",
         "//xla/python:custom_partition_callback",
+        "//xla/python:debug_callback_partitioner",  # To register "DebugCallbackCustomCallPartitioner" custom partitioning handler.
         "//xla/python:inspect_sharding",  # To register "InspectSharding" custom partitioning handler.
         "//xla/service:compiler",
         "//xla/service:custom_call_target_registry",
@@ -409,6 +420,9 @@ cc_library(
 # PJRT GPU plugin. Can be configured to be built for CUDA or ROCM.
 xla_cc_binary(
     name = "pjrt_c_api_gpu_plugin.so",
+    additional_linker_inputs = [
+        ":pjrt_c_api_gpu_version_script.lds",
+    ],
     linkopts = [
         "-Wl,--version-script,$(location :pjrt_c_api_gpu_version_script.lds)",
         "-Wl,--no-undefined",
@@ -422,7 +436,6 @@ xla_cc_binary(
     ],
     deps = [
         ":pjrt_c_api_gpu",
-        ":pjrt_c_api_gpu_version_script.lds",
         "//xla/service:gpu_plugin",
     ] + if_cuda_is_configured([
         "//xla/stream_executor:cuda_platform",
@@ -440,18 +453,24 @@ cc_library(
     deps = [
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
+        ":pjrt_c_api_wrapper_impl",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/client:executable_build_options",
-        "//xla/pjrt:compile_options_proto_cc",
+        "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/builder:xla_computation",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
+        "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service:computation_placer_hdr",
         "//xla/tsl/platform:status",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_for_library",
     ],
 )
 
@@ -476,6 +495,7 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/client:client_library",
         "//xla/ffi:execution_context",
         "//xla/ffi:ffi_api",
@@ -513,17 +533,13 @@ xla_cc_test(
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
         "//xla:shape_util",
-        "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/tsl/lib/core:status_test_util",
-        "//xla/tsl/platform:status",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@stablehlo//:version",
@@ -535,8 +551,8 @@ xla_cc_test(
     srcs = ["pjrt_c_api_cpu_test.cc"],
     deps = [
         ":pjrt_c_api_cpu",
+        ":pjrt_c_api_hdrs",
         ":pjrt_c_api_test_common",
-        ":pjrt_c_api_wrapper_impl",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -560,10 +576,10 @@ cc_library(
         "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_future",
+        "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_proto_cc",
         "//xla/tests:literal_test_util",
@@ -577,6 +593,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_for_library",
     ],
 )

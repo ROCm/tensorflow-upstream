@@ -87,7 +87,40 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$TestError", "Host",
                          kTestError);
 
 TEST(TfrtCpuClientTest, MemorySpace) {
-  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(CpuClientOptions()));
+  CpuClientOptions options;
+  options.legacy_memory_space_behavior = false;
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(std::move(options)));
+  ASSERT_GE(client->devices().size(), 1);
+
+  ASSERT_EQ(client->memory_spaces().size(),
+            client->addressable_devices().size() * 3);
+  for (auto* device : client->devices()) {
+    TF_ASSERT_OK_AND_ASSIGN(auto* default_memory_space,
+                            device->default_memory_space());
+    EXPECT_EQ(default_memory_space->kind(), CpuDeviceMemorySpace::kKind);
+    EXPECT_EQ(default_memory_space->kind_id(), CpuDeviceMemorySpace::kKindId);
+    EXPECT_THAT(device->memory_space_by_kind(CpuDeviceMemorySpace::kKind),
+                IsOkAndHolds(default_memory_space));
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto cpu_device_memory_space,
+        device->memory_space_by_kind(CpuDeviceMemorySpace::kKind));
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto unpinned_host_memory_space,
+        device->memory_space_by_kind(UnpinnedHostMemorySpace::kKind));
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto pinned_host_memory_space,
+        device->memory_space_by_kind(PinnedHostMemorySpace::kKind));
+    device->memory_spaces(),
+        ElementsAre(cpu_device_memory_space, unpinned_host_memory_space,
+                    pinned_host_memory_space);
+  }
+}
+
+TEST(TfrtCpuClientTest, LegacyMemorySpace) {
+  CpuClientOptions options;
+  options.legacy_memory_space_behavior = true;
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(std::move(options)));
   ASSERT_GE(client->devices().size(), 1);
 
   ASSERT_EQ(client->memory_spaces().size(),
@@ -123,7 +156,7 @@ ENTRY DonationWithExecutionError() -> f32[2, 2] {
                           ParseAndReturnUnverifiedModule(kProgram, {}));
   XlaComputation xla_computation(hlo_module->ToProto());
   TF_ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
-                          client->Compile(xla_computation, {}));
+                          client->CompileAndLoad(xla_computation, {}));
 
   TF_ASSERT_OK_AND_ASSIGN(auto fingerprint,
                           pjrt_executable->FingerprintExecutable());
@@ -174,7 +207,7 @@ TEST(TfrtCpuClientTest, HloSnapshot) {
   debug_opts->set_xla_dump_hlo_snapshots(true);
   XlaComputation xla_computation(hlo_module->ToProto());
   TF_ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
-                          client->Compile(xla_computation, options));
+                          client->CompileAndLoad(xla_computation, options));
 
   std::vector<float> data1{1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
   std::vector<float> data2{10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
@@ -305,6 +338,20 @@ TEST(TfrtCpuClientTest, BufferFromLiteralInt4) {
               ElementsAreArray(literal.data<s4>()));
 }
 
+TEST(TfrtCpuClientTest, CopyToMemorySpace) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(CpuClientOptions()));
+  xla::Shape shape = xla::ShapeUtil::MakeShape(S32, {128, 256});
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, xla::MakeFakeLiteral(shape));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostLiteral(literal, client->memory_spaces()[0]));
+  TF_ASSERT_OK_AND_ASSIGN(buffer,
+                          buffer->CopyToMemorySpace(buffer->memory_space()));
+  TF_ASSERT_OK_AND_ASSIGN(auto received_literal, buffer->ToLiteralSync());
+  EXPECT_THAT(received_literal->data<int32_t>(),
+              ElementsAreArray(literal.data<int32_t>()));
+}
+
 TEST(TfrtCpuClientTest, AsyncTransferCallsOnDone) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(CpuClientOptions()));
   xla::Shape shape = ShapeUtil::MakeShape(F32, {3, 2});
@@ -432,7 +479,7 @@ ENTRY Identity() -> f32[2, 2] {
                           ParseAndReturnUnverifiedModule(kProgram, {}));
   XlaComputation xla_computation(hlo_module->ToProto());
   TF_ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
-                          client->Compile(xla_computation, {}));
+                          client->CompileAndLoad(xla_computation, {}));
 
   TF_ASSERT_OK_AND_ASSIGN(auto fingerprint,
                           pjrt_executable->FingerprintExecutable());
@@ -470,7 +517,7 @@ ENTRY Identity() -> f32[2, 2] {
                           ParseAndReturnUnverifiedModule(kProgram, {}));
   XlaComputation xla_computation(hlo_module->ToProto());
   TF_ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
-                          client->Compile(xla_computation, {}));
+                          client->CompileAndLoad(xla_computation, {}));
 
   TF_ASSERT_OK_AND_ASSIGN(auto fingerprint,
                           pjrt_executable->FingerprintExecutable());
@@ -512,7 +559,7 @@ ENTRY Identity() -> f32[2, 2] {
                           ParseAndReturnUnverifiedModule(kProgram, {}));
   XlaComputation xla_computation(hlo_module->ToProto());
   TF_ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
-                          client->Compile(xla_computation, {}));
+                          client->CompileAndLoad(xla_computation, {}));
 
   TF_ASSERT_OK_AND_ASSIGN(auto fingerprint,
                           pjrt_executable->FingerprintExecutable());
@@ -573,7 +620,7 @@ ENTRY Identity() -> f32[2, 2] {
                           ParseAndReturnUnverifiedModule(kProgram, {}));
   XlaComputation xla_computation(hlo_module->ToProto());
   TF_ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
-                          client->Compile(xla_computation, {}));
+                          client->CompileAndLoad(xla_computation, {}));
 
   TF_ASSERT_OK_AND_ASSIGN(auto fingerprint,
                           pjrt_executable->FingerprintExecutable());
@@ -662,7 +709,7 @@ TEST(TfrtCpuClientTest, ForwardUserDataToFfiHandler) {
                           ParseAndReturnUnverifiedModule(kProgram, {}));
   XlaComputation xla_computation(hlo_module->ToProto());
   TF_ASSERT_OK_AND_ASSIGN(auto executable,
-                          client->Compile(xla_computation, {}));
+                          client->CompileAndLoad(xla_computation, {}));
 
   ExecuteContext context;
   TF_ASSERT_OK(context.ffi_context().Emplace<MemsetValue>(42.0f));
@@ -711,7 +758,7 @@ TEST(TfrtCpuClientTest, PassAttrToFfiHandler) {
                           ParseAndReturnUnverifiedModule(kProgram, {}));
   XlaComputation xla_computation(hlo_module->ToProto());
   TF_ASSERT_OK_AND_ASSIGN(auto executable,
-                          client->Compile(xla_computation, {}));
+                          client->CompileAndLoad(xla_computation, {}));
 
   ExecuteOptions opts;
   auto result = executable->Execute(/*argument_handles=*/{{}}, opts);

@@ -41,9 +41,14 @@ default_visibility = [
     # copybara:uncomment #internal tuning service,
     # copybara:uncomment "//third_party/odml/experimental:__subpackages__",
     #internal nexus library,
+    #internal headless cuj tests library,
     #internal nexus library tests,
     "//tensorflow/compiler/jit:__subpackages__",
     #internal library,
+    # TODO(matthurd): to be removed when summary.proto.h deps moves to TSL
+    "@org_xprof//xprof:__subpackages__",
+    "//tensorflow/cc/experimental/tfa:__subpackages__",
+    "//tensorflow/compiler/mlir/utils:__subpackages__",
 ]
 
 package(
@@ -101,6 +106,7 @@ exports_files(
         "tensor_reference.h",
         "tensor_slice.h",
         "tensor_util.h",
+        "tf_data_file_logger_options.h",
         "thread_factory.h",
         "tracking_allocator.h",
         "versions.h",
@@ -255,6 +261,7 @@ filegroup(
         "tensor_slice.h",
         "tensor_types.h",
         "tensor_util.h",
+        "tf_data_file_logger_options.h",
         "thread_factory.h",
         "tracking_allocator.h",
         "type_index.h",
@@ -304,7 +311,6 @@ filegroup(
         "run_handler.cc",
         "run_handler_util.cc",
         "tensor_slice.cc",
-        "tensor_util.cc",
         "versions.cc",
     ],
 )
@@ -337,6 +343,7 @@ filegroup(
         "tensor_shape.h",
         "tensor_types.h",
         "tensor_util.h",
+        "tf_data_file_logger_options.h",
         "tracking_allocator.h",
         "type_index.h",
         "type_traits.h",
@@ -646,10 +653,7 @@ cc_library(
     name = "bfloat16",
     srcs = ["bfloat16.cc"],
     hdrs = ["bfloat16.h"],
-    visibility = [
-        "//tensorflow/core:__subpackages__",
-        "//tensorflow/security/fuzzing:__subpackages__",
-    ],
+    visibility = ["//visibility:public"],
     deps = [
         ":numeric_types",
         "//tensorflow/core/platform:byte_order",
@@ -689,12 +693,7 @@ cc_library(
         "partial_tensor_shape.h",
         "tensor_shape.h",
     ],
-    visibility = [
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/runtime_fallback:__subpackages__",
-        "//tensorflow/core/tfrt/utils:__subpackages__",
-        "//waymo/ml/deploy/benchmark:__subpackages__",
-    ],
+    visibility = ["//visibility:public"],
     deps = [
         ":bounds_check",
         ":tensor_shape_proto_cc",
@@ -729,6 +728,7 @@ cc_library(
         "//learning/processing/hydra/tensorflow:__pkg__",
         "//learning/sibyl/tfx/state/kernels:__pkg__",
         "//learning/sibyl/tfx/transformation/kernels:__pkg__",
+        "//robotics/datasets/stepstable/tensorflow:__pkg__",
         "//tensorflow/compiler/mlir/tools/kernel_gen:__pkg__",
         "//tensorflow/compiler/tf2xla:__pkg__",
         "//tensorflow/examples/custom_ops_doc/simple_hash_table:__pkg__",
@@ -801,7 +801,7 @@ cc_library(
 cc_library(
     name = "tensor_types",
     hdrs = ["tensor_types.h"],
-    visibility = ["//visibility:private"],
+    visibility = ["//visibility:public"],
     deps = [
         "//tensorflow/core/platform:logging",
         "@eigen_archive//:eigen3",
@@ -824,6 +824,7 @@ tf_cuda_library(
     srcs = [
         "log_memory.cc",
         "tensor.cc",
+        "tensor_util.cc",
         "typed_allocator.cc",
         "types.cc",
         "variant.cc",
@@ -842,16 +843,7 @@ tf_cuda_library(
         "variant_op_registry.h",
         "variant_tensor_data.h",
     ],
-    visibility = [
-        "//learning/infra/runtime/experimental/mixed_engine:__subpackages__",
-        "//tensorflow:__pkg__",
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/runtime_fallback:__subpackages__",
-        "//tensorflow/core/tfrt:__subpackages__",
-        "//tensorflow/core/util:__pkg__",
-        "//tensorflow/python/profiler/internal:__pkg__",
-        "//tensorflow/security/fuzzing:__subpackages__",
-    ],
+    visibility = ["//visibility:public"],
     deps = [
         ":allocation_description_proto_cc",
         ":allocator",
@@ -884,13 +876,13 @@ tf_cuda_library(
         "//tensorflow/core/platform:errors",
         "//tensorflow/core/platform:logging",
         "//tensorflow/core/platform:macros",
+        "//tensorflow/core/platform:numbers",
         "//tensorflow/core/platform:platform_port",
         "//tensorflow/core/platform:protobuf",
         "//tensorflow/core/platform:strcat",
         "//tensorflow/core/platform:tensor_coding",
         "//tensorflow/core/platform:types",
         "//tensorflow/core/public:version",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/numeric:bits",

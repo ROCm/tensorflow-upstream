@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/compilation_environments.h"
 
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -28,14 +27,13 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/xla.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
+#include "xla/tsl/platform/errors.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/platform/statusor.h"
 
@@ -52,7 +50,7 @@ absl::flat_hash_map<const tsl::protobuf::Descriptor*,
 class GlobalCompEnvStats {
  public:
   static GlobalCompEnvStats& GetSingleton() {
-    static GlobalCompEnvStats* singleton = new GlobalCompEnvStats();
+    static GlobalCompEnvStats* const singleton = new GlobalCompEnvStats();
 
     return *singleton;
   }
@@ -184,6 +182,29 @@ void CompilationEnvironments::RegisterProcessNewEnvFn(
                   << descriptor->full_name() << "' has already been registered";
 }
 
+absl::Status CompilationEnvironments::InitializeAllKnownEnvs() {
+  std::vector<const tsl::protobuf::Descriptor*> descriptors;
+  {
+    absl::MutexLock l(&process_new_env_fns_mu);
+    if (process_new_env_fns == nullptr) {
+      return absl::OkStatus();
+    }
+    descriptors.reserve(process_new_env_fns->size());
+    for (const auto& [descriptor, fn] : *process_new_env_fns) {
+      descriptors.push_back(descriptor);
+    }
+  }
+  for (const auto& descriptor : descriptors) {
+    auto it = environments_.find(descriptor);
+    if (it == environments_.end()) {
+      TF_RETURN_IF_ERROR(AddEnvImpl(*descriptor, nullptr));
+      DefaultEnvCreatedByCompilationEnvironments(descriptor->full_name());
+    }
+  }
+
+  return absl::OkStatus();
+}
+
 absl::Status CompilationEnvironments::AddEnv(
     std::unique_ptr<tsl::protobuf::Message> env) {
   if (!env) {
@@ -243,15 +264,15 @@ absl::Status CompilationEnvironments::AddEnvImpl(
     std::unique_ptr<tsl::protobuf::Message> env) {
   // Check if we already have an environment of env's type
   if (environments_.contains(&descriptor)) {
-    return tsl::errors::InvalidArgument(
-        "Replacing CompilationEnvironment of type %s.", descriptor.full_name());
+    return absl::AlreadyExistsError(absl::StrCat(
+        "Replacing CompilationEnvironment of type ", descriptor.full_name()));
   }
 
   // Process env
   ProcessNewEnvFn process_new_env = GetProcessNewEnvFn(descriptor);
   if (!process_new_env) {
-    return tsl::errors::InvalidArgument(
-        "Unknown compilation environment type: %s", descriptor.full_name());
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Unknown CompilationEnvironment type ", descriptor.full_name()));
   }
   TF_ASSIGN_OR_RETURN(std::unique_ptr<tsl::protobuf::Message> processed_env,
                       process_new_env(std::move(env)));

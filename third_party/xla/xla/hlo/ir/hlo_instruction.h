@@ -300,9 +300,11 @@ class HloInstruction {
   void DetachFromOperandsAndUsers();
 
   // Adds a derived instruction to the parent computation of this instruction.
-  // Also update setup the new instruction as a derived instruction.
+  // Updates setup the new instruction as a derived instruction, and sets the
+  // name of the new instruction (if `new_name` is not empty).
   HloInstruction* AddInstruction(
-      std::unique_ptr<HloInstruction> derived_instruction);
+      std::unique_ptr<HloInstruction> derived_instruction,
+      absl::string_view new_name = "");
 
   // Creates an instruction from the given proto. Arguments:
   //
@@ -996,7 +998,7 @@ class HloInstruction {
   // Creates a dynamic reshape instruction. Similar to reshape but dynamic
   // dimensions sizes are provided as additional variadic arguments.
   //
-  // Precondition: dim_sizes.size() == shape.rank()
+  // Precondition: dim_sizes.size() == shape.dimensions().size()
   static std::unique_ptr<HloInstruction> CreateDynamicReshape(
       const Shape& shape, HloInstruction* data_operand,
       absl::Span<HloInstruction* const> dim_sizes);
@@ -1127,6 +1129,15 @@ class HloInstruction {
   static std::unique_ptr<HloInstruction> CreateCustomCall(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       absl::string_view custom_call_target,
+      absl::Span<const Shape> operand_shapes_with_layout,
+      std::string opaque = "",
+      CustomCallApiVersion api_version = API_VERSION_ORIGINAL);
+
+  // Overload which constrains the layouts of the operand and result and apply a
+  // computation.
+  static std::unique_ptr<HloInstruction> CreateCustomCall(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      HloComputation* to_apply, absl::string_view custom_call_target,
       absl::Span<const Shape> operand_shapes_with_layout,
       std::string opaque = "",
       CustomCallApiVersion api_version = API_VERSION_ORIGINAL);
@@ -1265,6 +1276,9 @@ class HloInstruction {
 
   // Returns if instruction has any control dependencies.
   bool HasControlDependencies() const;
+
+  // Returns if instruction has successor control dependencies.
+  bool HasSuccessorControlDependencies() const;
 
   // Copies the control predecessors and successors on this HLO instruction to
   // `inst`.  Does not do a deep copy so this makes sense only if `inst` and
@@ -1717,9 +1731,8 @@ class HloInstruction {
   }
 
   // Returns the computations this instruction directly calls (if any).
-  const PtrVec<HloComputation*>& called_computations() const {
-    return rare()->called_computations;
-  }
+  const PtrVec<HloComputation*>& called_computations() const;
+
   bool has_called_computations() const {
     return has_rare() && !called_computations().empty();
   }
@@ -1742,11 +1755,7 @@ class HloInstruction {
   // clearing out the computations, we reflect the fact that all side-effecting
   // properties have been reflected in the caller, and make the call HLO
   // removable.
-  virtual void ClearCalledComputations() {
-    if (has_rare()) {
-      mutable_rare()->called_computations.clear();
-    }
-  }
+  virtual void ClearCalledComputations();
 
   // Returns true if this instruction performs an elementwise operation on
   // `operand_idx`-th operand. An instruction is elementwise on an operand iff,
@@ -1822,7 +1831,11 @@ class HloInstruction {
   void ClearUniqueIdInternal() { unique_id_ = -1; }
 
   // Set the unique id for this instruction to "id"
-  void SetUniqueId(int id) {
+  // TODO(b/399394039): Remove this function once the bug is fixed.
+  void SetUniqueId(int id) { SetUniqueId(static_cast<int64_t>(id)); }
+
+  // Set the unique id for this instruction to "id"
+  void SetUniqueId(int64_t id) {
     CHECK_EQ(unique_id_, -1);  // Should not be assigned already
     CHECK_GE(id, 0);
     unique_id_ = id;
@@ -1830,7 +1843,19 @@ class HloInstruction {
 
   // Return the unique ID assigned to this node via SetUniqueId (or -1
   // if no id has been assigned yet).
-  int unique_id() const { return unique_id_; }
+  int unique_id() const {
+    CHECK_LT(unique_id_, INT32_MAX)
+        << "int32_t unique_id was requested but unique_id was written as a "
+           "64-bit integer: "
+        << unique_id_;
+    return static_cast<int>(unique_id_);
+  }
+
+  // Return the unique ID assigned to this node via SetUniqueId (or -1
+  // if no id has been assigned yet).Returns the entire unique ID as a 64-bit
+  // integer.
+  // TODO(b/399394039): Remove this function once the bug is fixed.
+  int64_t unique_id_64_bits() const { return unique_id_; }
 
   bool has_backend_config() const { return !backend_config_.empty(); }
 
@@ -1871,8 +1896,7 @@ class HloInstruction {
   }
 
   // Adds or overrides a single attribute in the HloInstruction.
-  void set_frontend_attribute(const std::string& key,
-                              const std::string& value) {
+  void set_frontend_attribute(absl::string_view key, absl::string_view value) {
     (*mutable_rare()->frontend_attributes.mutable_map())[key] = value;
   }
 
@@ -1885,7 +1909,7 @@ class HloInstruction {
   }
 
   std::optional<std::string> get_frontend_attribute(
-      const std::string& key) const {
+      absl::string_view key) const {
     auto it = rare()->frontend_attributes.map().find(key);
     if (it == rare()->frontend_attributes.map().end()) {
       return std::nullopt;
@@ -1968,7 +1992,7 @@ class HloInstruction {
   absl::StatusOr<ConfigProto> backend_config() const {
     ConfigProto proto;
     TF_RETURN_IF_ERROR(backend_config_.GetProto(&proto));
-    return std::move(proto);
+    return proto;
   }
 
   absl::Status set_backend_config(const tsl::protobuf::Message& proto) {
@@ -2028,10 +2052,7 @@ class HloInstruction {
   }
   const OpMetadata& metadata() const { return *metadata_; }
 
-  // Set/get the computation containing this instruction. set_parent should only
-  // be called by HloComputation methods which add/remove instructions to
-  // computations.
-  void set_parent(HloComputation* computation) { parent_ = computation; }
+  // Get the computation containing this instruction.
   const HloComputation* parent() const { return parent_; }
   HloComputation* parent() { return parent_; }
 
@@ -2381,6 +2402,10 @@ class HloInstruction {
   std::shared_ptr<OriginalValue> original_value() const;
   void set_original_value(std::shared_ptr<OriginalValue> original_value);
 
+  // Copy original value from the input instruction. This performs a deep copy
+  // if clone is set to true. Otherwise, it performs a shallow copy.
+  void CopyOriginalValue(const HloInstruction* instruction, bool clone);
+
  protected:
   // Internal constructor for a given opcode/shape, other fields must be filled
   // by factory methods.
@@ -2433,6 +2458,9 @@ class HloInstruction {
       bool layout_sensitive, bool sharding_sensitive,
       bool ignore_channel_id_values,
       bool ignore_commutative_operand_order) const;
+
+  // Set the computation containing this instruction.
+  void set_parent(HloComputation* computation) { parent_ = computation; }
 
   // Implementation for non-common logic of PrintExtraAttributes.
   virtual void PrintExtraAttributesImpl(AttributePrinter& printer,
@@ -2577,7 +2605,7 @@ class HloInstruction {
         user_map_;
   };
 
-  int unique_id_;  // Unique to this HloInstruction within a HloModule
+  int64_t unique_id_;  // Unique to this HloInstruction within a HloModule
   uint32_t index_in_parent_;  // Index that identifies inst in HloComputation
 
   // Opcode for this instruction.
@@ -2752,7 +2780,6 @@ bool HloPredicateIsNotOp(const HloInstruction* instruction) {
     case HloOpcode::kScatter:
     case HloOpcode::kSelectAndScatter:
     case HloOpcode::kSort:
-    case HloOpcode::kTopK:
     case HloOpcode::kCustomCall:
       return true;
     default:
