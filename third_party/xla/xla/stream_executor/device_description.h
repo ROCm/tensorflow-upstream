@@ -127,6 +127,8 @@ class RocmComputeCapability {
     return gfx9_mi200_or_later() || gfx1200() || gfx1201() || gfx_version() == "gfx950";
   }
 
+  bool has_hipblaslt_mx_support() const { return gfx_version() == "gfx950"; }
+
   bool has_fp8_support() const {
     return has_ocp_fp8_support() || has_nanoo_fp8_support();
   }

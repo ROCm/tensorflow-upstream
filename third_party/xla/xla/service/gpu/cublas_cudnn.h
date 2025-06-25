@@ -99,6 +99,9 @@ bool IsCublasLtMatmul(const HloInstruction& hlo);
 // Scaled matrix multiplication in FP8. Calls into cublasLt.
 bool IsCublasLtMatmulF8(const HloInstruction& hlo);
 
+// Scaled matrix multiplication in FP8. Calls into cublasLt.
+bool IsCublasLtMatmulMX(const HloInstruction& hlo);
+
 // Triangular solve that calls into legacy cublas.
 bool IsTriangularSolve(const HloInstruction& hlo);
 
@@ -209,6 +212,9 @@ std::string CudnnfMHAKindToString(CudnnfMHAKind kind);
 absl::Status SetFMHAInstructionName(HloModule* module, HloInstruction* fmha);
 
 bool MHACallHasDropout(absl::string_view fmha_call_name);
+
+// A call to hipblaslt for a block scaled dot.
+extern const absl::string_view kCublasLtMatmulMXCallTarget;
 
 // CUB library calls.
 // Reference: https://nvlabs.github.io/cub/
