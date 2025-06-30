@@ -446,8 +446,11 @@ cc_library(
         "//xla/service:hlo_creation_utils",
         "//xla/service:op_expander_pass",
         "//xla/service:shape_inference",
+        "//xla/service/gpu:cublas_cudnn",
+        "//xla/service/gpu:matmul_utils",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "//xla/service/gpu:backend_configs_cc",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
@@ -456,15 +459,32 @@ cc_library(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "block_scaling_rewriter_test",
     srcs = ["block_scaling_rewriter_test.cc"],
+    backends = ["gpu"],
     deps = [
         ":block_scaling_rewriter",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/tests:hlo_test_base",
+        "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_test(
+    name = "block_scaling_rewriter_hipblaslt_test",
+    srcs = ["block_scaling_rewriter_hipblaslt_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":block_scaling_rewriter",
+        "//xla:error_spec",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
