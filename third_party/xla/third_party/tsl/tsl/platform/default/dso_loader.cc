@@ -181,10 +181,10 @@ absl::StatusOr<void*> GetHipblasltDsoHandle() {
   return GetDsoHandle("hipblaslt", "");
 }
 
-#if (TF_ROCM_VERSION >= 60000)
-#define HIP_SO_VERSION "6"
+#if (TF_ROCM_VERSION >= 70000)
+#define HIP_SO_VERSION "7"
 #else
-#define HIP_SO_VERSION "5"
+#define HIP_SO_VERSION "6"
 #endif
 
 absl::StatusOr<void*> GetHipDsoHandle() { return GetDsoHandle("amdhip64", HIP_SO_VERSION); }
