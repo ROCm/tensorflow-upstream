@@ -349,17 +349,25 @@ absl::Status BlasLt::MatmulPlan::ValidateInputs(
   return absl::OkStatus();
 }
 
+absl::Status BlasLt::MatmulPlan::SetAlgorithm(const MatmulAlgorithm& algorithm) const {
+  algorithm_ = algorithm;
+  return absl::OkStatus();
+}
+
 absl::Status BlasLt::MatmulPlan::DoMatmul(
     Stream* stream, const void* alpha, DeviceMemoryBase a, DeviceMemoryBase b,
     const void* beta, DeviceMemoryBase c, DeviceMemoryBase d,
-    const MatmulAlgorithm& algorithm, ScratchAllocator& scratch_allocator,
+    const MatmulAlgorithm& Xalgorithm, ScratchAllocator& scratch_allocator,
     DeviceMemoryBase bias, DeviceMemoryBase aux, DeviceMemoryBase a_scale,
     DeviceMemoryBase b_scale, DeviceMemoryBase c_scale,
     DeviceMemoryBase d_scale, DeviceMemoryBase d_amax,
     blas::ProfileResult* profile_result) const {
+ 
   TF_ASSIGN_OR_RETURN(
       std::optional<gpu::GpuTimer> timer,
       gpu::GpuTimer::CreateIfNeeded(gpu::AsGpuStream(stream), profile_result));
+
+  auto algorithm = algorithm_.has_value() ? *algorithm_ : Xalgorithm;
 
   void* workspace = nullptr;
   if (algorithm.workspace_size > 0) {

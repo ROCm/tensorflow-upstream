@@ -31,7 +31,9 @@ namespace gpu {
 
 class CublasLtMatmulThunk : public Thunk {
  public:
-  CublasLtMatmulThunk(ThunkInfo thunk_info, GemmConfig gemm_config,
+  CublasLtMatmulThunk(const HloInstruction *instr, 
+                      ThunkInfo thunk_info,
+                      GemmConfig gemm_config,
                       se::gpu::BlasLt::Epilogue epilogue, int64_t algorithm_idx,
                       BufferAllocation::Slice a_buffer,
                       BufferAllocation::Slice b_buffer,
@@ -48,24 +50,13 @@ class CublasLtMatmulThunk : public Thunk {
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
  private:
-  absl::StatusOr<se::gpu::BlasLt::MatmulPlan*> GetMatmulPlan(
-      const stream_executor::Stream* stream);
-  absl::StatusOr<std::optional<se::gpu::BlasLt::MatmulAlgorithm> >
-  GetMatmulAlgorithm(const se::gpu::BlasLt::MatmulPlan* plan);
-
-  absl::Mutex matmul_plans_cache_mutex_;
-  absl::flat_hash_map<const stream_executor::Stream*,
-                      se::gpu::BlasLt::MatmulPlanPtr>
-      matmul_plans_cache_ ABSL_GUARDED_BY(matmul_plans_cache_mutex_);
-
-  absl::Mutex matmul_algorithm_cache_mutex_;
-  absl::flat_hash_map<const se::gpu::BlasLt::MatmulPlan*,
-                      se::gpu::BlasLt::MatmulAlgorithm>
-      matmul_algorithm_cache_ ABSL_GUARDED_BY(matmul_algorithm_cache_mutex_);
+  absl::StatusOr<se::gpu::BlasLt::MatmulPlan *> GetCachedMatmulPlan(
+                const ExecuteParams& params);
 
   GemmConfig gemm_config_;
   se::gpu::BlasLt::Epilogue epilogue_;
   int64_t algorithm_idx_;
+  std::string canonical_hlo_;
   BufferAllocation::Slice a_buffer_;
   BufferAllocation::Slice b_buffer_;
   BufferAllocation::Slice c_buffer_;
