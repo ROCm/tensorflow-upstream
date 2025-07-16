@@ -39,6 +39,7 @@ std::vector<TritonGemmConfig> GemmFusionAutotunerImpl::GetDefaultTritonConfigs()
       Config(32, 32, 256, 1, 1, 4), Config(64, 32, 32, 16, 1, 4),
       Config(32, 64, 64, 4, 1, 4),  Config(128, 128, 64, 4, 1, 4),
       Config(16, 16, 256, 1, 1, 4), Config(16, 128, 32, 16, 1, 4),
+      // Configs bellow were added after perf analysis for gfx950
       Config(128, 128, 64, 1, 1, 4), Config(16, 16, 64, 1, 1, 4),   
       Config(32, 16, 256, 1, 1, 4),  Config(32, 16, 64, 4, 1, 4),   
       Config(32, 64, 64, 1, 1, 4),   Config(64, 16, 32, 16, 1, 4),  
