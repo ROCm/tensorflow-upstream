@@ -73,13 +73,15 @@ class RocmComputeCapability {
 
   bool gfx9_mi300() const { return gfx_version() == "gfx942"; }
 
+  bool gfx9_mi350() const { return gfx_version() == "gfx950"; }
+
   bool gfx9_mi100_or_later() const {
-    static constexpr absl::string_view kList[] = {"gfx908", "gfx90a", "gfx942"};
+    static constexpr absl::string_view kList[] = {"gfx908", "gfx90a", "gfx942", "gfx950"};
     return absl::c_count(kList, gfx_version()) != 0;
   }
 
   bool gfx9_mi200_or_later() const {
-    static constexpr absl::string_view kList[] = {"gfx90a", "gfx942"};
+    static constexpr absl::string_view kList[] = {"gfx90a", "gfx942", "gfx950"};
     return absl::c_count(kList, gfx_version()) != 0;
   }
 
@@ -124,18 +126,18 @@ class RocmComputeCapability {
   }
 
   bool has_hipblaslt() const {
-    return gfx9_mi200_or_later() || gfx1200() || gfx1201() || gfx_version() == "gfx950";
+    return gfx9_mi200_or_later() || gfx1200() || gfx1201();
   }
 
-  bool has_hipblaslt_mx_support() const { return gfx_version() == "gfx950"; }
+  bool has_hipblaslt_mx_support() const { return gfx9_mi350(); }
 
   bool has_fp8_support() const {
     return has_ocp_fp8_support() || has_nanoo_fp8_support();
   }
 
-  bool has_ocp_fp8_support() const { return gfx1200() || gfx1201() || gfx_version() == "gfx950"; }
+  bool has_ocp_fp8_support() const { return gfx1200() || gfx1201() || gfx9_mi350(); }
 
-  bool has_nanoo_fp8_support() const { return gfx_version() == "gfx942"; }
+  bool has_nanoo_fp8_support() const { return gfx9_mi300(); }
 
   std::string ToString() const { return gcn_arch_name(); }
 
