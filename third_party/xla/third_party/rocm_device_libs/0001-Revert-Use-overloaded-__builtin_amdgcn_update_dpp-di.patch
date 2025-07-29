@@ -1,0 +1,42 @@
+From 635c6aeba44c500ddd86d490aaba6fe931fcdc8f Mon Sep 17 00:00:00 2001
+From: Dragan Mladjenovic <Dragan.Mladjenovic@amd.com>
+Date: Wed, 30 Jul 2025 15:41:02 -0500
+Subject: [PATCH] Revert "Use overloaded __builtin_amdgcn_update_dpp directly"
+
+This reverts commit 4d7f7c644f4ee3c41eb15e75add3fcb4248ed483.
+---
+ amd/device-libs/ockl/src/wfredscan.cl | 18 ++++++++++++------
+ 1 file changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/amd/device-libs/ockl/src/wfredscan.cl b/amd/device-libs/ockl/src/wfredscan.cl
+index 4da63029e4a0..0cfc20ab11f0 100644
+--- a/ockl/src/wfredscan.cl
++++ b/ockl/src/wfredscan.cl
+@@ -60,12 +60,18 @@
+ 
+ // DPP16
+ #define uint_dpp(ID,X,C,R,B,W) __builtin_amdgcn_update_dpp(ID,X,C,R,B,W)
+-#define ulong_dpp(ID,X,C,R,B,W) __builtin_amdgcn_update_dpp(ID,X,C,R,B,W)
+-#define int_dpp(ID,X,C,R,B,W) __builtin_amdgcn_update_dpp(ID,X,C,R,B,W)
+-#define long_dpp(ID,X,C,R,B,W) __builtin_amdgcn_update_dpp(ID,X,C,R,B,W)
+-#define float_dpp(ID,X,C,R,B,W) __builtin_amdgcn_update_dpp(ID,X,C,R,B,W)
+-#define double_dpp(ID,X,C,R,B,W) __builtin_amdgcn_update_dpp(ID,X,C,R,B,W)
+-#define half_dpp(ID,X,C,R,B,W) __builtin_amdgcn_update_dpp(ID,X,C,R,B,W)
++#define ulong_dpp(ID,X,C,R,B,W) ({ \
++    uint2 __x = AS_UINT2(X); \
++    uint2 __r; \
++    __r.lo = uint_dpp((uint)ID, __x.lo, C, R, B, W); \
++    __r.hi = uint_dpp((uint)(ID >> 32), __x.hi, C, R, B, W); \
++    AS_ULONG(__r); \
++})
++#define int_dpp(ID,X,C,R,B,W) AS_INT(uint_dpp(AS_UINT(ID),AS_UINT(X),C,R,B,W))
++#define long_dpp(ID,X,C,R,B,W) AS_LONG(ulong_dpp(AS_ULONG(ID),AS_ULONG(X),C,R,B,W))
++#define float_dpp(ID,X,C,R,B,W) AS_FLOAT(uint_dpp(AS_UINT(ID),AS_UINT(X),C,R,B,W))
++#define double_dpp(ID,X,C,R,B,W) AS_DOUBLE(ulong_dpp(AS_ULONG(ID),AS_ULONG(X),C,R,B,W))
++#define half_dpp(ID,X,C,R,B,W) AS_HALF((ushort)uint_dpp((uint)AS_USHORT(ID),(uint)AS_USHORT(X),C,R,B,W))
+ 
+ // DPP8
+ #define uint_dpp8(X,S) __builtin_amdgcn_mov_dpp8(X,S)
+-- 
+2.34.1
+

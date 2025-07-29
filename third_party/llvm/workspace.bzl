@@ -24,6 +24,8 @@ def repo(name):
             "//third_party/llvm:zstd.patch",
             "//third_party/llvm:0001-Add-the-initializes-attribute-langref-and-support-84.patch",
             "//third_party/llvm:0002-IR-Add-samesign-flag-to-icmp-instruction-111419.patch",
+            "//third_party/llvm:0001-clang-CodeGen-sret-args-should-always-point-to-the-a.patch",
+            "//third_party/llvm:0001-Bazel-build-workaround.patch",
         ],
         link_files = {"//third_party/llvm:run_lit.sh": "mlir/run_lit.sh"},
     )
