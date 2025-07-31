@@ -25,6 +25,7 @@ load("//third_party/ducc:workspace.bzl", ducc = "repo")
 load("//third_party/eigen3:workspace.bzl", eigen3 = "repo")
 load("//third_party/farmhash:workspace.bzl", farmhash = "repo")
 load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
+load("@local_xla//third_party/rocm_device_libs:workspace.bzl", rocm_device_libs = "repo")
 
 # Import third party repository rules. See go/tfbr-thirdparty.
 load("//third_party/FP16:workspace.bzl", FP16 = "repo")
@@ -87,6 +88,7 @@ def _initialize_third_party():
     ml_dtypes()
     nanobind()
     nasm()
+    rocm_device_libs()
     opencl_headers()
     pasta()
     pybind11_abseil()
