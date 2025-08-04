@@ -1,0 +1,25 @@
+From 21873c3e3b8822452f038274d2ebe7600e7ea65a Mon Sep 17 00:00:00 2001
+From: Dragan Mladjenovic <Dragan.Mladjenovic@amd.com>
+Date: Wed, 30 Jul 2025 14:42:58 -0500
+Subject: [PATCH] Bazel build workaround
+
+---
+ utils/bazel/llvm-project-overlay/llvm/cc_plugin_library.bzl | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/utils/bazel/llvm-project-overlay/llvm/cc_plugin_library.bzl b/utils/bazel/llvm-project-overlay/llvm/cc_plugin_library.bzl
+index b28425efa397..300323d8388c 100644
+--- a/utils/bazel/llvm-project-overlay/llvm/cc_plugin_library.bzl
++++ b/utils/bazel/llvm-project-overlay/llvm/cc_plugin_library.bzl
+@@ -15,7 +15,7 @@ configure generic aspects of all generated rules such as `testonly`. Lastly,
+ `kwargs` is expanded into all the `cc_binary` rules.
+ """
+ 
+-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
++load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_binary", "cc_import", "cc_library")
+ 
+ def cc_plugin_library(name, srcs, hdrs, include_prefix = None, strip_include_prefix = None, alwayslink = False, features = [], tags = [], testonly = False, **kwargs):
+     # Neither the name of the plugin binary nor tags on whether it is built are
+-- 
+2.34.1
+
