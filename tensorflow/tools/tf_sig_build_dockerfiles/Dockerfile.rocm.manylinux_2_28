@@ -10,7 +10,7 @@ RUN echo -e "[build_system]\nname=ROCm\nbaseurl=https://repo.almalinux.org/build
 
 # Setup c++ dev
 # TODO: Only install what is needed
-RUN dnf group install -y "Development Tools" && dnf install -y llvm-toolset gcc-toolset-13
+RUN  retries=3; for i in $(seq 1 $retries); do dnf group install -y "Development Tools" && break || sleep $((i * 5)); done && dnf install -y llvm-toolset gcc-toolset-13
 
 # Install dependencies
 COPY setup.packages.rocm.el8.sh setup.packages.rocm.el8.sh
