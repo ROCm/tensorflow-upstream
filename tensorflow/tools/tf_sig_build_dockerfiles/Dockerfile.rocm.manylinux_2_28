@@ -3,7 +3,7 @@ FROM quay.io/pypa/manylinux_2_28_x86_64:2023-11-29-1ba608e as builder
 ################################################################################
 
 # Add epel and elrepo repos and enable powertools repo
-RUN dnf update -y && dnf install -y epel-release && dnf install -y elrepo-release && dnf config-manager --set-enabled powertools
+RUN retries=3; for i in $(seq 1 $retries); do dnf update -y && break || sleep $((i * 5)); done && dnf install -y epel-release && dnf install -y elrepo-release && dnf config-manager --set-enabled powertools
 
 # Setup the build_system repo
 RUN echo -e "[build_system]\nname=ROCm\nbaseurl=https://repo.almalinux.org/build_system/8/x86_64/\nenabled=1\ngpgcheck=0" >/etc/yum.repos.d/build_system.repo
