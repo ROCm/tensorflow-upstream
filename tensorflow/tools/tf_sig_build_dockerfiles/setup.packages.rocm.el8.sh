@@ -21,6 +21,6 @@ set -e
 set -x
 
 dnf clean all
-dnf update -y
+retries=3; for i in $(seq 1 $retries); do dnf update -y && break || sleep $((i * 5)); done
 PKG_LIST=$(sed -e '/^\s*#.*$/d' -e '/^\s*$/d' "$1" | sort -u)
 dnf --enablerepo=extras,epel,elrepo,powertools,build_system  install -y $PKG_LIST
