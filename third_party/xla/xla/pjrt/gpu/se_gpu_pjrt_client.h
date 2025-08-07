@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
 namespace xla {
@@ -105,17 +106,22 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       std::shared_ptr<KeyValueStoreInterface> kv_store,
       std::shared_ptr<DistributedRuntimeClient> distributed_client,
       bool abort_collectives_on_failure,
-      std::shared_ptr<const GpuTopology> gpu_topology);
+      std::shared_ptr<const GpuTopology> gpu_topology,
+      std::optional<int> num_nodes);
 
   std::optional<std::shared_ptr<KeyValueStoreInterface>> key_value_store()
       const override {
     return kv_store_;
   }
 
+  gpu::GpuExecutableRunOptions* gpu_run_options() override;
+
   absl::StatusOr<xla::DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override;
 
   absl::string_view platform_version() const override;
+
+  std::optional<PjRtPluginAttributes> plugin_attributes() const override;
 
   using PjRtStreamExecutorClient::CreateBuffersForAsyncHostToDevice;
   absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
@@ -137,6 +143,15 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       LocalDeviceState* local_device,
       tsl::RCReference<RawSEDeviceMemory> device_buffer, void* dst,
       int64_t offset, int64_t transfer_size) override;
+
+  void CopyToRemoteDevice(PjRtBuffer* buffer,
+                          absl::string_view serialized_descriptor,
+                          PjRtBuffer::RemoteSendCallback on_done) override;
+
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
+                              PjRtDevice* device,
+                              PjRtCrossHostRecvNotifier notifier) override;
 
   absl::StatusOr<const xla::PjRtTopologyDescription*> GetTopologyDescription()
       const override {
@@ -162,6 +177,10 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       ExecutableRunOptions run_options) override;
 
  private:
+  absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
+  GetLatestIncarnations();
+
+  std::optional<int> num_nodes_;
   xla::StreamExecutorGpuTopologyDescription topology_;
   std::shared_ptr<KeyValueStoreInterface> kv_store_;
   std::shared_ptr<DistributedRuntimeClient> distributed_client_;

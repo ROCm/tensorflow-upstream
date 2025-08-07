@@ -37,6 +37,7 @@ limitations under the License.
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/Casting.h"
@@ -70,7 +71,6 @@ limitations under the License.
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
-#include "mlir/IR/Types.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
@@ -86,18 +86,16 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
-#include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
+#include "xla/codegen/emitters/ir/xla_dialect.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/emitters/transforms/passes.h"
-#include "xla/codegen/emitters/type_util.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/mlir/tools/mlir_replay/public/compiler_trace.pb.h"
 #include "xla/mlir/tools/mlir_replay/public/compiler_trace_instrumentation.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
@@ -113,7 +111,6 @@ limitations under the License.
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
-#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -141,26 +138,32 @@ void AddRanges(llvm::Function* func, const LaunchDimensions& launch_dims,
         if (auto* callee = call->getCalledFunction()) {
           switch (callee->getIntrinsicID()) {
             case llvm::Intrinsic::nvvm_read_ptx_sreg_tid_x:
+            case llvm::Intrinsic::amdgcn_workitem_id_x:
               llvm_ir::AddRangeMetadata(
                   0, launch_dims.thread_counts_per_block().x, call, module);
               break;
             case llvm::Intrinsic::nvvm_read_ptx_sreg_tid_y:
+            case llvm::Intrinsic::amdgcn_workitem_id_y:
               llvm_ir::AddRangeMetadata(
                   0, launch_dims.thread_counts_per_block().y, call, module);
               break;
             case llvm::Intrinsic::nvvm_read_ptx_sreg_tid_z:
+            case llvm::Intrinsic::amdgcn_workitem_id_z:
               llvm_ir::AddRangeMetadata(
                   0, launch_dims.thread_counts_per_block().z, call, module);
               break;
             case llvm::Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
+            case llvm::Intrinsic::amdgcn_workgroup_id_x:
               llvm_ir::AddRangeMetadata(0, launch_dims.block_counts().x, call,
                                         module);
               break;
             case llvm::Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
+            case llvm::Intrinsic::amdgcn_workgroup_id_y:
               llvm_ir::AddRangeMetadata(0, launch_dims.block_counts().y, call,
                                         module);
               break;
             case llvm::Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
+            case llvm::Intrinsic::amdgcn_workgroup_id_z:
               llvm_ir::AddRangeMetadata(0, launch_dims.block_counts().z, call,
                                         module);
               break;
@@ -325,6 +328,8 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> EmitterBase::CreateLLVMModule(
     const se::DeviceDescription& device, const HloFusionInstruction& fusion,
     const std::string& entry_function_name,
     const BufferAssignment* buffer_assignment) const {
+  mlir_context.appendDialectRegistry(GetDialectRegistry());
+  mlir_context.loadAllAvailableDialects();
   TF_ASSIGN_OR_RETURN(
       auto module, CreateMLIRModule(mlir_context, fusion, entry_function_name,
                                     buffer_assignment));
@@ -348,22 +353,6 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitterBase::CreateMLIRModule(
     mlir::MLIRContext& context, const HloFusionInstruction& fusion,
     const std::string& entry_function_name,
     const BufferAssignment* buffer_assignment) const {
-  context.loadDialect<
-      mlir::DLTIDialect, mlir::NVVM::NVVMDialect, mlir::ROCDL::ROCDLDialect,
-      mlir::affine::AffineDialect, mlir::arith::ArithDialect,
-      mlir::cf::ControlFlowDialect, mlir::func::FuncDialect,
-      mlir::gpu::GPUDialect, mlir::math::MathDialect, mlir::mhlo::MhloDialect,
-      mlir::scf::SCFDialect, mlir::tensor::TensorDialect,
-      mlir::vector::VectorDialect, xla::XlaDialect, xla::gpu::XlaGpuDialect>();
-  mlir::DialectRegistry registry;
-  mlir::LLVM::registerInlinerInterface(registry);
-  mlir::func::registerInlinerExtension(registry);
-  mlir::registerBuiltinDialectTranslation(registry);
-  mlir::registerLLVMDialectTranslation(registry);
-  mlir::registerNVVMDialectTranslation(registry);
-  mlir::registerROCDLDialectTranslation(registry);
-  context.appendDialectRegistry(registry);
-
   mlir::OpBuilder builder(&context);
   auto loc = mlir::NameLoc::get(builder.getStringAttr(fusion.name()));
   mlir::OwningOpRef<mlir::ModuleOp> module = llvm_ir::CreateMlirModuleOp(loc);
@@ -419,6 +408,24 @@ emitters::EpilogueSpecification EmitterBase::GetEpilogueForOutputIndexing(
   result.heroes = heroes;
   result.roots = roots;
   return result;
+}
+
+mlir::DialectRegistry EmitterBase::GetDialectRegistry() {
+  mlir::DialectRegistry registry;
+  registry.insert<
+      mlir::DLTIDialect, mlir::NVVM::NVVMDialect, mlir::ROCDL::ROCDLDialect,
+      mlir::affine::AffineDialect, mlir::arith::ArithDialect,
+      mlir::cf::ControlFlowDialect, mlir::func::FuncDialect,
+      mlir::gpu::GPUDialect, mlir::math::MathDialect, mlir::mhlo::MhloDialect,
+      mlir::scf::SCFDialect, mlir::tensor::TensorDialect,
+      mlir::vector::VectorDialect, xla::XlaDialect, xla::gpu::XlaGpuDialect>();
+  mlir::LLVM::registerInlinerInterface(registry);
+  mlir::func::registerInlinerExtension(registry);
+  mlir::registerBuiltinDialectTranslation(registry);
+  mlir::registerLLVMDialectTranslation(registry);
+  mlir::registerNVVMDialectTranslation(registry);
+  mlir::registerROCDLDialectTranslation(registry);
+  return registry;
 }
 
 absl::Status EmitterBase::EmitMlir(mlir::ModuleOp module, FuncOp entry_function,

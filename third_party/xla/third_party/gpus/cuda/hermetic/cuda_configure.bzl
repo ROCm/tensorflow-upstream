@@ -309,6 +309,12 @@ def _create_cuda_ptx_copts_list(repository_ctx, cuda_version):
 
     return copts
 
+def _create_cuda_extra_copts(repository_ctx):
+    copts = get_host_environ(repository_ctx, "CUDA_EXTRA_COPTS")
+    if copts:
+        return [copts]
+    return []
+
 def _get_cuda_config(repository_ctx):
     """Detects and returns information about the CUDA installation on the system.
 
@@ -609,7 +615,8 @@ def _create_local_cuda_repository(repository_ctx):
             "%{cuda_is_configured}": "True",
             "%{cuda_extra_copts}": str(
                 _create_cuda_ptx_copts_list(repository_ctx, cuda_config.cuda_version) +
-                _create_cuda_copts_list(cuda_config.compute_capabilities),
+                _create_cuda_copts_list(cuda_config.compute_capabilities) +
+                _create_cuda_extra_copts(repository_ctx),
             ),
             "%{cuda_gpu_architectures}": str(cuda_config.compute_capabilities),
             "%{cuda_version}": cuda_config.cuda_version,
@@ -702,28 +709,8 @@ _CUDA_NVCC = "CUDA_NVCC"
 _TF_SYSROOT = "TF_SYSROOT"
 _TMPDIR = "TMPDIR"
 
-_ENVIRONS = [
-    _CC,
-    _CLANG_CUDA_COMPILER_PATH,
-    TF_NEED_CUDA,
-    _TF_NEED_ROCM,
-    _TF_NVCC_CLANG,
-    _CUDA_NVCC,
-    TF_CUDA_VERSION,
-    HERMETIC_CUDA_VERSION,
-    _TF_CUDA_COMPUTE_CAPABILITIES,
-    _HERMETIC_CUDA_COMPUTE_CAPABILITIES,
-    _TF_SYSROOT,
-    "TMP",
-    _TMPDIR,
-    "LOCAL_CUDA_PATH",
-    "LOCAL_CUDNN_PATH",
-    USE_CUDA_REDISTRIBUTIONS,
-]
-
 cuda_configure = repository_rule(
     implementation = _cuda_configure_impl,
-    environ = _ENVIRONS,
     attrs = {
         "environ": attr.string_dict(),
         "cccl_version": attr.label(default = Label("@cuda_cccl//:version.bzl")),

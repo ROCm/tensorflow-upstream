@@ -169,12 +169,44 @@ using ::xla::gpu::triton::TritonType;
 
 namespace {
 
+// Emit a value as Index clamped to [lower, upper].
+Value EmitClampedIndex(EmitterLocOpBuilder& b, Value value, int64_t lower,
+                       int64_t upper) {
+  Value clamped_index = b.create<arith::MaxSIOp>(
+      value, CreateConst(b, value.getType(), lower).UnwrapUnsafe());
+  clamped_index = b.create<arith::MinSIOp>(
+      clamped_index, CreateConst(b, value.getType(), upper).UnwrapUnsafe());
+  return b.create<arith::IndexCastUIOp>(b.getIndexType(), clamped_index);
+}
+
 absl::StatusOr<SmallVector<Value>> ComputeOffsetsForTile(
-    EmitterLocOpBuilder& b, Value pid, const TiledHloInstruction& tiled_hlo) {
+    EmitterLocOpBuilder& b, Value pid, ValueRange runtime_values,
+    const TiledHloInstruction& tiled_hlo) {
   TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
                       tiled_hlo.tile_offsets_indexing());
-  return emitters::ApplyIndexing(tile_offsets_indexing,
-                                 /*dims=*/pid, /*symbols=*/{}, b);
+  const std::vector<IndexingMap::Variable>& rt_vars =
+      tile_offsets_indexing.GetRTVars();
+  CHECK_EQ(rt_vars.size(), runtime_values.size())
+      << absl::StrCat(tiled_hlo.ToString(), " has ", rt_vars.size(),
+                      " runtime variables in tile_offsets_indexing but only ",
+                      runtime_values.size(), " runtime values were provided");
+  CHECK_EQ(tile_offsets_indexing.GetRangeVars().size(), 0)
+      << "Range variables must be converted to dimensions. Instruction: "
+      << tiled_hlo.ToString();
+  // emitters::ApplyIndexing does not support symbols at the moment. As a
+  // workaround we convert them to dimensions.
+  IndexingMap dim_only_tiling =
+      tile_offsets_indexing.ConvertSymbolsToDimensions();
+  SmallVector<Value> dims;
+  dims.reserve(1 /* pid */ + runtime_values.size());
+  dims.push_back(pid);
+  for (const auto& [rt_var, value] : llvm::zip(rt_vars, runtime_values)) {
+    Value clamped_index =
+        EmitClampedIndex(b, value, rt_var.bounds.lower, rt_var.bounds.upper);
+    dims.push_back(triton::Cast(b, clamped_index, pid.getType()));
+  }
+  return emitters::ApplyIndexing(dim_only_tiling, /*dims=*/dims,
+                                 /*symbols=*/{}, b);
 }
 
 SmallVector<Value> CreateIndexValues(EmitterLocOpBuilder& builder,
@@ -194,7 +226,8 @@ SmallVector<Value> CreateIndexValues(EmitterLocOpBuilder& builder,
 class TileInfo {
  public:
   static absl::StatusOr<TileInfo> Construct(
-      EmitterLocOpBuilder& b, Value pid, const TiledHloInstruction& tiled_hlo);
+      EmitterLocOpBuilder& b, Value pid, ValueRange runtime_values,
+      const TiledHloInstruction& tiled_hlo);
 
   // Tile offsets. Its size is equal to the rank of the output shape.
   ValueRange offsets() const { return offsets_; }
@@ -239,9 +272,10 @@ class TileInfo {
 };
 
 absl::StatusOr<TileInfo> TileInfo::Construct(
-    EmitterLocOpBuilder& b, Value pid, const TiledHloInstruction& tiled_hlo) {
+    EmitterLocOpBuilder& b, Value pid, ValueRange runtime_values,
+    const TiledHloInstruction& tiled_hlo) {
   TF_ASSIGN_OR_RETURN(SmallVector<Value> offsets,
-                      ComputeOffsetsForTile(b, pid, tiled_hlo));
+                      ComputeOffsetsForTile(b, pid, runtime_values, tiled_hlo));
 
   // Triton requires that all block dimensions are a power of 2.
   auto padded_tile_sizes = GetPaddedTileSizes(tiled_hlo.tile_sizes());
@@ -521,6 +555,21 @@ absl::StatusOr<ScalarOrTensor> EmitTiledIota(
                          /*dims=*/{iota_dim});
 }
 
+SmallVector<Value> GetRuntimeValues(
+    const TiledHloInstruction& tiled_hlo,
+    const absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>&
+        values) {
+  SmallVector<Value> runtime_values;
+  if (!tiled_hlo.runtime_variables().empty()) {
+    for (const TiledHloInstruction* rt : tiled_hlo.runtime_variables()) {
+      CHECK(values.contains(rt))
+          << absl::StrCat(" runtime variable ", rt->ToString(), " not found");
+      runtime_values.push_back(values.at(rt).UnwrapScalar());
+    }
+  }
+  return runtime_values;
+}
+
 // Reshapes a non-0D tensor of shape [1, 1, 1, ...] to a scalar.
 ScalarOrTensor ReshapeTensorToScalar(EmitterLocOpBuilder& b, Value input) {
   auto element_type = mlir::cast<ShapedType>(input.getType()).getElementType();
@@ -665,14 +714,8 @@ absl::StatusOr<std::vector<ScalarOrTensor>> EmitTiledComputation(
     const se::DeviceDescription& device_info,
     const HloFusionInstruction* fusion,
     const TiledHloComputation& tiled_computation, mlir::FunctionOpInterface fn,
-    Value pid);
-
-bool UseGenericTritonEmitterForGemms(const HloInstruction* hlo) {
-  return hlo->GetModule()
-      ->config()
-      .debug_options()
-      .xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms();
-}
+    Value pid,
+    absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values);
 
 // Returns the number of iterations of the loop over the contracting
 // dimension of matrix multiplication.
@@ -825,13 +868,13 @@ absl::StatusOr<Value> CanonicalizeDotOperand(EmitterLocOpBuilder& b,
   return operand;
 }
 
-absl::StatusOr<ScalarOrTensor> EmitDot(EmitterLocOpBuilder& b,
-                                       absl::string_view libdevice_path,
-                                       const se::DeviceDescription& device_info,
-                                       const HloFusionInstruction* fusion,
-                                       const TiledHloInstruction& tiled_hlo_dot,
-                                       mlir::FunctionOpInterface fn,
-                                       Value pid) {
+absl::StatusOr<ScalarOrTensor> EmitDot(
+    EmitterLocOpBuilder& b, absl::string_view libdevice_path,
+    const se::DeviceDescription& device_info,
+    const HloFusionInstruction* fusion,
+    const TiledHloInstruction& tiled_hlo_dot, mlir::FunctionOpInterface fn,
+    Value pid,
+    absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values) {
   // We expect to get a tiled HLO in form:
   //
   // left { ... }
@@ -930,7 +973,7 @@ absl::StatusOr<ScalarOrTensor> EmitDot(EmitterLocOpBuilder& b,
               b, libdevice_path, device_info,
               ::xla::Cast<HloFusionInstruction>(tiled_fusion_operand->hlo()),
               *tiled_fusion_operand->called_computation(), fn,
-              computation_index));
+              computation_index, values));
       if (result.size() != 1) {
         return absl::InternalError(absl::StrCat(
             "Expected nested fusion computation to emit a single value, got ",
@@ -997,7 +1040,8 @@ absl::StatusOr<ScalarOrTensor> EmitConcatenate(
     const se::DeviceDescription& device_info,
     const HloFusionInstruction* fusion,
     const TiledHloInstruction& tiled_concatenate, mlir::FunctionOpInterface fn,
-    Value pid) {
+    Value pid,
+    absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values) {
   const int64_t concatenate_dimension =
       tiled_concatenate.hlo()->concatenate_dimension();
 
@@ -1089,7 +1133,7 @@ absl::StatusOr<ScalarOrTensor> EmitConcatenate(
         EmitTiledComputation(
             b, libdevice_path, device_info,
             ::xla::Cast<HloFusionInstruction>(tiled_fusion_operand->hlo()),
-            *tiled_fusion_operand->called_computation(), fn, pid));
+            *tiled_fusion_operand->called_computation(), fn, pid, values));
     CHECK_EQ(result.size(), 1);
     b.create<mlir::scf::YieldOp>(result.front().UnwrapTensor());
   }
@@ -1097,6 +1141,72 @@ absl::StatusOr<ScalarOrTensor> EmitConcatenate(
   b.setInsertionPointAfter(if_ops.front());
 
   return ScalarOrTensor(if_ops.front().getResult(0));
+}
+
+absl::StatusOr<ScalarOrTensor> EmitPad(
+    EmitterLocOpBuilder& b, const se::DeviceDescription& device_info,
+    const TiledHloInstruction& tiled_pad,
+    absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values,
+    Value pid) {
+  if (!IsTritonSupportedInstruction(*tiled_pad.hlo(),
+                                    device_info.gpu_compute_capability())) {
+    return absl::FailedPreconditionError(
+        absl::StrCat("Pad is not supported: ", tiled_pad.hlo()->ToString()));
+  }
+  // TODO(b/393299275): get rid of calls to `GetPaddedTileSizes` once tiling
+  // is using power of twos everywhere, including when propagating into the
+  // prologue of reductions.
+  SmallVector<int64_t> padded_tile_sizes =
+      GetPaddedTileSizes(tiled_pad.tile_sizes());
+
+  const TiledHloInstruction* tiled_operand = tiled_pad.operand(0);
+  const auto& pad_input_shape = tiled_operand->hlo()->shape().dimensions();
+
+  // Compute tile offsets.
+  TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
+                      tiled_pad.tile_offsets_indexing());
+  SmallVector<Value, 3> tile_offsets =
+      emitters::ApplyIndexing(tile_offsets_indexing, /*dims=*/pid,
+                              /*symbols=*/{}, b);
+
+  // Compute mask.
+  Type i32_type = b.getI32Type();
+  Value mask;
+  for (auto [dim_index, sizes] : llvm::enumerate(
+           llvm::zip(pad_input_shape, padded_tile_sizes, tile_offsets))) {
+    auto [pad_input_dim_size, pad_output_dim_size, tile_offset] = sizes;
+    if (pad_input_dim_size == pad_output_dim_size) {
+      continue;
+    }
+
+    // LHS for the compare is an iota broadcasted to the output shape.
+    ScalarOrTensor range = Range(b, pad_output_dim_size);
+    ScalarOrTensor bcast = BroadcastInDims(b, range, padded_tile_sizes,
+                                           {static_cast<int64_t>(dim_index)});
+
+    // RHS for the compare is splat(pad_input_dim_size - tile_offset).
+    Value tile_offset_i32 = Cast(b, tile_offset, i32_type);
+    Value threshold = b.create<arith::SubIOp>(
+        CreateConst(b, i32_type, pad_input_dim_size).UnwrapScalar(),
+        tile_offset_i32);
+    ScalarOrTensor threshold_splat =
+        Splat(b, ScalarOrTensor(threshold), padded_tile_sizes);
+    Value cmp =
+        b.create<arith::CmpIOp>(arith::CmpIPredicate::slt, bcast.UnwrapTensor(),
+                                threshold_splat.UnwrapTensor());
+    mask = mask ? b.create<arith::AndIOp>(mask, cmp) : cmp;
+  }
+  if (!mask) {
+    return values[tiled_operand];
+  }
+  const TiledHloInstruction* padding_value = tiled_pad.operand(1);
+
+  ScalarOrTensor pad_value_splat =
+      Splat(b, values[padding_value], padded_tile_sizes);
+  auto result = ScalarOrTensor(
+      b.create<arith::SelectOp>(mask, values[tiled_operand].UnwrapUnsafe(),
+                                pad_value_splat.UnwrapUnsafe()));
+  return result;
 }
 
 absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
@@ -1119,7 +1229,10 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
       arg_index = hlo->parameter_number();  // Nested operands are parameters.
       hlo = instr->operand(arg_index);
     }
-    TF_ASSIGN_OR_RETURN(auto tile_info, TileInfo::Construct(b, pid, tiled_hlo));
+    TF_ASSIGN_OR_RETURN(
+        TileInfo tile_info,
+        TileInfo::Construct(b, pid, GetRuntimeValues(tiled_hlo, values),
+                            tiled_hlo));
     ScalarOrTensor parameter =
         EmitParameterExtract(b, tile_info, fn.getArgument(arg_index));
 
@@ -1149,11 +1262,16 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
 
   if (hlo->opcode() == HloOpcode::kConcatenate) {
     return EmitConcatenate(b, libdevice_path, device_info, fusion, tiled_hlo,
-                           fn, pid);
+                           fn, pid, values);
+  }
+
+  if (hlo->opcode() == HloOpcode::kPad) {
+    return EmitPad(b, device_info, tiled_hlo, values, pid);
   }
 
   if (hlo->opcode() == HloOpcode::kDot) {
-    return EmitDot(b, libdevice_path, device_info, fusion, tiled_hlo, fn, pid);
+    return EmitDot(b, libdevice_path, device_info, fusion, tiled_hlo, fn, pid,
+                   values);
   }
 
   if (hlo->opcode() == HloOpcode::kConstant) {
@@ -1213,6 +1331,12 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
     return values[tiled_hlo.operand(0)];
   }
 
+  if (hlo->opcode() == HloOpcode::kDynamicSlice) {
+    // Dynamic slice is implemented as a load and does not require any further
+    // processing.
+    return values[tiled_hlo.operand(0)];
+  }
+
   return absl::UnimplementedError(
       absl::StrCat("Unsupported operation ", hlo->ToString()));
 }
@@ -1225,9 +1349,9 @@ absl::StatusOr<std::vector<ScalarOrTensor>> EmitTiledComputation(
     const se::DeviceDescription& device_info,
     const HloFusionInstruction* fusion,
     const TiledHloComputation& tiled_computation, mlir::FunctionOpInterface fn,
-    Value pid) {
+    Value pid,
+    absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values) {
   VLOG(2) << "EmitTiledComputation: " << tiled_computation.ToString();
-  absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor> values;
   for (const TiledHloInstruction* tiled_hlo :
        tiled_computation.instructions()) {
     const HloInstruction* hlo = tiled_hlo->hlo();
@@ -1451,9 +1575,11 @@ absl::StatusOr<SmallVector<Value>> EmitGeneric(
   Value pid_i64 = Cast(b, b.create<ttir::GetProgramIdOp>(ttir::ProgramIDDim::X),
                        b.getI64Type());
   Value pid = Cast(b, pid_i64, b.getIndexType());
+  absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor> values;
   TF_ASSIGN_OR_RETURN(
-      auto results, EmitTiledComputation(b, libdevice_path, device_info, fusion,
-                                         tiled_hlo_computation, fn, pid));
+      auto results,
+      EmitTiledComputation(b, libdevice_path, device_info, fusion,
+                           tiled_hlo_computation, fn, pid, values));
 
   SmallVector<Value> insert_results;
   for (auto [root, result, parent_base_ptr] :
@@ -1481,7 +1607,9 @@ absl::StatusOr<SmallVector<Value>> EmitGeneric(
 
     CHECK(root->hlo()->shape().IsArray() &&
           !root->hlo()->shape().dimensions().empty());
-    TF_ASSIGN_OR_RETURN(auto tile_info, TileInfo::Construct(b, pid, *root));
+    TF_ASSIGN_OR_RETURN(
+        auto tile_info,
+        TileInfo::Construct(b, pid, /*runtime_values=*/{}, *root));
 
     // Should not be scalar at this point.
     CHECK(!tile_info.padded_tile_sizes().empty())
@@ -1550,7 +1678,7 @@ absl::Status CreateInternalError(absl::string_view message,
 }
 
 // Legacy emitter works with tt.func. New emitter works with func.func.
-// TODO(393299275): Remove legacy optionality once migration is complete.
+// TODO(b/393299275): Remove legacy optionality once migration is complete.
 void AppendFuncArgType(absl::Span<const int64_t> dims,
                        absl::string_view fusion_kind, Type ir_type,
                        SmallVector<Type>& fn_arg_types) {
@@ -1566,7 +1694,7 @@ void AppendFuncArgType(absl::Span<const int64_t> dims,
 
 // Only needed for the new emitter since we are using func.func instead of
 // tt.func.
-// TODO(393299275): Remove legacy optionality once migration is complete.
+// TODO(b/393299275): Remove legacy optionality once migration is complete.
 void AppendFuncResultType(absl::string_view fusion_kind,
                           absl::Span<const int64_t> dims, Type ir_type,
                           SmallVector<Type>& fn_result_types) {
@@ -1578,7 +1706,7 @@ void AppendFuncResultType(absl::string_view fusion_kind,
 }
 
 // Legacy emitter works with tt.func. New emitter works with func.func.
-// TODO(393299275): Remove legacy optionality once migration is complete.
+// TODO(b/393299275): Remove legacy optionality once migration is complete.
 mlir::FunctionOpInterface CreateFuncOp(EmitterLocOpBuilder& b,
                                        absl::string_view fn_name,
                                        absl::string_view fusion_kind,
@@ -1599,7 +1727,7 @@ mlir::FunctionOpInterface CreateFuncOp(EmitterLocOpBuilder& b,
 }
 
 // Legacy emitter works with tt.return. New emitter works with func.return.
-// TODO(393299275): Remove legacy optionality once migration is complete.
+// TODO(b/393299275): Remove legacy optionality once migration is complete.
 void EmitReturnOp(EmitterLocOpBuilder& b, absl::string_view fusion_kind,
                   SmallVector<Value> insert_results) {
   if (fusion_kind == kTritonGemmFusionKind) {
@@ -1628,10 +1756,10 @@ absl::StatusOr<stream_executor::gpu::TmaMetadata> ExtractTmaMetadata(
             idx, "tt.tma_descriptor")) {
       TF_ASSIGN_OR_RETURN(
           auto tma_desc,
-          Create2DTmaDescriptor(attr.getGlobalShape(), attr.getTileShape(),
-                                attr.getTileStrides(), attr.getLayout(),
-                                attr.getElementByteSize(),
-                                attr.getSwizzleMode().getValue()));
+          CreateTmaDescriptor(attr.getGlobalShape(), attr.getTileShape(),
+                              attr.getTileStrides(), attr.getLayout(),
+                              attr.getElementByteSize(),
+                              attr.getSwizzleMode().getValue()));
       tma_metadata.arg_index_to_tma_info.insert({idx, tma_desc});
     }
   }
@@ -1702,12 +1830,13 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
 
   SmallVector<Value> insert_results;
   if (fusion_kind == kTritonGemmFusionKind) {
-    // If the generic Triton emitter is enabled, we should never go through the
-    // legacy MatMul emitter.
-    if (UseGenericTritonEmitterForGemms(fusion)) {
-      return absl::FailedPreconditionError(
-          "The generic Triton emitter is enabled, but the legacy MatMul "
-          "emitter is being used.");
+    if (absl::c_contains(
+            fusion->GetModule()
+                ->config()
+                .debug_options()
+                .xla_gpu_unsupported_generic_triton_emitter_features(),
+            DebugOptions::GENERIC_TRITON_EMITTER_DISABLE_LEGACY_GEMM)) {
+      return Internal("Legacy GEMM emitter is disabled.");
     }
     TF_RETURN_IF_ERROR(EmitMatMul(b, libdevice_path, device_info, fusion, fn,
                                   block_level_parameters));
@@ -1862,8 +1991,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
                             /*shouldPrintAfterPass=*/print_always,
                             /*printModuleScope=*/true,
                             /*printAfterOnlyOnChange=*/false,
-                            /*printAfterOnlyOnFailure=*/true, *log_stream,
-                            /*opPrintingFlags=*/{});
+                            /*printAfterOnlyOnFailure=*/true, *log_stream);
       }
     } else {
       LOG(ERROR)
@@ -1873,9 +2001,12 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     }
   }
 
+  if (is_xla_fusion) {
+    pm.addPass(mlir::triton::xla::CreateInt4ToPackedInt4RewritePass());
+  }
+
   pm.addPass(mlir::triton::xla::CreateTritonXLAExtractInsertToTritonPass(
-      device_info,
-      hlo_config.debug_options().xla_gpu_experimental_enable_triton_tma()));
+      device_info, block_level_parameters.is_tma_allowed));
 
   // Lower affine expressions into arithmetic ops.
   pm.addPass(mlir::createLowerAffinePass());
@@ -1896,7 +2027,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
 
   mlir::triton::nvidia_gpu::ClusterInfo cluster_info;
   if (!CreateTritonPipeline(&pm, arch_name, num_warps, num_ctas, num_stages,
-                            cluster_info, is_xla_fusion)
+                            cluster_info)
            .ok()) {
     return Internal("Failed to create Triton pipeline.");
   }

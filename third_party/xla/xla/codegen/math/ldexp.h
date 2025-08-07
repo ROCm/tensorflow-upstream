@@ -16,18 +16,32 @@ limitations under the License.
 #ifndef XLA_CODEGEN_MATH_LDEXP_H_
 #define XLA_CODEGEN_MATH_LDEXP_H_
 
-#include "llvm/IR/Value.h"
+#include <cstddef>
+#include <string>
 
-namespace xla::codegen::math {
+#include "llvm/IR/Value.h"
+#include "xla/codegen/math/intrinsic.h"
+#include "xla/xla_data.pb.h"
+
+namespace xla::codegen {
+
+class Intrinsic::Ldexp {
+ public:
+  static std::string Name(PrimitiveType type);
+  static std::string Name(PrimitiveType type, size_t vector_width);
+};
+
+namespace math {
+
 // Returns a fast bit-shifting f64 implementation of ldexp for F64 based on
 // Eigen. Function is named `xla.ldexp.<vector_size>xf64`.
 // Won't overflow even if 2^e doesn't fit in a double.
 // N.B. A 7x faster implementation is available in Eigen that we could try
 // in the future:
 // https://gitlab.com/libeigen/eigen/-/blob/master/Eigen/src/Core/arch/Default/GenericPacketMathFunctions.h#L272
-
 llvm::Function* CreateLdexpF64(llvm::Module* module, llvm::Type* vector_type);
 
-}  // namespace xla::codegen::math
+}  // namespace math
+}  // namespace xla::codegen
 
 #endif  // XLA_CODEGEN_MATH_LDEXP_H_

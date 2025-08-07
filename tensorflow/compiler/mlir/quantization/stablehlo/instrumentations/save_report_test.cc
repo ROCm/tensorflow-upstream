@@ -28,9 +28,9 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "tensorflow/compiler/mlir/quantization/common/tf_test_base.h"
+#include "tensorflow/compiler/mlir/quantization/common/test_base.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/cc/io.h"
-#include "tensorflow/compiler/mlir/quantization/stablehlo/passes/tf_passes.h"
+#include "tensorflow/compiler/mlir/quantization/stablehlo/passes/passes.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/quantization_config.pb.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
@@ -42,9 +42,6 @@ using ::stablehlo::quantization::QuantizationResults;
 using ::stablehlo::quantization::io::ReadFileToString;
 using ::testing::SizeIs;
 using ::testing::StrEq;
-using tf_quant::QuantizationTestBase;
-using tf_quant::stablehlo::createPrepareQuantizePass;
-using tf_quant::stablehlo::QuantizeCompositeFunctionsPassOptions;
 using ::tsl::protobuf::TextFormat;
 using ::tsl::testing::IsOk;
 using ::tsl::testing::StatusIs;

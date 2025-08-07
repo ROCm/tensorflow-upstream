@@ -360,7 +360,8 @@ void PopulateWithFloatingPointData(
       // We want to generate floating point numbers to a fixed precision, while
       // keeping them between -1 and 1. This preserves their bits of precision
       // while keeping the numbers small.
-      value = static_cast<FloatT>(temp * pow(2, -ceil(log2(abs(temp)))));
+      value = static_cast<FloatT>(
+          temp == 0 ? 0 : temp * pow(2, -ceil(log2(abs(temp)))));
     }
   } else if (no_duplicates) {
     PopulateWithNoDuplicateData<FloatT>(literal, engine);
@@ -812,6 +813,15 @@ absl::StatusOr<Literal> MakeFakeLiteral(
       },
       shape.element_type()));
   return std::move(literal);
+}
+
+/*static*/ std::vector<const Literal*> LiteralUtil::MakePointers(
+    absl::Span<const Literal> literals) {
+  std::vector<const Literal*> pointers(literals.size());
+  for (int i = 0; i < literals.size(); i++) {
+    pointers[i] = &literals[i];
+  }
+  return pointers;
 }
 
 }  // namespace xla

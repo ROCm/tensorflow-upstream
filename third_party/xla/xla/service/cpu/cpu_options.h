@@ -44,6 +44,10 @@ inline constexpr absl::string_view kFoldAllConstants =
     "xla_cpu_fold_all_constants";
 inline constexpr absl::string_view kSmallWhileLoopByteThreshold =
     "xla_cpu_small_while_loop_byte_threshold";
+inline constexpr absl::string_view kUseExperimentalLoopFusion =
+    "xla_cpu_use_experimental_loop_fusion";
+inline constexpr absl::string_view kFlattenAfterFusion =
+    "xla_cpu_flatten_after_fusion";
 
 bool OptimizeForSizeRequested(const HloModuleConfig& config);
 bool VectorizedReduceDisabled(const HloModuleConfig& config);
@@ -56,6 +60,8 @@ std::optional<std::tuple<int64_t, int64_t, int64_t>> LlvmIrGemmTileSize(
     const HloModuleConfig& config);
 absl::StatusOr<int64_t> SmallWhileLoopByteThreshold(
     const HloModuleConfig& config);
+bool UseExperimentalLoopFusion(const HloModuleConfig& config);
+bool FlattenAfterFusion(const HloModuleConfig& config);
 
 }  // namespace xla::cpu::options
 

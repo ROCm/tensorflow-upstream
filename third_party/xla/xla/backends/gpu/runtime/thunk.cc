@@ -23,11 +23,13 @@ limitations under the License.
 #include <utility>
 
 #include "absl/base/nullability.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -135,6 +137,10 @@ Thunk::CollectiveExecuteParams::Create(
                                  ? &gpu_options->clique_id_callback()
                                  : nullptr;
 
+  auto* incarnations = gpu_options && gpu_options->incarnations().has_value()
+                           ? &*gpu_options->incarnations()
+                           : nullptr;
+
   TF_ASSIGN_OR_RETURN(GlobalDeviceId global_device_id,
                       GetGlobalDeviceId(device_id_map, local_device_ordinal));
 
@@ -142,7 +148,7 @@ Thunk::CollectiveExecuteParams::Create(
       collectives, run_options.stream()->parent(),
       run_options.run_options().run_id(), async_streams, local_device_ordinal,
       global_device_id, run_options.run_options().device_assignment(),
-      device_id_map, clique_id_callback, collective_max_nchannels,
+      device_id_map, clique_id_callback, incarnations, collective_max_nchannels,
       p2p_max_nchannels);
 }
 
@@ -152,6 +158,7 @@ Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
     GlobalDeviceId global_device_id, const DeviceAssignment* device_assn,
     const GlobalDeviceIdMap* global_device_id_map,
     const CliqueIdCallback* nccl_clique_id_callback,
+    const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations,
     int64_t collective_max_nchannels, int64_t p2p_max_nchannels)
     : collectives(collectives),
       executor(executor),
@@ -162,6 +169,7 @@ Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
       device_assn(device_assn),
       global_device_id_map(global_device_id_map),
       nccl_clique_id_callback(nccl_clique_id_callback),
+      incarnations(incarnations),
       collective_max_nchannels(collective_max_nchannels),
       p2p_max_nchannels(p2p_max_nchannels) {}
 
@@ -275,6 +283,15 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kMemset32BitValue);
     CASE(kMemzero);
     CASE(kNorm);
+    CASE(kNvshmemAllReduceDone);
+    CASE(kNvshmemAllReduceStart);
+    CASE(kNvshmemCollectivePermute);
+    CASE(kNvshmemCollectivePermuteDone);
+    CASE(kNvshmemCollectivePermuteStart);
+    CASE(kNvshmemRecv);
+    CASE(kNvshmemRecvDone);
+    CASE(kNvshmemSend);
+    CASE(kNvshmemSendDone);
     CASE(kOutfeed);
     CASE(kPartitionId);
     CASE(kRaggedAllToAll);
@@ -315,7 +332,9 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
 
 bool IsReductionCollective(Thunk::Kind kind) {
   return kind == Thunk::kAllReduce || kind == Thunk::kAllReduceStart ||
-         kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart;
+         kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart ||
+         kind == Thunk::kNvshmemAllReduceStart;
+  ;
 }
 
 absl::StatusOr<Thunk::ThunkInfo> Thunk::ThunkInfo::FromProto(
@@ -384,11 +403,9 @@ void Thunk::ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const {
 }
 
 absl::StatusOr<ThunkProto> Thunk::ToProto() const {
-  ThunkProto proto;
-  proto.mutable_thunk_info()->set_execution_stream_id(
-      execution_stream_id_.value());
-  proto.mutable_thunk_info()->set_profile_annotation(profile_annotation_);
-  return proto;
+  return absl::UnimplementedError(absl::StrFormat(
+      "Proto serialization for thunk of type %s is not implemented",
+      typeid(*this).name()));
 }
 
 absl::StatusOr<GpuCollectives* absl_nonnull> Thunk::GetGpuCollectives(
@@ -397,6 +414,13 @@ absl::StatusOr<GpuCollectives* absl_nonnull> Thunk::GetGpuCollectives(
     return Internal("Collectives API is not provided");
   }
   return params.collectives;
+}
+
+ThunkInfoProto Thunk::ThunkInfo::ToProto() const {
+  ThunkInfoProto proto;
+  proto.set_profile_annotation(profile_annotation);
+  proto.set_execution_stream_id(execution_stream_id.value());
+  return proto;
 }
 }  // namespace gpu
 }  // namespace xla

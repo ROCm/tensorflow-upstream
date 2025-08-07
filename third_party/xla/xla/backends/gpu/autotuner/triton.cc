@@ -55,12 +55,9 @@ namespace gpu {
 using TritonBackendConfig = AutotuneResult::TritonGemmKey;
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
-TritonBackend::GetSupportedConfigs(
-    const HloInstruction& instr,
-    stream_executor::StreamExecutor* stream_executor) {
+TritonBackend::GetSupportedConfigs(const HloInstruction& instr) {
   if (!IsSupported(instr)) {
-    return absl::InvalidArgumentError(
-        "TritonBackend does not support this instruction.");
+    return std::vector<std::unique_ptr<BackendConfig>>();
   }
   const HloDotInstruction* dot =
       Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
@@ -154,12 +151,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
   FusionWrapper fusion_wrapper(gpu_device_info);
   TF_RETURN_IF_ERROR(fusion_wrapper.Run(hlo_module.get()).status());
 
-  if (debug_options()
-          .xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms()) {
-    NestGemmFusion nest_gemm_fusion(gpu_device_info.gpu_compute_capability());
-    TF_RETURN_IF_ERROR(nest_gemm_fusion.Run(hlo_module.get()).status());
-  }
-
+  NestGemmFusion nest_gemm_fusion(gpu_device_info.gpu_compute_capability());
+  TF_RETURN_IF_ERROR(nest_gemm_fusion.Run(hlo_module.get()).status());
   return hlo_module;
 }
 

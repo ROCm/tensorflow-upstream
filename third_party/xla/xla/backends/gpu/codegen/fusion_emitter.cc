@@ -14,9 +14,7 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 
-#include <array>
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -27,6 +25,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -49,6 +48,7 @@ limitations under the License.
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/layout_util.h"
+#include "xla/runtime/work_dimensions.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/target_util.h"
@@ -81,23 +81,38 @@ absl::Status AnnotateKernelLaunchDimensions(
   // Add __launch_bounds__ to metadata. This limits registers per thread to
   // avoid out-of-resources launching errors.
 
-  // Our launch bounds are exact, so we can specify them as
-  // reqntid[xyz] rather than maxntid[xyz].
-  const std::string attr =
-      absl::StrCat(launch_dims.thread_counts_per_block().x, ",",
-                   launch_dims.thread_counts_per_block().y, ",",
-                   launch_dims.thread_counts_per_block().z);
-  kernel->addFnAttr("nvvm.reqntid", attr);
-  // Maybe we want to set "reqnctapercluster" here, but not sure if needed or if
-  // LLVM supports that yet. Let's do that later when needed.
+  llvm::Triple target_triple = llvm::Triple(llvm_module->getTargetTriple());
+
+  if (target_triple.isNVPTX()) {
+    // Our launch bounds are exact, so we can specify them as
+    // reqntid[xyz] rather than maxntid[xyz].
+    const std::string attr =
+        absl::StrCat(launch_dims.thread_counts_per_block().x, ",",
+                     launch_dims.thread_counts_per_block().y, ",",
+                     launch_dims.thread_counts_per_block().z);
+    kernel->addFnAttr("nvvm.reqntid", attr);
+    // Maybe we want to set "reqnctapercluster" here, but not sure if needed or
+    // if LLVM supports that yet. Let's do that later when needed.
+  } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
+    kernel->addFnAttr("amdgpu-flat-work-group-size",
+                      absl::StrJoin({launch_dims.num_threads_per_block(),
+                                     launch_dims.num_threads_per_block()},
+                                    ","));
+    kernel->addFnAttr("amdgpu-max-num-workgroups",
+                      absl::StrJoin({launch_dims.block_counts().x,
+                                     launch_dims.block_counts().y,
+                                     launch_dims.block_counts().z},
+                                    ","));
+  }
   return absl::OkStatus();
 }
 
 IndexingMap KernelFusionInterface::GetDefaultThreadIdIndexingMap(
     const LaunchDimensions& launch_dims, int unroll_factor, const Shape& shape,
     mlir::MLIRContext* ctx) {
-  return emitters::GetDefaultWorkItemIndexingMap(launch_dims.AsWorkDimensions(),
-                                                 unroll_factor, shape, ctx);
+  WorkDimensions work_dimensions = launch_dims.AsWorkDimensions();
+  work_dimensions.work_tile_size.dimensions.push_back(unroll_factor);
+  return emitters::GetDefaultWorkItemIndexingMap(work_dimensions, shape, ctx);
 }
 
 std::string GetSanitizedUniqueName(IrEmitterContext& ir_emitter_context,

@@ -15,7 +15,7 @@ cc_library(
     hdrs = ["save_report.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "//tensorflow/compiler/mlir/quantization/stablehlo/cc:tf_report",
+        "//tensorflow/compiler/mlir/quantization/stablehlo/cc:report",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
@@ -30,9 +30,9 @@ tf_cc_test(
     srcs = ["save_report_test.cc"],
     deps = [
         ":save_report",
-        "//tensorflow/compiler/mlir/quantization/common:tf_test_base",
+        "//tensorflow/compiler/mlir/quantization/common:test_base",
+        "//tensorflow/compiler/mlir/quantization/stablehlo:passes",
         "//tensorflow/compiler/mlir/quantization/stablehlo:quantization_config_proto_cc",
-        "//tensorflow/compiler/mlir/quantization/stablehlo:tf_passes",
         "//tensorflow/compiler/mlir/quantization/stablehlo/cc:io",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

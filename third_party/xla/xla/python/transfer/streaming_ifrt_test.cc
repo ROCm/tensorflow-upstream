@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
+#include "tsl/platform/casts.h"
 
 namespace aux {
 namespace {
@@ -87,7 +88,7 @@ absl::StatusOr<SingleBufferCopyPlan> SetupTransferDestList(
 
   results.dests.push_back(MakeDmaDestination(atm, 0, copy_size));
   TF_ASSIGN_OR_RETURN(auto arr,
-                   ifrt_client->CreatePjRtArray(atm->RetrieveBuffer(0)));
+                      ifrt_client->CreatePjRtArray(atm->RetrieveBuffer(0)));
   results.arrays.push_back(std::move(arr));
   return results;
 }
@@ -99,11 +100,15 @@ TEST(PremappedCopierState, RoundTrip) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto arr, tests::CopyTestPatternToDevice(
                     client.get(), client->devices()[0], test_pattern));
+  std::shared_ptr<xla::PjRtClient> pjrt_client =
+      tensorflow::down_cast<xla::ifrt::PjRtClient*>(arr->client())
+          ->shared_ptr_pjrt_client();
   TF_ASSERT_OK_AND_ASSIGN(
-      auto scratch, AllocateAndMapPjrtMemory(arr->client(), 1024 * 1024 * 16));
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto src_work_units,
-      DmaCopyChunk::DivideBufferCopiesEvenly(arr, xfer_size, 0));
+      auto scratch, AllocateAndMapPjrtMemory(pjrt_client, 1024 * 1024 * 16));
+  auto* array = static_cast<xla::ifrt::PjRtCompatibleArray*>(arr.get());
+  TF_ASSERT_OK_AND_ASSIGN(auto src_work_units,
+                          DmaCopyChunk::DivideBufferCopiesEvenly(
+                              array->pjrt_buffers()[0], xfer_size, 0));
   TF_ASSERT_OK_AND_ASSIGN(
       auto dest_copy_plan,
       SetupTransferDestList(ShapeFromIfrt(arr), GetOtherDevice(arr),
@@ -121,10 +126,12 @@ TEST(PremappedCopierState, RoundTrip) {
   for (size_t i = 0; i < src_work_units.size(); ++i) {
     cstate->ScheduleCopy(
         std::move(src_work_units[i]),
-        [&mu, &local_queue](PremappedCopierState* state, void* buf,
+        [&mu, &local_queue](PremappedCopierState* state,
+                            absl::StatusOr<void*> buf,
                             const DmaCopyChunk& chunk) {
+          CHECK_OK(buf.status());
           absl::MutexLock l(&mu);
-          local_queue.push_back(LocalQueueInfo{buf, chunk.offset, chunk.size});
+          local_queue.push_back(LocalQueueInfo{*buf, chunk.offset, chunk.size});
         });
   }
   for (size_t i = 0; i < src_work_units.size(); ++i) {
@@ -142,10 +149,11 @@ TEST(PremappedCopierState, RoundTrip) {
 
   std::vector<int32_t> result;
   result.resize(test_pattern.size());
-  TF_ASSERT_OK(pull_result_arr
-                ->CopyToHostBuffer(result.data(), std::nullopt,
-                                   xla::ifrt::ArrayCopySemantics::kReuseInput)
-                .Await());
+  TF_ASSERT_OK(
+      pull_result_arr
+          ->CopyToHostBuffer(result.data(), std::nullopt,
+                             xla::ifrt::ArrayCopySemantics::kReuseInput)
+          .Await());
   EXPECT_EQ(result, test_pattern);
 }
 

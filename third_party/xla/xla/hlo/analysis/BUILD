@@ -97,6 +97,7 @@ cc_library(
     srcs = ["hlo_ordering.cc"],
     hdrs = ["hlo_ordering.h"],
     deps = [
+        ":alias_info",
         ":hlo_dataflow_analysis",
         ":hlo_reachability",
         "//xla:shape_util",
@@ -123,6 +124,7 @@ xla_cc_test(
     size = "small",
     srcs = ["hlo_ordering_test.cc"],
     deps = [
+        ":alias_info",
         ":hlo_dataflow_analysis",
         ":hlo_ordering",
         "//xla:literal_util",
@@ -195,18 +197,43 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "hlo_operand_index",
+    hdrs = ["hlo_operand_index.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+    ],
+)
+
+cc_library(
+    name = "alias_info",
+    srcs = ["alias_info.cc"],
+    hdrs = ["alias_info.h"],
+    deps = [
+        ":hlo_operand_index",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+    ],
+)
+
+cc_library(
     name = "hlo_dataflow_analysis",
     srcs = ["hlo_dataflow_analysis.cc"],
     hdrs = ["hlo_dataflow_analysis.h"],
     deps = [
+        ":alias_info",
+        ":hlo_operand_index",
         "//xla:shape_util",
-        "//xla:types",
+        "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:call_graph",
         "//xla/service:hlo_phi_graph",
         "//xla/service:hlo_value",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:status",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -220,8 +247,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:logging",
     ],
 )
 
@@ -229,7 +254,9 @@ xla_cc_test(
     name = "hlo_dataflow_analysis_test",
     srcs = ["hlo_dataflow_analysis_test.cc"],
     deps = [
+        ":alias_info",
         ":hlo_dataflow_analysis",
+        ":hlo_operand_index",
         ":hlo_ordering",
         "//xla:comparison_util",
         "//xla:literal_util",
@@ -249,8 +276,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_tsl//tsl/platform:test",
     ],
 )
 
@@ -383,16 +408,23 @@ cc_library(
     srcs = ["hlo_alias_analysis.cc"],
     hdrs = ["hlo_alias_analysis.h"],
     deps = [
+        ":alias_info",
         ":hlo_dataflow_analysis",
+        ":hlo_operand_index",
         ":hlo_ordering",
         "//xla:comparison_util",
         "//xla:shape_util",
+        "//xla:status_macros",
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:call_graph",
         "//xla/service:hlo_buffer",
         "//xla/service:hlo_value",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -403,8 +435,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:logging",
     ],
 )
 
@@ -412,6 +442,7 @@ xla_cc_test(
     name = "hlo_alias_analysis_test",
     srcs = ["hlo_alias_analysis_test.cc"],
     deps = [
+        ":alias_info",
         ":hlo_alias_analysis",
         ":hlo_ordering",
         "//xla:literal_util",
@@ -467,6 +498,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:logical_buffer",
         "//xla/tsl/lib/gtl:compactptrset",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -478,8 +510,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:status",
     ],
 )

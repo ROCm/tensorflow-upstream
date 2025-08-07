@@ -67,6 +67,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/shape_inference.h"
 #include "xla/service/spmd/custom_call_handler.h"
+#include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/spmd_partitioner_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -250,6 +251,13 @@ HloInstruction* SpmdBuilder::AddInstruction(
   if (visiting_hlo_) {
     std::shared_ptr<const HloSharding> prev_sharding = hlo->sharding_ptr();
     visiting_hlo_->SetupDerivedInstruction(hlo);
+    // Prevent the `sdy.has_unreduced_axes` attribute from propagating to new
+    // instructions, unless they have the same opcode as the original.
+    // This is similar to how backend_config is handled and allows cloned
+    // instructions to have the attribute.
+    if (visiting_hlo_->opcode() != hlo->opcode()) {
+      hlo->erase_frontend_attribute(sdy::kHasUnreducedAxes);
+    }
     if (prev_sharding != nullptr) {
       hlo->set_sharding(*prev_sharding);
     } else {
@@ -619,17 +627,16 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
       if (!allow_full_replication) {
         return *this;
       }
-      LOG(ERROR)
-          << "[spmd] Involuntary full rematerialization. The compiler was "
-             "not able to go from sharding "
-          << sharding().ToString(/*include_metadata=*/true) << " to "
-          << target.ToString(/*include_metadata=*/true)
-          << " without doing a full rematerialization of the tensor for HLO "
-             "operation: "
-          << hlo_->ToString()
-          << ". You probably want to enrich the sharding annotations to "
-             "prevent "
-             "this from happening.";
+      LOG(WARNING) << "[SPMD] Involuntary full rematerialization. The compiler "
+                      "cannot go from sharding "
+                   << sharding().ToString(/*include_metadata=*/true) << " to "
+                   << target.ToString(/*include_metadata=*/true)
+                   << " efficiently for HLO operation " << hlo_->ToString()
+                   << ". As the last resort, SPMD will replicate the tensor "
+                      "and then partition it to obtain the target sharding, "
+                      "which is inefficient. This issue will be fixed by "
+                      "Shardy with explicit collectives features enabled. "
+                      "Contact XLA or Shardy team for help.";
     }
     return Replicate().Reshard(target);
   }
@@ -3940,7 +3947,7 @@ absl::Status SpmdPartitioningVisitor::HandleGetTupleElement(
       gte, tuple.base_shape().tuple_shapes(hlo->tuple_index()),
       MakePartitioningState());
   source_partitioned_gte = source_partitioned_gte.Reshard(hlo->sharding());
-  SetPartitionedHlo(hlo, source_partitioned_gte);
+  SetPartitionedHlo(hlo, std::move(source_partitioned_gte));
   return absl::OkStatus();
 }
 
@@ -5378,6 +5385,11 @@ HloInstruction* SpmdPartitioner::AllReduceAlongShardingDimsInternal(
     int64_t* next_channel_id, absl::Span<const int64_t> selected_dims,
     const SPMDCollectiveOpsCreator& collectives_creator,
     HloComputation* reduction, bool per_dim_ar) {
+  // Skip adding AR if the operand has unreduced axes in its sharding,
+  // represented by the frontend attribute.
+  if (operand->frontend_attributes().map().contains(sdy::kHasUnreducedAxes)) {
+    return operand;
+  }
   if (!per_dim_ar) {
     // Attempt to generate partition groups in iota format. If infeasible,
     // fallback to list of lists representation.

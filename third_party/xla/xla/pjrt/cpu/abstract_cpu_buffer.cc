@@ -40,7 +40,9 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/async_work_runner.h"
+#include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/cpu/cpu_event.h"
+#include "xla/pjrt/cpu/raw_buffer.h"
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_future.h"
@@ -61,6 +63,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -120,8 +123,9 @@ ShapedBuffer AsShapedBuffer(int device_ordinal, const Shape& on_device_shape,
 
 AbstractCpuBuffer::AbstractCpuBuffer(
     Shape on_device_shape,
-    std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer)
-    : CommonPjRtBuffer(std::move(tracked_device_buffer)),
+    std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
+    PjRtMemorySpace* memory_space)
+    : CommonPjRtBuffer(std::move(tracked_device_buffer), memory_space),
       on_device_shape_(std::move(on_device_shape)) {}
 
 AbstractCpuBuffer::~AbstractCpuBuffer() { AbstractCpuBuffer::Delete(); }
@@ -146,14 +150,15 @@ absl::StatusOr<Shape> AbstractCpuBuffer::logical_on_device_shape() {
     return Internal("Error Execute: %s", error->message());
   }
 
-  // Safe to call `AsShapedBuffer` because the definition event is ready.
-  ShapedBuffer shaped_buffer =
-      AsShapedBuffer(device()->local_hardware_id().value(), on_device_shape_,
-                     device_buffer->buffer());
-  Shape ret_shape = on_device_shape_;
-  TF_RETURN_IF_ERROR(ReadDynamicShapesOnCpu(
-      &shaped_buffer, &ret_shape, cpu::CpuExecutable::ShapeSizeBytes));
-  return ret_shape;
+  auto output_shape =
+      tsl::MakeConstructedAsyncValueRef<Shape>(on_device_shape_);
+  tsl::MakeRef<CpuRawBuffer>(memory_space(), device_buffer->buffer())
+      ->ReadDynamicShape(output_shape, on_device_shape_);
+  tsl::BlockUntilReady(output_shape);
+  if (auto* error = output_shape.GetErrorIfPresent()) {
+    return Internal("logical_on_device_shape failed: %s", error->message());
+  }
+  return output_shape.get();
 }
 
 absl::StatusOr<size_t> AbstractCpuBuffer::GetOnDeviceSizeInBytes() const {
@@ -230,27 +235,9 @@ AbstractCpuBuffer::ReleaseDeviceMemoryOwnership(
 }
 
 void AbstractCpuBuffer::Delete() {
-  std::unique_ptr<TrackedCpuDeviceBuffer> device_buffer(
-      static_cast<TrackedCpuDeviceBuffer*>(ReleaseBuffer().release()));
-  if (device_buffer == nullptr) return;
-
-  // Now that all holds have completed and no more can be added, we can get
-  // the final set of usage events.
-  absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4> usage_events =
-      device_buffer->LockUseAndTransferUsageEvents();
-
-  std::vector<tsl::AsyncValue*> event_avs;
-  event_avs.reserve(usage_events.size() + 1);
-  for (auto& event : usage_events) {
-    event_avs.push_back(event.GetAsyncValue());
+  if (auto device_buffer = ReleaseBuffer()) {
+    device_buffer.release()->Delete(memory_space_);
   }
-
-  // We should also wait for the definition event.
-  event_avs.push_back(device_buffer->definition_event().GetAsyncValue());
-
-  RunWhenReady(event_avs, [device_buffer = std::move(device_buffer)]() mutable {
-    device_buffer.reset();
-  });
 }
 
 absl::StatusOr<std::unique_ptr<TrackedCpuDeviceBuffer>>
@@ -492,55 +479,22 @@ AbstractCpuBuffer::CopyToDeviceHelper(AsyncWorkRunner* async_work_runner) {
 }
 
 PjRtFuture<> AbstractCpuBuffer::GetReadyFuture() {
-  tsl::AsyncValueRef<CpuEvent> definition_event;
+  PjRtFuture<>::Promise definition_promise;
   {
     absl::MutexLock lock(&mu_);
     if (!device_buffer()) {
       return PjRtFuture<>(InvalidArgument(
           "GetReadyFuture() called on deleted or donated buffer"));
     }
-    definition_event = device_buffer()->definition_event();
-  }
-  DCHECK(definition_event);
-
-  if (definition_event.IsAvailable()) {
-    if (definition_event.IsError()) {
-      const absl::Status& s = definition_event.GetError();
-      return PjRtFuture<>(tsl::errors::CreateWithUpdatedMessage(
-          s, absl::StrCat("Buffer Definition Event: ", s.message())));
+    if (!definition_promise_) {
+      definition_promise_ =
+          device_buffer()->GetReadyFuturePromise(memory_space());
     }
-    return PjRtFuture<>(absl::OkStatus());
-  } else {
-    PjRtFuture<>::Promise promise = PjRtFuture<>::CreatePromise();
-    definition_event.AndThen(
-        [definition_event = definition_event.AsPtr(), promise]() mutable {
-          if (definition_event.IsError()) {
-            const absl::Status& s = definition_event.GetError();
-            promise.Set(tsl::errors::CreateWithUpdatedMessage(
-                s, absl::StrCat("Buffer Definition Event: ", s.message())));
-          } else {
-            promise.Set();
-          }
-        });
-
-    std::string message = absl::StrCat(buffer_name(), "::Await");
-    return PjRtFuture<>(
-        std::move(promise),
-        /*on_block_start=*/
-        [message]() {
-          absl::string_view message_view(message);
-          tsl::profiler::TraceMeProducer traceme(message_view);
-          VLOG(1) << message_view;
-          return PjRtFutureHelpers::ProfilingKeys(
-              {/*traceme_context_id=*/traceme.GetContextId()});
-        },
-        /*on_block_end=*/
-        [message](PjRtFutureHelpers::ProfilingKeys keys) {
-          absl::string_view message_view(message);
-          tsl::profiler::TraceMeConsumer traceme(message_view,
-                                                 keys.traceme_context_id);
-        });
+    definition_promise = definition_promise_;
   }
+  return tensorflow::down_cast<CommonPjRtClient*>(client())
+      ->CreateFutureFromUserPromise(memory_space(), "AbstractCpuBuffer",
+                                    "Await", std::move(definition_promise));
 }
 
 void PackOrCopy(PrimitiveType element_type, const LiteralSlice& literal,
@@ -561,6 +515,7 @@ void PackOrCopy(PrimitiveType element_type, const LiteralSlice& literal,
 AbstractCpuBuffer::AllocateTrackedDeviceBuffer(
     const Shape& on_device_shape,
     absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4> definition_events) {
+  VLOG(0) << "Allocate: " << on_device_shape.ToString();
   if (on_device_shape.IsTuple()) {
     return absl::InvalidArgumentError(
         absl::StrCat("Tuples are not supported for cpu-buffers: ",

@@ -27,6 +27,7 @@
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -92,7 +93,7 @@ absl::StatusOr<std::unique_ptr<Client>> Client::Create(
       init_response.addressable_device_ids().begin(),
       init_response.addressable_device_ids().end());
   absl::flat_hash_set<int> primary_device_ids;
-  if (rpc_helper->version().protocol_version() < 7) {
+  if (rpc_helper->protocol_version() < 7) {
     // Legacy implementation for servers do not support Client::GetAllDevices()
     // and thus do not provide device_ids(). Assume that it contains all device
     // ids from devices().
@@ -122,7 +123,7 @@ absl::StatusOr<std::unique_ptr<Client>> Client::Create(
   for (const auto& d : init_response.all_devices()) {
     absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute>
         pjrt_device_attributes;
-    if (rpc_helper->version().protocol_version() <= 3) {
+    if (rpc_helper->protocol_version() <= 3) {
       for (const auto& [key, attr] : d.deprecated_attributes()) {
         TF_ASSIGN_OR_RETURN(xla::PjRtDeviceAttribute value,
                             FromVariantProto(attr));
@@ -233,7 +234,11 @@ Client::Client(std::shared_ptr<RpcHelper> rpc_helper, uint64_t session_id,
       memories_(std::move(memories)),
       default_compiler_(this, rpc_helper) {}
 
-Client::~Client() { rpc_helper_->Disconnect(); }
+Client::~Client() {
+  LOG(INFO) << "Client::~Client() starting.";
+  rpc_helper_->Disconnect();
+  LOG(INFO) << "Client::~Client(): rpc_helper_->Disconnect() is done.";
+}
 
 absl::StatusOr<xla::ifrt::Device*> Client::LookupDevice(
     DeviceId device_id) const {
@@ -330,7 +335,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> Client::CopyArrays(
   req->set_copy_semantics(ToArrayCopySemanticsProto(semantics));
 
   std::vector<uint64_t> result_handles;
-  if (rpc_helper_->version().protocol_version() <
+  if (rpc_helper_->protocol_version() <
       protocol_version::kClientHandlesOptimization2) {
     TF_ASSIGN_OR_RETURN(auto response,
                         rpc_helper_->CopyArrays(std::move(req)).Await());
@@ -437,9 +442,11 @@ xla::ifrt::DeviceListRef Client::MakeDeviceList(
   return xla::ifrt::BasicDeviceList::Create(devices);
 }
 
-absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> Client::GetDefaultLayout(
-    xla::ifrt::DType dtype, absl::Span<const int64_t> dims,
-    xla::ifrt::Device* device, xla::ifrt::MemoryKind memory_kind) const {
+absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>
+Client::GetDefaultPjRtLayout(xla::ifrt::DType dtype,
+                             absl::Span<const int64_t> dims,
+                             xla::ifrt::Device* device,
+                             xla::ifrt::MemoryKind memory_kind) const {
   tsl::profiler::TraceMe traceme_ifrt_entrypoint(
       "IfrtProxyEntrypointGetDefaultLayout");
   auto req = std::make_unique<GetDefaultLayoutRequest>();
@@ -457,7 +464,7 @@ absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> Client::GetDefaultLayout(
     }
   }
 
-  *req->mutable_dtype() = dtype.ToProto();
+  *req->mutable_dtype() = dtype.ToProto(rpc_helper_->ifrt_serdes_version());
   req->mutable_dims()->Reserve(dims.size());
   for (int64_t dim : dims) {
     req->add_dims(dim);

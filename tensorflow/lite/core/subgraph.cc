@@ -157,14 +157,15 @@ TfLiteQuantizationParams GetLegacyQuantization(
       static_cast<TfLiteAffineQuantization*>(quantization.params);
   if (!affine_quantization || !affine_quantization->scale ||
       !affine_quantization->zero_point ||
-      affine_quantization->scale->size != 1 ||
-      affine_quantization->zero_point->size != 1) {
+      affine_quantization->scale->size != 1) {
     return legacy_quantization;
   }
 
   // We know its per-layer quantization now.
   legacy_quantization.scale = affine_quantization->scale->data[0];
-  legacy_quantization.zero_point = affine_quantization->zero_point->data[0];
+  legacy_quantization.zero_point =
+      affine_quantization->zero_point ? affine_quantization->zero_point->data[0]
+                                      : 0;
   return legacy_quantization;
 }
 
@@ -1142,7 +1143,17 @@ TfLiteStatus Subgraph::AddNodeWithParameters(
     node.user_data = OpInit(
         *registration, static_cast<const char*>(builtin_data_deleter.get()), 0);
   }
-
+  if (node.user_data == TfLiteKernelInitFailed()) {
+    // Delegate kernels may fail to initialize. Return an error to the caller in
+    // this case.
+    node.user_data = nullptr;
+    TfLiteIntArrayFree(node.inputs);
+    TfLiteIntArrayFree(node.outputs);
+    TfLiteIntArrayFree(node.intermediates);
+    TfLiteIntArrayFree(node.temporaries);
+    ReportError("Failed to initialize kernel.");
+    return kTfLiteError;
+  }
   node.builtin_data = builtin_data_deleter.release();
 
   if (registration->builtin_code == BuiltinOperator_CUSTOM) {
@@ -2337,11 +2348,11 @@ TfLiteStatus Subgraph::ReplaceNodeWithSubgraph(
     int cloned_node_index = -1;
     // Note: it is safe to pass &decom_reg because it will be **copied**
     // into the new node.
-    AddNodeWithParameters(node_inputs, node_outputs, node_intermediates,
-                          (const char*)decomp_node.custom_initial_data,
-                          decomp_node.custom_initial_data_size,
-                          cloned_node_builtin_data, &decom_reg,
-                          &cloned_node_index);
+    TF_LITE_ENSURE_STATUS(AddNodeWithParameters(
+        node_inputs, node_outputs, node_intermediates,
+        (const char*)decomp_node.custom_initial_data,
+        decomp_node.custom_initial_data_size, cloned_node_builtin_data,
+        &decom_reg, &cloned_node_index));
     // AddNodeWithParameter adds the node to the execution plan which we
     // don't want.
     execution_plan_.pop_back();

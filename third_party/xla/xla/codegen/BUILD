@@ -16,17 +16,6 @@ package_group(
 )
 
 cc_library(
-    name = "autotuner",
-    hdrs = ["autotuner.h"],
-    deps = [
-        "//xla/hlo/ir:hlo",
-        "//xla/runtime:thunk",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/time",
-    ],
-)
-
-cc_library(
     name = "device_spec",
     hdrs = ["device_spec.h"],
     deps = [
@@ -86,6 +75,7 @@ cc_library(
     hdrs = ["kernel_spec.h"],
     deps = [
         "//xla/runtime:work_cluster",
+        "//xla/runtime:work_dimensions",
         "//xla/runtime:work_group",
         "//xla/runtime:work_item",
         "//xla/service:buffer_assignment",
@@ -182,8 +172,41 @@ cc_library(
     hdrs = ["ir_emission_utils.h"],
     deps = [
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:inlined_vector",
+    ],
+)
+
+cc_library(
+    name = "math_lib",
+    srcs = ["math_lib.cc"],
+    hdrs = ["math_lib.h"],
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/codegen/math:erf",
+        "//xla/codegen/math:exp",
+        "//xla/codegen/math:fptrunc",
+        "//xla/codegen/math:intrinsic",
+        "//xla/codegen/math:ldexp",
+        "//xla/codegen/math:log1p",
+        "//xla/codegen/math:string_interner",
+        "//xla/codegen/math:vec_name_mangler",
+        "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:ExecutionEngine",
+        "@llvm-project//llvm:IPO",
+        "@llvm-project//llvm:JITLink",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Scalar",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:ir_headers",
     ],
 )
 
@@ -193,5 +216,6 @@ cc_library(
     deps = [
         "//xla/hlo/utils:hlo_traversal",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/types:span",
     ],
 )

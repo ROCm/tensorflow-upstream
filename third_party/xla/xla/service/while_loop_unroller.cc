@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/service/scheduling_annotations_util.h"
 #include "xla/service/value_range.h"
 #include "xla/service/while_loop_constant_sinking.h"
+#include "xla/service/while_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -446,8 +447,8 @@ std::optional<Range> IdentifyRangeAsFunctionOfInductionVar(
 absl::StatusOr<std::vector<int64_t>> FindDynamicIndices(
     const HloInstruction* instr, int64_t start_indices_offset,
     const Shape& slice_shape, const Shape& input_shape) {
-  const int64_t num_indices = slice_shape.dimensions_size();
-  TF_RET_CHECK(num_indices == input_shape.dimensions_size());
+  const int64_t num_indices = slice_shape.dimensions().size();
+  TF_RET_CHECK(num_indices == input_shape.dimensions().size());
   std::vector<int64_t> dynamic_indices;
   for (int64_t index = 0; index < num_indices; ++index) {
     int64_t operand_index = start_indices_offset + index;
@@ -1222,8 +1223,18 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
   bool changed = false;
   TF_ASSIGN_OR_RETURN(
       bool applied_cse,
-      HloCSE(/*is_layout_sensitive=*/true, /*only_fusion_computations=*/false,
-             /*ignore_control_dependencies=*/false, /*only_scalars=*/true)
+      HloCSE(/*is_layout_sensitive=*/true,
+             /*ignore_control_dependencies=*/false,
+             /*should_eliminate_computation=*/nullptr,
+             /*should_eliminate_instruction=*/
+             [](const HloInstruction* instruction) {
+               return HloCSE::ShouldEliminateInstruction(instruction) &&
+                      ShapeUtil::IsScalar(instruction->shape());
+             },
+             /*should_combine_constant=*/
+             [](const HloInstruction* instruction) {
+               return ShapeUtil::IsScalar(instruction->shape());
+             })
           .Run(module, execution_threads));
   if (applied_cse) {
     changed = true;
@@ -1378,6 +1389,67 @@ absl::StatusOr<bool> WhileLoopUnroller::Run(
 
   XLA_VLOG_LINES(3, "WhileLoopUnroller::Run(), after:\n" + module->ToString());
   return changed;
+}
+
+absl::StatusOr<std::vector<HloInstruction*>> CreatePartiallyUnrolledLoop(
+    HloComputation* computation, std::vector<HloInstruction*>& init_values,
+    WhileUtil::LoopBodyGeneratorTy loop_body_generator, int32_t trip_count,
+    int32_t unroll_factor, const OpMetadata& metadata) {
+  int32_t outer_loop_trip_count = trip_count / unroll_factor;
+  int32_t residue_count = trip_count % unroll_factor;
+  absl::StatusOr<std::vector<HloInstruction*>> loop_result_status;
+
+  if (unroll_factor > 1 && outer_loop_trip_count > 0) {
+    // Handle the main loop.
+    loop_result_status = WhileUtil::MakeCountedLoop(
+        computation, outer_loop_trip_count, init_values,
+        [&, unroll_factor, loop_body_generator](
+            HloInstruction* induction_var,
+            const std::vector<HloInstruction*>& loop_state)
+            -> absl::StatusOr<std::vector<HloInstruction*>> {
+          std::vector<HloInstruction*> inner_loop_state = loop_state;
+          TF_ASSIGN_OR_RETURN(
+              HloInstruction * inner_loop_indvar,
+              MakeBinaryHlo(
+                  HloOpcode::kMultiply, induction_var,
+                  MakeR0ConstantHlo(induction_var->parent(), unroll_factor)));
+          for (int i = 0; i < unroll_factor; ++i) {
+            TF_ASSIGN_OR_RETURN(
+                inner_loop_state,
+                loop_body_generator(inner_loop_indvar, inner_loop_state));
+            TF_ASSIGN_OR_RETURN(
+                inner_loop_indvar,
+                MakeBinaryHlo(
+                    HloOpcode::kAdd, inner_loop_indvar,
+                    MakeR0ConstantHlo(inner_loop_indvar->parent(), 1)));
+          }
+          return inner_loop_state;
+        },
+        metadata);
+    if (loop_result_status.ok() && residue_count > 0) {
+      // Handle the residue loop.
+      init_values = loop_result_status.value();
+      int32_t starting_index = trip_count - residue_count;
+      loop_result_status = WhileUtil::MakeCountedLoop(
+          computation, residue_count, init_values,
+          [&, loop_body_generator](
+              HloInstruction* induction_var,
+              const std::vector<HloInstruction*>& loop_state)
+              -> absl::StatusOr<std::vector<HloInstruction*>> {
+            TF_ASSIGN_OR_RETURN(
+                HloInstruction * adjusted_induction_var,
+                MakeBinaryHlo(HloOpcode::kAdd, induction_var,
+                              MakeR0ConstantHlo(induction_var->parent(),
+                                                starting_index)));
+            return loop_body_generator(adjusted_induction_var, loop_state);
+          },
+          metadata);
+    }
+  } else {
+    loop_result_status = WhileUtil::MakeCountedLoop(
+        computation, trip_count, init_values, loop_body_generator, metadata);
+  }
+  return loop_result_status;
 }
 
 }  // namespace xla

@@ -30,6 +30,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/base/no_destructor.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
@@ -112,11 +113,11 @@ template <PrimitiveType kType>
 const Shape& ScalarShapeImpl() {
   static_assert(primitive_util::IsArrayType(kType),
                 "Not a valid type for a scalar.");
-  static const Shape* const shape = [] {
-    auto* const shape = new Shape(kType, /*dimensions=*/{});
-    shape->mutable_layout();
+  static const absl::NoDestructor<Shape> shape([] {
+    Shape shape(kType, /*dimensions=*/{});
+    shape.mutable_layout();
     return shape;
-  }();
+  }());
   return *shape;
 }
 
@@ -130,7 +131,7 @@ const Shape& ScalarShape(PrimitiveType type) {
 
 const Shape& NilShape() {
   // Create a nullary tuple.
-  static const Shape* const shape = new Shape(std::vector<Shape>());
+  static const absl::NoDestructor<Shape> shape(std::vector<Shape>{});
   return *shape;
 }
 
@@ -1794,7 +1795,7 @@ absl::StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
   if (literal.shape().element_type() == primitive_dest_type) {
     return literal.Clone();
   }
-  // Source Array type requirement is ensured by IsDenseArray before.
+  // Source Array type requirement is ensured before.
   if (!primitive_util::IsArrayType(primitive_dest_type) ||
       !primitive_util::IsArrayType(literal.shape().element_type())) {
     return Unimplemented("%s from type %s to type %s is not implemented.",

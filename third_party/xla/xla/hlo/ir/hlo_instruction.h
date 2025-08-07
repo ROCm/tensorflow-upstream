@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/backend_config.h"
 #include "xla/hlo/ir/collective_device_list.h"
+#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_domain_metadata.h"
@@ -533,14 +534,16 @@ class HloInstruction {
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       HloComputation* reduce_computation,
       const CollectiveDeviceList& device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
+      const std::optional<int64_t>& channel_id, bool use_global_device_ids,
+      std::optional<CollectiveOpGroupMode> mode = std::nullopt);
 
   ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
   static std::unique_ptr<HloInstruction> CreateAllReduce(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       HloComputation* reduce_computation,
       absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
-      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
+      const std::optional<int64_t>& channel_id, bool use_global_device_ids,
+      std::optional<CollectiveOpGroupMode> mode = std::nullopt);
 
   // Creates a reduce-scatter operation which reduces its inputs across the
   // given replica groups and then scatters the reduced data across the N
@@ -550,7 +553,8 @@ class HloInstruction {
       HloComputation* reduce_computation,
       const CollectiveDeviceList& device_list, bool constrain_layout,
       const std::optional<int64_t>& channel_id, bool use_global_device_ids,
-      int64_t scatter_dimension);
+      int64_t scatter_dimension,
+      std::optional<CollectiveOpGroupMode> mode = std::nullopt);
 
   ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
   static std::unique_ptr<HloInstruction> CreateReduceScatter(
@@ -558,7 +562,8 @@ class HloInstruction {
       HloComputation* reduce_computation,
       absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
       const std::optional<int64_t>& channel_id, bool use_global_device_ids,
-      int64_t scatter_dimension);
+      int64_t scatter_dimension,
+      std::optional<CollectiveOpGroupMode> mode = std::nullopt);
 
   // Creates an asynchronous cross replica reduction op.
   //
@@ -577,14 +582,16 @@ class HloInstruction {
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       HloComputation* reduce_computation,
       const CollectiveDeviceList& device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
+      const std::optional<int64_t>& channel_id, bool use_global_device_ids,
+      std::optional<CollectiveOpGroupMode> mode = std::nullopt);
 
   ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
   static std::unique_ptr<HloInstruction> CreateAllReduceStart(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       HloComputation* reduce_computation,
       absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
-      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
+      const std::optional<int64_t>& channel_id, bool use_global_device_ids,
+      std::optional<CollectiveOpGroupMode> mode = std::nullopt);
 
   // An all-to-all op takes N array operands of the same shape and scatters them
   // to N replicas.  Each replica gathers the results into a tuple.
@@ -1344,8 +1351,9 @@ class HloInstruction {
                              /*ignore_commutative_operand_order=*/true);
   }
 
-  // Same as Identical() but ignores channel ID value mismatches, as long as
-  // both have channel IDs or neither has a channel ID.
+  // Same as IdenticalIgnoringCommutativeOperandOrder() but ignores channel ID
+  // value mismatches, as long as both have channel IDs or neither has a channel
+  // ID.
   bool IdenticalIgnoringChannelIdValues(
       const HloInstruction& other,
       absl::FunctionRef<bool(const HloInstruction*, const HloInstruction*)>
@@ -1640,7 +1648,8 @@ class HloInstruction {
   // Returns the sharding applied to this operator.
   // REQUIRES: has_sharding() is true.
   const HloSharding& sharding() const {
-    CHECK(has_sharding());
+    CHECK(has_sharding()) << "Sharding instruction expected for: "
+                          << ToString();
     return *sharding_;
   }
   std::shared_ptr<const HloSharding> sharding_ptr() const { return sharding_; }
@@ -1891,7 +1900,7 @@ class HloInstruction {
     return it.second;
   }
 
-  size_t erase_frontend_attribute(const std::string& key) {
+  size_t erase_frontend_attribute(absl::string_view key) {
     return mutable_rare()->frontend_attributes.mutable_map()->erase(key);
   }
 
@@ -2106,9 +2115,6 @@ class HloInstruction {
 
   // Delegates to HloReshapeInstruction::inferred_dimension.
   int64_t inferred_dimension() const;
-
-  // Returns whether this instruction does a rank-2 transposition.
-  bool IsRank2Transpose() const;
 
   // Delegates to HloSliceInstruction::slice_start.
   int64_t slice_starts(int64_t dimension) const;
@@ -2444,7 +2450,7 @@ class HloInstruction {
   };
 
   // Change instruction's name to have a given suffix.
-  void AddSuffixToInstructionName(const absl::string_view suffix);
+  void AddSuffixToInstructionName(absl::string_view suffix);
 
  private:
   friend class HloComputation;

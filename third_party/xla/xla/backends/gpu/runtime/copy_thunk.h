@@ -18,6 +18,8 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -59,6 +61,24 @@ class DeviceToDeviceCopyThunk : public Thunk {
     return destination_buffer_;
   }
   uint64_t size_bytes() const { return mem_size_; }
+
+  absl::StatusOr<ThunkProto> ToProto() const override;
+
+  static absl::StatusOr<std::unique_ptr<DeviceToDeviceCopyThunk>> FromProto(
+      ThunkInfo thunk_info, const DeviceToDeviceCopyThunkProto& thunk_proto,
+      absl::Span<const BufferAllocation> buffer_allocations);
+
+  friend bool operator==(const DeviceToDeviceCopyThunk& lhs,
+                         const DeviceToDeviceCopyThunk& rhs) {
+    return std::tie(lhs.source_buffer_, lhs.destination_buffer_,
+                    lhs.mem_size_) ==
+           std::tie(rhs.source_buffer_, rhs.destination_buffer_, rhs.mem_size_);
+  }
+
+  friend bool operator!=(const DeviceToDeviceCopyThunk& lhs,
+                         const DeviceToDeviceCopyThunk& rhs) {
+    return !(lhs == rhs);
+  }
 
  private:
   const BufferAllocation::Slice source_buffer_;
@@ -142,6 +162,10 @@ class DeviceToHostCopyThunk : public CopyThunk {
       ThunkInfo thunk_info, const DeviceToHostCopyThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
+  std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const override;
+
+  bool IsAsyncStart() const override { return async_events_ != nullptr; }
+
  private:
   std::shared_ptr<CopyThunk::AsyncEvents> async_events_;
   const HloInstruction* instr_;
@@ -173,6 +197,10 @@ class HostToDeviceCopyThunk : public CopyThunk {
       ThunkInfo thunk_info, const HostToDeviceCopyThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
+  std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const override;
+
+  bool IsAsyncStart() const override { return async_events_ != nullptr; }
+
  private:
   std::shared_ptr<CopyThunk::AsyncEvents> async_events_;
   const HloInstruction* instr_;
@@ -189,6 +217,10 @@ class CopyDoneThunk : public Thunk {
                 const HloInstruction* copy_start_instr);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+
+  std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const override;
+
+  bool IsAsyncDone() const override { return async_events_ != nullptr; }
 
  private:
   std::shared_ptr<CopyThunk::AsyncEvents> async_events_;
@@ -243,6 +275,13 @@ class DynamicMemcpyThunk : public Thunk {
                      uint64_t mem_size, Offsets offsets);
   DynamicMemcpyThunk(const DynamicMemcpyThunk&) = delete;
   DynamicMemcpyThunk& operator=(const DynamicMemcpyThunk&) = delete;
+
+  Offsets offsets() const { return offsets_; }
+  uint64_t mem_size() const { return mem_size_; }
+  const BufferAllocation::Slice& source() const { return source_buffer_; }
+  const BufferAllocation::Slice& destination() const {
+    return destination_buffer_;
+  }
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 

@@ -43,6 +43,10 @@ message HostToDeviceCopyThunkProto {
   CopyThunkProto copy_thunk = 1;
 }
 
+message DeviceToDeviceCopyThunkProto {
+  CopyThunkProto copy_thunk = 1;
+}
+
 message ConditionalThunkProto {
   xla.buffer_assignment.BufferAllocationSliceProto branch_index_buffer = 1;
   repeated SequentialThunkProto branch_thunks = 2;
@@ -93,6 +97,14 @@ message TriangularSolveThunkProto {
   int64 b_batch_stride = 10;
 }
 
+message ReplicaIdThunkProto {
+  xla.buffer_assignment.BufferAllocationSliceProto dest_buffer = 1;
+}
+
+message PartitionIdThunkProto {
+  xla.buffer_assignment.BufferAllocationSliceProto dest_buffer = 1;
+}
+
 message ThunkProto {
   ThunkInfoProto thunk_info = 1;
 
@@ -107,6 +119,9 @@ message ThunkProto {
     GemmThunkProto gemm_thunk = 9;
     WaitForStreamsThunkProto wait_for_streams_thunk = 10;
     TriangularSolveThunkProto triangular_solve_thunk = 11;
+    ReplicaIdThunkProto replica_id_thunk = 12;
+    DeviceToDeviceCopyThunkProto device_to_device_copy_thunk = 13;
+    PartitionIdThunkProto partition_id_thunk = 14;
   }
 }
 
