@@ -488,6 +488,11 @@ cc_library(
     ],
 )
 
+tf_proto_library(
+    name = "triton_call_args_proto",
+    srcs = ["triton_call_args.proto"],
+)
+
 cc_library(
     name = "triton_call",
     srcs = if_gpu_is_configured(["triton_call.cc"]),
@@ -496,11 +501,14 @@ cc_library(
         "TENSORFLOW_USE_ROCM=1",
     ]),
     deps = [
+        ":triton_call_args_proto_cc",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Support",
+        "@local_tsl//tsl/platform:logging",
+        "@local_tsl//tsl/platform:protobuf",
     ],
 )
 
