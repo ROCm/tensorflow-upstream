@@ -61,6 +61,7 @@ load("//third_party/ruy:workspace.bzl", ruy = "repo")
 load("//third_party/sobol_data:workspace.bzl", sobol_data = "repo")
 load("//third_party/systemlibs:syslibs_configure.bzl", "syslibs_configure")
 load("//third_party/vulkan_headers:workspace.bzl", vulkan_headers = "repo")
+load("@local_xla//third_party/rocm_device_libs:workspace.bzl", rocm_device_libs = "repo")
 
 def _initialize_third_party():
     """ Load third party repositories.  See above load() statements. """
@@ -87,6 +88,7 @@ def _initialize_third_party():
     ml_dtypes()
     nanobind()
     nasm()
+    rocm_device_libs()
     opencl_headers()
     pasta()
     pybind11_abseil()
