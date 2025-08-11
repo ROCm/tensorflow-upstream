@@ -1,0 +1,1664 @@
+From ae0464944300fae4012981b2f04fb93c21fdf228 Mon Sep 17 00:00:00 2001
+From: Alex Voicu <alexandru.voicu@amd.com>
+Date: Fri, 14 Feb 2025 11:20:45 +0000
+Subject: [PATCH] [clang][CodeGen] `sret` args should always point to the
+ `alloca` AS, so use that (#114062)
+
+`sret` arguments are always going to reside in the stack/`alloca`
+address space, which makes the current formulation where their AS is
+derived from the pointee somewhat quaint. This patch ensures that `sret`
+ends up pointing to the `alloca` AS in IR function signatures, and also
+guards agains trying to pass a casted `alloca`d pointer to a `sret` arg,
+which can happen for most languages, when compiled for targets that have
+a non-zero `alloca` AS (e.g. AMDGCN) / map `LangAS::default` to a
+non-zero value (SPIR-V). A target could still choose to do something
+different here, by e.g. overriding `classifyReturnType` behaviour.
+
+In a broader sense, this patch extends non-aliased indirect args to also
+carry an AS, which leads to changing the `getIndirect()` interface. At
+the moment we're only using this for (indirect) returns, but it allows
+for future handling of indirect args themselves. We default to using the
+AllocaAS as that matches what Clang is currently doing, however if, in
+the future, a target would opt for e.g. placing indirect returns in some
+other storage, with another AS, this will require revisiting.
+
+---------
+
+Co-authored-by: Matt Arsenault <arsenm2@gmail.com>
+Co-authored-by: Matt Arsenault <Matthew.Arsenault@amd.com>
+---
+ clang/include/clang/CodeGen/CGFunctionInfo.h  | 11 +--
+ clang/lib/CodeGen/ABIInfo.cpp                 |  8 +--
+ clang/lib/CodeGen/ABIInfo.h                   |  3 +-
+ clang/lib/CodeGen/ABIInfoImpl.cpp             | 15 ++--
+ clang/lib/CodeGen/CGCall.cpp                  | 32 +++++----
+ clang/lib/CodeGen/CGExprAgg.cpp               | 19 ++++--
+ clang/lib/CodeGen/ItaniumCXXABI.cpp           |  4 +-
+ clang/lib/CodeGen/MicrosoftCXXABI.cpp         |  4 +-
+ clang/lib/CodeGen/SwiftCallingConv.cpp        | 16 +++--
+ clang/lib/CodeGen/Targets/AArch64.cpp         | 24 ++++---
+ clang/lib/CodeGen/Targets/AMDGPU.cpp          |  3 +-
+ clang/lib/CodeGen/Targets/ARC.cpp             | 11 +--
+ clang/lib/CodeGen/Targets/ARM.cpp             | 32 ++++++---
+ clang/lib/CodeGen/Targets/AVR.cpp             |  2 +-
+ clang/lib/CodeGen/Targets/BPF.cpp             | 12 ++--
+ clang/lib/CodeGen/Targets/CSKY.cpp            |  8 ++-
+ clang/lib/CodeGen/Targets/Hexagon.cpp         | 18 +++--
+ clang/lib/CodeGen/Targets/Lanai.cpp           | 14 ++--
+ clang/lib/CodeGen/Targets/LoongArch.cpp       | 13 ++--
+ clang/lib/CodeGen/Targets/Mips.cpp            | 10 +--
+ clang/lib/CodeGen/Targets/NVPTX.cpp           |  8 ++-
+ clang/lib/CodeGen/Targets/PNaCl.cpp           | 12 ++--
+ clang/lib/CodeGen/Targets/PPC.cpp             | 35 ++++++----
+ clang/lib/CodeGen/Targets/RISCV.cpp           | 13 ++--
+ clang/lib/CodeGen/Targets/SPIR.cpp            |  9 ++-
+ clang/lib/CodeGen/Targets/Sparc.cpp           |  7 +-
+ clang/lib/CodeGen/Targets/SystemZ.cpp         | 14 ++--
+ clang/lib/CodeGen/Targets/WebAssembly.cpp     |  3 +-
+ clang/lib/CodeGen/Targets/X86.cpp             | 58 +++++++++++-----
+ .../test/CodeGen/partial-reinitialization2.c  |  4 +-
+ clang/test/CodeGen/sret.c                     | 11 +++
+ .../test/CodeGenCXX/no-elide-constructors.cpp |  6 ++
+ .../CodeGenOpenCL/addr-space-struct-arg.cl    | 14 ++--
+ .../amdgpu-abi-struct-arg-byref.cl            | 14 ++--
+ ...plicit-addrspacecast-function-parameter.cl | 68 +++++++++++++++++++
+ 35 files changed, 371 insertions(+), 164 deletions(-)
+ create mode 100644 clang/test/CodeGenOpenCL/implicit-addrspacecast-function-parameter.cl
+
+diff --git a/clang/include/clang/CodeGen/CGFunctionInfo.h b/clang/include/clang/CodeGen/CGFunctionInfo.h
+index 9d785d878b61..040ee025afaa 100644
+--- a/clang/include/clang/CodeGen/CGFunctionInfo.h
++++ b/clang/include/clang/CodeGen/CGFunctionInfo.h
+@@ -206,8 +206,8 @@ public:
+   static ABIArgInfo getIgnore() {
+     return ABIArgInfo(Ignore);
+   }
+-  static ABIArgInfo getIndirect(CharUnits Alignment, bool ByVal = true,
+-                                bool Realign = false,
++  static ABIArgInfo getIndirect(CharUnits Alignment, unsigned AddrSpace,
++                                bool ByVal = true, bool Realign = false,
+                                 llvm::Type *Padding = nullptr) {
+     auto AI = ABIArgInfo(Indirect);
+     AI.setIndirectAlign(Alignment);
+@@ -215,6 +215,7 @@ public:
+     AI.setIndirectRealign(Realign);
+     AI.setSRetAfterThis(false);
+     AI.setPaddingType(Padding);
++    AI.setIndirectAddrSpace(AddrSpace);
+     return AI;
+   }
+ 
+@@ -232,7 +233,7 @@ public:
+ 
+   static ABIArgInfo getIndirectInReg(CharUnits Alignment, bool ByVal = true,
+                                      bool Realign = false) {
+-    auto AI = getIndirect(Alignment, ByVal, Realign);
++    auto AI = getIndirect(Alignment, 0, ByVal, Realign);
+     AI.setInReg(true);
+     return AI;
+   }
+@@ -422,12 +423,12 @@ public:
+   }
+ 
+   unsigned getIndirectAddrSpace() const {
+-    assert(isIndirectAliased() && "Invalid kind!");
++    assert((isIndirect() || isIndirectAliased()) && "Invalid kind!");
+     return IndirectAttr.AddrSpace;
+   }
+ 
+   void setIndirectAddrSpace(unsigned AddrSpace) {
+-    assert(isIndirectAliased() && "Invalid kind!");
++    assert((isIndirect() || isIndirectAliased()) && "Invalid kind!");
+     IndirectAttr.AddrSpace = AddrSpace;
+   }
+ 
+diff --git a/clang/lib/CodeGen/ABIInfo.cpp b/clang/lib/CodeGen/ABIInfo.cpp
+index cda8a494f6c2..d981d6991363 100644
+--- a/clang/lib/CodeGen/ABIInfo.cpp
++++ b/clang/lib/CodeGen/ABIInfo.cpp
+@@ -171,11 +171,11 @@ bool ABIInfo::isPromotableIntegerTypeForABI(QualType Ty) const {
+   return false;
+ }
+ 
+-ABIArgInfo ABIInfo::getNaturalAlignIndirect(QualType Ty, bool ByVal,
+-                                            bool Realign,
++ABIArgInfo ABIInfo::getNaturalAlignIndirect(QualType Ty, unsigned AddrSpace,
++                                            bool ByVal, bool Realign,
+                                             llvm::Type *Padding) const {
+-  return ABIArgInfo::getIndirect(getContext().getTypeAlignInChars(Ty), ByVal,
+-                                 Realign, Padding);
++  return ABIArgInfo::getIndirect(getContext().getTypeAlignInChars(Ty),
++                                 AddrSpace, ByVal, Realign, Padding);
+ }
+ 
+ ABIArgInfo ABIInfo::getNaturalAlignIndirectInReg(QualType Ty,
+diff --git a/clang/lib/CodeGen/ABIInfo.h b/clang/lib/CodeGen/ABIInfo.h
+index 213e7879c316..9c7029c99bd4 100644
+--- a/clang/lib/CodeGen/ABIInfo.h
++++ b/clang/lib/CodeGen/ABIInfo.h
+@@ -110,7 +110,8 @@ public:
+   /// A convenience method to return an indirect ABIArgInfo with an
+   /// expected alignment equal to the ABI alignment of the given type.
+   CodeGen::ABIArgInfo
+-  getNaturalAlignIndirect(QualType Ty, bool ByVal = true, bool Realign = false,
++  getNaturalAlignIndirect(QualType Ty, unsigned AddrSpace, bool ByVal = true,
++                          bool Realign = false,
+                           llvm::Type *Padding = nullptr) const;
+ 
+   CodeGen::ABIArgInfo getNaturalAlignIndirectInReg(QualType Ty,
+diff --git a/clang/lib/CodeGen/ABIInfoImpl.cpp b/clang/lib/CodeGen/ABIInfoImpl.cpp
+index 795874059bda..68887cd7916c 100644
+--- a/clang/lib/CodeGen/ABIInfoImpl.cpp
++++ b/clang/lib/CodeGen/ABIInfoImpl.cpp
+@@ -21,9 +21,10 @@ ABIArgInfo DefaultABIInfo::classifyArgumentType(QualType Ty) const {
+     // Records with non-trivial destructors/copy-constructors should not be
+     // passed by value.
+     if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+-      return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     RAA == CGCXXABI::RAA_DirectInMemory);
+ 
+-    return getNaturalAlignIndirect(Ty);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace());
+   }
+ 
+   // Treat an enum type as its underlying type.
+@@ -36,7 +37,7 @@ ABIArgInfo DefaultABIInfo::classifyArgumentType(QualType Ty) const {
+         Context.getTypeSize(Context.getTargetInfo().hasInt128Type()
+                                 ? Context.Int128Ty
+                                 : Context.LongLongTy))
+-      return getNaturalAlignIndirect(Ty);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace());
+ 
+   return (isPromotableIntegerTypeForABI(Ty)
+               ? ABIArgInfo::getExtend(Ty, CGT.ConvertType(Ty))
+@@ -48,7 +49,7 @@ ABIArgInfo DefaultABIInfo::classifyReturnType(QualType RetTy) const {
+     return ABIArgInfo::getIgnore();
+ 
+   if (isAggregateTypeForABI(RetTy))
+-    return getNaturalAlignIndirect(RetTy);
++    return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace());
+ 
+   // Treat an enum type as its underlying type.
+   if (const EnumType *EnumTy = RetTy->getAs<EnumType>())
+@@ -59,7 +60,8 @@ ABIArgInfo DefaultABIInfo::classifyReturnType(QualType RetTy) const {
+         getContext().getTypeSize(getContext().getTargetInfo().hasInt128Type()
+                                      ? getContext().Int128Ty
+                                      : getContext().LongLongTy))
+-      return getNaturalAlignIndirect(RetTy);
++      return getNaturalAlignIndirect(RetTy,
++                                     getDataLayout().getAllocaAddrSpace());
+ 
+   return (isPromotableIntegerTypeForABI(RetTy) ? ABIArgInfo::getExtend(RetTy)
+                                                : ABIArgInfo::getDirect());
+@@ -126,7 +128,8 @@ bool CodeGen::classifyReturnType(const CGCXXABI &CXXABI, CGFunctionInfo &FI,
+   if (const auto *RT = Ty->getAs<RecordType>())
+     if (!isa<CXXRecordDecl>(RT->getDecl()) &&
+         !RT->getDecl()->canPassInRegisters()) {
+-      FI.getReturnInfo() = Info.getNaturalAlignIndirect(Ty);
++      FI.getReturnInfo() = Info.getNaturalAlignIndirect(
++          Ty, Info.getDataLayout().getAllocaAddrSpace());
+       return true;
+     }
+ 
+diff --git a/clang/lib/CodeGen/CGCall.cpp b/clang/lib/CodeGen/CGCall.cpp
+index 2dce86410db8..e6c2ac939eb8 100644
+--- a/clang/lib/CodeGen/CGCall.cpp
++++ b/clang/lib/CodeGen/CGCall.cpp
+@@ -1671,10 +1671,8 @@ CodeGenTypes::GetFunctionType(const CGFunctionInfo &FI) {
+ 
+   // Add type for sret argument.
+   if (IRFunctionArgs.hasSRetArg()) {
+-    QualType Ret = FI.getReturnType();
+-    unsigned AddressSpace = CGM.getTypes().getTargetAddressSpace(Ret);
+-    ArgTypes[IRFunctionArgs.getSRetArgNo()] =
+-        llvm::PointerType::get(getLLVMContext(), AddressSpace);
++    ArgTypes[IRFunctionArgs.getSRetArgNo()] = llvm::PointerType::get(
++        getLLVMContext(), FI.getReturnInfo().getIndirectAddrSpace());
+   }
+ 
+   // Add type for inalloca argument.
+@@ -5144,7 +5142,6 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
+   // If the call returns a temporary with struct return, create a temporary
+   // alloca to hold the result, unless one is given to us.
+   Address SRetPtr = Address::invalid();
+-  RawAddress SRetAlloca = RawAddress::invalid();
+   llvm::Value *UnusedReturnSizePtr = nullptr;
+   if (RetAI.isIndirect() || RetAI.isInAlloca() || RetAI.isCoerceAndExpand()) {
+     // For virtual function pointer thunks and musttail calls, we must always
+@@ -5158,11 +5155,11 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
+     } else if (!ReturnValue.isNull()) {
+       SRetPtr = ReturnValue.getAddress();
+     } else {
+-      SRetPtr = CreateMemTemp(RetTy, "tmp", &SRetAlloca);
++      SRetPtr = CreateMemTempWithoutCast(RetTy, "tmp");
+       if (HaveInsertPoint() && ReturnValue.isUnused()) {
+         llvm::TypeSize size =
+             CGM.getDataLayout().getTypeAllocSize(ConvertTypeForMem(RetTy));
+-        UnusedReturnSizePtr = EmitLifetimeStart(size, SRetAlloca.getPointer());
++        UnusedReturnSizePtr = EmitLifetimeStart(size, SRetPtr.getBasePointer());
+       }
+     }
+     if (IRFunctionArgs.hasSRetArg()) {
+@@ -5397,11 +5394,22 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
+             V->getType()->isIntegerTy())
+           V = Builder.CreateZExt(V, ArgInfo.getCoerceToType());
+ 
+-        // If the argument doesn't match, perform a bitcast to coerce it.  This
+-        // can happen due to trivial type mismatches.
++        // The only plausible mismatch here would be for pointer address spaces,
++        // which can happen e.g. when passing a sret arg that is in the AllocaAS
++        // to a function that takes a pointer to and argument in the DefaultAS.
++        // We assume that the target has a reasonable mapping for the DefaultAS
++        // (it can be casted to from incoming specific ASes), and insert an AS
++        // cast to address the mismatch.
+         if (FirstIRArg < IRFuncTy->getNumParams() &&
+-            V->getType() != IRFuncTy->getParamType(FirstIRArg))
+-          V = Builder.CreateBitCast(V, IRFuncTy->getParamType(FirstIRArg));
++            V->getType() != IRFuncTy->getParamType(FirstIRArg)) {
++          assert(V->getType()->isPointerTy() && "Only pointers can mismatch!");
++          auto FormalAS = CallInfo.arguments()[ArgNo]
++                              .type.getQualifiers()
++                              .getAddressSpace();
++          auto ActualAS = I->Ty.getAddressSpace();
++          V = getTargetHooks().performAddrSpaceCast(
++              *this, V, ActualAS, FormalAS, IRFuncTy->getParamType(FirstIRArg));
++        }
+ 
+         if (ArgHasMaybeUndefAttr)
+           V = Builder.CreateFreeze(V);
+@@ -5737,7 +5745,7 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
+   // pop this cleanup later on. Being eager about this is OK, since this
+   // temporary is 'invisible' outside of the callee.
+   if (UnusedReturnSizePtr)
+-    pushFullExprCleanup<CallLifetimeEnd>(NormalEHLifetimeMarker, SRetAlloca,
++    pushFullExprCleanup<CallLifetimeEnd>(NormalEHLifetimeMarker, SRetPtr,
+                                          UnusedReturnSizePtr);
+ 
+   llvm::BasicBlock *InvokeDest = CannotThrow ? nullptr : getInvokeDest();
+diff --git a/clang/lib/CodeGen/CGExprAgg.cpp b/clang/lib/CodeGen/CGExprAgg.cpp
+index 2ad6587089f1..f9c9c5df8016 100644
+--- a/clang/lib/CodeGen/CGExprAgg.cpp
++++ b/clang/lib/CodeGen/CGExprAgg.cpp
+@@ -296,18 +296,25 @@ void AggExprEmitter::withReturnValueSlot(
+                  (RequiresDestruction && Dest.isIgnored());
+ 
+   Address RetAddr = Address::invalid();
+-  RawAddress RetAllocaAddr = RawAddress::invalid();
+ 
+   EHScopeStack::stable_iterator LifetimeEndBlock;
+   llvm::Value *LifetimeSizePtr = nullptr;
+   llvm::IntrinsicInst *LifetimeStartInst = nullptr;
+   if (!UseTemp) {
+-    RetAddr = Dest.getAddress();
++    // It is possible for the existing slot we are using directly to have been
++    // allocated in the correct AS for an indirect return, and then cast to
++    // the default AS (this is the behaviour of CreateMemTemp), however we know
++    // that the return address is expected to point to the uncasted AS, hence we
++    // strip possible pointer casts here.
++    if (Dest.getAddress().isValid())
++      RetAddr = Dest.getAddress().withPointer(
++          Dest.getAddress().getBasePointer()->stripPointerCasts(),
++          Dest.getAddress().isKnownNonNull());
+   } else {
+-    RetAddr = CGF.CreateMemTemp(RetTy, "tmp", &RetAllocaAddr);
++    RetAddr = CGF.CreateMemTempWithoutCast(RetTy, "tmp");
+     llvm::TypeSize Size =
+         CGF.CGM.getDataLayout().getTypeAllocSize(CGF.ConvertTypeForMem(RetTy));
+-    LifetimeSizePtr = CGF.EmitLifetimeStart(Size, RetAllocaAddr.getPointer());
++    LifetimeSizePtr = CGF.EmitLifetimeStart(Size, RetAddr.getBasePointer());
+     if (LifetimeSizePtr) {
+       LifetimeStartInst =
+           cast<llvm::IntrinsicInst>(std::prev(Builder.GetInsertPoint()));
+@@ -316,7 +323,7 @@ void AggExprEmitter::withReturnValueSlot(
+              "Last insertion wasn't a lifetime.start?");
+ 
+       CGF.pushFullExprCleanup<CodeGenFunction::CallLifetimeEnd>(
+-          NormalEHLifetimeMarker, RetAllocaAddr, LifetimeSizePtr);
++          NormalEHLifetimeMarker, RetAddr, LifetimeSizePtr);
+       LifetimeEndBlock = CGF.EHStack.stable_begin();
+     }
+   }
+@@ -337,7 +344,7 @@ void AggExprEmitter::withReturnValueSlot(
+     // Since we're not guaranteed to be in an ExprWithCleanups, clean up
+     // eagerly.
+     CGF.DeactivateCleanupBlock(LifetimeEndBlock, LifetimeStartInst);
+-    CGF.EmitLifetimeEnd(LifetimeSizePtr, RetAllocaAddr.getPointer());
++    CGF.EmitLifetimeEnd(LifetimeSizePtr, RetAddr.getBasePointer());
+   }
+ }
+ 
+diff --git a/clang/lib/CodeGen/ItaniumCXXABI.cpp b/clang/lib/CodeGen/ItaniumCXXABI.cpp
+index 7375a511809b..bcd171724c41 100644
+--- a/clang/lib/CodeGen/ItaniumCXXABI.cpp
++++ b/clang/lib/CodeGen/ItaniumCXXABI.cpp
+@@ -1350,7 +1350,9 @@ bool ItaniumCXXABI::classifyReturnType(CGFunctionInfo &FI) const {
+   // If C++ prohibits us from making a copy, return by address.
+   if (!RD->canPassInRegisters()) {
+     auto Align = CGM.getContext().getTypeAlignInChars(FI.getReturnType());
+-    FI.getReturnInfo() = ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
++    FI.getReturnInfo() = ABIArgInfo::getIndirect(
++        Align, /*AddrSpace=*/CGM.getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/false);
+     return true;
+   }
+   return false;
+diff --git a/clang/lib/CodeGen/MicrosoftCXXABI.cpp b/clang/lib/CodeGen/MicrosoftCXXABI.cpp
+index 4a2630e83b62..5cb742a92a9b 100644
+--- a/clang/lib/CodeGen/MicrosoftCXXABI.cpp
++++ b/clang/lib/CodeGen/MicrosoftCXXABI.cpp
+@@ -1172,7 +1172,9 @@ bool MicrosoftCXXABI::classifyReturnType(CGFunctionInfo &FI) const {
+ 
+   if (isIndirectReturn) {
+     CharUnits Align = CGM.getContext().getTypeAlignInChars(FI.getReturnType());
+-    FI.getReturnInfo() = ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
++    FI.getReturnInfo() = ABIArgInfo::getIndirect(
++        Align, /*AddrSpace=*/CGM.getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/false);
+ 
+     // MSVC always passes `this` before the `sret` parameter.
+     FI.getReturnInfo().setSRetAfterThis(FI.isInstanceMethod());
+diff --git a/clang/lib/CodeGen/SwiftCallingConv.cpp b/clang/lib/CodeGen/SwiftCallingConv.cpp
+index 1ff4ece2811e..10f9f20bca31 100644
+--- a/clang/lib/CodeGen/SwiftCallingConv.cpp
++++ b/clang/lib/CodeGen/SwiftCallingConv.cpp
+@@ -796,11 +796,14 @@ bool swiftcall::mustPassRecordIndirectly(CodeGenModule &CGM,
+ 
+ static ABIArgInfo classifyExpandedType(SwiftAggLowering &lowering,
+                                        bool forReturn,
+-                                       CharUnits alignmentForIndirect) {
++                                       CharUnits alignmentForIndirect,
++                                       unsigned IndirectAS) {
+   if (lowering.empty()) {
+     return ABIArgInfo::getIgnore();
+   } else if (lowering.shouldPassIndirectly(forReturn)) {
+-    return ABIArgInfo::getIndirect(alignmentForIndirect, /*byval*/ false);
++    return ABIArgInfo::getIndirect(alignmentForIndirect,
++                                   /*AddrSpace=*/IndirectAS,
++                                   /*byval=*/false);
+   } else {
+     auto types = lowering.getCoerceAndExpandTypes();
+     return ABIArgInfo::getCoerceAndExpand(types.first, types.second);
+@@ -809,18 +812,21 @@ static ABIArgInfo classifyExpandedType(SwiftAggLowering &lowering,
+ 
+ static ABIArgInfo classifyType(CodeGenModule &CGM, CanQualType type,
+                                bool forReturn) {
++  unsigned IndirectAS = CGM.getDataLayout().getAllocaAddrSpace();
+   if (auto recordType = dyn_cast<RecordType>(type)) {
+     auto record = recordType->getDecl();
+     auto &layout = CGM.getContext().getASTRecordLayout(record);
+ 
+     if (mustPassRecordIndirectly(CGM, record))
+-      return ABIArgInfo::getIndirect(layout.getAlignment(), /*byval*/ false);
++      return ABIArgInfo::getIndirect(layout.getAlignment(),
++                                     /*AddrSpace=*/IndirectAS, /*byval=*/false);
+ 
+     SwiftAggLowering lowering(CGM);
+     lowering.addTypedData(recordType->getDecl(), CharUnits::Zero(), layout);
+     lowering.finish();
+ 
+-    return classifyExpandedType(lowering, forReturn, layout.getAlignment());
++    return classifyExpandedType(lowering, forReturn, layout.getAlignment(),
++                                IndirectAS);
+   }
+ 
+   // Just assume that all of our target ABIs can support returning at least
+@@ -836,7 +842,7 @@ static ABIArgInfo classifyType(CodeGenModule &CGM, CanQualType type,
+     lowering.finish();
+ 
+     CharUnits alignment = CGM.getContext().getTypeAlignInChars(type);
+-    return classifyExpandedType(lowering, forReturn, alignment);
++    return classifyExpandedType(lowering, forReturn, alignment, IndirectAS);
+   }
+ 
+   // Member pointer types need to be expanded, but it's a simple form of
+diff --git a/clang/lib/CodeGen/Targets/AArch64.cpp b/clang/lib/CodeGen/Targets/AArch64.cpp
+index e2e434815d43..e2b65a758241 100644
+--- a/clang/lib/CodeGen/Targets/AArch64.cpp
++++ b/clang/lib/CodeGen/Targets/AArch64.cpp
+@@ -327,7 +327,8 @@ ABIArgInfo AArch64ABIInfo::coerceIllegalVector(QualType Ty, unsigned &NSRN,
+     return ABIArgInfo::getDirect(ResType);
+   }
+ 
+-  return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++  return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                 /*ByVal=*/false);
+ }
+ 
+ ABIArgInfo AArch64ABIInfo::coerceAndExpandPureScalableAggregate(
+@@ -335,7 +336,8 @@ ABIArgInfo AArch64ABIInfo::coerceAndExpandPureScalableAggregate(
+     const SmallVectorImpl<llvm::Type *> &UnpaddedCoerceToSeq, unsigned &NSRN,
+     unsigned &NPRN) const {
+   if (!IsNamedArg || NSRN + NVec > 8 || NPRN + NPred > 4)
+-    return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   /*ByVal=*/false);
+   NSRN += NVec;
+   NPRN += NPred;
+ 
+@@ -375,7 +377,8 @@ ABIArgInfo AArch64ABIInfo::classifyArgumentType(QualType Ty, bool IsVariadicFn,
+ 
+     if (const auto *EIT = Ty->getAs<BitIntType>())
+       if (EIT->getNumBits() > 128)
+-        return getNaturalAlignIndirect(Ty, false);
++        return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                       false);
+ 
+     if (Ty->isVectorType())
+       NSRN = std::min(NSRN + 1, 8u);
+@@ -411,8 +414,9 @@ ABIArgInfo AArch64ABIInfo::classifyArgumentType(QualType Ty, bool IsVariadicFn,
+   // Structures with either a non-trivial destructor or a non-trivial
+   // copy constructor are always indirect.
+   if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI())) {
+-    return getNaturalAlignIndirect(Ty, /*ByVal=*/RAA ==
+-                                     CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(
++        Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/RAA == CGCXXABI::RAA_DirectInMemory);
+   }
+ 
+   // Empty records:
+@@ -489,7 +493,8 @@ ABIArgInfo AArch64ABIInfo::classifyArgumentType(QualType Ty, bool IsVariadicFn,
+                           : llvm::ArrayType::get(BaseTy, Size / Alignment));
+   }
+ 
+-  return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++  return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                 /*ByVal=*/false);
+ }
+ 
+ ABIArgInfo AArch64ABIInfo::classifyReturnType(QualType RetTy,
+@@ -507,7 +512,7 @@ ABIArgInfo AArch64ABIInfo::classifyReturnType(QualType RetTy,
+ 
+   // Large vector types should be returned via memory.
+   if (RetTy->isVectorType() && getContext().getTypeSize(RetTy) > 128)
+-    return getNaturalAlignIndirect(RetTy);
++    return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace());
+ 
+   if (!passAsAggregateType(RetTy)) {
+     // Treat an enum type as its underlying type.
+@@ -516,7 +521,8 @@ ABIArgInfo AArch64ABIInfo::classifyReturnType(QualType RetTy,
+ 
+     if (const auto *EIT = RetTy->getAs<BitIntType>())
+       if (EIT->getNumBits() > 128)
+-        return getNaturalAlignIndirect(RetTy);
++        return getNaturalAlignIndirect(RetTy,
++                                       getDataLayout().getAllocaAddrSpace());
+ 
+     return (isPromotableIntegerTypeForABI(RetTy) && isDarwinPCS()
+                 ? ABIArgInfo::getExtend(RetTy)
+@@ -575,7 +581,7 @@ ABIArgInfo AArch64ABIInfo::classifyReturnType(QualType RetTy,
+     return ABIArgInfo::getDirect(llvm::IntegerType::get(getVMContext(), Size));
+   }
+ 
+-  return getNaturalAlignIndirect(RetTy);
++  return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace());
+ }
+ 
+ /// isIllegalVectorType - check whether the vector type is legal for AArch64.
+diff --git a/clang/lib/CodeGen/Targets/AMDGPU.cpp b/clang/lib/CodeGen/Targets/AMDGPU.cpp
+index 788eac5f2823..dc45def4f324 100644
+--- a/clang/lib/CodeGen/Targets/AMDGPU.cpp
++++ b/clang/lib/CodeGen/Targets/AMDGPU.cpp
+@@ -236,7 +236,8 @@ ABIArgInfo AMDGPUABIInfo::classifyArgumentType(QualType Ty, bool Variadic,
+     // Records with non-trivial destructors/copy-constructors should not be
+     // passed by value.
+     if (auto RAA = getRecordArgABI(Ty, getCXXABI()))
+-      return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     RAA == CGCXXABI::RAA_DirectInMemory);
+ 
+     // Ignore empty structs/unions.
+     if (isEmptyRecord(getContext(), Ty, true))
+diff --git a/clang/lib/CodeGen/Targets/ARC.cpp b/clang/lib/CodeGen/Targets/ARC.cpp
+index 1904e8fdb388..c8db7e8f9706 100644
+--- a/clang/lib/CodeGen/Targets/ARC.cpp
++++ b/clang/lib/CodeGen/Targets/ARC.cpp
+@@ -69,16 +69,19 @@ public:
+ 
+ 
+ ABIArgInfo ARCABIInfo::getIndirectByRef(QualType Ty, bool HasFreeRegs) const {
+-  return HasFreeRegs ? getNaturalAlignIndirectInReg(Ty) :
+-                       getNaturalAlignIndirect(Ty, false);
++  return HasFreeRegs ? getNaturalAlignIndirectInReg(Ty)
++                     : getNaturalAlignIndirect(
++                           Ty, getDataLayout().getAllocaAddrSpace(), false);
+ }
+ 
+ ABIArgInfo ARCABIInfo::getIndirectByValue(QualType Ty) const {
+   // Compute the byval alignment.
+   const unsigned MinABIStackAlignInBytes = 4;
+   unsigned TypeAlign = getContext().getTypeAlign(Ty) / 8;
+-  return ABIArgInfo::getIndirect(CharUnits::fromQuantity(4), /*ByVal=*/true,
+-                                 TypeAlign > MinABIStackAlignInBytes);
++  return ABIArgInfo::getIndirect(
++      CharUnits::fromQuantity(4),
++      /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++      /*ByVal=*/true, TypeAlign > MinABIStackAlignInBytes);
+ }
+ 
+ RValue ARCABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+diff --git a/clang/lib/CodeGen/Targets/ARM.cpp b/clang/lib/CodeGen/Targets/ARM.cpp
+index 47e31ceeaf29..0aad5703ffac 100644
+--- a/clang/lib/CodeGen/Targets/ARM.cpp
++++ b/clang/lib/CodeGen/Targets/ARM.cpp
+@@ -299,7 +299,9 @@ ABIArgInfo ARMABIInfo::coerceIllegalVector(QualType Ty) const {
+         llvm::Type::getInt32Ty(getVMContext()), Size / 32);
+     return ABIArgInfo::getDirect(ResType);
+   }
+-  return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++  return getNaturalAlignIndirect(
++      Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++      /*ByVal=*/false);
+ }
+ 
+ ABIArgInfo ARMABIInfo::classifyHomogeneousAggregate(QualType Ty,
+@@ -381,7 +383,9 @@ ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty, bool isVariadic,
+ 
+     if (const auto *EIT = Ty->getAs<BitIntType>())
+       if (EIT->getNumBits() > 64)
+-        return getNaturalAlignIndirect(Ty, /*ByVal=*/true);
++        return getNaturalAlignIndirect(
++            Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++            /*ByVal=*/true);
+ 
+     return (isPromotableIntegerTypeForABI(Ty)
+                 ? ABIArgInfo::getExtend(Ty, CGT.ConvertType(Ty))
+@@ -389,7 +393,8 @@ ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty, bool isVariadic,
+   }
+ 
+   if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI())) {
+-    return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   RAA == CGCXXABI::RAA_DirectInMemory);
+   }
+ 
+   // Empty records are either ignored completely or passed as if they were a
+@@ -429,7 +434,8 @@ ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty, bool isVariadic,
+     // bigger than 128-bits, they get placed in space allocated by the caller,
+     // and a pointer is passed.
+     return ABIArgInfo::getIndirect(
+-        CharUnits::fromQuantity(getContext().getTypeAlign(Ty) / 8), false);
++        CharUnits::fromQuantity(getContext().getTypeAlign(Ty) / 8),
++        getDataLayout().getAllocaAddrSpace(), false);
+   }
+ 
+   // Support byval for ARM.
+@@ -447,9 +453,10 @@ ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty, bool isVariadic,
+   }
+   if (getContext().getTypeSizeInChars(Ty) > CharUnits::fromQuantity(64)) {
+     assert(getABIKind() != ARMABIKind::AAPCS16_VFP && "unexpected byval");
+-    return ABIArgInfo::getIndirect(CharUnits::fromQuantity(ABIAlign),
+-                                   /*ByVal=*/true,
+-                                   /*Realign=*/TyAlign > ABIAlign);
++    return ABIArgInfo::getIndirect(
++        CharUnits::fromQuantity(ABIAlign),
++        /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/true, /*Realign=*/TyAlign > ABIAlign);
+   }
+ 
+   // Otherwise, pass by coercing to a structure of the appropriate size.
+@@ -566,7 +573,8 @@ ABIArgInfo ARMABIInfo::classifyReturnType(QualType RetTy, bool isVariadic,
+   if (const VectorType *VT = RetTy->getAs<VectorType>()) {
+     // Large vector types should be returned via memory.
+     if (getContext().getTypeSize(RetTy) > 128)
+-      return getNaturalAlignIndirect(RetTy);
++      return getNaturalAlignIndirect(RetTy,
++                                     getDataLayout().getAllocaAddrSpace());
+     // TODO: FP16/BF16 vectors should be converted to integer vectors
+     // This check is similar  to isIllegalVectorType - refactor?
+     if ((!getTarget().hasLegalHalfType() &&
+@@ -584,7 +592,9 @@ ABIArgInfo ARMABIInfo::classifyReturnType(QualType RetTy, bool isVariadic,
+ 
+     if (const auto *EIT = RetTy->getAs<BitIntType>())
+       if (EIT->getNumBits() > 64)
+-        return getNaturalAlignIndirect(RetTy, /*ByVal=*/false);
++        return getNaturalAlignIndirect(
++            RetTy, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++            /*ByVal=*/false);
+ 
+     return isPromotableIntegerTypeForABI(RetTy) ? ABIArgInfo::getExtend(RetTy)
+                                                 : ABIArgInfo::getDirect();
+@@ -615,7 +625,7 @@ ABIArgInfo ARMABIInfo::classifyReturnType(QualType RetTy, bool isVariadic,
+     }
+ 
+     // Otherwise return in memory.
+-    return getNaturalAlignIndirect(RetTy);
++    return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace());
+   }
+ 
+   // Otherwise this is an AAPCS variant.
+@@ -653,7 +663,7 @@ ABIArgInfo ARMABIInfo::classifyReturnType(QualType RetTy, bool isVariadic,
+     return ABIArgInfo::getDirect(CoerceTy);
+   }
+ 
+-  return getNaturalAlignIndirect(RetTy);
++  return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace());
+ }
+ 
+ /// isIllegalVector - check whether Ty is an illegal vector type.
+diff --git a/clang/lib/CodeGen/Targets/AVR.cpp b/clang/lib/CodeGen/Targets/AVR.cpp
+index 50547dd6dec5..26e2a22f14d1 100644
+--- a/clang/lib/CodeGen/Targets/AVR.cpp
++++ b/clang/lib/CodeGen/Targets/AVR.cpp
+@@ -45,7 +45,7 @@ public:
+     // stack slot, along with a pointer as the function's implicit argument.
+     if (getContext().getTypeSize(Ty) > RetRegs * 8) {
+       LargeRet = true;
+-      return getNaturalAlignIndirect(Ty);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace());
+     }
+     // An i8 return value should not be extended to i16, since AVR has 8-bit
+     // registers.
+diff --git a/clang/lib/CodeGen/Targets/BPF.cpp b/clang/lib/CodeGen/Targets/BPF.cpp
+index 2849222f7a18..880a891083c3 100644
+--- a/clang/lib/CodeGen/Targets/BPF.cpp
++++ b/clang/lib/CodeGen/Targets/BPF.cpp
+@@ -42,7 +42,8 @@ public:
+         }
+         return ABIArgInfo::getDirect(CoerceTy);
+       } else {
+-        return getNaturalAlignIndirect(Ty);
++        return getNaturalAlignIndirect(Ty,
++                                       getDataLayout().getAllocaAddrSpace());
+       }
+     }
+ 
+@@ -52,7 +53,8 @@ public:
+     ASTContext &Context = getContext();
+     if (const auto *EIT = Ty->getAs<BitIntType>())
+       if (EIT->getNumBits() > Context.getTypeSize(Context.Int128Ty))
+-        return getNaturalAlignIndirect(Ty);
++        return getNaturalAlignIndirect(Ty,
++                                       getDataLayout().getAllocaAddrSpace());
+ 
+     return (isPromotableIntegerTypeForABI(Ty) ? ABIArgInfo::getExtend(Ty)
+                                               : ABIArgInfo::getDirect());
+@@ -63,7 +65,8 @@ public:
+       return ABIArgInfo::getIgnore();
+ 
+     if (isAggregateTypeForABI(RetTy))
+-      return getNaturalAlignIndirect(RetTy);
++      return getNaturalAlignIndirect(RetTy,
++                                     getDataLayout().getAllocaAddrSpace());
+ 
+     // Treat an enum type as its underlying type.
+     if (const EnumType *EnumTy = RetTy->getAs<EnumType>())
+@@ -72,7 +75,8 @@ public:
+     ASTContext &Context = getContext();
+     if (const auto *EIT = RetTy->getAs<BitIntType>())
+       if (EIT->getNumBits() > Context.getTypeSize(Context.Int128Ty))
+-        return getNaturalAlignIndirect(RetTy);
++        return getNaturalAlignIndirect(RetTy,
++                                       getDataLayout().getAllocaAddrSpace());
+ 
+     // Caller will do necessary sign/zero extension.
+     return ABIArgInfo::getDirect();
+diff --git a/clang/lib/CodeGen/Targets/CSKY.cpp b/clang/lib/CodeGen/Targets/CSKY.cpp
+index d8720afd1a71..ef26d483a180 100644
+--- a/clang/lib/CodeGen/Targets/CSKY.cpp
++++ b/clang/lib/CodeGen/Targets/CSKY.cpp
+@@ -82,8 +82,9 @@ ABIArgInfo CSKYABIInfo::classifyArgumentType(QualType Ty, int &ArgGPRsLeft,
+   if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI())) {
+     if (ArgGPRsLeft)
+       ArgGPRsLeft -= 1;
+-    return getNaturalAlignIndirect(Ty, /*ByVal=*/RAA ==
+-                                           CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(
++        Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/RAA == CGCXXABI::RAA_DirectInMemory);
+   }
+ 
+   // Ignore empty structs/unions.
+@@ -144,7 +145,8 @@ ABIArgInfo CSKYABIInfo::classifyArgumentType(QualType Ty, int &ArgGPRsLeft,
+           llvm::IntegerType::get(getVMContext(), XLen), (Size + 31) / XLen));
+     }
+   }
+-  return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++  return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                 /*ByVal=*/false);
+ }
+ 
+ ABIArgInfo CSKYABIInfo::classifyReturnType(QualType RetTy) const {
+diff --git a/clang/lib/CodeGen/Targets/Hexagon.cpp b/clang/lib/CodeGen/Targets/Hexagon.cpp
+index 8fd2a81494d9..667599d2d9a6 100644
+--- a/clang/lib/CodeGen/Targets/Hexagon.cpp
++++ b/clang/lib/CodeGen/Targets/Hexagon.cpp
+@@ -105,14 +105,16 @@ ABIArgInfo HexagonABIInfo::classifyArgumentType(QualType Ty,
+       HexagonAdjustRegsLeft(Size, RegsLeft);
+ 
+     if (Size > 64 && Ty->isBitIntType())
+-      return getNaturalAlignIndirect(Ty, /*ByVal=*/true);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     /*ByVal=*/true);
+ 
+     return isPromotableIntegerTypeForABI(Ty) ? ABIArgInfo::getExtend(Ty)
+                                              : ABIArgInfo::getDirect();
+   }
+ 
+   if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+-    return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   RAA == CGCXXABI::RAA_DirectInMemory);
+ 
+   // Ignore empty records.
+   if (isEmptyRecord(getContext(), Ty, true))
+@@ -122,7 +124,8 @@ ABIArgInfo HexagonABIInfo::classifyArgumentType(QualType Ty,
+   unsigned Align = getContext().getTypeAlign(Ty);
+ 
+   if (Size > 64)
+-    return getNaturalAlignIndirect(Ty, /*ByVal=*/true);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   /*ByVal=*/true);
+ 
+   if (HexagonAdjustRegsLeft(Size, RegsLeft))
+     Align = Size <= 32 ? 32 : 64;
+@@ -151,7 +154,8 @@ ABIArgInfo HexagonABIInfo::classifyReturnType(QualType RetTy) const {
+     }
+     // Large vector types should be returned via memory.
+     if (Size > 64)
+-      return getNaturalAlignIndirect(RetTy);
++      return getNaturalAlignIndirect(RetTy,
++                                     getDataLayout().getAllocaAddrSpace());
+   }
+ 
+   if (!isAggregateTypeForABI(RetTy)) {
+@@ -160,7 +164,8 @@ ABIArgInfo HexagonABIInfo::classifyReturnType(QualType RetTy) const {
+       RetTy = EnumTy->getDecl()->getIntegerType();
+ 
+     if (Size > 64 && RetTy->isBitIntType())
+-      return getNaturalAlignIndirect(RetTy, /*ByVal=*/false);
++      return getNaturalAlignIndirect(
++          RetTy, getDataLayout().getAllocaAddrSpace(), /*ByVal=*/false);
+ 
+     return isPromotableIntegerTypeForABI(RetTy) ? ABIArgInfo::getExtend(RetTy)
+                                                 : ABIArgInfo::getDirect();
+@@ -176,7 +181,8 @@ ABIArgInfo HexagonABIInfo::classifyReturnType(QualType RetTy) const {
+     Size = llvm::bit_ceil(Size);
+     return ABIArgInfo::getDirect(llvm::Type::getIntNTy(getVMContext(), Size));
+   }
+-  return getNaturalAlignIndirect(RetTy, /*ByVal=*/true);
++  return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace(),
++                                 /*ByVal=*/true);
+ }
+ 
+ Address HexagonABIInfo::EmitVAArgFromMemory(CodeGenFunction &CGF,
+diff --git a/clang/lib/CodeGen/Targets/Lanai.cpp b/clang/lib/CodeGen/Targets/Lanai.cpp
+index 2578fc0291e7..6f75bd54a8ef 100644
+--- a/clang/lib/CodeGen/Targets/Lanai.cpp
++++ b/clang/lib/CodeGen/Targets/Lanai.cpp
+@@ -72,15 +72,17 @@ ABIArgInfo LanaiABIInfo::getIndirectResult(QualType Ty, bool ByVal,
+       --State.FreeRegs; // Non-byval indirects just use one pointer.
+       return getNaturalAlignIndirectInReg(Ty);
+     }
+-    return getNaturalAlignIndirect(Ty, false);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   false);
+   }
+ 
+   // Compute the byval alignment.
+   const unsigned MinABIStackAlignInBytes = 4;
+   unsigned TypeAlign = getContext().getTypeAlign(Ty) / 8;
+-  return ABIArgInfo::getIndirect(CharUnits::fromQuantity(4), /*ByVal=*/true,
+-                                 /*Realign=*/TypeAlign >
+-                                     MinABIStackAlignInBytes);
++  return ABIArgInfo::getIndirect(
++      CharUnits::fromQuantity(4),
++      /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(), /*ByVal=*/true,
++      /*Realign=*/TypeAlign > MinABIStackAlignInBytes);
+ }
+ 
+ ABIArgInfo LanaiABIInfo::classifyArgumentType(QualType Ty,
+@@ -92,7 +94,9 @@ ABIArgInfo LanaiABIInfo::classifyArgumentType(QualType Ty,
+     if (RAA == CGCXXABI::RAA_Indirect) {
+       return getIndirectResult(Ty, /*ByVal=*/false, State);
+     } else if (RAA == CGCXXABI::RAA_DirectInMemory) {
+-      return getNaturalAlignIndirect(Ty, /*ByVal=*/true);
++      return getNaturalAlignIndirect(
++          Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++          /*ByVal=*/true);
+     }
+   }
+ 
+diff --git a/clang/lib/CodeGen/Targets/LoongArch.cpp b/clang/lib/CodeGen/Targets/LoongArch.cpp
+index 6c90e48a5ea4..0f689371a60d 100644
+--- a/clang/lib/CodeGen/Targets/LoongArch.cpp
++++ b/clang/lib/CodeGen/Targets/LoongArch.cpp
+@@ -305,8 +305,9 @@ ABIArgInfo LoongArchABIInfo::classifyArgumentType(QualType Ty, bool IsFixed,
+   if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI())) {
+     if (GARsLeft)
+       GARsLeft -= 1;
+-    return getNaturalAlignIndirect(Ty, /*ByVal=*/RAA ==
+-                                           CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(
++        Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/RAA == CGCXXABI::RAA_DirectInMemory);
+   }
+ 
+   uint64_t Size = getContext().getTypeSize(Ty);
+@@ -381,7 +382,9 @@ ABIArgInfo LoongArchABIInfo::classifyArgumentType(QualType Ty, bool IsFixed,
+       if (EIT->getNumBits() > 128 ||
+           (!getContext().getTargetInfo().hasInt128Type() &&
+            EIT->getNumBits() > 64))
+-        return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++        return getNaturalAlignIndirect(
++            Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++            /*ByVal=*/false);
+     }
+ 
+     return ABIArgInfo::getDirect();
+@@ -404,7 +407,9 @@ ABIArgInfo LoongArchABIInfo::classifyArgumentType(QualType Ty, bool IsFixed,
+     return ABIArgInfo::getDirect(
+         llvm::ArrayType::get(llvm::IntegerType::get(getVMContext(), GRLen), 2));
+   }
+-  return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++  return getNaturalAlignIndirect(
++      Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++      /*ByVal=*/false);
+ }
+ 
+ ABIArgInfo LoongArchABIInfo::classifyReturnType(QualType RetTy) const {
+diff --git a/clang/lib/CodeGen/Targets/Mips.cpp b/clang/lib/CodeGen/Targets/Mips.cpp
+index 771a85c84b35..c025f7312959 100644
+--- a/clang/lib/CodeGen/Targets/Mips.cpp
++++ b/clang/lib/CodeGen/Targets/Mips.cpp
+@@ -226,7 +226,8 @@ MipsABIInfo::classifyArgumentType(QualType Ty, uint64_t &Offset) const {
+ 
+     if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI())) {
+       Offset = OrigOffset + MinABIStackAlignInBytes;
+-      return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     RAA == CGCXXABI::RAA_DirectInMemory);
+     }
+ 
+     // If we have reached here, aggregates are passed directly by coercing to
+@@ -248,7 +249,7 @@ MipsABIInfo::classifyArgumentType(QualType Ty, uint64_t &Offset) const {
+     if (EIT->getNumBits() > 128 ||
+         (EIT->getNumBits() > 64 &&
+          !getContext().getTargetInfo().hasInt128Type()))
+-      return getNaturalAlignIndirect(Ty);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace());
+ 
+   // All integral types are promoted to the GPR width.
+   if (Ty->isIntegralOrEnumerationType())
+@@ -327,7 +328,7 @@ ABIArgInfo MipsABIInfo::classifyReturnType(QualType RetTy) const {
+       }
+     }
+ 
+-    return getNaturalAlignIndirect(RetTy);
++    return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace());
+   }
+ 
+   // Treat an enum type as its underlying type.
+@@ -339,7 +340,8 @@ ABIArgInfo MipsABIInfo::classifyReturnType(QualType RetTy) const {
+     if (EIT->getNumBits() > 128 ||
+         (EIT->getNumBits() > 64 &&
+          !getContext().getTargetInfo().hasInt128Type()))
+-      return getNaturalAlignIndirect(RetTy);
++      return getNaturalAlignIndirect(RetTy,
++                                     getDataLayout().getAllocaAddrSpace());
+ 
+   if (isPromotableIntegerTypeForABI(RetTy))
+     return ABIArgInfo::getExtend(RetTy);
+diff --git a/clang/lib/CodeGen/Targets/NVPTX.cpp b/clang/lib/CodeGen/Targets/NVPTX.cpp
+index b82e4ddb9f3f..c236de8db70e 100644
+--- a/clang/lib/CodeGen/Targets/NVPTX.cpp
++++ b/clang/lib/CodeGen/Targets/NVPTX.cpp
+@@ -192,14 +192,18 @@ ABIArgInfo NVPTXABIInfo::classifyArgumentType(QualType Ty) const {
+         return ABIArgInfo::getDirect(
+             CGInfo.getCUDADeviceBuiltinTextureDeviceType());
+     }
+-    return getNaturalAlignIndirect(Ty, /* byval */ true);
++    return getNaturalAlignIndirect(
++        Ty, /* AddrSpace */ getDataLayout().getAllocaAddrSpace(),
++        /* byval */ true);
+   }
+ 
+   if (const auto *EIT = Ty->getAs<BitIntType>()) {
+     if ((EIT->getNumBits() > 128) ||
+         (!getContext().getTargetInfo().hasInt128Type() &&
+          EIT->getNumBits() > 64))
+-      return getNaturalAlignIndirect(Ty, /* byval */ true);
++      return getNaturalAlignIndirect(
++          Ty, /* AddrSpace */ getDataLayout().getAllocaAddrSpace(),
++          /* byval */ true);
+   }
+ 
+   return (isPromotableIntegerTypeForABI(Ty) ? ABIArgInfo::getExtend(Ty)
+diff --git a/clang/lib/CodeGen/Targets/PNaCl.cpp b/clang/lib/CodeGen/Targets/PNaCl.cpp
+index 9b7d757df3a3..358010785850 100644
+--- a/clang/lib/CodeGen/Targets/PNaCl.cpp
++++ b/clang/lib/CodeGen/Targets/PNaCl.cpp
+@@ -63,8 +63,9 @@ RValue PNaClABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+ ABIArgInfo PNaClABIInfo::classifyArgumentType(QualType Ty) const {
+   if (isAggregateTypeForABI(Ty)) {
+     if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+-      return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
+-    return getNaturalAlignIndirect(Ty);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     RAA == CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace());
+   } else if (const EnumType *EnumTy = Ty->getAs<EnumType>()) {
+     // Treat an enum type as its underlying type.
+     Ty = EnumTy->getDecl()->getIntegerType();
+@@ -75,7 +76,7 @@ ABIArgInfo PNaClABIInfo::classifyArgumentType(QualType Ty) const {
+     // Treat bit-precise integers as integers if <= 64, otherwise pass
+     // indirectly.
+     if (EIT->getNumBits() > 64)
+-      return getNaturalAlignIndirect(Ty);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace());
+     return ABIArgInfo::getDirect();
+   }
+ 
+@@ -89,12 +90,13 @@ ABIArgInfo PNaClABIInfo::classifyReturnType(QualType RetTy) const {
+ 
+   // In the PNaCl ABI we always return records/structures on the stack.
+   if (isAggregateTypeForABI(RetTy))
+-    return getNaturalAlignIndirect(RetTy);
++    return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace());
+ 
+   // Treat bit-precise integers as integers if <= 64, otherwise pass indirectly.
+   if (const auto *EIT = RetTy->getAs<BitIntType>()) {
+     if (EIT->getNumBits() > 64)
+-      return getNaturalAlignIndirect(RetTy);
++      return getNaturalAlignIndirect(RetTy,
++                                     getDataLayout().getAllocaAddrSpace());
+     return ABIArgInfo::getDirect();
+   }
+ 
+diff --git a/clang/lib/CodeGen/Targets/PPC.cpp b/clang/lib/CodeGen/Targets/PPC.cpp
+index 989e46f4b66a..4df4c9f3c347 100644
+--- a/clang/lib/CodeGen/Targets/PPC.cpp
++++ b/clang/lib/CodeGen/Targets/PPC.cpp
+@@ -189,7 +189,7 @@ ABIArgInfo AIXABIInfo::classifyReturnType(QualType RetTy) const {
+     return ABIArgInfo::getIgnore();
+ 
+   if (isAggregateTypeForABI(RetTy))
+-    return getNaturalAlignIndirect(RetTy);
++    return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace());
+ 
+   return (isPromotableTypeForABI(RetTy) ? ABIArgInfo::getExtend(RetTy)
+                                         : ABIArgInfo::getDirect());
+@@ -208,13 +208,16 @@ ABIArgInfo AIXABIInfo::classifyArgumentType(QualType Ty) const {
+     // Records with non-trivial destructors/copy-constructors should not be
+     // passed by value.
+     if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+-      return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     RAA == CGCXXABI::RAA_DirectInMemory);
+ 
+     CharUnits CCAlign = getParamTypeAlignment(Ty);
+     CharUnits TyAlign = getContext().getTypeAlignInChars(Ty);
+ 
+-    return ABIArgInfo::getIndirect(CCAlign, /*ByVal*/ true,
+-                                   /*Realign*/ TyAlign > CCAlign);
++    return ABIArgInfo::getIndirect(
++        CCAlign, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/true,
++        /*Realign=*/TyAlign > CCAlign);
+   }
+ 
+   return (isPromotableTypeForABI(Ty)
+@@ -833,7 +836,8 @@ PPC64_SVR4_ABIInfo::classifyArgumentType(QualType Ty) const {
+   if (Ty->isVectorType()) {
+     uint64_t Size = getContext().getTypeSize(Ty);
+     if (Size > 128)
+-      return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     /*ByVal=*/false);
+     else if (Size < 128) {
+       llvm::Type *CoerceTy = llvm::IntegerType::get(getVMContext(), Size);
+       return ABIArgInfo::getDirect(CoerceTy);
+@@ -842,11 +846,13 @@ PPC64_SVR4_ABIInfo::classifyArgumentType(QualType Ty) const {
+ 
+   if (const auto *EIT = Ty->getAs<BitIntType>())
+     if (EIT->getNumBits() > 128)
+-      return getNaturalAlignIndirect(Ty, /*ByVal=*/true);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     /*ByVal=*/true);
+ 
+   if (isAggregateTypeForABI(Ty)) {
+     if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+-      return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     RAA == CGCXXABI::RAA_DirectInMemory);
+ 
+     uint64_t ABIAlign = getParamTypeAlignment(Ty).getQuantity();
+     uint64_t TyAlign = getContext().getTypeAlignInChars(Ty).getQuantity();
+@@ -887,9 +893,10 @@ PPC64_SVR4_ABIInfo::classifyArgumentType(QualType Ty) const {
+     }
+ 
+     // All other aggregates are passed ByVal.
+-    return ABIArgInfo::getIndirect(CharUnits::fromQuantity(ABIAlign),
+-                                   /*ByVal=*/true,
+-                                   /*Realign=*/TyAlign > ABIAlign);
++    return ABIArgInfo::getIndirect(
++        CharUnits::fromQuantity(ABIAlign),
++        /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/true, /*Realign=*/TyAlign > ABIAlign);
+   }
+ 
+   return (isPromotableTypeForABI(Ty)
+@@ -910,7 +917,8 @@ PPC64_SVR4_ABIInfo::classifyReturnType(QualType RetTy) const {
+   if (RetTy->isVectorType()) {
+     uint64_t Size = getContext().getTypeSize(RetTy);
+     if (Size > 128)
+-      return getNaturalAlignIndirect(RetTy);
++      return getNaturalAlignIndirect(RetTy,
++                                     getDataLayout().getAllocaAddrSpace());
+     else if (Size < 128) {
+       llvm::Type *CoerceTy = llvm::IntegerType::get(getVMContext(), Size);
+       return ABIArgInfo::getDirect(CoerceTy);
+@@ -919,7 +927,8 @@ PPC64_SVR4_ABIInfo::classifyReturnType(QualType RetTy) const {
+ 
+   if (const auto *EIT = RetTy->getAs<BitIntType>())
+     if (EIT->getNumBits() > 128)
+-      return getNaturalAlignIndirect(RetTy, /*ByVal=*/false);
++      return getNaturalAlignIndirect(
++          RetTy, getDataLayout().getAllocaAddrSpace(), /*ByVal=*/false);
+ 
+   if (isAggregateTypeForABI(RetTy)) {
+     // ELFv2 homogeneous aggregates are returned as array types.
+@@ -949,7 +958,7 @@ PPC64_SVR4_ABIInfo::classifyReturnType(QualType RetTy) const {
+     }
+ 
+     // All other aggregates are returned indirectly.
+-    return getNaturalAlignIndirect(RetTy);
++    return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace());
+   }
+ 
+   return (isPromotableTypeForABI(RetTy) ? ABIArgInfo::getExtend(RetTy)
+diff --git a/clang/lib/CodeGen/Targets/RISCV.cpp b/clang/lib/CodeGen/Targets/RISCV.cpp
+index 2c48ba37fd20..aa5fb6329c1c 100644
+--- a/clang/lib/CodeGen/Targets/RISCV.cpp
++++ b/clang/lib/CodeGen/Targets/RISCV.cpp
+@@ -410,8 +410,9 @@ ABIArgInfo RISCVABIInfo::classifyArgumentType(QualType Ty, bool IsFixed,
+   if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI())) {
+     if (ArgGPRsLeft)
+       ArgGPRsLeft -= 1;
+-    return getNaturalAlignIndirect(Ty, /*ByVal=*/RAA ==
+-                                           CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(
++        Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/RAA == CGCXXABI::RAA_DirectInMemory);
+   }
+ 
+   uint64_t Size = getContext().getTypeSize(Ty);
+@@ -492,7 +493,9 @@ ABIArgInfo RISCVABIInfo::classifyArgumentType(QualType Ty, bool IsFixed,
+       if (EIT->getNumBits() > 128 ||
+           (!getContext().getTargetInfo().hasInt128Type() &&
+            EIT->getNumBits() > 64))
+-        return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++        return getNaturalAlignIndirect(
++            Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++            /*ByVal=*/false);
+     }
+ 
+     return ABIArgInfo::getDirect();
+@@ -524,7 +527,9 @@ ABIArgInfo RISCVABIInfo::classifyArgumentType(QualType Ty, bool IsFixed,
+           llvm::IntegerType::get(getVMContext(), XLen), 2));
+     }
+   }
+-  return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++  return getNaturalAlignIndirect(
++      Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++      /*ByVal=*/false);
+ }
+ 
+ ABIArgInfo RISCVABIInfo::classifyReturnType(QualType RetTy) const {
+diff --git a/clang/lib/CodeGen/Targets/SPIR.cpp b/clang/lib/CodeGen/Targets/SPIR.cpp
+index 5c75e985e953..b81ed29a5159 100644
+--- a/clang/lib/CodeGen/Targets/SPIR.cpp
++++ b/clang/lib/CodeGen/Targets/SPIR.cpp
+@@ -156,8 +156,10 @@ ABIArgInfo SPIRVABIInfo::classifyKernelArgumentType(QualType Ty) const {
+       // copied to be valid on the device.
+       // This behavior follows the CUDA spec
+       // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#global-function-argument-processing,
+-      // and matches the NVPTX implementation.
+-      return getNaturalAlignIndirect(Ty, /* byval */ true);
++      // and matches the NVPTX implementation. TODO: hardcoding to 0 should be
++      // revisited if HIPSPV / byval starts making use of the AS of an indirect
++      // arg.
++      return getNaturalAlignIndirect(Ty, /*AddrSpace=*/0, /*byval=*/true);
+     }
+   }
+   return classifyArgumentType(Ty);
+@@ -172,7 +174,8 @@ ABIArgInfo SPIRVABIInfo::classifyArgumentType(QualType Ty) const {
+   // Records with non-trivial destructors/copy-constructors should not be
+   // passed by value.
+   if (auto RAA = getRecordArgABI(Ty, getCXXABI()))
+-    return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   RAA == CGCXXABI::RAA_DirectInMemory);
+ 
+   if (const RecordType *RT = Ty->getAs<RecordType>()) {
+     const RecordDecl *RD = RT->getDecl();
+diff --git a/clang/lib/CodeGen/Targets/Sparc.cpp b/clang/lib/CodeGen/Targets/Sparc.cpp
+index da8c7219be26..9642196b78c6 100644
+--- a/clang/lib/CodeGen/Targets/Sparc.cpp
++++ b/clang/lib/CodeGen/Targets/Sparc.cpp
+@@ -232,7 +232,9 @@ SparcV9ABIInfo::classifyType(QualType Ty, unsigned SizeLimit) const {
+   // Anything too big to fit in registers is passed with an explicit indirect
+   // pointer / sret pointer.
+   if (Size > SizeLimit)
+-    return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++    return getNaturalAlignIndirect(
++        Ty, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/false);
+ 
+   // Treat an enum type as its underlying type.
+   if (const EnumType *EnumTy = Ty->getAs<EnumType>())
+@@ -253,7 +255,8 @@ SparcV9ABIInfo::classifyType(QualType Ty, unsigned SizeLimit) const {
+   // If a C++ object has either a non-trivial copy constructor or a non-trivial
+   // destructor, it is passed with an explicit indirect pointer / sret pointer.
+   if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+-    return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   RAA == CGCXXABI::RAA_DirectInMemory);
+ 
+   // This is a small aggregate type that should be passed in registers.
+   // Build a coercion type from the LLVM struct type.
+diff --git a/clang/lib/CodeGen/Targets/SystemZ.cpp b/clang/lib/CodeGen/Targets/SystemZ.cpp
+index 23c96fa5cf98..c928d3c029ca 100644
+--- a/clang/lib/CodeGen/Targets/SystemZ.cpp
++++ b/clang/lib/CodeGen/Targets/SystemZ.cpp
+@@ -406,7 +406,7 @@ ABIArgInfo SystemZABIInfo::classifyReturnType(QualType RetTy) const {
+   if (isVectorArgumentType(RetTy))
+     return ABIArgInfo::getDirect();
+   if (isCompoundType(RetTy) || getContext().getTypeSize(RetTy) > 64)
+-    return getNaturalAlignIndirect(RetTy);
++    return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace());
+   return (isPromotableIntegerTypeForABI(RetTy) ? ABIArgInfo::getExtend(RetTy)
+                                                : ABIArgInfo::getDirect());
+ }
+@@ -417,7 +417,8 @@ ABIArgInfo SystemZABIInfo::classifyArgumentType(QualType Ty) const {
+ 
+   // Handle the generic C++ ABI.
+   if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+-    return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   RAA == CGCXXABI::RAA_DirectInMemory);
+ 
+   // Integers and enums are extended to full register width.
+   if (isPromotableIntegerTypeForABI(Ty))
+@@ -434,7 +435,8 @@ ABIArgInfo SystemZABIInfo::classifyArgumentType(QualType Ty) const {
+ 
+   // Values that are not 1, 2, 4 or 8 bytes in size are passed indirectly.
+   if (Size != 8 && Size != 16 && Size != 32 && Size != 64)
+-    return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   /*ByVal=*/false);
+ 
+   // Handle small structures.
+   if (const RecordType *RT = Ty->getAs<RecordType>()) {
+@@ -442,7 +444,8 @@ ABIArgInfo SystemZABIInfo::classifyArgumentType(QualType Ty) const {
+     // fail the size test above.
+     const RecordDecl *RD = RT->getDecl();
+     if (RD->hasFlexibleArrayMember())
+-      return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     /*ByVal=*/false);
+ 
+     // The structure is passed as an unextended integer, a float, or a double.
+     if (isFPArgumentType(SingleElementTy)) {
+@@ -459,7 +462,8 @@ ABIArgInfo SystemZABIInfo::classifyArgumentType(QualType Ty) const {
+ 
+   // Non-structure compounds are passed indirectly.
+   if (isCompoundType(Ty))
+-    return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   /*ByVal=*/false);
+ 
+   return ABIArgInfo::getDirect(nullptr);
+ }
+diff --git a/clang/lib/CodeGen/Targets/WebAssembly.cpp b/clang/lib/CodeGen/Targets/WebAssembly.cpp
+index 70a968fe93ca..9217c78a540a 100644
+--- a/clang/lib/CodeGen/Targets/WebAssembly.cpp
++++ b/clang/lib/CodeGen/Targets/WebAssembly.cpp
+@@ -103,7 +103,8 @@ ABIArgInfo WebAssemblyABIInfo::classifyArgumentType(QualType Ty) const {
+     // Records with non-trivial destructors/copy-constructors should not be
+     // passed by value.
+     if (auto RAA = getRecordArgABI(Ty, getCXXABI()))
+-      return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     RAA == CGCXXABI::RAA_DirectInMemory);
+     // Ignore empty structs/unions.
+     if (isEmptyRecord(getContext(), Ty, true))
+       return ABIArgInfo::getIgnore();
+diff --git a/clang/lib/CodeGen/Targets/X86.cpp b/clang/lib/CodeGen/Targets/X86.cpp
+index 5ee5179dd0f3..b3664513c119 100644
+--- a/clang/lib/CodeGen/Targets/X86.cpp
++++ b/clang/lib/CodeGen/Targets/X86.cpp
+@@ -462,7 +462,9 @@ ABIArgInfo X86_32ABIInfo::getIndirectReturnResult(QualType RetTy, CCState &State
+     if (!IsMCUABI)
+       return getNaturalAlignIndirectInReg(RetTy);
+   }
+-  return getNaturalAlignIndirect(RetTy, /*ByVal=*/false);
++  return getNaturalAlignIndirect(
++      RetTy, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++      /*ByVal=*/false);
+ }
+ 
+ ABIArgInfo X86_32ABIInfo::classifyReturnType(QualType RetTy,
+@@ -599,20 +601,26 @@ ABIArgInfo X86_32ABIInfo::getIndirectResult(QualType Ty, bool ByVal,
+       if (!IsMCUABI)
+         return getNaturalAlignIndirectInReg(Ty);
+     }
+-    return getNaturalAlignIndirect(Ty, false);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   false);
+   }
+ 
+   // Compute the byval alignment.
+   unsigned TypeAlign = getContext().getTypeAlign(Ty) / 8;
+   unsigned StackAlign = getTypeStackAlignInBytes(Ty, TypeAlign);
+   if (StackAlign == 0)
+-    return ABIArgInfo::getIndirect(CharUnits::fromQuantity(4), /*ByVal=*/true);
++    return ABIArgInfo::getIndirect(
++        CharUnits::fromQuantity(4),
++        /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/true);
+ 
+   // If the stack alignment is less than the type alignment, realign the
+   // argument.
+   bool Realign = TypeAlign > StackAlign;
+-  return ABIArgInfo::getIndirect(CharUnits::fromQuantity(StackAlign),
+-                                 /*ByVal=*/true, Realign);
++  return ABIArgInfo::getIndirect(
++      CharUnits::fromQuantity(StackAlign),
++      /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(), /*ByVal=*/true,
++      Realign);
+ }
+ 
+ X86_32ABIInfo::Class X86_32ABIInfo::classify(QualType Ty) const {
+@@ -2164,13 +2172,13 @@ ABIArgInfo X86_64ABIInfo::getIndirectReturnResult(QualType Ty) const {
+       Ty = EnumTy->getDecl()->getIntegerType();
+ 
+     if (Ty->isBitIntType())
+-      return getNaturalAlignIndirect(Ty);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace());
+ 
+     return (isPromotableIntegerTypeForABI(Ty) ? ABIArgInfo::getExtend(Ty)
+                                               : ABIArgInfo::getDirect());
+   }
+ 
+-  return getNaturalAlignIndirect(Ty);
++  return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace());
+ }
+ 
+ bool X86_64ABIInfo::IsIllegalVectorType(QualType Ty) const {
+@@ -2210,7 +2218,8 @@ ABIArgInfo X86_64ABIInfo::getIndirectResult(QualType Ty,
+   }
+ 
+   if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+-    return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++    return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                   RAA == CGCXXABI::RAA_DirectInMemory);
+ 
+   // Compute the byval alignment. We specify the alignment of the byval in all
+   // cases so that the mid-level optimizer knows the alignment of the byval.
+@@ -2247,7 +2256,8 @@ ABIArgInfo X86_64ABIInfo::getIndirectResult(QualType Ty,
+                                                           Size));
+   }
+ 
+-  return ABIArgInfo::getIndirect(CharUnits::fromQuantity(Align));
++  return ABIArgInfo::getIndirect(CharUnits::fromQuantity(Align),
++                                 getDataLayout().getAllocaAddrSpace());
+ }
+ 
+ /// The ABI specifies that a value should be passed in a full vector XMM/YMM
+@@ -3283,12 +3293,13 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,
+   if (RT) {
+     if (!IsReturnType) {
+       if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(RT, getCXXABI()))
+-        return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
++        return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                       RAA == CGCXXABI::RAA_DirectInMemory);
+     }
+ 
+     if (RT->getDecl()->hasFlexibleArrayMember())
+-      return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
+-
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     /*ByVal=*/false);
+   }
+ 
+   const Type *Base = nullptr;
+@@ -3304,7 +3315,9 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,
+           return ABIArgInfo::getDirect();
+         return ABIArgInfo::getExpand();
+       }
+-      return ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
++      return ABIArgInfo::getIndirect(
++          Align, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++          /*ByVal=*/false);
+     } else if (IsVectorCall) {
+       if (FreeSSERegs >= NumElts &&
+           (IsReturnType || Ty->isBuiltinType() || Ty->isVectorType())) {
+@@ -3314,7 +3327,9 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,
+         return ABIArgInfo::getExpand();
+       } else if (!Ty->isBuiltinType() && !Ty->isVectorType()) {
+         // HVAs are delayed and reclassified in the 2nd step.
+-        return ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
++        return ABIArgInfo::getIndirect(
++            Align, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++            /*ByVal=*/false);
+       }
+     }
+   }
+@@ -3331,7 +3346,8 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,
+     // MS x64 ABI requirement: "Any argument that doesn't fit in 8 bytes, or is
+     // not 1, 2, 4, or 8 bytes, must be passed by reference."
+     if (Width > 64 || !llvm::isPowerOf2_64(Width))
+-      return getNaturalAlignIndirect(Ty, /*ByVal=*/false);
++      return getNaturalAlignIndirect(Ty, getDataLayout().getAllocaAddrSpace(),
++                                     /*ByVal=*/false);
+ 
+     // Otherwise, coerce it to a small integer.
+     return ABIArgInfo::getDirect(llvm::IntegerType::get(getVMContext(), Width));
+@@ -3350,7 +3366,9 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,
+       if (IsMingw64) {
+         const llvm::fltSemantics *LDF = &getTarget().getLongDoubleFormat();
+         if (LDF == &llvm::APFloat::x87DoubleExtended())
+-          return ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
++          return ABIArgInfo::getIndirect(
++              Align, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++              /*ByVal=*/false);
+       }
+       break;
+ 
+@@ -3360,7 +3378,9 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,
+       // than 8 bytes are passed indirectly. GCC follows it. We follow it too,
+       // even though it isn't particularly efficient.
+       if (!IsReturnType)
+-        return ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
++        return ABIArgInfo::getIndirect(
++            Align, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++            /*ByVal=*/false);
+ 
+       // Mingw64 GCC returns i128 in XMM0. Coerce to v2i64 to handle that.
+       // Clang matches them for compatibility.
+@@ -3380,7 +3400,9 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,
+     // the power of 2.
+     if (Width <= 64)
+       return ABIArgInfo::getDirect();
+-    return ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
++    return ABIArgInfo::getIndirect(
++        Align, /*AddrSpace=*/getDataLayout().getAllocaAddrSpace(),
++        /*ByVal=*/false);
+   }
+ 
+   return ABIArgInfo::getDirect();
+diff --git a/clang/test/CodeGen/partial-reinitialization2.c b/clang/test/CodeGen/partial-reinitialization2.c
+index e709c1d4ad1e..7949a6955503 100644
+--- a/clang/test/CodeGen/partial-reinitialization2.c
++++ b/clang/test/CodeGen/partial-reinitialization2.c
+@@ -91,8 +91,8 @@ void test5(void)
+ // CHECK-LABEL: test6
+ void test6(void)
+ {
+-  // CHECK: [[LP:%[a-z0-9]+]] = getelementptr{{.*}}%struct.LLP2P2, ptr{{.*}}, i32 0, i32 0
+-  // CHECK: call {{.*}}get456789(ptr {{.*}}[[LP]])
++  // CHECK: [[VAR:%[a-z0-9]+]] = alloca
++  // CHECK: call {{.*}}get456789(ptr {{.*}}sret{{.*}} [[VAR]])
+ 
+   // CHECK: [[CALL:%[a-z0-9]+]] = call {{.*}}@get235()
+   // CHECK: store{{.*}}[[CALL]], {{.*}}[[TMP0:%[a-z0-9.]+]]
+diff --git a/clang/test/CodeGen/sret.c b/clang/test/CodeGen/sret.c
+index 83dce80aa279..883049041b70 100644
+--- a/clang/test/CodeGen/sret.c
++++ b/clang/test/CodeGen/sret.c
+@@ -1,4 +1,5 @@
+ // RUN: %clang_cc1 %s -Wno-strict-prototypes -emit-llvm -o - | FileCheck %s
++// RUN: %clang_cc1 %s -Wno-strict-prototypes -triple amdgcn-amd-amdhsa -emit-llvm -o - | FileCheck --check-prefix=NONZEROALLOCAAS %s
+ 
+ struct abc {
+  long a;
+@@ -6,18 +7,28 @@ struct abc {
+  long c;
+  long d;
+  long e;
++ long f;
++ long g;
++ long h;
++ long i;
++ long j;
+ };
+ 
+ struct abc foo1(void);
+ // CHECK-DAG: declare {{.*}} @foo1(ptr dead_on_unwind writable sret(%struct.abc)
++// NONZEROALLOCAAS-DAG: declare {{.*}} @foo1(ptr addrspace(5) dead_on_unwind writable sret(%struct.abc)
+ struct abc foo2();
+ // CHECK-DAG: declare {{.*}} @foo2(ptr dead_on_unwind writable sret(%struct.abc)
++// NONZEROALLOCAAS-DAG: declare {{.*}} @foo2(ptr addrspace(5) dead_on_unwind writable sret(%struct.abc)
+ struct abc foo3(void) { return (struct abc){0}; }
+ // CHECK-DAG: define {{.*}} @foo3(ptr dead_on_unwind noalias writable sret(%struct.abc)
++// NONZEROALLOCAAS-DAG: define {{.*}} @foo3(ptr addrspace(5) dead_on_unwind noalias writable sret(%struct.abc)
+ 
+ void bar(void) {
+   struct abc dummy1 = foo1();
+   // CHECK-DAG: call {{.*}} @foo1(ptr dead_on_unwind writable sret(%struct.abc)
++  // NONZEROALLOCAAS-DAG: call {{.*}} @foo1(ptr addrspace(5) dead_on_unwind writable sret(%struct.abc)
+   struct abc dummy2 = foo2();
+   // CHECK-DAG: call {{.*}} @foo2(ptr dead_on_unwind writable sret(%struct.abc)
++  // NONZEROALLOCAAS-DAG: call {{.*}} @foo2(ptr addrspace(5) dead_on_unwind writable sret(%struct.abc)
+ }
+diff --git a/clang/test/CodeGenCXX/no-elide-constructors.cpp b/clang/test/CodeGenCXX/no-elide-constructors.cpp
+index 750392a43e05..994282debb0d 100644
+--- a/clang/test/CodeGenCXX/no-elide-constructors.cpp
++++ b/clang/test/CodeGenCXX/no-elide-constructors.cpp
+@@ -1,7 +1,9 @@
+ // RUN: %clang_cc1 -std=c++98 -triple i386-unknown-unknown -fno-elide-constructors -emit-llvm -o - %s | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-CXX98
+ // RUN: %clang_cc1 -std=c++11 -triple i386-unknown-unknown -fno-elide-constructors -emit-llvm -o - %s | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-CXX11
++// RUN: %clang_cc1 -std=c++11 -triple amdgcn-amd-amdhsa -fno-elide-constructors -emit-llvm -o - %s | FileCheck %s --check-prefixes=CHECK --check-prefix=CHECK-CXX11-NONZEROALLOCAAS
+ // RUN: %clang_cc1 -std=c++98 -triple i386-unknown-unknown -emit-llvm -o - %s | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-CXX98-ELIDE
+ // RUN: %clang_cc1 -std=c++11 -triple i386-unknown-unknown -emit-llvm -o - %s | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-CXX11-ELIDE
++// RUN: %clang_cc1 -std=c++11 -triple amdgcn-amd-amdhsa -emit-llvm -o - %s | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-CXX11-NONZEROALLOCAAS-ELIDE
+ 
+ // Reduced from PR12208
+ class X {
+@@ -15,6 +17,7 @@ public:
+ };
+ 
+ // CHECK-LABEL: define{{.*}} void @_Z4Testv(
++// CHECK-SAME: ptr {{.*}}dead_on_unwind noalias writable sret([[CLASS_X:%.*]]) align 1 [[AGG_RESULT:%.*]])
+ X Test()
+ {
+   X x;
+@@ -23,8 +26,11 @@ X Test()
+   // sret argument.
+   // CHECK-CXX98: call void @_ZN1XC1ERKS_(
+   // CHECK-CXX11: call void @_ZN1XC1EOS_(
++  // CHECK-CXX11-NONZEROALLOCAAS: [[TMP0:%.*]] = addrspacecast ptr addrspace(5) [[AGG_RESULT]] to ptr
++  // CHECK-CXX11-NONZEROALLOCAAS-NEXT: call void @_ZN1XC1EOS_(ptr noundef nonnull align 1 dereferenceable(1) [[TMP0]]
+   // CHECK-CXX98-ELIDE-NOT: call void @_ZN1XC1ERKS_(
+   // CHECK-CXX11-ELIDE-NOT: call void @_ZN1XC1EOS_(
++  // CHECK-CXX11-NONZEROALLOCAAS-ELIDE-NOT: call void @_ZN1XC1EOS_(
+ 
+   // Make sure that the destructor for X is called.
+   // FIXME: This call is present even in the -ELIDE runs, but is guarded by a
+diff --git a/clang/test/CodeGenOpenCL/addr-space-struct-arg.cl b/clang/test/CodeGenOpenCL/addr-space-struct-arg.cl
+index 57d056b0ff9d..effdeb954680 100644
+--- a/clang/test/CodeGenOpenCL/addr-space-struct-arg.cl
++++ b/clang/test/CodeGenOpenCL/addr-space-struct-arg.cl
+@@ -154,7 +154,6 @@ Mat4X4 __attribute__((noinline)) foo(Mat3X3 in) {
+ // AMDGCN20-NEXT:    [[TMP:%.*]] = alloca [[STRUCT_MAT4X4:%.*]], align 4, addrspace(5)
+ // AMDGCN20-NEXT:    [[IN_ADDR_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[IN_ADDR]] to ptr
+ // AMDGCN20-NEXT:    [[OUT_ADDR_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[OUT_ADDR]] to ptr
+-// AMDGCN20-NEXT:    [[TMP_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[TMP]] to ptr
+ // AMDGCN20-NEXT:    store ptr addrspace(1) [[IN]], ptr [[IN_ADDR_ASCAST]], align 8
+ // AMDGCN20-NEXT:    store ptr addrspace(1) [[OUT]], ptr [[OUT_ADDR_ASCAST]], align 8
+ // AMDGCN20-NEXT:    [[TMP0:%.*]] = load ptr addrspace(1), ptr [[OUT_ADDR_ASCAST]], align 8
+@@ -164,10 +163,10 @@ Mat4X4 __attribute__((noinline)) foo(Mat3X3 in) {
+ // AMDGCN20-NEXT:    [[TMP2:%.*]] = getelementptr inbounds nuw [[STRUCT_MAT3X3]], ptr addrspace(1) [[ARRAYIDX1]], i32 0, i32 0
+ // AMDGCN20-NEXT:    [[TMP3:%.*]] = load [9 x i32], ptr addrspace(1) [[TMP2]], align 4
+ // AMDGCN20-NEXT:    [[CALL:%.*]] = call [[STRUCT_MAT4X4]] @[[FOO:[a-zA-Z0-9_$\"\\.-]*[a-zA-Z_$\"\\.-][a-zA-Z0-9_$\"\\.-]*]]([9 x i32] [[TMP3]]) #[[ATTR3:[0-9]+]]
+-// AMDGCN20-NEXT:    [[TMP4:%.*]] = getelementptr inbounds nuw [[STRUCT_MAT4X4]], ptr [[TMP_ASCAST]], i32 0, i32 0
++// AMDGCN20-NEXT:    [[TMP4:%.*]] = getelementptr inbounds nuw [[STRUCT_MAT4X4]], ptr addrspace(5) [[TMP]], i32 0, i32 0
+ // AMDGCN20-NEXT:    [[TMP5:%.*]] = extractvalue [[STRUCT_MAT4X4]] [[CALL]], 0
+-// AMDGCN20-NEXT:    store [16 x i32] [[TMP5]], ptr [[TMP4]], align 4
+-// AMDGCN20-NEXT:    call void @llvm.memcpy.p1.p0.i64(ptr addrspace(1) align 4 [[ARRAYIDX]], ptr align 4 [[TMP_ASCAST]], i64 64, i1 false)
++// AMDGCN20-NEXT:    store [16 x i32] [[TMP5]], ptr addrspace(5) [[TMP4]], align 4
++// AMDGCN20-NEXT:    call void @llvm.memcpy.p1.p5.i64(ptr addrspace(1) align 4 [[ARRAYIDX]], ptr addrspace(5) align 4 [[TMP]], i64 64, i1 false)
+ // AMDGCN20-NEXT:    ret void
+ //
+ // SPIR-LABEL: define dso_local spir_kernel void @ker(
+@@ -250,7 +249,7 @@ kernel void ker(global Mat3X3 *in, global Mat4X4 *out) {
+ // AMDGCN-NEXT:    ret void
+ //
+ // AMDGCN20-LABEL: define dso_local void @foo_large(
+-// AMDGCN20-SAME: ptr dead_on_unwind noalias writable sret([[STRUCT_MAT64X64:%.*]]) align 4 [[AGG_RESULT:%.*]], ptr addrspace(5) noundef byref([[STRUCT_MAT32X32:%.*]]) align 4 [[TMP0:%.*]]) #[[ATTR0]] {
++// AMDGCN20-SAME: ptr addrspace(5) dead_on_unwind noalias writable sret([[STRUCT_MAT64X64:%.*]]) align 4 [[AGG_RESULT:%.*]], ptr addrspace(5) noundef byref([[STRUCT_MAT32X32:%.*]]) align 4 [[TMP0:%.*]]) #[[ATTR0]] {
+ // AMDGCN20-NEXT:  [[ENTRY:.*:]]
+ // AMDGCN20-NEXT:    [[COERCE:%.*]] = alloca [[STRUCT_MAT32X32]], align 4, addrspace(5)
+ // AMDGCN20-NEXT:    [[IN:%.*]] = addrspacecast ptr addrspace(5) [[COERCE]] to ptr
+@@ -327,7 +326,6 @@ Mat64X64 __attribute__((noinline)) foo_large(Mat32X32 in) {
+ // AMDGCN20-NEXT:    [[BYVAL_TEMP:%.*]] = alloca [[STRUCT_MAT32X32:%.*]], align 4, addrspace(5)
+ // AMDGCN20-NEXT:    [[IN_ADDR_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[IN_ADDR]] to ptr
+ // AMDGCN20-NEXT:    [[OUT_ADDR_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[OUT_ADDR]] to ptr
+-// AMDGCN20-NEXT:    [[TMP_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[TMP]] to ptr
+ // AMDGCN20-NEXT:    store ptr addrspace(1) [[IN]], ptr [[IN_ADDR_ASCAST]], align 8
+ // AMDGCN20-NEXT:    store ptr addrspace(1) [[OUT]], ptr [[OUT_ADDR_ASCAST]], align 8
+ // AMDGCN20-NEXT:    [[TMP0:%.*]] = load ptr addrspace(1), ptr [[OUT_ADDR_ASCAST]], align 8
+@@ -335,8 +333,8 @@ Mat64X64 __attribute__((noinline)) foo_large(Mat32X32 in) {
+ // AMDGCN20-NEXT:    [[TMP1:%.*]] = load ptr addrspace(1), ptr [[IN_ADDR_ASCAST]], align 8
+ // AMDGCN20-NEXT:    [[ARRAYIDX1:%.*]] = getelementptr inbounds [[STRUCT_MAT32X32]], ptr addrspace(1) [[TMP1]], i64 1
+ // AMDGCN20-NEXT:    call void @llvm.memcpy.p5.p1.i64(ptr addrspace(5) align 4 [[BYVAL_TEMP]], ptr addrspace(1) align 4 [[ARRAYIDX1]], i64 4096, i1 false)
+-// AMDGCN20-NEXT:    call void @foo_large(ptr dead_on_unwind writable sret([[STRUCT_MAT64X64]]) align 4 [[TMP_ASCAST]], ptr addrspace(5) noundef byref([[STRUCT_MAT32X32]]) align 4 [[BYVAL_TEMP]]) #[[ATTR3]]
+-// AMDGCN20-NEXT:    call void @llvm.memcpy.p1.p0.i64(ptr addrspace(1) align 4 [[ARRAYIDX]], ptr align 4 [[TMP_ASCAST]], i64 16384, i1 false)
++// AMDGCN20-NEXT:    call void @foo_large(ptr addrspace(5) dead_on_unwind writable sret([[STRUCT_MAT64X64]]) align 4 [[TMP]], ptr addrspace(5) noundef byref([[STRUCT_MAT32X32]]) align 4 [[BYVAL_TEMP]]) #[[ATTR3]]
++// AMDGCN20-NEXT:    call void @llvm.memcpy.p1.p5.i64(ptr addrspace(1) align 4 [[ARRAYIDX]], ptr addrspace(5) align 4 [[TMP]], i64 16384, i1 false)
+ // AMDGCN20-NEXT:    ret void
+ //
+ // SPIR-LABEL: define dso_local spir_kernel void @ker_large(
+diff --git a/clang/test/CodeGenOpenCL/amdgpu-abi-struct-arg-byref.cl b/clang/test/CodeGenOpenCL/amdgpu-abi-struct-arg-byref.cl
+index 084281a8cada..2f8ba99a3e41 100644
+--- a/clang/test/CodeGenOpenCL/amdgpu-abi-struct-arg-byref.cl
++++ b/clang/test/CodeGenOpenCL/amdgpu-abi-struct-arg-byref.cl
+@@ -70,7 +70,6 @@ Mat4X4 __attribute__((noinline)) foo(Mat3X3 in) {
+ // AMDGCN-NEXT:    [[TMP:%.*]] = alloca [[STRUCT_MAT4X4:%.*]], align 4, addrspace(5)
+ // AMDGCN-NEXT:    [[IN_ADDR_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[IN_ADDR]] to ptr
+ // AMDGCN-NEXT:    [[OUT_ADDR_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[OUT_ADDR]] to ptr
+-// AMDGCN-NEXT:    [[TMP_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[TMP]] to ptr
+ // AMDGCN-NEXT:    store ptr addrspace(1) [[IN]], ptr [[IN_ADDR_ASCAST]], align 8
+ // AMDGCN-NEXT:    store ptr addrspace(1) [[OUT]], ptr [[OUT_ADDR_ASCAST]], align 8
+ // AMDGCN-NEXT:    [[TMP0:%.*]] = load ptr addrspace(1), ptr [[OUT_ADDR_ASCAST]], align 8
+@@ -80,10 +79,10 @@ Mat4X4 __attribute__((noinline)) foo(Mat3X3 in) {
+ // AMDGCN-NEXT:    [[TMP2:%.*]] = getelementptr inbounds nuw [[STRUCT_MAT3X3]], ptr addrspace(1) [[ARRAYIDX1]], i32 0, i32 0
+ // AMDGCN-NEXT:    [[TMP3:%.*]] = load [9 x i32], ptr addrspace(1) [[TMP2]], align 4
+ // AMDGCN-NEXT:    [[CALL:%.*]] = call [[STRUCT_MAT4X4]] @[[FOO:[a-zA-Z0-9_$\"\\.-]*[a-zA-Z_$\"\\.-][a-zA-Z0-9_$\"\\.-]*]]([9 x i32] [[TMP3]]) #[[ATTR3:[0-9]+]]
+-// AMDGCN-NEXT:    [[TMP4:%.*]] = getelementptr inbounds nuw [[STRUCT_MAT4X4]], ptr [[TMP_ASCAST]], i32 0, i32 0
++// AMDGCN-NEXT:    [[TMP4:%.*]] = getelementptr inbounds nuw [[STRUCT_MAT4X4]], ptr addrspace(5) [[TMP]], i32 0, i32 0
+ // AMDGCN-NEXT:    [[TMP5:%.*]] = extractvalue [[STRUCT_MAT4X4]] [[CALL]], 0
+-// AMDGCN-NEXT:    store [16 x i32] [[TMP5]], ptr [[TMP4]], align 4
+-// AMDGCN-NEXT:    call void @llvm.memcpy.p1.p0.i64(ptr addrspace(1) align 4 [[ARRAYIDX]], ptr align 4 [[TMP_ASCAST]], i64 64, i1 false)
++// AMDGCN-NEXT:    store [16 x i32] [[TMP5]], ptr addrspace(5) [[TMP4]], align 4
++// AMDGCN-NEXT:    call void @llvm.memcpy.p1.p5.i64(ptr addrspace(1) align 4 [[ARRAYIDX]], ptr addrspace(5) align 4 [[TMP]], i64 64, i1 false)
+ // AMDGCN-NEXT:    ret void
+ //
+ kernel void ker(global Mat3X3 *in, global Mat4X4 *out) {
+@@ -91,7 +90,7 @@ kernel void ker(global Mat3X3 *in, global Mat4X4 *out) {
+ }
+ 
+ // AMDGCN-LABEL: define dso_local void @foo_large(
+-// AMDGCN-SAME: ptr dead_on_unwind noalias writable sret([[STRUCT_MAT64X64:%.*]]) align 4 [[AGG_RESULT:%.*]], ptr addrspace(5) noundef byref([[STRUCT_MAT32X32:%.*]]) align 4 [[TMP0:%.*]]) #[[ATTR0]] {
++// AMDGCN-SAME: ptr addrspace(5) dead_on_unwind noalias writable sret([[STRUCT_MAT64X64:%.*]]) align 4 [[AGG_RESULT:%.*]], ptr addrspace(5) noundef byref([[STRUCT_MAT32X32:%.*]]) align 4 [[TMP0:%.*]]) #[[ATTR0]] {
+ // AMDGCN-NEXT:  [[ENTRY:.*:]]
+ // AMDGCN-NEXT:    [[COERCE:%.*]] = alloca [[STRUCT_MAT32X32]], align 4, addrspace(5)
+ // AMDGCN-NEXT:    [[IN:%.*]] = addrspacecast ptr addrspace(5) [[COERCE]] to ptr
+@@ -112,7 +111,6 @@ Mat64X64 __attribute__((noinline)) foo_large(Mat32X32 in) {
+ // AMDGCN-NEXT:    [[BYVAL_TEMP:%.*]] = alloca [[STRUCT_MAT32X32:%.*]], align 4, addrspace(5)
+ // AMDGCN-NEXT:    [[IN_ADDR_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[IN_ADDR]] to ptr
+ // AMDGCN-NEXT:    [[OUT_ADDR_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[OUT_ADDR]] to ptr
+-// AMDGCN-NEXT:    [[TMP_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[TMP]] to ptr
+ // AMDGCN-NEXT:    store ptr addrspace(1) [[IN]], ptr [[IN_ADDR_ASCAST]], align 8
+ // AMDGCN-NEXT:    store ptr addrspace(1) [[OUT]], ptr [[OUT_ADDR_ASCAST]], align 8
+ // AMDGCN-NEXT:    [[TMP0:%.*]] = load ptr addrspace(1), ptr [[OUT_ADDR_ASCAST]], align 8
+@@ -120,8 +118,8 @@ Mat64X64 __attribute__((noinline)) foo_large(Mat32X32 in) {
+ // AMDGCN-NEXT:    [[TMP1:%.*]] = load ptr addrspace(1), ptr [[IN_ADDR_ASCAST]], align 8
+ // AMDGCN-NEXT:    [[ARRAYIDX1:%.*]] = getelementptr inbounds [[STRUCT_MAT32X32]], ptr addrspace(1) [[TMP1]], i64 1
+ // AMDGCN-NEXT:    call void @llvm.memcpy.p5.p1.i64(ptr addrspace(5) align 4 [[BYVAL_TEMP]], ptr addrspace(1) align 4 [[ARRAYIDX1]], i64 4096, i1 false)
+-// AMDGCN-NEXT:    call void @foo_large(ptr dead_on_unwind writable sret([[STRUCT_MAT64X64]]) align 4 [[TMP_ASCAST]], ptr addrspace(5) noundef byref([[STRUCT_MAT32X32]]) align 4 [[BYVAL_TEMP]]) #[[ATTR3]]
+-// AMDGCN-NEXT:    call void @llvm.memcpy.p1.p0.i64(ptr addrspace(1) align 4 [[ARRAYIDX]], ptr align 4 [[TMP_ASCAST]], i64 16384, i1 false)
++// AMDGCN-NEXT:    call void @foo_large(ptr addrspace(5) dead_on_unwind writable sret([[STRUCT_MAT64X64]]) align 4 [[TMP]], ptr addrspace(5) noundef byref([[STRUCT_MAT32X32]]) align 4 [[BYVAL_TEMP]]) #[[ATTR3]]
++// AMDGCN-NEXT:    call void @llvm.memcpy.p1.p5.i64(ptr addrspace(1) align 4 [[ARRAYIDX]], ptr addrspace(5) align 4 [[TMP]], i64 16384, i1 false)
+ // AMDGCN-NEXT:    ret void
+ //
+ kernel void ker_large(global Mat32X32 *in, global Mat64X64 *out) {
+diff --git a/clang/test/CodeGenOpenCL/implicit-addrspacecast-function-parameter.cl b/clang/test/CodeGenOpenCL/implicit-addrspacecast-function-parameter.cl
+new file mode 100644
+index 000000000000..4a7bb8227c33
+--- /dev/null
++++ b/clang/test/CodeGenOpenCL/implicit-addrspacecast-function-parameter.cl
+@@ -0,0 +1,68 @@
++// NOTE: Assertions have been autogenerated by utils/update_cc_test_checks.py UTC_ARGS: --version 5
++// RUN: %clang_cc1 -cl-std=CL2.0 -triple amdgcn-amd-amdhsa -disable-llvm-passes -emit-llvm -o - %s | FileCheck %s
++
++// Check there's no assertion when passing a pointer to an address space
++// qualified argument.
++
++extern void private_ptr(__private int *);
++extern void local_ptr(__local int *);
++extern void generic_ptr(__generic int *);
++
++// CHECK-LABEL: define dso_local void @use_of_private_var(
++// CHECK-SAME: ) #[[ATTR0:[0-9]+]] {
++// CHECK-NEXT:  [[ENTRY:.*:]]
++// CHECK-NEXT:    [[X:%.*]] = alloca i32, align 4, addrspace(5)
++// CHECK-NEXT:    [[X_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[X]] to ptr
++// CHECK-NEXT:    call void @llvm.lifetime.start.p5(i64 4, ptr addrspace(5) [[X]]) #[[ATTR4:[0-9]+]]
++// CHECK-NEXT:    store i32 0, ptr [[X_ASCAST]], align 4, !tbaa [[TBAA4:![0-9]+]]
++// CHECK-NEXT:    [[TMP0:%.*]] = addrspacecast ptr [[X_ASCAST]] to ptr addrspace(5)
++// CHECK-NEXT:    call void @private_ptr(ptr addrspace(5) noundef [[TMP0]]) #[[ATTR5:[0-9]+]]
++// CHECK-NEXT:    call void @generic_ptr(ptr noundef [[X_ASCAST]]) #[[ATTR5]]
++// CHECK-NEXT:    call void @llvm.lifetime.end.p5(i64 4, ptr addrspace(5) [[X]]) #[[ATTR4]]
++// CHECK-NEXT:    ret void
++//
++void use_of_private_var()
++{
++    int x = 0 ;
++    private_ptr(&x);
++    generic_ptr(&x);
++}
++
++// CHECK-LABEL: define dso_local void @addr_of_arg(
++// CHECK-SAME: i32 noundef [[X:%.*]]) #[[ATTR0]] {
++// CHECK-NEXT:  [[ENTRY:.*:]]
++// CHECK-NEXT:    [[X_ADDR:%.*]] = alloca i32, align 4, addrspace(5)
++// CHECK-NEXT:    [[X_ADDR_ASCAST:%.*]] = addrspacecast ptr addrspace(5) [[X_ADDR]] to ptr
++// CHECK-NEXT:    store i32 [[X]], ptr [[X_ADDR_ASCAST]], align 4, !tbaa [[TBAA4]]
++// CHECK-NEXT:    [[TMP0:%.*]] = addrspacecast ptr [[X_ADDR_ASCAST]] to ptr addrspace(5)
++// CHECK-NEXT:    call void @private_ptr(ptr addrspace(5) noundef [[TMP0]]) #[[ATTR5]]
++// CHECK-NEXT:    call void @generic_ptr(ptr noundef [[X_ADDR_ASCAST]]) #[[ATTR5]]
++// CHECK-NEXT:    ret void
++//
++void addr_of_arg(int x)
++{
++    private_ptr(&x);
++    generic_ptr(&x);
++}
++
++// CHECK-LABEL: define dso_local amdgpu_kernel void @use_of_local_var(
++// CHECK-SAME: ) #[[ATTR3:[0-9]+]] !kernel_arg_addr_space [[META8:![0-9]+]] !kernel_arg_access_qual [[META8]] !kernel_arg_type [[META8]] !kernel_arg_base_type [[META8]] !kernel_arg_type_qual [[META8]] {
++// CHECK-NEXT:  [[ENTRY:.*:]]
++// CHECK-NEXT:    call void @local_ptr(ptr addrspace(3) noundef @use_of_local_var.x) #[[ATTR5]]
++// CHECK-NEXT:    call void @generic_ptr(ptr noundef addrspacecast (ptr addrspace(3) @use_of_local_var.x to ptr)) #[[ATTR5]]
++// CHECK-NEXT:    ret void
++//
++__kernel void use_of_local_var()
++{
++    __local int x;
++    local_ptr(&x);
++    generic_ptr(&x);
++}
++
++//.
++// CHECK: [[TBAA4]] = !{[[META5:![0-9]+]], [[META5]], i64 0}
++// CHECK: [[META5]] = !{!"int", [[META6:![0-9]+]], i64 0}
++// CHECK: [[META6]] = !{!"omnipotent char", [[META7:![0-9]+]], i64 0}
++// CHECK: [[META7]] = !{!"Simple C/C++ TBAA"}
++// CHECK: [[META8]] = !{}
++//.
+-- 
+2.34.1
+
