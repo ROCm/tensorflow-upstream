@@ -1970,6 +1970,7 @@ static string GetShortDeviceDescription(
 #elif TENSORFLOW_USE_ROCM
   return strings::StrCat("device: ", platform_device_id.value(),
                          ", name: ", desc.name(),
+                         ", gcn arch: ", desc.rocm_compute_capability().gcn_arch_name(),
                          ", pci bus id: ", desc.pci_bus_id());
 #endif
 }

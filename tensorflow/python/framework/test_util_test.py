@@ -45,6 +45,7 @@ from tensorflow.python.framework import random_seed
 from tensorflow.python.framework import tensor
 from tensorflow.python.framework import test_ops
 from tensorflow.python.framework import test_util
+from tensorflow.python.platform import test as tf_test
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import control_flow_assert
 from tensorflow.python.ops import lookup_ops
@@ -1094,6 +1095,11 @@ class TestUtilTest(test_util.TensorFlowTestCase, parameterized.TestCase):
     some_test(None)
     self.assertEqual(tested_codepaths, set(["present", "future"]))
 
+  def test_assert_gcn_arch(self):
+    if not tf_test.is_built_with_rocm():
+      self.skipTest("Test is only applicable for Tensorflow built with ROCm")
+
+    self.assertNotEqual("", test_util.gpu_gcn_arch())
 
 class SkipTestTest(test_util.TensorFlowTestCase):
 

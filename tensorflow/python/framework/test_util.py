@@ -189,6 +189,29 @@ def gpu_device_name() -> str:
       return compat.as_str(x.name)
   return ""
 
+@tf_export("test.gpu_gcn_arch")
+def gpu_gcn_arch() -> str:
+  """ Returns the GCN Arch if GPU available or an empty string.
+
+  This method should only be used in tests written with tf.test.TestCase
+
+  >>> class MyTest(tf.test.TestCase):
+  ...
+  ...   if not tf_test.is_built_with_rocm():
+  ...    self.skipTest("Test is only applicable for Tensorflow built with ROCm")
+  ...
+  ...   self.assertNotEqual("", test_util.gpu_gcn_arch())
+
+  """
+  for x in device_lib.list_local_devices():
+    if x.device_type == "GPU":
+      desc = getattr(x, "physical_device_desc", "")
+      gcn_arch = re.search(r"gfx[0-9]+", desc)
+      
+      if gcn_arch:
+        return compat.as_str(gcn_arch.group(0))
+
+  return ""
 
 def assert_ops_in_graph(
     expected_ops: dict[str, str], graph: ops.Graph
