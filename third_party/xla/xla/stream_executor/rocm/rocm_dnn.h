@@ -26,6 +26,8 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/plugin_registry.h"
 
+#include <fstream>
+
 namespace stream_executor {
 namespace gpu {
 
@@ -628,6 +630,27 @@ class MIOpenSupport : public dnn::DnnSupport {
       const NumericOptions& numeric_options,
       ScratchAllocator* scratch_allocator, DeviceMemory<uint8>* scratch_memory,
       int* ctc_loss_algo_id) override;
+
+    template<typename T>
+    void _VLOG_data(std::string_view msg, std::vector<T> data)
+    {
+        VLOG(1) << msg << std::endl;
+        for(const T& val : data) VLOG(1) << val << " ";
+        VLOG(1) << std::endl;
+    }
+
+    template<typename T>
+    void _SAVE_data_locally(std::string_view filename, std::vector<T> data)
+    {
+        std::ofstream out(filename.data(), std::ios::out | std::ofstream::binary);
+        if(!out)
+        {
+            LOG(ERROR) << "Cannot open file: " << filename;
+            return;
+        }
+        out.write(reinterpret_cast<const char*>(data.data()), data.size());
+        out.close();
+    }
 
   MIOpenSupport(const MIOpenSupport&) = delete;
   void operator=(const MIOpenSupport&) = delete;

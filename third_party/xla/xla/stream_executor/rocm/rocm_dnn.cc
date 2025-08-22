@@ -54,6 +54,8 @@ limitations under the License.
 #include <hip/hip_fp16.h>
 #include <hip/hip_bfloat16.h>
 
+#include <filesystem>
+
 namespace {
 
 // Converts (via narrowing) a type T value to a type U, and checks that the
@@ -3053,6 +3055,30 @@ absl::Status MIOpenSupport::DoCtcLossImpl(
   int total_size = kNumLabels * kNumTimestamps * kBatchSize;
   (void)total_size;
 
+  static int iter = 0;
+
+  std::vector<int> probs_description = {kNumTimestamps, kBatchSize, kNumLabels, total_size};
+  std::vector<int> labels_data_vector;
+  std::vector<int> label_lengths_data_vector;
+  std::vector<int> input_lengths_data_vector;
+
+  labels_data_vector.assign(labels_data.begin(), labels_data.end());
+  label_lengths_data_vector.assign(labels_lengths_data.begin(), labels_lengths_data.end());
+  input_lengths_data_vector.assign(input_lengths_data.begin(), input_lengths_data.end());
+
+  VLOG(1) << "HOST Data: ";
+  _VLOG_data("probs_description = ", probs_description);
+  _VLOG_data("labels_data = ", labels_data_vector);
+  _VLOG_data("labels_lengths_data = ", label_lengths_data_vector);
+  _VLOG_data("input_lengths_data = ", input_lengths_data_vector);
+  VLOG(1) << "ctc_loss_algo_id = " << ctc_loss_algo_id << std::endl;
+
+  // Save input data locally
+  _SAVE_data_locally(std::filesystem::current_path().string() + "/" + "probs_description_" + std::to_string(iter) + ".bin", probs_description);
+  _SAVE_data_locally(std::filesystem::current_path().string() + "/" + "labels_data_" + std::to_string(iter) + ".bin", labels_data_vector);
+  _SAVE_data_locally(std::filesystem::current_path().string() + "/" + "labels_lengths_data_" + std::to_string(iter) + ".bin", label_lengths_data_vector);
+  _SAVE_data_locally(std::filesystem::current_path().string() + "/" + "input_lengths_data_" + std::to_string(iter) + ".bin", input_lengths_data_vector);
+
   // Stream used for debugging
   hipStream_t hipStream = (hipStream_t)AsGpuStreamValue(stream);
 
@@ -3071,8 +3097,6 @@ absl::Status MIOpenSupport::DoCtcLossImpl(
                           hipMemcpyDeviceToHost, hipStream), hipSuccess);
   CHECK_EQ(hipMemcpyAsync(before_grads_data.data(), grads_data.opaque(), grads_data.size(),
                           hipMemcpyDeviceToHost, hipStream), hipSuccess);
-  CHECK_EQ(hipMemcpyAsync(before_scratch_memory.data(), scratch_memory.opaque(), scratch_memory.size(),
-                          hipMemcpyDeviceToHost, hipStream), hipSuccess);
 
   // Synchronize the stream to make sure the memcpy is done
   CHECK_EQ(hipStreamSynchronize(hipStream), hipSuccess);
@@ -3080,30 +3104,15 @@ absl::Status MIOpenSupport::DoCtcLossImpl(
   // VLOG(1) output the input data before the call to miopenCTCLoss
   // DEVICE data 
   VLOG(1) << "Data before the call of miopenCTCLoss: ";
-  VLOG(1) << "probs_data = " << std::endl;
-  for(const float& val : before_probs_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "costs_data = " << std::endl;
-  for(const float& val : before_costs_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "grads_data = " << std::endl;
-  for(const float& val : before_grads_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "scratch_memory = " << std::endl;
-  for(const uint8& val : before_scratch_memory) VLOG(1) << (int)val << " ";
-  VLOG(1) << std::endl;
+  _VLOG_data("probs_data = ", before_probs_data);
+  _VLOG_data("costs_data = ", before_costs_data);
+  _VLOG_data("grads_data = ", before_grads_data);
 
-  // HOST data
-  VLOG(1) << "labels_data = " << std::endl;
-  for(const int& val : labels_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "labels_lengths_data = " << std::endl;
-  for(const int& val : labels_lengths_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "input_lengths_data = " << std::endl;
-  for(const int& val : input_lengths_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "ctc_loss_algo_id = " << ctc_loss_algo_id << std::endl;
+  // Save input data locally
+  VLOG(1) << "Current working directory: " << std::filesystem::current_path().string() << std::endl;
+  _SAVE_data_locally(std::filesystem::current_path().string() + "/" + "before_probs_data_" + std::to_string(iter) + ".bin", before_probs_data);
+  _SAVE_data_locally(std::filesystem::current_path().string() + "/" + "before_costs_data_" + std::to_string(iter) + ".bin", before_costs_data);
+  _SAVE_data_locally(std::filesystem::current_path().string() + "/" + "before_grads_data_" + std::to_string(iter) + ".bin", before_grads_data);
 
   // **************************************************************************************
   // Function call to MIOpen CTC Loss
@@ -3124,7 +3133,6 @@ absl::Status MIOpenSupport::DoCtcLossImpl(
   std::vector<float> after_probs_data(probs_data.size());
   std::vector<float> after_costs_data(costs_data.size());
   std::vector<float> after_grads_data(grads_data.size());
-  std::vector<uint8> after_scratch_memory(scratch_memory.size());
 
   // Copy data from device to host for debugging asynchronously
   CHECK_EQ(hipMemcpyAsync(after_probs_data.data(), probs_data.opaque(), probs_data.size(),
@@ -3133,8 +3141,6 @@ absl::Status MIOpenSupport::DoCtcLossImpl(
                           hipMemcpyDeviceToHost, hipStream), hipSuccess);
   CHECK_EQ(hipMemcpyAsync(after_grads_data.data(), grads_data.opaque(), grads_data.size(),
                           hipMemcpyDeviceToHost, hipStream), hipSuccess);
-  CHECK_EQ(hipMemcpyAsync(after_scratch_memory.data(), scratch_memory.opaque(), scratch_memory.size(),
-                          hipMemcpyDeviceToHost, hipStream), hipSuccess);
 
   // Synchronize the stream to make sure the memcpy is done
   CHECK_EQ(hipStreamSynchronize(hipStream), hipSuccess);
@@ -3142,30 +3148,16 @@ absl::Status MIOpenSupport::DoCtcLossImpl(
   // VLOG(1) output the output data before the call to miopenCTCLoss
   // DEVICE data 
   VLOG(1) << "Data after the call of miopenCTCLoss: ";
-  VLOG(1) << "probs_data = " << std::endl;
-  for(const float& val : after_probs_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "costs_data = " << std::endl;
-  for(const float& val : after_costs_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "grads_data = " << std::endl;
-  for(const float& val : after_grads_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "scratch_memory = " << std::endl;
-  for(const uint8& val : after_scratch_memory) VLOG(1) << (int)val << " ";
-  VLOG(1) << std::endl;
+  _VLOG_data("probs_data = ", after_probs_data);
+  _VLOG_data("costs_data = ", after_costs_data);
+  _VLOG_data("grads_data = ", after_grads_data);
 
-  // HOST data
-  VLOG(1) << "labels_data = " << std::endl;
-  for(const int& val : labels_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "labels_lengths_data = " << std::endl;
-  for(const int& val : labels_lengths_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "input_lengths_data = " << std::endl;
-  for(const int& val : input_lengths_data) VLOG(1) << val << " ";
-  VLOG(1) << std::endl;
-  VLOG(1) << "ctc_loss_algo_id = " << ctc_loss_algo_id << std::endl;
+  // Save output data locally
+  _SAVE_data_locally(std::filesystem::current_path().string() + "/" + "after_probs_data_" + std::to_string(iter) + ".bin", after_probs_data);
+  _SAVE_data_locally(std::filesystem::current_path().string() + "/" + "after_costs_data_" + std::to_string(iter) + ".bin", after_costs_data);
+  _SAVE_data_locally(std::filesystem::current_path().string() + "/" + "after_grads_data_" + std::to_string(iter) + ".bin", after_grads_data);
+
+  ++iter;
 
   return absl::OkStatus();
 }
