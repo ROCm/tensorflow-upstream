@@ -3105,6 +3105,8 @@ absl::Status MIOpenSupport::DoCtcLossImpl(
   VLOG(1) << std::endl;
   VLOG(1) << "ctc_loss_algo_id = " << ctc_loss_algo_id << std::endl;
 
+  // **************************************************************************************
+  // Function call to MIOpen CTC Loss
   auto status = wrap::miopenCTCLoss(
       miopen.handle(), probs_desc.handle(), probs_data.opaque(),
       labels_data.data(), labels_lengths_data.data(), input_lengths_data.data(),
@@ -3115,6 +3117,55 @@ absl::Status MIOpenSupport::DoCtcLossImpl(
     LOG(FATAL) << "call to miopenCTCLoss failed: " << ToString(status);
     return absl::InternalError("Failure during MIOpen CTC Loss");
   }
+
+  // **************************************************************************************
+
+  // Output data after MIOpen CTC Loss call
+  std::vector<float> after_probs_data(probs_data.size());
+  std::vector<float> after_costs_data(costs_data.size());
+  std::vector<float> after_grads_data(grads_data.size());
+  std::vector<uint8> after_scratch_memory(scratch_memory.size());
+
+  // Copy data from device to host for debugging asynchronously
+  CHECK_EQ(hipMemcpyAsync(after_probs_data.data(), probs_data.opaque(), probs_data.size(),
+                          hipMemcpyDeviceToHost, hipStream), hipSuccess);
+  CHECK_EQ(hipMemcpyAsync(after_costs_data.data(), costs_data.opaque(), costs_data.size(),
+                          hipMemcpyDeviceToHost, hipStream), hipSuccess);
+  CHECK_EQ(hipMemcpyAsync(after_grads_data.data(), grads_data.opaque(), grads_data.size(),
+                          hipMemcpyDeviceToHost, hipStream), hipSuccess);
+  CHECK_EQ(hipMemcpyAsync(after_scratch_memory.data(), scratch_memory.opaque(), scratch_memory.size(),
+                          hipMemcpyDeviceToHost, hipStream), hipSuccess);
+
+  // Synchronize the stream to make sure the memcpy is done
+  CHECK_EQ(hipStreamSynchronize(hipStream), hipSuccess);
+
+  // VLOG(1) output the output data before the call to miopenCTCLoss
+  // DEVICE data 
+  VLOG(1) << "Data after the call of miopenCTCLoss: ";
+  VLOG(1) << "probs_data = " << std::endl;
+  for(const float& val : after_probs_data) VLOG(1) << val << " ";
+  VLOG(1) << std::endl;
+  VLOG(1) << "costs_data = " << std::endl;
+  for(const float& val : after_costs_data) VLOG(1) << val << " ";
+  VLOG(1) << std::endl;
+  VLOG(1) << "grads_data = " << std::endl;
+  for(const float& val : after_grads_data) VLOG(1) << val << " ";
+  VLOG(1) << std::endl;
+  VLOG(1) << "scratch_memory = " << std::endl;
+  for(const uint8& val : after_scratch_memory) VLOG(1) << (int)val << " ";
+  VLOG(1) << std::endl;
+
+  // HOST data
+  VLOG(1) << "labels_data = " << std::endl;
+  for(const int& val : labels_data) VLOG(1) << val << " ";
+  VLOG(1) << std::endl;
+  VLOG(1) << "labels_lengths_data = " << std::endl;
+  for(const int& val : labels_lengths_data) VLOG(1) << val << " ";
+  VLOG(1) << std::endl;
+  VLOG(1) << "input_lengths_data = " << std::endl;
+  for(const int& val : input_lengths_data) VLOG(1) << val << " ";
+  VLOG(1) << std::endl;
+  VLOG(1) << "ctc_loss_algo_id = " << ctc_loss_algo_id << std::endl;
 
   return absl::OkStatus();
 }
