@@ -152,6 +152,10 @@ class RocmComputeCapability {
 
   bool gfx12_rx8900() const { return gfx12_discrete(); }
 
+  bool gfx1200() const { return gfx_version() == "gfx1200"; }
+
+  bool gfx1201() const { return gfx_version() == "gfx1201"; }
+
   bool has_nhwc_layout_support() const { return gfx9_mi100_or_later(); }
 
   bool has_bf16_dtype_support() const {
@@ -166,6 +170,11 @@ class RocmComputeCapability {
 
   bool has_amd_matrix_core() const {
     return gfx9_mi100_or_later() || gfx12() || gfx11();
+  }
+
+  bool has_fp16_atomics_support() const {
+    // TODO(rocm): Check. This should be the same as has_fast_fp16_support().
+    return gfx9_mi200_or_later();
   }
 
   bool has_packed_fp16_atomics_support() const { return gfx9_mi100_or_later(); }
