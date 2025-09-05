@@ -138,10 +138,19 @@ class RocmComputeCapability {
                                                     "gfx1151"};
   bool gfx11_apu() const { return IsThisGfxInAnyList(kGfx11Apu); }
 
+  static constexpr absl::string_view kGfx11Rx7900[] = {"gfx1100", "gfx1101",
+                                                       "gfx1102"};
+  bool gfx11_rx7900() const {
+    // TODO(AMD/TF): instead of this, other gfx11*() methods might be better
+    return IsThisGfxInAnyList(kGfx11Rx7900);
+  }
+
   bool gfx12() const { return absl::StartsWith(gfx_version(), "gfx12"); }
 
   static constexpr absl::string_view kGfx12Discrete[] = {"gfx1200", "gfx1201"};
   bool gfx12_discrete() const { return IsThisGfxInAnyList(kGfx12Discrete); }
+
+  bool gfx12_rx8900() const { return gfx12_discrete(); }
 
   bool has_nhwc_layout_support() const { return gfx9_mi100_or_later(); }
 
@@ -157,6 +166,11 @@ class RocmComputeCapability {
 
   bool has_amd_matrix_core() const {
     return gfx9_mi100_or_later() || gfx12() || gfx11();
+  }
+
+  bool has_fp16_atomics_support() const {
+    // TODO(rocm): Check. This should be the same as has_fast_fp16_support().
+    return gfx9_mi200_or_later();
   }
 
   bool has_packed_fp16_atomics_support() const { return gfx9_mi100_or_later(); }
