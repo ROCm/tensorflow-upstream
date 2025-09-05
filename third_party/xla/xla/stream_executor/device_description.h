@@ -152,10 +152,6 @@ class RocmComputeCapability {
 
   bool gfx12_rx8900() const { return gfx12_discrete(); }
 
-  bool gfx1200() const { return gfx_version() == "gfx1200"; }
-
-  bool gfx1201() const { return gfx_version() == "gfx1201"; }
-
   bool has_nhwc_layout_support() const { return gfx9_mi100_or_later(); }
 
   bool has_bf16_dtype_support() const {
