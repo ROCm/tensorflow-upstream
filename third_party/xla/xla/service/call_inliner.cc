@@ -57,20 +57,31 @@ void RecursivelyUpdateOpName(HloInstruction* hlo, absl::string_view prefix) {
     return;
   }
 
-  for (HloComputation* computation : hlo->called_computations()) {
-    for (HloInstruction* instruction : computation->instructions()) {
-      RecursivelyUpdateOpName(instruction, prefix);
+  // We only want to descend into "control flow" computations, since annotating
+  // embedded computations is wasted effort.
+  //
+  // TODO(b/429017389): We don't want to descend into calls, since this will
+  // produce incorrect metadata for computations with multiple callsites.
+  // However we're still seeing some missing prefix metadata that we'll need to
+  // figure out that recursing into calls does appear to help with.
+  if (GetInstructionCallContext(hlo->opcode()) == CallContext::kControlFlow &&
+      hlo->opcode() != HloOpcode::kCall) {
+    for (HloComputation* computation : hlo->called_computations()) {
+      for (HloInstruction* instruction : computation->instructions()) {
+        RecursivelyUpdateOpName(instruction, prefix);
+      }
     }
   }
+
   // We found that some users are sticking many megabytes of strings into
-  // op_name. Don't concatenate op names if they are too big.
-  constexpr int kMaxOpNameSize = 1000;
+  // op_name. Don't form op names that would be too big.
   OpMetadata metadata = hlo->metadata();
-  if (metadata.op_name().empty()) {
-    metadata.set_op_name(prefix);
-    hlo->set_metadata(metadata);
-  } else if (prefix.size() + metadata.op_name().size() < kMaxOpNameSize) {
-    metadata.set_op_name(absl::StrCat(prefix, "/", metadata.op_name()));
+  if (prefix.size() + metadata.op_name().size() < CallInliner::kMaxOpNameSize) {
+    if (metadata.op_name().empty()) {
+      metadata.set_op_name(prefix);
+    } else {
+      metadata.set_op_name(absl::StrCat(prefix, "/", metadata.op_name()));
+    }
     hlo->set_metadata(metadata);
   }
 }
@@ -107,17 +118,18 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     new_hlo_pointer->CopyOriginalValue(hlo, /*clone=*/true);
     if (std::shared_ptr<OriginalValue> original_value =
             new_hlo_pointer->original_value()) {
-      for (auto& leaf : original_value->leaves()) {
-        std::optional<OriginalArray>& original_array = leaf.second;
+      for (auto& pair : original_value->mutable_original_arrays()) {
+        std::optional<OriginalArray>& original_array = pair.second;
         if (original_array.has_value()) {
           std::string call_instruction_name;
           if (std::shared_ptr<OriginalValue> call_original_value =
                   call_->original_value()) {
-            call_instruction_name =
-                call_original_value->leaf_begin()->second->instruction_name;
+            call_instruction_name = call_original_value->original_arrays()
+                                        .begin()
+                                        ->second->instruction_name;
           }
-          absl::StrAppend(&original_array->instruction_name, "/",
-                          call_instruction_name);
+          original_array->instruction_name = absl::StrCat(
+              call_instruction_name, "/", original_array->instruction_name);
         }
       }
     }
@@ -212,21 +224,6 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
   absl::string_view call_op_name_;
 };
 
-// Specific inlining rules when needing to round-trip from MLIR->HLO->MLIR
-// when using Shardy (github.com/openxla/shardy).
-//
-// - shmap_body: We don't want to inline the bodies of JAX shard maps in order
-//   to import them into an `sdy.ManualComputationOp`. This is for the MHLO
-//   round-trip pipeline
-// - kManualComputationBodyFuncName: Same as shmap_body except for the SDY
-//   round-trip pipeline.
-bool InlineUnderShardy(HloInstruction* instruction) {
-  return !(instruction->GetModule()->config().use_shardy_partitioner() &&
-           (absl::StrContains(instruction->to_apply()->name(), "shmap_body") ||
-            absl::StrContains(instruction->to_apply()->name(),
-                              sdy::kManualComputationBodyFuncName.str())));
-}
-
 bool InlineComposites(
     HloInstruction* instruction,
     const absl::flat_hash_set<std::string>& composites_to_preserve) {
@@ -305,8 +302,24 @@ bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
     // prerequisites.
     return false;
   }
-  return InlineUnderShardy(instruction) &&
-         InlineComposites(instruction, composites_to_preserve_);
+  if (instruction->GetModule()->config().use_shardy_partitioner() &&
+      (absl::StrContains(instruction->to_apply()->name(), "shmap_body") ||
+       absl::StrContains(instruction->to_apply()->name(),
+                         sdy::kManualComputationBodyFuncName.str()))) {
+    // TODO(b/436603025). Remove this special handling by marking the
+    // instruction as uninlineable with the frontend attribute.
+    //
+    // Specific inlining rules when needing to round-trip from MLIR->HLO->MLIR
+    // when using Shardy (github.com/openxla/shardy).
+    //
+    // - shmap_body: We do not want to inline the bodies of JAX shard maps to
+    //   import them into an `sdy.ManualComputationOp`. This is for the MHLO
+    //   round-trip pipeline
+    // - kManualComputationBodyFuncName: Same as shmap_body except for the SDY
+    //   round-trip pipeline.
+    return false;
+  }
+  return InlineComposites(instruction, composites_to_preserve_);
 }
 
 bool CallInliner::ShouldInline(const CallGraph& call_graph,

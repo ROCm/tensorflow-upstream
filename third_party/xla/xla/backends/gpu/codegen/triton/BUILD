@@ -1,5 +1,5 @@
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
@@ -150,6 +150,7 @@ cc_library(
         "@llvm-project//mlir:ArithToLLVM",
         "@llvm-project//mlir:ControlFlowToLLVM",
         "@llvm-project//mlir:IndexToLLVM",
+        "@llvm-project//mlir:NVVMToLLVM",
         "@llvm-project//mlir:SCFToControlFlow",
         "@llvm-project//mlir:Transforms",
         "//xla/service:hlo_module_config",
@@ -158,6 +159,7 @@ cc_library(
         "@triton//:TritonDialects",
         "@triton//:TritonGPUToLLVM",
         "@triton//:TritonGPUTransforms",
+        "@triton//:TritonInstrumentTransforms",
         "@triton//:TritonLLVMIR",
         "@triton//:TritonNvidiaGPUTransforms",
         "@triton//:TritonToTritonGPU",
@@ -169,6 +171,7 @@ cc_library(
         "//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
+        "@triton//third_party/nvidia:NVHopperTransforms",
     ]) + if_rocm_is_configured([
         "//xla/service/gpu/llvm_gpu_backend:amdgpu_backend",
         "//xla/tsl/platform:rocm_rocdl_path",
@@ -320,10 +323,10 @@ cc_library(
         "//xla/mlir_hlo:map_mhlo_to_scalar_op",
         "//xla/mlir_hlo:transformation_helpers",
         "//xla/service:algorithm_util",
+        "//xla/service:matmul_indexing_utils",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
-        "//xla/service/gpu:matmul_indexing_utils",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:triton_fusion_analysis",
         "//xla/service/gpu:triton_tiling_propagation",
@@ -408,6 +411,7 @@ cc_library(
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:triton_fusion_analysis",
+        "//xla/service/gpu/model:symbolic_tile_analysis",
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:launch_dim",
@@ -629,8 +633,13 @@ xla_test(
         "no_mac",
     ],
     deps = [
+        ":test_utils",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
@@ -641,6 +650,7 @@ xla_test(
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@local_tsl//tsl/platform:path",
     ],
@@ -648,11 +658,12 @@ xla_test(
 
 xla_test(
     name = "dot_algorithms_test",
-    srcs = if_gpu_is_configured(["dot_algorithms_test.cc"]),
+    srcs = ["dot_algorithms_test.cc"],
     backend_args = if_google(
         {
-            "h100": ["--heap_check="],
+            "b200": ["--heap_check="],
             "a100": ["--heap_check="],
+            "h100": ["--heap_check="],
         },
         {},
     ),
@@ -671,7 +682,6 @@ xla_test(
         "no_mac",
     ],
     deps = [
-        ":kernel_name_tracer",
         ":test_utils",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
@@ -679,6 +689,7 @@ xla_test(
         "//xla:literal_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/profiler:kernel_name_tracer",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:verified_hlo_module",
@@ -713,11 +724,12 @@ xla_test(
 # TODO(b/393299275): Remove this target once the legacy emitter is removed.
 xla_test(
     name = "dot_algorithms_legacy_test",
-    srcs = if_gpu_is_configured(["dot_algorithms_legacy_test.cc"]),
+    srcs = ["dot_algorithms_legacy_test.cc"],
     backend_args = if_google(
         {
-            "h100": ["--heap_check="],
+            "b200": ["--heap_check="],
             "a100": ["--heap_check="],
+            "h100": ["--heap_check="],
         },
         {},
     ),
@@ -736,7 +748,6 @@ xla_test(
         "no_mac",
     ],
     deps = [
-        ":kernel_name_tracer",
         ":test_utils",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
@@ -744,6 +755,7 @@ xla_test(
         "//xla:literal_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/profiler:kernel_name_tracer",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:verified_hlo_module",
@@ -830,38 +842,6 @@ xla_test(
         "@llvm-project//mlir:Pass",
         "@local_tsl//tsl/platform:path",
     ],
-)
-
-cc_library(
-    name = "kernel_name_tracer_cuda",
-    testonly = True,
-    srcs = if_cuda(["kernel_name_tracer_cuda.cc"]),
-    hdrs = ["kernel_name_tracer.h"],
-    tags = ["manual"],  # Need to exclude this from wildcard builds
-    deps = [
-        "//xla/backends/profiler/gpu:cupti_collector",
-        "//xla/backends/profiler/gpu:cupti_tracer",
-        "//xla/tsl/profiler/utils:time_utils",
-        "@local_tsl//tsl/profiler/protobuf:xplane_proto_cc",
-    ],
-)
-
-cc_library(
-    name = "kernel_name_tracer_noop",
-    testonly = True,
-    srcs = ["kernel_name_tracer_noop.cc"],
-    hdrs = ["kernel_name_tracer.h"],
-    tags = ["manual"],  # Need to exclude this from wildcard builds
-)
-
-cc_library(
-    name = "kernel_name_tracer",
-    testonly = True,
-    hdrs = ["kernel_name_tracer.h"],
-    deps = if_cuda(
-        [":kernel_name_tracer_cuda"],
-        [":kernel_name_tracer_noop"],
-    ),
 )
 
 cc_library(
@@ -1010,9 +990,9 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:algorithm_util",
         "//xla/service:instruction_fusion",
+        "//xla/service:matmul_indexing_utils",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:ir_emission_utils",
-        "//xla/service/gpu:matmul_indexing_utils",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:statusor",
@@ -1101,6 +1081,8 @@ cc_library(
     hdrs = ["tma_utils.h"],
     deps = [
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/gpu:tma_metadata",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",

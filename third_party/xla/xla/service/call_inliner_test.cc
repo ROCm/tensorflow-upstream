@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <gmock/gmock.h>
@@ -487,7 +488,6 @@ TEST_F(CallInlinerTest, UseShardManualComputationBodyNotInlined) {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hloString));
   module->mutable_config().set_use_shardy_partitioner(true);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, CallInliner().Run(module.get()));
-  VLOG(1) << module->ToString();
   // The single call in the module is not inlined.
   EXPECT_FALSE(changed);
 
@@ -596,7 +596,7 @@ ENTRY main {
   CallInliner call_inliner(
       /*single_call_site=*/false, /*update_domain=*/false,
       /*composites_to_preserve=*/{}, /*uniquify_channel_ids=*/true);
-  EXPECT_THAT(call_inliner.Run(m.get()), ::tsl::testing::IsOkAndHolds(true));
+  ASSERT_THAT(call_inliner.Run(m.get()), ::tsl::testing::IsOkAndHolds(true));
 
   auto ag = m->entry_computation()->root_instruction()->operand(0);
   auto ag2 = m->entry_computation()->root_instruction()->operand(1);
@@ -819,8 +819,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
                           ParseAndReturnVerifiedModule(hlo));
-  CallInliner call_inliner;
-  EXPECT_THAT(call_inliner.Run(m.get()), ::tsl::testing::IsOkAndHolds(true));
+  ASSERT_THAT(CallInliner().Run(m.get()), ::tsl::testing::IsOkAndHolds(true));
 
   auto root = m->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::While());
@@ -829,6 +828,63 @@ ENTRY main {
             "x/while/cond");
   EXPECT_EQ(root->while_body()->root_instruction()->metadata().op_name(),
             "x/while/body");
+}
+
+TEST_F(CallInlinerTest, InliningMergesOpNoEmbeddedRecursion) {
+  const char* hlo = R"(
+
+reducer {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+callee {
+  input = f32[128,32] parameter(0)
+  const = f32[] constant(0)
+  ROOT reduce = f32[128] reduce(input, const), dimensions={1}, to_apply=reducer, metadata={op_name="reduce"}
+}
+
+ENTRY main {
+  input = f32[128,32] parameter(0)
+  ROOT result = f32[128] call(input), to_apply=callee, metadata={op_name="x"}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  CallInliner call_inliner;
+  EXPECT_THAT(call_inliner.Run(m.get()), ::tsl::testing::IsOkAndHolds(true));
+
+  auto root = m->entry_computation()->root_instruction();
+  EXPECT_THAT(root, op::Reduce());
+  EXPECT_EQ(root->metadata().op_name(), "x/reduce");
+  EXPECT_EQ(root->to_apply()->root_instruction()->metadata().op_name(), "");
+}
+
+TEST_F(CallInlinerTest, InliningDoesNotDuplicateLongOpNames) {
+  const char* hlo = R"(
+callee {
+  input = f32[128,32] parameter(0)
+  ROOT y = f32[128,32] negate(input), metadata={op_name="y"}
+}
+
+ENTRY main {
+  input = f32[128,32] parameter(0)
+  ROOT result = f32[128,32] call(input), to_apply=callee
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  auto root = m->entry_computation()->root_instruction();
+  ASSERT_THAT(root, op::Call());
+  OpMetadata metadata = root->metadata();
+  metadata.set_op_name(std::string(CallInliner::kMaxOpNameSize, 'x'));
+  root->set_metadata(metadata);
+  ASSERT_THAT(CallInliner().Run(m.get()), ::tsl::testing::IsOkAndHolds(true));
+
+  root = m->entry_computation()->root_instruction();
+  EXPECT_THAT(root, op::Negate());
+  EXPECT_EQ(root->metadata().op_name(), "y");
 }
 
 TEST_F(CallInlinerTest, InliningCallBack) {
@@ -862,7 +918,7 @@ ENTRY main {
                            /*uniquify_channel_ids=*/false,
                            /*should_inline=*/inline_trivial_only);
 
-  EXPECT_THAT(call_inliner.Run(m.get()), ::tsl::testing::IsOkAndHolds(true));
+  ASSERT_THAT(call_inliner.Run(m.get()), ::tsl::testing::IsOkAndHolds(true));
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               op::Subtract(op::Call(op::Parameter(0)), op::Parameter(0)));
 }

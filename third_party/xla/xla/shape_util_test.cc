@@ -1360,6 +1360,17 @@ TEST(ShapeUtilTest, Int4ShapeSize) {
   EXPECT_EQ(u4_shape.layout().element_size_in_bits(), 4);
 }
 
+TEST(ShapeUtilTest, Int4ShapeToHostShape) {
+  Shape int4_shape = ShapeUtil::MakeShape(S4, {64, 128});
+  int4_shape.mutable_layout()->set_element_size_in_bits(4);
+
+  EXPECT_FALSE(ShapeUtil::DeviceShapeIsHostShape(int4_shape));
+  Shape host_shape = ShapeUtil::DeviceShapeToHostShape(int4_shape);
+
+  EXPECT_TRUE(ShapeUtil::DeviceShapeIsHostShape(host_shape));
+  EXPECT_EQ(host_shape.layout().element_size_in_bits(), 0);
+}
+
 TEST(XlaShapeUtilTest, ZeroSize) {
   // Verify that if any one dimension is 0 we have a zero byte buffer.
   std::vector<std::vector<int64_t>> test_cases = {
@@ -1648,7 +1659,11 @@ void BM_ShapeCount(::testing::benchmark::State& state) {
   }
 }
 
-BENCHMARK(BM_ShapeCount)->ArgPair(2, 8)->ArgPair(4, 8)->ArgPair(1, 1000);
+BENCHMARK(BM_ShapeCount)
+    ->ArgPair(0, 0)
+    ->ArgPair(2, 8)
+    ->ArgPair(4, 8)
+    ->ArgPair(1, 1000);
 
 void BM_MakeShape(::testing::benchmark::State& state) {
   for (auto s : state) {
