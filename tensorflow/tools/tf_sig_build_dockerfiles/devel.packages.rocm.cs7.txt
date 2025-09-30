@@ -51,3 +51,4 @@ kernel-devel-uname-r
 # rocm packagaes
 #libdrm-amdgpu - Not mandatory needed from amdgpu repo. Upstream package is fine too
 rocm-ml-sdk
+rocm-dev
