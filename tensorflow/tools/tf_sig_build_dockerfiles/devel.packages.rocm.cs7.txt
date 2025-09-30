@@ -50,3 +50,4 @@ kernel-devel-uname-r
 
 # rocm packagaes
 rocm-ml-sdk
+rocm-dev
