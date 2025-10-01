@@ -1976,7 +1976,7 @@ tf_xla_py_strict_test(
 
 tf_xla_py_strict_test(
     name = "sort_ops_test",
-    size = "medium",
+    size = "large",
     srcs = ["sort_ops_test.py"],
     shard_count = 50,
     # Times out in fastbuild mode.
