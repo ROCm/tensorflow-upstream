@@ -1,0 +1,178 @@
+From d7e0421762f4c64321f993d34d452e7fe88e61e8 Mon Sep 17 00:00:00 2001
+From: Dragan Mladjenovic <Dragan.Mladjenovic@amd.com>
+Date: Tue, 30 Sep 2025 11:57:10 -0500
+Subject: [PATCH] Add minimal gfx950 support
+
+---
+ llvm/include/llvm/BinaryFormat/ELF.h          |  2 +-
+ llvm/include/llvm/TargetParser/TargetParser.h | 25 +++++++-------
+ llvm/lib/Target/AMDGPU/AMDGPU.td              | 34 +++++++++++++++++++
+ llvm/lib/Target/AMDGPU/GCNProcessors.td       |  4 +++
+ .../MCTargetDesc/AMDGPUTargetStreamer.cpp     |  2 ++
+ llvm/lib/TargetParser/TargetParser.cpp        |  5 ++-
+ 6 files changed, 58 insertions(+), 14 deletions(-)
+
+diff --git a/llvm/include/llvm/BinaryFormat/ELF.h b/llvm/include/llvm/BinaryFormat/ELF.h
+index 9a538252d9be..69be653f6033 100644
+--- a/llvm/include/llvm/BinaryFormat/ELF.h
++++ b/llvm/include/llvm/BinaryFormat/ELF.h
+@@ -789,7 +789,7 @@ enum : unsigned {
+   EF_AMDGPU_MACH_AMDGCN_GFX942        = 0x04c,
+   EF_AMDGPU_MACH_AMDGCN_RESERVED_0X4D = 0x04d,
+   EF_AMDGPU_MACH_AMDGCN_GFX1201       = 0x04e,
+-  EF_AMDGPU_MACH_AMDGCN_RESERVED_0X4F = 0x04f,
++  EF_AMDGPU_MACH_AMDGCN_GFX950        = 0x04f,
+   EF_AMDGPU_MACH_AMDGCN_RESERVED_0X50 = 0x050,
+   EF_AMDGPU_MACH_AMDGCN_GFX9_GENERIC      = 0x051,
+   EF_AMDGPU_MACH_AMDGCN_GFX10_1_GENERIC   = 0x052,
+diff --git a/llvm/include/llvm/TargetParser/TargetParser.h b/llvm/include/llvm/TargetParser/TargetParser.h
+index 7da11701fefb..5b90bb265d13 100644
+--- a/llvm/include/llvm/TargetParser/TargetParser.h
++++ b/llvm/include/llvm/TargetParser/TargetParser.h
+@@ -86,18 +86,19 @@ enum GPUKind : uint32_t {
+   GK_GFX940 = 68,
+   GK_GFX941 = 69,
+   GK_GFX942 = 70,
+-
+-  GK_GFX1010 = 71,
+-  GK_GFX1011 = 72,
+-  GK_GFX1012 = 73,
+-  GK_GFX1013 = 74,
+-  GK_GFX1030 = 75,
+-  GK_GFX1031 = 76,
+-  GK_GFX1032 = 77,
+-  GK_GFX1033 = 78,
+-  GK_GFX1034 = 79,
+-  GK_GFX1035 = 80,
+-  GK_GFX1036 = 81,
++  GK_GFX950 = 71,
++
++  GK_GFX1010 = 72,
++  GK_GFX1011 = 73,
++  GK_GFX1012 = 74,
++  GK_GFX1013 = 75,
++  GK_GFX1030 = 76,
++  GK_GFX1031 = 77,
++  GK_GFX1032 = 78,
++  GK_GFX1033 = 79,
++  GK_GFX1034 = 80,
++  GK_GFX1035 = 81,
++  GK_GFX1036 = 82,
+ 
+   GK_GFX1100 = 90,
+   GK_GFX1101 = 91,
+diff --git a/llvm/lib/Target/AMDGPU/AMDGPU.td b/llvm/lib/Target/AMDGPU/AMDGPU.td
+index 35b0cb439bfa..41f4b77c8689 100644
+--- a/llvm/lib/Target/AMDGPU/AMDGPU.td
++++ b/llvm/lib/Target/AMDGPU/AMDGPU.td
+@@ -1374,6 +1374,40 @@ def FeatureISAVersion9_4_Common : FeatureSet<
+    FeatureBackOffBarrier,
+    FeatureKernargPreload]>;
+ 
++def FeatureISAVersion9_5_Common : FeatureSet<
++  [FeatureGFX9,
++   FeatureGFX90AInsts,
++   FeatureGFX940Insts,
++   FeatureFmaMixInsts,
++   FeatureLDSBankCount32,
++   FeatureDLInsts,
++   FeatureFmacF64Inst,
++   FeatureDot1Insts,
++   FeatureDot2Insts,
++   FeatureDot3Insts,
++   FeatureDot4Insts,
++   FeatureDot5Insts,
++   FeatureDot6Insts,
++   FeatureDot7Insts,
++   FeatureDot10Insts,
++   FeatureAtomicDsPkAdd16Insts,
++   FeatureAtomicFlatPkAdd16Insts,
++   FeatureDPALU_DPP,
++   FeaturePackedFP32Ops,
++   FeatureMAIInsts,
++   FeaturePkFmacF16Inst,
++   FeatureAtomicFaddRtnInsts,
++   FeatureAtomicFaddNoRtnInsts,
++   FeatureAtomicBufferGlobalPkAddF16Insts,
++   FeatureAtomicGlobalPkAddBF16Inst,
++   FeatureFlatAtomicFaddF32Inst,
++   FeatureSupportsSRAMECC,
++   FeaturePackedTID,
++   FeatureArchitectedFlatScratch,
++   FullRate64Ops,
++   FeatureBackOffBarrier,
++   FeatureKernargPreload]>;
++
+ def FeatureISAVersion9_4_0 : FeatureSet<
+   !listconcat(FeatureISAVersion9_4_Common.Features,
+     [FeatureForceStoreSC0SC1])>;
+diff --git a/llvm/lib/Target/AMDGPU/GCNProcessors.td b/llvm/lib/Target/AMDGPU/GCNProcessors.td
+index f7e091904bad..16b27ac96a16 100644
+--- a/llvm/lib/Target/AMDGPU/GCNProcessors.td
++++ b/llvm/lib/Target/AMDGPU/GCNProcessors.td
+@@ -204,6 +204,10 @@ def : ProcessorModel<"gfx942", SIDPGFX940FullSpeedModel,
+   FeatureISAVersion9_4_2.Features
+ >;
+ 
++def : ProcessorModel<"gfx950", SIDPGFX940FullSpeedModel,
++  FeatureISAVersion9_5_Common.Features
++>;
++
+ // [gfx900, gfx902, gfx904, gfx906, gfx909, gfx90c]
+ def : ProcessorModel<"gfx9-generic", SIQuarterSpeedModel,
+   FeatureISAVersion9_Generic.Features
+diff --git a/llvm/lib/Target/AMDGPU/MCTargetDesc/AMDGPUTargetStreamer.cpp b/llvm/lib/Target/AMDGPU/MCTargetDesc/AMDGPUTargetStreamer.cpp
+index 00e64e3419ba..ff8132cf396c 100644
+--- a/llvm/lib/Target/AMDGPU/MCTargetDesc/AMDGPUTargetStreamer.cpp
++++ b/llvm/lib/Target/AMDGPU/MCTargetDesc/AMDGPUTargetStreamer.cpp
+@@ -96,6 +96,7 @@ StringRef AMDGPUTargetStreamer::getArchNameFromElfMach(unsigned ElfMach) {
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX940:  AK = GK_GFX940;  break;
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX941:  AK = GK_GFX941;  break;
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX942:  AK = GK_GFX942;  break;
++  case ELF::EF_AMDGPU_MACH_AMDGCN_GFX950:  AK = GK_GFX950;  break;
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX1010: AK = GK_GFX1010; break;
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX1011: AK = GK_GFX1011; break;
+   case ELF::EF_AMDGPU_MACH_AMDGCN_GFX1012: AK = GK_GFX1012; break;
+@@ -178,6 +179,7 @@ unsigned AMDGPUTargetStreamer::getElfMach(StringRef GPU) {
+   case GK_GFX940:  return ELF::EF_AMDGPU_MACH_AMDGCN_GFX940;
+   case GK_GFX941:  return ELF::EF_AMDGPU_MACH_AMDGCN_GFX941;
+   case GK_GFX942:  return ELF::EF_AMDGPU_MACH_AMDGCN_GFX942;
++  case GK_GFX950:  return ELF::EF_AMDGPU_MACH_AMDGCN_GFX950;
+   case GK_GFX1010: return ELF::EF_AMDGPU_MACH_AMDGCN_GFX1010;
+   case GK_GFX1011: return ELF::EF_AMDGPU_MACH_AMDGCN_GFX1011;
+   case GK_GFX1012: return ELF::EF_AMDGPU_MACH_AMDGCN_GFX1012;
+diff --git a/llvm/lib/TargetParser/TargetParser.cpp b/llvm/lib/TargetParser/TargetParser.cpp
+index 0d784a79e5ba..d48aabfbdae0 100644
+--- a/llvm/lib/TargetParser/TargetParser.cpp
++++ b/llvm/lib/TargetParser/TargetParser.cpp
+@@ -107,6 +107,7 @@ constexpr GPUInfo AMDGCNGPUs[] = {
+     {{"gfx940"},    {"gfx940"},  GK_GFX940,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC},
+     {{"gfx941"},    {"gfx941"},  GK_GFX941,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC},
+     {{"gfx942"},    {"gfx942"},  GK_GFX942,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC},
++    {{"gfx950"},    {"gfx950"},  GK_GFX950,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK|FEATURE_SRAMECC},
+     {{"gfx1010"},   {"gfx1010"}, GK_GFX1010, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_WGP},
+     {{"gfx1011"},   {"gfx1011"}, GK_GFX1011, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_WGP},
+     {{"gfx1012"},   {"gfx1012"}, GK_GFX1012, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK|FEATURE_WGP},
+@@ -255,6 +256,7 @@ AMDGPU::IsaVersion AMDGPU::getIsaVersion(StringRef GPU) {
+   case GK_GFX940:  return {9, 4, 0};
+   case GK_GFX941:  return {9, 4, 1};
+   case GK_GFX942:  return {9, 4, 2};
++  case GK_GFX950:  return {9, 5, 0};
+   case GK_GFX1010: return {10, 1, 0};
+   case GK_GFX1011: return {10, 1, 1};
+   case GK_GFX1012: return {10, 1, 2};
+@@ -415,9 +417,10 @@ void AMDGPU::fillAMDGPUFeatureMap(StringRef GPU, const Triple &T,
+     case GK_GFX942:
+     case GK_GFX941:
+     case GK_GFX940:
+-      Features["gfx940-insts"] = true;
+       Features["fp8-insts"] = true;
+       Features["fp8-conversion-insts"] = true;
++    case GK_GFX950:
++      Features["gfx940-insts"] = true;
+       Features["atomic-ds-pk-add-16-insts"] = true;
+       Features["atomic-flat-pk-add-16-insts"] = true;
+       Features["atomic-global-pk-add-bf16-inst"] = true;
+-- 
+2.34.1
+
