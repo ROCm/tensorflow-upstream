@@ -23,7 +23,7 @@ N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
 rocm-smi -i
 STATUS=$?
 if [ $STATUS -ne 0 ]; then TF_GPU_COUNT=1; else
-   TF_GPU_COUNT=$(rocm-smi -i|grep 'Device ID' |grep 'GPU' |wc -l)
+    TF_GPU_COUNT=$(rocm-smi -i | grep 'Device ID' | grep 'GPU' | wc -l)
 fi
 TF_TESTS_PER_GPU=1
 N_TEST_JOBS=$(expr ${TF_GPU_COUNT} \* ${TF_TESTS_PER_GPU})
@@ -44,9 +44,9 @@ else
 fi
 
 # Run configure.
-export PYTHON_BIN_PATH=`which python3`
+export PYTHON_BIN_PATH=$(which python3)
 
-PYTHON_VERSION=`python3 -c "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')"`
+PYTHON_VERSION=$(python3 -c "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 export TF_PYTHON_VERSION=$PYTHON_VERSION
 export TF_NEED_ROCM=1
 export ROCM_PATH=$ROCM_INSTALL_DIR
@@ -75,10 +75,10 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
     --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
     --test_env=MIOPEN_DEBUG_CONV_WINOGRAD=0 \
-    --test_timeout 600,900,2400,7200 \
     --repo_env="TF_ROCM_AMDGPU_TARGETS=$TARGET_ARCHS" \
+    --repo_env="ROCM_PATH=/opt/rocm" \
     --build_tests_only \
     --test_output=errors \
     --verbose_failures \
     --test_sharding_strategy=disabled \
-    --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute 
+    --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute
