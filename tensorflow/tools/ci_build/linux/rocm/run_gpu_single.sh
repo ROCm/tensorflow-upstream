@@ -23,7 +23,7 @@ N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
 rocm-smi -i
 STATUS=$?
 if [ $STATUS -ne 0 ]; then TF_GPU_COUNT=1; else
-   TF_GPU_COUNT=$(rocm-smi -i|grep 'Device ID' |grep 'GPU' |wc -l)
+    TF_GPU_COUNT=$(rocm-smi -i | grep 'Device ID' | grep 'GPU' | wc -l)
 fi
 TF_TESTS_PER_GPU=1
 N_TEST_JOBS=$(expr ${TF_GPU_COUNT} \* ${TF_TESTS_PER_GPU})
@@ -44,57 +44,41 @@ else
 fi
 
 # Run configure.
-export PYTHON_BIN_PATH=`which python3`
+export PYTHON_BIN_PATH=$(which python3)
 
-PYTHON_VERSION=`python3 -c "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')"`
+PYTHON_VERSION=$(python3 -c "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 export TF_PYTHON_VERSION=$PYTHON_VERSION
 export TF_NEED_ROCM=1
 export ROCM_PATH=$ROCM_INSTALL_DIR
 
-if [ -f /usertools/rocm.bazelrc ]; then
-	# Use the bazelrc files in /usertools if available
-	bazel \
-	     --bazelrc=/usertools/rocm.bazelrc \
-             test \
-             --jobs=${N_BUILD_JOBS} \
-	     --local_test_jobs=${N_TEST_JOBS} \
-             --config=sigbuild_local_cache \
-             --config=rocm \
-             --config=pycpp \
-             --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
-             --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
-             --test_env=TF_GPU_COUNT=$TF_GPU_COUNT
-else
-	# Legacy style: run configure then build
-	yes "" | $PYTHON_BIN_PATH configure.py
+yes "" | $PYTHON_BIN_PATH configure.py
 
-  # Run bazel test command. Double test timeouts to avoid flakes.
-	bazel test \
-	      --config=rocm \
-	      -k \
-	      --test_tag_filters=gpu,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-cuda-only,-benchmark-test,-rocm_multi_gpu,-tpu,-v1only \
-	      --jobs=${N_BUILD_JOBS} \
-	      --local_test_jobs=${N_TEST_JOBS} \
-	      --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
-	      --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
-	      --test_env=HSA_TOOLS_LIB=libroctracer64.so \
-        --test_env=MIOPEN_DEBUG_CONV_WINOGRAD=0 \
-	      --test_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
-	      --test_timeout 920,2400,7200,9600 \
-	      --build_tests_only \
-	      --test_output=errors \
-	      --test_sharding_strategy=disabled \
-	      --test_size_filters=small,medium \
-	      --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute \
-	      -- \
-	      //tensorflow/... \
-	      -//tensorflow/python/integration_testing/... \
-	      -//tensorflow/core/tpu/... \
-	      -//tensorflow/lite/... \
-	      -//tensorflow/compiler/tf2tensorrt/... \
-	      -//tensorflow/tools/toolchains/... \
-	      -//tensorflow/dtensor/python/tests:multi_client_test_nccl_2gpus \
-              -//tensorflow/dtensor/python/tests:multi_client_test_2gpus \
-	      -//tensorflow/dtensor/python/tests:multi_client_test_nccl_local_2gpus \
-	      -//tensorflow/python/distribute/experimental:multi_worker_mirrored_strategy_test_2gpus
+TARGET_ARCHS=$(rocminfo | grep "Name: *gfx" | awk '/Name:/ {print $2}' | sort -u)
+if [ -z "$TARGET_ARCHS" ]; then
+    echo "No gpu found"
+    exit 1
 fi
+
+if [ ! -d /tf ];then
+    # The bazelrc files in /usertools expect /tf to exist
+        mkdir /tf
+fi
+
+# Run bazel test command. Double test timeouts to avoid flakes.
+bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
+    --config=rocm \
+    --config=sigbuild_local_cache \
+    --config=pycpp \
+    -k \
+    --jobs=${N_BUILD_JOBS} \
+    --local_test_jobs=${N_TEST_JOBS} \
+    --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
+    --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
+    --test_env=MIOPEN_DEBUG_CONV_WINOGRAD=0 \
+    --repo_env="TF_ROCM_AMDGPU_TARGETS=$TARGET_ARCHS" \
+    --repo_env="ROCM_PATH=/opt/rocm" \
+    --build_tests_only \
+    --test_output=errors \
+    --verbose_failures \
+    --test_sharding_strategy=disabled \
+    --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute
