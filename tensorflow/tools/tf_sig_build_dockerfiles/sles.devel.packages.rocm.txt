@@ -1,4 +1,5 @@
-rocm-libs
+#rocm
+rocm-ml-sdk
 rocm-dev
 
 make
