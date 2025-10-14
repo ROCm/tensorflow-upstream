@@ -28,40 +28,17 @@ export PYTHON_BIN_PATH=`which python3`
 PYTHON_VERSION=`python3 -c "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')"`
 export TF_PYTHON_VERSION=$PYTHON_VERSION
 
-
-if [ -f /usertools/cpu.bazelrc ]; then
-        # Use the bazelrc files in /usertools if available
-        bazel \
-          --bazelrc=/usertools/cpu.bazelrc \
-          test \
-          --config=sigbuild_local_cache \
-          --config=pycpp \
-          --test_tag_filters=-no_cuda_on_cpu_tap,-no-gpu,-optimize.mlir.test,-requires-gpu-nvidia,-tpu,-v1only,-oss_serial,-no_windows,-no_oss \
-          --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
-          --local_test_jobs=${N_BUILD_JOBS} \
-          --jobs=${N_BUILD_JOBS} --test_env=HIP_VISIBLE_DEVICES= --action_env=TF_NEED_ROCM=0
-else
-         yes "" | $PYTHON_BIN_PATH configure.py
-
-        # Run bazel test command. Double test timeouts to avoid flakes.
-        # xla/mlir_hlo/tests/Dialect/gml_st tests disabled in 09/08/22 sync
-        bazel test \
-              -k \
-              --test_tag_filters=-no_oss,-oss_excluded,-oss_serial,-gpu,-multi_gpu,-tpu,-no_rocm,-benchmark-test,-v1only \
-              --test_lang_filters=cc,py \
-              --jobs=${N_BUILD_JOBS} --test_env=HIP_VISIBLE_DEVICES= --action_env=TF_NEED_ROCM=0 \
-              --local_test_jobs=${N_BUILD_JOBS} \
-              --test_timeout 920,2400,7200,9600 \
-              --config=opt \
-              --build_tests_only \
-              --test_output=errors \
-              --test_size_filters=small,medium \
-              --test_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
-              -- \
-              //tensorflow/... \
-              -//tensorflow/python/integration_testing/... \
-              -//tensorflow/compiler/tf2tensorrt/... \
-              -//tensorflow/core/tpu/... \
-              -//tensorflow/lite/... \
-              -//tensorflow/tools/toolchains/...    
+if [ ! -d /tf ];then
+    # The bazelrc files expect /tf to exist
+    mkdir /tf
 fi
+
+bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/cpu.bazelrc test \
+    --config=sigbuild_local_cache \
+    --verbose_failures \
+    --config=pycpp \
+    --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
+    --local_test_jobs=${N_BUILD_JOBS} \
+    --jobs=${N_BUILD_JOBS} \
+    --test_env=HIP_VISIBLE_DEVICES= \
+    --action_env=TF_NEED_ROCM=0
