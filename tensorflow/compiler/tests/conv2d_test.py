@@ -544,7 +544,7 @@ class Conv2DBackpropInputTest(xla_test.XLATestCase, parameterized.TestCase):
   def testConv2D2x2Depth3ValidBackpropInputStride1x1Dilation2x1(
       self, data_format):
     if test.is_built_with_rocm():
-      self.skipTest('only ROCm 6.2 will skip this subtest')
+      self.skipTest('ROCm 6.2/6.3 will skip this subtest')
     self._VerifyValues(
         input_sizes=[1, 3, 6, 1],
         filter_sizes=[2, 2, 1, 1],
@@ -604,7 +604,7 @@ class Conv2DBackpropInputTest(xla_test.XLATestCase, parameterized.TestCase):
   def testConv2DKernelSizeMatchesInputSizeBackpropInputDilation2x2(
       self, data_format):
     if test.is_built_with_rocm():
-      self.skipTest('only ROCm 6.2 will skip this subtest')    
+      self.skipTest('ROCm 6.2/6.3 will skip this subtest')
     self._VerifyValues(
         input_sizes=[1, 3, 3, 1],
         filter_sizes=[2, 2, 1, 2],
