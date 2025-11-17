@@ -283,7 +283,6 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-lnuma"],
     linkstatic = 1,
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
