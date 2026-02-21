@@ -1295,6 +1295,37 @@ cc_library(
 )
 
 cc_library(
+    name = "tensorflow_backend_tf",
+    srcs = ["tensorflow_backend_tf.cc"],
+    hdrs = ["tensorflow_backend_tf.h",
+    "//tensorflow/cc/saved_model:loader.h",
+    "//tensorflow/core/public:session.h",
+    "//tensorflow/cc/saved_model:tag_constants.h",
+    "//tensorflow/core/common_runtime/gpu:gpu_process_state.h",
+    "//tensorflow/core/common_runtime/device:device_id.h",
+    "//tensorflow/core/common_runtime:device.h",
+    "//tensorflow/core/common_runtime:device_mgr.h",
+    "//tensorflow/core/common_runtime/gpu:gpu_id.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+           "@local_config_rocm//rocm:rocm_headers",
+           "//tensorflow/c:c_api_headers",
+           "//tensorflow/core/common_runtime:device_mgr",
+           "//tensorflow/core/common_runtime/gpu:gpu_id",
+           "//tensorflow/core:framework",
+            "//tensorflow/core:framework_internal",
+            "//tensorflow/core:graph",
+            "//tensorflow/core:lib",
+            "//tensorflow/core:lib_internal",
+            "//tensorflow/core:protos_all_cc",
+            "@com_google_absl//absl/base",
+           "//tensorflow/core/grappler:utils",
+           "//tensorflow/c:env",
+    ],
+)
+
+cc_library(
     name = "local_executor_params",
     hdrs = ["local_executor_params.h"],
     copts = tf_copts(),
@@ -2079,6 +2110,7 @@ tf_cuda_library(
         ":int32_fulltype",
         ":isolate_placer_inspection_required_ops_pass",
         ":local_device",
+       #":tensorflow_backend_tf",
         ":lower_functional_ops",
         ":memory_types",
         ":mkl_cpu_allocator",

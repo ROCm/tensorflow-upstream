@@ -1370,7 +1370,8 @@ tf_cc_shared_library(
         "//tensorflow/core",
         "//tensorflow/core/common_runtime/eager:context",
         "//tensorflow/core/common_runtime/eager:tensor_handle",
-        "//tensorflow/core/config:flag_defs",
+       "//tensorflow/core/common_runtime:tensorflow_backend_tf",
+       "//tensorflow/core/config:flag_defs",
         "//tensorflow/core/config:flags",
         "//tensorflow/core/data/service:dispatcher_client",
         "//tensorflow/core/data/service:grpc_util",
@@ -1459,7 +1460,10 @@ tf_cc_shared_library(
         "//tensorflow/core/distributed_runtime/rpc:grpc_session",
     ]),
     soversion = VERSION,
-    static_deps = PACKAGE_STATIC_DEPS,
+    #static_deps = PACKAGE_STATIC_DEPS,
+    static_deps = PACKAGE_STATIC_DEPS + [
+        "//tensorflow/core/common_runtime:tensorflow_backend_tf",
+    ],
     visibility = ["//visibility:public"],
     win_def_file = ":tensorflow_filtered_def_file",
 )
