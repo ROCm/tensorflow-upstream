@@ -126,7 +126,7 @@ class RocmComputeCapability {
   }
 
   bool has_hipblaslt() const {
-    return gfx9_mi200_or_later() || gfx1200() || gfx1201();
+    return gfx9_mi200_or_later() || gfx1200() || gfx1201() || gfx11();
   }
 
   bool has_fp8_support() const {
@@ -163,6 +163,7 @@ class RocmComputeCapability {
       "gfx950",                         // MI355
       "gfx1030",                        // RX68xx / RX69xx
       "gfx1100", "gfx1101", "gfx1102",  // RX7900
+      "gfx1150", "gfx1151",
       "gfx1200", "gfx1201",             // RX8900      
   };
 };
