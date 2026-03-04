@@ -164,8 +164,10 @@ TEST(AMDGPUCacheHitModuleStatsTest, CacheHitReturnsIdenticalModuleStats) {
   llvm::LLVMContext context;
   const std::string module_id = "cache_hit_stats_test";
   auto load_module = [&context]() {
+    auto path = tsl::testing::XlaSrcRoot();
+    path = path.erase(path.length() - 4);
     return LoadIRModule(
-        tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "service", "gpu",
+        tsl::io::JoinPath(path, "external/xla/xla", "service", "gpu",
                           "llvm_gpu_backend", "tests_data",
                           "amdgpu_vgpr_spills.ll"),
         &context);
