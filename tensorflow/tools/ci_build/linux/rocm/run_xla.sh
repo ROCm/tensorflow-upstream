@@ -188,9 +188,6 @@ EXCLUDED_TESTS=(
     # @xla//xla/tools:xla_deviceless_compile_lib_test 
     XlaDevicelessCompileLibTest/XlaDevicelessCompileLibTest.CompilesForGpuWithoutDevice/LegacyAotFlow
     XlaDevicelessCompileLibTest/XlaDevicelessCompileLibTest.CompilesForGpuWithoutDevice/NewAotFlow
-
-    # @xla//xla/service/gpu/autotuning:gemm_fusion_autotuner_test_amdgpu_any
-    GemmFusionAutotunerTest.Int8FusedGemm # failing on mi250
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
