@@ -80,28 +80,6 @@ EXCLUDED_TESTS=(
     DotTf32Tf32F32Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
     DotTf32Tf32F32X3Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
 
-    # @xla//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any_notfrt
-    # @xla//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any
-    TritonFusionNumericsVerifierTest.CompilationSucceedsEvenIfKernelWillSpillRegisters
-    TritonFusionNumericsVerifierTest.VerifyThatDisablingTritonIsFast
-    TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/0
-    TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/1
-
-    # @xla//xla/service/gpu/transforms:dot_dimension_sorter_test_amdgpu_any
-    WithoutDotDimensionSorterTest.UnsortedDimsCreateTransposes # failing on mi250
-    WithoutDotDimensionSorterTest.DimOrderCanBeChanged # failing on mi250
-
-    # @xla//xla/service/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any
-    CublasLtGemmRewriteTest.MatrixBiasSwishActivation
-    CublasLtGemmRewriteTest.VectorBiasReluActivationF16Padded
-    CublasLtGemmRewriteTest.VectorBiasF16Padded
-    CublasLtGemmRewriteTest.ReluActivationF16Padded
-    CublasLtGemmRewriteTest.VectorBiasReluActivationBF16Padded
-    CublasLtGemmRewriteTest.BF16VectorBiasPadded
-    CublasLtGemmRewriteTest.ApproxGeluActivationBF16
-    CublasLtGemmRewriteTest.ReluActivationBF16Padded
-    CublasLtGemmRewriteTest.VectorBiasBF16Padded
-
     # @xla//xla/tests:sample_file_test_amdgpu_any
     # @xla//xla/tests:sample_file_test_amdgpu_any_notfrt
     SampleFileTest.Convolution
@@ -170,17 +148,6 @@ EXCLUDED_TESTS=(
     Convolve1D_1x2x5_1x2x2*
     Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestFloat*
     Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestHalf*
-
-    # @xla//xla/service/gpu/transforms:cudnn_fused_conv_rewriter_autotune_disabled_test_amdgpu_any
-    CudnnFusedConvRewriterTest.TestRelu6
-    CudnnFusedConvRewriterTest.TestLeakyRelu
-    CudnnFusedConvRewriterTest.TestBiasMultiCall
-    CudnnFusedConvRewriterTest.TestElu
-    CudnnFusedConvRewriterTest.TestBias
-    CudnnFusedConvRewriterTest.TestBiasNoRelu
-    CudnnFusedConvRewriterTest.Test3D
-    CudnnFusedConvRewriterTest.TestRelu6OddChannels
-    CudnnFusedConvRewriterTest.TestConvOnly
 
     # @xla//xla/tools:xla_gpu_compile_lib_test_amdgpu_any
     XlaCompileLibTest.CompilesForGpuWithoutDevice
