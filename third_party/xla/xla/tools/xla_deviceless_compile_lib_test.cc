@@ -50,8 +50,10 @@ absl::StatusOr<Compiler::GpuTargetConfig> GetGpuTargetConfig() {
       PlatformUtil::CanonicalPlatformName("gpu").value_or("") == "rocm"
           ? "mi200.txtpb"
           : "h100_sxm.txtpb";
+  auto tmp_path = tsl::testing::XlaSrcRoot();
+  tmp_path = tmp_path.erase(tmp_path.length() - 4);
   const std::string target_config_path =
-      tsl::io::JoinPath(tsl::testing::XlaSrcRoot(),
+      tsl::io::JoinPath(tmp_path, "external/xla/xla/",
                         "backends/gpu/target_config/specs", spec_file);
   stream_executor::GpuTargetConfigProto target_config_proto;
   TF_RETURN_IF_ERROR(tsl::ReadTextProto(tsl::Env::Default(), target_config_path,

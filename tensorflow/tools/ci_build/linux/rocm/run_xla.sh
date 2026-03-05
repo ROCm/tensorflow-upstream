@@ -156,10 +156,6 @@ EXCLUDED_TESTS=(
 
     # @xla//xla/tools:xla_gpu_compile_lib_test_amdgpu_any
     XlaCompileLibTest.CompilesForGpuWithoutDevice
-
-    # @xla//xla/tools:xla_deviceless_compile_lib_test 
-    XlaDevicelessCompileLibTest/XlaDevicelessCompileLibTest.CompilesForGpuWithoutDevice/LegacyAotFlow
-    XlaDevicelessCompileLibTest/XlaDevicelessCompileLibTest.CompilesForGpuWithoutDevice/NewAotFlow
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
