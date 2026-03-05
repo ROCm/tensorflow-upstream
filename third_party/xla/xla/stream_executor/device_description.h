@@ -91,6 +91,7 @@ class RocmComputeCapability {
       "gfx1030",  // RX68xx / RX69xx
       "gfx1100",  // RX7900
       "gfx1101",  // RX7700 / RX7800
+      "gfx1102",
       "gfx1103", "gfx1150", "gfx1151", "gfx1200", "gfx1201",
   };
 
@@ -131,7 +132,7 @@ class RocmComputeCapability {
 
   bool gfx11() const { return absl::StartsWith(gfx_version(), "gfx11"); }
 
-  static constexpr absl::string_view kGfx11Discrete[] = {"gfx1100", "gfx1101"};
+  static constexpr absl::string_view kGfx11Discrete[] = {"gfx1100", "gfx1101", "gfx1102"};
   bool gfx11_discrete() const { return IsThisGfxInAnyList(kGfx11Discrete); }
 
   static constexpr absl::string_view kGfx11Apu[] = {"gfx1103", "gfx1150",
