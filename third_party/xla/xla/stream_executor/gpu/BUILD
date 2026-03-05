@@ -589,8 +589,8 @@ xla_test(
     name = "gpu_command_buffer_test",
     srcs = ["gpu_command_buffer_test.cc"],
     backends = ["gpu"],
-    # TODO(ybaturina): Re-enable once the CUDA driver version is updated in RBE.
-    tags = ["manual"],
+    # TODO(intel-tf): Implement gpu command buffer for oneAPI and enable this test.
+    tags = ["no-oneapi"],
     deps = [
         ":gpu_test_kernels",
         "//xla/service:platform_util",
