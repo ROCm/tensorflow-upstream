@@ -185,9 +185,11 @@ class RocmComputeCapability {
 
   bool gfx10_rx69xx() const { return gfx_version() == "gfx1030"; }
 
-  bool gfx11_rx7900() const { return (gfx_version() == "gfx1100" ||
+  bool gfx11() const { return (gfx_version() == "gfx1100" ||
                                       gfx_version() == "gfx1101" ||
-                                      gfx_version() == "gfx1102"); }
+                                      gfx_version() == "gfx1102" || 
+                                      gfx_version() == "gfx1150" ||
+                                      gfx_version() == "gfx1151"); }
 
   bool gfx12_rx8900() const { return ((gfx_version() == "gfx1200") || 
                                       (gfx_version() == "gfx1201")); }
@@ -198,7 +200,7 @@ class RocmComputeCapability {
 
   bool has_fast_fp16_support() const {
     return gfx9_mi100_or_later() || gfx10_rx68xx() || gfx10_rx69xx() ||
-           gfx11_rx7900() || gfx12_rx8900();
+           gfx11() || gfx12_rx8900();
   }
 
   bool has_mfma_instr_support() const { return gfx9_mi100_or_later(); }
@@ -217,7 +219,7 @@ class RocmComputeCapability {
     return gfx_version() != "gfx900" && gfx_version() != "gfx906";
   }
 
-  bool has_hipblaslt() const { return gfx9_mi200_or_later() || gfx12_rx8900(); }
+  bool has_hipblaslt() const { return gfx9_mi200_or_later() || gfx11() || gfx12_rx8900(); }
 
   bool has_fp8_support() const {
     return has_ocp_fp8_support() || has_nanoo_fp8_support();
@@ -249,6 +251,7 @@ class RocmComputeCapability {
       "gfx950",
       "gfx1030",                        // RX68xx / RX69xx
       "gfx1100", "gfx1101", "gfx1102",  // RX7900
+      "gfx1150", "gfx1151",
       "gfx1200", "gfx1201",             // RX8900
   };
 };
@@ -621,3 +624,4 @@ void CalculateDimensionality(const DeviceDescription &device_description,
 }  // namespace stream_executor
 
 #endif  // XLA_STREAM_EXECUTOR_DEVICE_DESCRIPTION_H_
+
