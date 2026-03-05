@@ -110,9 +110,12 @@ absl::StatusOr<std::string> LLVMToHSACO(mlir::ModuleOp module,
   }
 
   xla::DebugOptions debug_opts = xla::DefaultDebugOptionsIgnoringFlags();
+  auto llvm_opts = xla::gpu::amdgpu::GetAMDGPUBackendOptions(debug_opts);
+  xla::llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_opts);
   TF_ASSIGN_OR_RETURN(auto hsaco_file_result,
                       xla::gpu::amdgpu::CompileToHsacoAndReturnFilePath(
-                          llvm_module.get(), gpu_version, debug_opts, false));
+                          llvm_module.get(), gpu_version, debug_opts, false,
+                          llvm_lock));
   return hsaco_file_result.hsaco_path;
 }
 

@@ -477,7 +477,8 @@ void HsacoCache::Add(const std::string& ir, uint64_t hash,
 // TargetMachine for the AMDGPU target.
 absl::StatusOr<EmitResult> EmitModuleToHsaco(
     llvm::Module* module, llvm::TargetMachine* target_machine,
-    const DebugOptions& debug_options, bool keep_tempfiles) {
+    const DebugOptions& debug_options, bool keep_tempfiles,
+    llvm_ir::LLVMCommandLineOptionsLock& llvm_lock) {
   auto* env = tsl::Env::Default();
   std::vector<std::string> tempdir_vector;
   env->GetLocalTempDirectories(&tempdir_vector);
@@ -538,8 +539,6 @@ absl::StatusOr<EmitResult> EmitModuleToHsaco(
 
   if (debug_options.xla_gpu_use_inprocess_lld()) {
 #ifdef HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY
-    static absl::Mutex lld_mu(absl::kConstInit);
-
     std::array<const char*, 7> args{
         "ld.lld",           "--threads=1",       "-shared",
         "--no-undefined",   isabin_path.c_str(), "-o",
@@ -550,7 +549,7 @@ absl::StatusOr<EmitResult> EmitModuleToHsaco(
     llvm::raw_string_ostream os(error_message);
     lld::Result result;
     {
-      absl::MutexLock lock(&lld_mu);
+      llvm_lock.UpgradeToExclusiveAccessToRawLLVMCommandLine();
       result =
           lld::lldMain(args, llvm::nulls(), os, {{lld::Gnu, &lld::elf::link}});
     }
@@ -993,7 +992,8 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
                                       /*default_val=*/false, &keep_tempfiles));
   TF_ASSIGN_OR_RETURN(HsacoFileResult file_result,
                       CompileToHsacoAndReturnFilePath(
-                          module, gpu_version, debug_options, keep_tempfiles));
+                          module, gpu_version, debug_options, keep_tempfiles,
+                          llvm_lock));
 
   // Read HSACO.
   std::ifstream hsaco_file(file_result.hsaco_path,
@@ -1013,7 +1013,8 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
 
 absl::StatusOr<HsacoFileResult> CompileToHsacoAndReturnFilePath(
     llvm::Module* module, se::GpuComputeCapability gpu_version,
-    const DebugOptions& debug_options, bool keep_tempfiles) {
+    const DebugOptions& debug_options, bool keep_tempfiles,
+    llvm_ir::LLVMCommandLineOptionsLock& llvm_lock) {
   static absl::once_flag backend_init_flag;
   // TODO(rocm) Ideally this would be refreshed if xla_gpu_cuda_data_dir
   // changes.
@@ -1035,7 +1036,8 @@ absl::StatusOr<HsacoFileResult> CompileToHsacoAndReturnFilePath(
   // Lower optimized LLVM module to HSA code object.
   TF_ASSIGN_OR_RETURN(EmitResult emit_result,
                       EmitModuleToHsaco(module, target_machine.get(),
-                                        debug_options, keep_tempfiles));
+                                        debug_options, keep_tempfiles,
+                                        llvm_lock));
   return HsacoFileResult{std::move(emit_result.hsaco_path),
                          emit_result.spill_info.ToModuleStats()};
 }

@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "llvm/IR/Module.h"
+#include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/xla.pb.h"
@@ -59,7 +60,8 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
 // along with register spill information.
 absl::StatusOr<HsacoFileResult> CompileToHsacoAndReturnFilePath(
     llvm::Module* module, stream_executor::GpuComputeCapability gpu_version,
-    const DebugOptions& debug_options, bool keep_tempfiles);
+    const DebugOptions& debug_options, bool keep_tempfiles,
+    llvm_ir::LLVMCommandLineOptionsLock& llvm_lock);
 
 // Returns the LLVM command line flags that we use for compilation.
 std::vector<std::string> GetAMDGPUBackendOptions(
