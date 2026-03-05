@@ -153,9 +153,6 @@ EXCLUDED_TESTS=(
     Convolve1D_1x2x5_1x2x2*
     Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestFloat*
     Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestHalf*
-
-    # @xla//xla/tools:xla_gpu_compile_lib_test_amdgpu_any
-    XlaCompileLibTest.CompilesForGpuWithoutDevice
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
