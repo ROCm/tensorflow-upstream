@@ -346,7 +346,6 @@ xla_test(
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:convert_triton_gemm_config",
         "//xla/backends/gpu/transforms:hoist_fused_bitcasts",
-        "//xla/backends/gpu/transforms:nest_gemm_fusion",
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
@@ -636,29 +635,32 @@ cc_library(
 
 xla_test(
     name = "fusion_emitter_large_test",
-    size = "large",
     srcs = ["fusion_emitter_large_test.cc"],
+    backend_tags = {
+        "h100": [
+            # Needs full H100, otherwise we run OOM.
+            "full",
+        ],
+    },
     backends = [
         "a100",
         "h100",
         "b200",
         "amdgpu_any",
     ],
+    shard_count = 3,
     tags = [
-        "large",
         "no_mac",
         "no_oss",  # requires-mem:16g tag doesn't work in open source
         "nozapfhahn",  # Times out under coverage
-        "pjrt_migration_candidate",
     ] + if_google([
         "requires-mem:16g",
     ]),
-    use_legacy_runtime = True,
     deps = [
         "//xla:error_spec",
         "//xla:xla_proto_cc",
-        "//xla/service/gpu/tests:gpu_codegen_test",
-        "//xla/tests:hlo_test_base",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
@@ -847,6 +849,7 @@ cc_library(
     srcs = ["collective_emitter.cc"],
     hdrs = ["collective_emitter.h"],
     deps = [
+        ":lowering_util",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:types",
@@ -854,7 +857,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
         "//xla/backends/gpu/runtime:all_reduce",
-        "//xla/codegen/tiling:tiled_hlo_instruction",
+        "//xla/codegen/emitters/ir:xla",
         "//xla/codegen/xtile/codegen:emitter_helpers",
         "//xla/codegen/xtile/ir:xtile",
         "//xla/core/collectives:reduction_kind",
@@ -868,7 +871,6 @@ cc_library(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -877,7 +879,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Support",
