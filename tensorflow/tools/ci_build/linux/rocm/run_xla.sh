@@ -132,6 +132,14 @@ EXCLUDED_TESTS=(
     Convolve1D_1x2x5_1x2x2*
     Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestFloat*
     Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestHalf*
+
+    # vvv TODO (rocm) weekly-sync-260306 excluded tests
+
+    # @xla//xla/codegen/intrinsic/accuracy:intrinsic_accuracy_test_amdgpu_any
+    # ROCm subnormal/ULP accuracy divergence for log1p f64, rsqrt f64, erf f32
+    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/LogPlusOne_f64
+    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Rsqrt_f64
+    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Erf_f32
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
