@@ -2452,14 +2452,9 @@ DynamicSliceCopyFusionCmd::Record(const Thunk::ExecuteParams& execute_params,
       [&](const se::CommandBuffer::Command* command) -> absl::Status {
         int64_t iteration_index = 0;
         if (offsets_.depends_on_loop) {
-<<<<<<< HEAD
-          TF_ASSIGN_OR_RETURN(iteration_index,
-                              WhileThunk::CurrentLoopIteration());
-=======
           const WhileLoopState* state = IsInsideWhileLoop();
           TF_RET_CHECK(state) << "DynamicSliceCopyFusionCmd depends on loop";
           iteration_index = state->loop_iteration;
->>>>>>> upstream/master
         }
         int64_t src_offset = offsets_.src_offsets[iteration_index];
         int64_t dst_offset = offsets_.dst_offsets[iteration_index];
