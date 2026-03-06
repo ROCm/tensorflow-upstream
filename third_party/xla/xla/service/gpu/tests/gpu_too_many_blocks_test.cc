@@ -38,6 +38,14 @@ TEST_F(TooManyBlocksTest, FailsWithInvalidStatus) {
   // somewhere in the pipeline. The practical relevance is low, since as of
   // 2024, the inputs or outputs have to be way too large to fit on any GPU
   // anyway.
+  //
+  // On ROCm, the grid splitting feature (MaybeSplitGridDimensionX) splits
+  // oversized grids into multiple dimensions, so compilation succeeds instead
+  // of failing. Skip this test on ROCm since the behavior is intentionally
+  // different.
+  if (is_built_with_rocm_) {
+    GTEST_SKIP() << "ROCm handles large grids via grid dimension splitting";
+  }
   const char* hlo_text = R"(
 HloModule primitive_computation_mul.8
 
