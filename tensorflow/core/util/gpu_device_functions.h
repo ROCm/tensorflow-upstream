@@ -675,14 +675,14 @@ __device__ inline Eigen::half GpuAtomicAdd(Eigen::half* ptr,
   return detail::GpuAtomicCasHelper(
       ptr, [value](Eigen::half a) { return a + value; });
 }
-#endif
 
-#if (__CUDA_ARCH__ < 600) || TENSORFLOW_USE_ROCM
+#if (__CUDA_ARCH__ < 600) //TODO Beware of merge conflict resolution here
 __device__ inline double GpuAtomicAdd(double* ptr, double value) {
   return detail::GpuAtomicCasHelper(ptr,
                                     [value](double a) { return a + value; });
 }
 #endif
+#endif // GOOGLE_CUDA (line 666)
 
 #if TENSORFLOW_USE_ROCM
 template <typename T>
