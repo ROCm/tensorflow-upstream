@@ -60,7 +60,6 @@ EXCLUDED_TESTS=(
     # @xla//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any
     TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_*
 
-
     # @xla//xla/backends/gpu/codegen/triton:fusion_emitter_int4_device_test_amdgpu_any
     TritonTest.FuseSubchannelDequantizationWithTranspose
 
@@ -78,7 +77,6 @@ EXCLUDED_TESTS=(
     DotTf32Tf32F32Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
     DotTf32Tf32F32X3Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
 
-
     # @xla//xla/tests:sample_file_test_amdgpu_any
     # @xla//xla/tests:sample_file_test_amdgpu_any_notfrt
     SampleFileTest.Convolution
@@ -90,7 +88,6 @@ EXCLUDED_TESTS=(
     ScatterTest.TensorFlowScatterV1_UpdateTwice
 
     # vvv TODO (rocm) weekly-sync-20251224 excluded tests
-
 
     # @xla//xla/backends/gpu/profiler:kernel_name_tracer_test
     KernelNameTracerTest.Create
