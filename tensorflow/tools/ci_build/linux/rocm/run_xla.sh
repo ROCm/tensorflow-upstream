@@ -140,6 +140,9 @@ EXCLUDED_TESTS=(
     UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/LogPlusOne_f64
     UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Rsqrt_f64
     UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Erf_f32
+
+    # @xla//xla/backends/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any
+    CublasLtGemmRewriteTest.MatrixBiasSwishActivation
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
