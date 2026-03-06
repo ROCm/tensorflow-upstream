@@ -91,21 +91,6 @@ EXCLUDED_TESTS=(
 
     # vvv TODO (rocm) weekly-sync-20251224 excluded tests
 
-    # @xla//xla/backends/gpu/codegen/triton:support_test
-    BitcastOrReshapeTestSuite/BitcastOrReshapeTest.IsTritonSupportedBitcastOrReshape*
-    BitcastOrReshapeTestSuite/BitcastOrReshapeTest.IsTritonSupported0DBitcastOrReshape*
-    BitcastConvertSuite/BitcastConvertTest.BitcastConvertDisguisedAsBitcast*
-    UnaryElementwiseTestSuite/UnaryElementwiseTest.IsTritonSupportedUnaryElementwise*
-    ConvertTestSuite/ConvertTest.Convert*
-    BinaryElementwiseTestSuite/BinaryElementwiseTest.IsTritonSupportedBinaryElementwise*
-    TernaryElementwiseTestSuite/TernaryElementwiseTest.IsTritonSupportedTernaryElementwise*
-    ReductionComputationTestSuite/ReductionComputationTest.DifferentBinaryOps*
-    TransposeTestSuite/TransposeTest.LoadTranspose3D*
-    SliceTestSuite/SliceTest.ContinuousSlice*
-    BroadcastTestSuite/BroadcastTest.Broadcast*
-    ParameterTestSuite/ParameterTest.Parameter*
-    ConstantTestSuite/ConstantTest.ConstantEffectiveScalar*
-    DotTestSuite/DotTypesTest.Dot*
 
     # @xla//xla/backends/gpu/profiler:kernel_name_tracer_test
     KernelNameTracerTest.Create
