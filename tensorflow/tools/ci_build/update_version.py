@@ -401,7 +401,17 @@ def main():
                             "-dev" + time.strftime("%Y%m%d"),
                             NIGHTLY_VERSION)
   else:
-    new_version = Version.parse_from_string(args.version, SNAPSHOT_VERSION)
+    if args.version:
+      new_version = Version.parse_from_string(args.version, SNAPSHOT_VERSION)
+      if args.rocm_version:
+          new_version.set_identifier_string("." + str(_rocm_version(_get_rocm_install_path()).replace('.', '')) + old_version.identifier_string)
+    else:
+      if args.rocm_version:
+          new_version = Version(old_version.major,
+                            str(old_version.minor),
+                            old_version.patch,
+                            "." + str(_rocm_version(_get_rocm_install_path()).replace('.', '')) + old_version.identifier_string,
+                            SNAPSHOT_VERSION)
 
   update_tf_version_bzl(old_version, new_version)
   update_bazelrc(old_version, new_version)
