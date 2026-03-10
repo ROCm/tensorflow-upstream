@@ -253,5 +253,11 @@ TEST_F(FloatSupportTest, ShouldKeepBf16OnHopper) {
                     /*should_convert_rhs=*/false, BF16);
 }
 
+TEST_F(FloatSupportTest, ShouldKeepBf16OnMI200orLater) {
+    TestDotConversion(BF16, BF16, F32, se::RocmComputeCapability("gfx940"),
+                      /*should_convert_lhs=*/false,
+                      /*should_convert_rhs=*/false, BF16);
+  }
+
 }  // namespace
 }  // namespace xla::gpu
