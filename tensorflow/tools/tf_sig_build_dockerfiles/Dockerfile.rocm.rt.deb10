@@ -3,7 +3,7 @@ ARG DISTRO_IMG
 #FROM ${DISTRO_IMG:-'compute-artifactory.amd.com:5000/rocm-base-images/debian-10:2025022301-6.4-47'} as runtime
 #FROM ${DISTRO_IMG:-'compute-artifactory.amd.com:5000/rocm-base-images/debian-10:2025032101-6.5-15845'} as runtime
 #FROM ${DISTRO_IMG:-'compute-artifactory.amd.com:5000/rocm-base-images/debian-10:2025022301-6.4.1-60'} as runtime
-FROM ${DISTRO_IMG:-'debian:buster-20240612'} as runtime
+FROM ${DISTRO_IMG:-'registry-sc-harbor.amd.com/rocm-base-images/debian-10:2025081801'} as runtime
 ################################################################################
 
 ARG GPU_DEVICE_TARGETS
