@@ -3,14 +3,14 @@ FROM quay.io/pypa/manylinux_2_28_x86_64:2023-11-29-1ba608e as builder
 ################################################################################
 
 # Add epel and elrepo repos and enable powertools repo
-RUN dnf update -y && dnf install -y epel-release && dnf install -y elrepo-release && dnf config-manager --set-enabled powertools
+RUN retries=3; for i in $(seq 1 $retries); do dnf update -y && break || sleep $((i * 5)); done && dnf install -y epel-release && dnf install -y elrepo-release && dnf config-manager --set-enabled powertools
 
 # Setup the build_system repo
 RUN echo -e "[build_system]\nname=ROCm\nbaseurl=https://repo.almalinux.org/build_system/8/x86_64/\nenabled=1\ngpgcheck=0" >/etc/yum.repos.d/build_system.repo
 
 # Setup c++ dev
 # TODO: Only install what is needed
-RUN dnf group install -y "Development Tools" && dnf install -y llvm-toolset gcc-toolset-13
+RUN retries=3; for i in $(seq 1 $retries); do dnf group install -y "Development Tools" && break || sleep $((i * 5)); done && dnf install -y llvm-toolset gcc-toolset-13
 
 # Install dependencies
 COPY setup.packages.rocm.el8.sh setup.packages.rocm.el8.sh
