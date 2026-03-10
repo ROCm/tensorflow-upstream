@@ -916,7 +916,7 @@ Status MarkForCompilationPassImpl::DeclusterNodes() {
     // increasing its live range.
     //
     // See b/221997940 for a real-world example of this.
-    if (n->op_def().name() == "Fill" &&
+    if ((n->op_def().name() == "Fill" || n->def().op() == "SplitV") &&
         n->out_nodes().begin() != n->out_nodes().end() &&
         absl::c_all_of(n->out_nodes(), [&](Node* user) {
           return GetClusterForNode(user) != cluster;
@@ -990,8 +990,7 @@ Status MarkForCompilationPassImpl::CreateClusters() {
     // trouble.
 
     if (cluster->effective_cluster_size() >= debug_options_.min_cluster_size ||
-        cluster->has_functional_control_flow() ||
-        cluster->is_xla_compile_attr_true()) {
+        cluster->has_functional_control_flow()) {
       string& name = cluster_names[cluster->cycles_graph_node_id()];
 
       if (name.empty()) {

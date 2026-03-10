@@ -902,7 +902,7 @@ struct UnsortedSegmentFunctor<GPUDevice, T, Index, InitialValueF, ReductionF> {
       config = GetGpuLaunchConfig(data_size, d);
       TF_CHECK_OK(GpuLaunchKernel(
           UnsortedSegmentCustomKernel<
-              T, Index, typename ReduceUpdateOpFor<ReductionF>::atomic_op>,
+              T, Index, typename ReduceUpdateOpFor<ReductionF>::nonatomic_op>,
           config.block_count, config.thread_per_block, 0, d.stream(),
           input_outer_dim_size, input_inner_dim_size, output_outer_dim_size,
           unsorted_segment_ids.data(), data.data(), output.data()));
