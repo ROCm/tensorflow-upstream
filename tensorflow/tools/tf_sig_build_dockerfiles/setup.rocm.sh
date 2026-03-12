@@ -50,8 +50,8 @@ else
         ROCM_VERS=$ROCM_VERSION
 fi
 
-# hardcode to 7.0.2
-AMDGPU_REPO_VERS=7.0.2
+# hardcode to 7.0.3
+AMDGPU_REPO_VERS=7.0.3
 
 if [[ "$DISTRO" == "focal" ]] || [[ "$DISTRO" == "jammy" ]] || [[ "$DISTRO" == "noble" ]]; then
     ROCM_DEB_REPO_HOME=https://repo.radeon.com/rocm/apt/
