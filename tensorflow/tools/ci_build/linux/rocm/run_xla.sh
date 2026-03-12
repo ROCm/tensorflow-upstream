@@ -86,9 +86,6 @@ EXCLUDED_TESTS=(
     SwapConvOperandsTest.SmallPadding
     SwapConvOperandsTest.DoesNotLower
 
-    # @xla//xla/service/gpu/tests:gpu_triton_custom_call_test
-    GpuIrEmitterUnnestedTest.CanNotEmitTritonCustomCallOnPreAmpereGpu
-
     # @xla//xla/tests:convolution_autotune_disabled_test
     Transposed2DConvHloTest/Transposed2DConvHloTest.Simple*
     ConvolveWithAndWithoutCanonicalization_Instantiation/ConvolveWithAndWithoutCanonicalization.Convolve2D_NoSpatialDims*
