@@ -22,6 +22,7 @@
 #   - jammy
 #   - el7
 #   - el8
+#   - bookworm
 set -x
 
 # Get arguments (or defaults)
@@ -31,11 +32,11 @@ if [[ -n $1 ]]; then
     ROCM_VERSION=$1
 fi
 if [[ -n $2 ]]; then
-    if [[ "$2" == "focal" ]] || [[ "$2" == "jammy" ]] || [[ "$2" == "noble" ]] || [[ "$2" == "el7" ]] || [[ "$2" == "el8" ]]; then
+    if [[ "$2" == "focal" ]] || [[ "$2" == "jammy" ]] || [[ "$2" == "noble" ]] || [[ "$2" == "el7" ]] || [[ "$2" == "el8" ]] || [[ "$2" == "bookworm" ]]; then
         DISTRO=$2
     else
         echo "Distro not supported"
-        echo "Supported distros are:\n focal\n jammy\n noble\n el7\n el8"
+        echo "Supported distros are:\n focal\n jammy\n noble\n el7\n el8\n bookworm"
 	exit 1
     fi
 fi
@@ -49,8 +50,8 @@ else
         ROCM_VERS=$ROCM_VERSION
 fi
 
-# hardcode to 7.0.2
-AMDGPU_REPO_VERS=7.0.2
+# hardcode to 7.0.3
+AMDGPU_REPO_VERS=7.0.3
 
 if [[ "$DISTRO" == "focal" ]] || [[ "$DISTRO" == "jammy" ]] || [[ "$DISTRO" == "noble" ]]; then
     ROCM_DEB_REPO_HOME=https://repo.radeon.com/rocm/apt/
@@ -137,6 +138,56 @@ elif [[ "$DISTRO" == "el8" ]]; then
 
     # install hipblasLT if available
     dnf --enablerepo=extras,epel,elrepo,build_system install -y hipblaslt-devel || true
+
+elif [[ "$DISTRO" == "bookworm" ]]; then
+    ROCM_DEB_REPO_HOME=https://repo.radeon.com/rocm/apt/
+    AMDGPU_DEB_REPO_HOME=https://repo.radeon.com/amdgpu/
+    ROCM_BUILD_NAME=${DISTRO}
+    ROCM_BUILD_NUM=main
+
+    # Adjust the ROCM repo location
+    ROCM_DEB_REPO=${ROCM_DEB_REPO_HOME}${ROCM_VERS}/
+    AMDGPU_DEB_REPO=${AMDGPU_DEB_REPO_HOME}${AMDGPU_REPO_VERS}/
+
+    DEBIAN_FRONTEND=noninteractive apt-get --allow-unauthenticated update 
+    DEBIAN_FRONTEND=noninteractive apt install -y wget software-properties-common
+    DEBIAN_FRONTEND=noninteractive apt-get clean all
+
+    if [ ! -f "/${CUSTOM_INSTALL}" ]; then
+        # Make the directory if it doesn't exist yet.
+        # This location is recommended by the distribution maintainers.
+        mkdir --parents --mode=0755 /etc/apt/keyrings
+
+        # Download the key, convert the signing-key to a full
+        # keyring required by apt and store in the keyring directory
+        wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | \
+            gpg --dearmor | tee /etc/apt/keyrings/rocm.gpg > /dev/null
+
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] $AMDGPU_DEB_REPO/ubuntu jammy $ROCM_BUILD_NUM" | tee --append /etc/apt/sources.list.d/amdgpu.list
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] $ROCM_DEB_REPO jammy $ROCM_BUILD_NUM" | tee /etc/apt/sources.list.d/rocm.list
+        echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' \
+             | tee /etc/apt/preferences.d/rocm-pin-600
+    else
+        bash "/${CUSTOM_INSTALL}"
+    fi
+    apt-get update --allow-insecure-repositories
+
+    wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+    echo "deb [arch=amd64 trusted=yes] http://apt.llvm.org/$DISTRO/ llvm-toolchain-$DISTRO-18 main" | tee /etc/apt/sources.list.d/llvm.list
+    apt-get update --allow-insecure-repositories
+
+    # install rocm
+    /setup.packages.sh /devel.packages.rocm.txt
+
+    MIOPENKERNELS=$( \
+                        apt-cache search --names-only miopen-hip-gfx | \
+                        awk '{print $1}' | \
+                        grep -F -v . || \
+                        true )
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated ${MIOPENKERNELS}
+
+    #install hipblasLT if available
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated hipblaslt-dev || true
 fi
 
 function ver { printf "%03d%03d%03d" $(echo "$1" | tr '.' ' '); }
