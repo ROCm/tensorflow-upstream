@@ -497,7 +497,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
-        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:casts",
     ],
 )
@@ -671,7 +670,6 @@ cc_library(
         "//xla/pjrt:pjrt_device_dimensions",
         "//xla/pjrt:pjrt_stream_executor_device_description",
         "//xla/pjrt/proto:topology_description_proto_cc",
-        "//xla/runtime:process_id",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
         "//xla/stream_executor:device_description_proto_cc",
