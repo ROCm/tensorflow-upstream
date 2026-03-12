@@ -484,18 +484,18 @@ absl::StatusOr<PjRtDevice*> PjRtCApiClient::LookupAddressableDevice(
 }
 
 void PjRtCApiClient::UpdateGlobalProcessInfo(
-    absl::Span<xla::coordination::CoordinatedTaskStateInfo> infos) {
-  auto translate_state = [](xla::coordination::CoordinatedTaskState state) {
+    absl::Span<tensorflow::CoordinatedTaskStateInfo> infos) {
+  auto translate_state = [](tensorflow::CoordinatedTaskState state) {
     switch (state) {
-      case xla::coordination::CoordinatedTaskState::TASKSTATE_UNSPECIFIED:
+      case tensorflow::CoordinatedTaskState::TASKSTATE_UNSPECIFIED:
         return PJRT_ProcessState_kUnspecified;
-      case xla::coordination::CoordinatedTaskState::TASKSTATE_UNINITIALIZED:
+      case tensorflow::CoordinatedTaskState::TASKSTATE_UNINITIALIZED:
         return PJRT_ProcessState_kUninitialized;
-      case xla::coordination::CoordinatedTaskState::TASKSTATE_DISCONNECTED:
+      case tensorflow::CoordinatedTaskState::TASKSTATE_DISCONNECTED:
         return PJRT_ProcessState_kDisconnected;
-      case xla::coordination::CoordinatedTaskState::TASKSTATE_CONNECTED:
+      case tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED:
         return PJRT_ProcessState_kConnected;
-      case xla::coordination::CoordinatedTaskState::TASKSTATE_ERROR:
+      case tensorflow::CoordinatedTaskState::TASKSTATE_ERROR:
         return PJRT_ProcessState_kError;
       default:
         LOG(FATAL) << "Unexpected CoordinatedTaskState " << state;
@@ -504,7 +504,7 @@ void PjRtCApiClient::UpdateGlobalProcessInfo(
   };
 
   std::vector<PJRT_ProcessInfo> process_infos;
-  for (const xla::coordination::CoordinatedTaskStateInfo& info : infos) {
+  for (const tensorflow::CoordinatedTaskStateInfo& info : infos) {
     PJRT_ProcessInfo process_info;
     process_info.struct_size = PJRT_ProcessInfo_STRUCT_SIZE;
     process_info.task_id = info.task().task_id();
@@ -644,7 +644,7 @@ InitializeArgsAndCompileAot(const PJRT_Api* c_api, PjRtClient* client,
 }  // namespace
 
 absl::StatusOr<std::string> PjRtCApiClient::SerializeMlirModule(
-    mlir::ModuleOp module, const CompileOptions& options) {
+    MaybeOwningMlirModule module, const CompileOptions& options) {
   if (!pjrt_c_api()) {
     llvm::report_fatal_error("pjrt_c_api is null");
   }
@@ -652,12 +652,12 @@ absl::StatusOr<std::string> PjRtCApiClient::SerializeMlirModule(
   const std::string version_string = GetPluginStablehloVersionOrDefault(this);
   TF_ASSIGN_OR_RETURN(
       std::string serialized,
-      xla::Serialize(module, version_string,
+      xla::Serialize(module.mlir_module(), version_string,
                      /*inplace=*/options.allow_in_place_mlir_modification));
   if (options.allow_in_place_mlir_modification) {
     // If we're allowed to modify the computation, free the functions in the
     // MLIR. We don't use them anymore, and this reduces peak memory.
-    module.getBody()->clear();
+    module.mlir_module().getBody()->clear();
   }
   return serialized;
 }
@@ -667,7 +667,7 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiClient::Compile(
   TF_ASSIGN_OR_RETURN(const PjRtTopologyDescription* const topology,
                       GetTopologyDescription());
   TF_ASSIGN_OR_RETURN(const std::string serialized,
-                      SerializeMlirModule(module.mlir_module(), options));
+                      SerializeMlirModule(std::move(module), options));
   return InitializeArgsAndCompileAot(c_api_, this, options, *topology,
                                      serialized,
                                      std::string(pjrt::kMlirFormat));
@@ -677,7 +677,7 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtCApiClient::CompileAndLoad(MaybeOwningMlirModule module,
                                CompileOptions options) {
   TF_ASSIGN_OR_RETURN(const std::string serialized,
-                      SerializeMlirModule(module.mlir_module(), options));
+                      SerializeMlirModule(std::move(module), options));
   return InitializeArgsAndCompile(this, c_api_, c_client_.get(), options,
                                   serialized, std::string(pjrt::kMlirFormat));
 }
@@ -3919,10 +3919,37 @@ void PjRtCApiBuffer::CopyToRemoteDevice(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::Bitcast(
-    xla::PrimitiveType element_type, absl::Span<int64_t const> dims,
-    const xla::Layout* device_layout) {
-  return absl::UnimplementedError(
-      "Bitcast is not yet implemented for PjRtCApiBuffer.");
+    PrimitiveType element_type, absl::Span<const int64_t> dims,
+    const Layout* device_layout) {
+  const PJRT_Api* api = client_->pjrt_c_api();
+  if (api->pjrt_api_version.major_version == 0 &&
+      api->pjrt_api_version.minor_version < 98) {
+    return absl::UnimplementedError(
+        "PJRT_Buffer_Bitcast requires PJRT C API version 0.98 or higher.");
+  }
+  if (api->PJRT_Buffer_Bitcast == nullptr) {
+    return absl::UnimplementedError(
+        "PJRT_Buffer_Bitcast not available in this version of "
+        "the PjRT plugin");
+  }
+  PJRT_Buffer_Bitcast_Args args;
+  args.struct_size = PJRT_Buffer_Bitcast_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.buffer = c_buffer();
+  args.element_type = pjrt::ConvertToPjRtBufferType(element_type);
+  args.dims = dims.data();
+  args.num_dims = dims.size();
+  pjrt::BufferMemoryLayoutData c_layout_data;
+  if (device_layout != nullptr) {
+    TF_ASSIGN_OR_RETURN(c_layout_data,
+                        pjrt::ConvertToBufferMemoryLayoutData(*device_layout));
+    args.device_layout = &c_layout_data.c_layout;
+  } else {
+    args.device_layout = nullptr;
+  }
+  RETURN_STATUS_IF_PJRT_ERROR(api->PJRT_Buffer_Bitcast(&args), api);
+  return std::unique_ptr<PjRtBuffer>(
+      std::make_unique<PjRtCApiBuffer>(client_, args.out_buffer));
 }
 
 PjRtCApiExternalReference::~PjRtCApiExternalReference() {

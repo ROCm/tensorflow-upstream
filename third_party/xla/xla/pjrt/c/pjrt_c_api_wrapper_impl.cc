@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_memory_descriptions_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_multi_slice_internal_types.h"
 #include "xla/pjrt/c/pjrt_c_api_shardings_extension.h"
-#include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -79,6 +78,7 @@ limitations under the License.
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -665,23 +665,23 @@ PJRT_Error* PJRT_Client_UpdateGlobalProcessInfo(
   auto translate_state = [](PJRT_ProcessState state) {
     switch (state) {
       case PJRT_ProcessState_kUnspecified:
-        return xla::coordination::CoordinatedTaskState::TASKSTATE_UNSPECIFIED;
+        return tensorflow::CoordinatedTaskState::TASKSTATE_UNSPECIFIED;
       case PJRT_ProcessState_kUninitialized:
-        return xla::coordination::CoordinatedTaskState::TASKSTATE_UNINITIALIZED;
+        return tensorflow::CoordinatedTaskState::TASKSTATE_UNINITIALIZED;
       case PJRT_ProcessState_kDisconnected:
-        return xla::coordination::CoordinatedTaskState::TASKSTATE_DISCONNECTED;
+        return tensorflow::CoordinatedTaskState::TASKSTATE_DISCONNECTED;
       case PJRT_ProcessState_kConnected:
-        return xla::coordination::CoordinatedTaskState::TASKSTATE_CONNECTED;
+        return tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED;
       case PJRT_ProcessState_kError:
-        return xla::coordination::CoordinatedTaskState::TASKSTATE_ERROR;
+        return tensorflow::CoordinatedTaskState::TASKSTATE_ERROR;
     }
     LOG(FATAL) << "Unexpected PJRT_ProcessState " << state;
   };
 
-  std::vector<xla::coordination::CoordinatedTaskStateInfo> infos;
+  std::vector<tensorflow::CoordinatedTaskStateInfo> infos;
   for (int i = 0; i < args->num_process_infos; ++i) {
     PJRT_ProcessInfo* p = &args->process_infos[i];
-    xla::coordination::CoordinatedTaskStateInfo info;
+    tensorflow::CoordinatedTaskStateInfo info;
     info.mutable_task()->set_task_id(p->task_id);
     info.set_incarnation(p->incarnation_id);
     info.set_state(translate_state(p->state));
@@ -1121,6 +1121,46 @@ PJRT_Error* PJRT_Client_Load(PJRT_Client_Load_Args* args) {
                                  xla::LoadOptions()));
   args->loaded_executable =
       new PJRT_LoadedExecutable(std::move(loaded), args->client);
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Buffer_Bitcast(PJRT_Buffer_Bitcast_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Buffer_Bitcast_Args", PJRT_Buffer_Bitcast_Args_STRUCT_SIZE,
+      args->struct_size));
+  xla::PrimitiveType element_type =
+      pjrt::ConvertFromPjRtBufferType(args->element_type);
+  absl::Span<const int64_t> dims =
+      absl::Span<const int64_t>(args->dims, args->num_dims);
+  std::optional<xla::Layout> cpp_layout;
+  xla::Layout* device_layout = nullptr;
+  if (args->device_layout != nullptr) {
+    PJRT_Buffer_MemoryLayout* layout = args->device_layout;
+    switch (layout->type) {
+      case PJRT_Buffer_MemoryLayout_Type::PJRT_Buffer_MemoryLayout_Type_Tiled: {
+        PJRT_ASSIGN_OR_RETURN(cpp_layout, ConvertToLayout(layout->tiled));
+        break;
+      }
+      case PJRT_Buffer_MemoryLayout_Type::
+          PJRT_Buffer_MemoryLayout_Type_Strides: {
+        PJRT_RETURN_IF_ERROR(absl::InvalidArgumentError(
+            "PJRT_Buffer_MemoryLayout_Type_Strides is not supported to be "
+            "converted to a xla::Layout."));
+        break;
+      }
+      default: {
+        PJRT_RETURN_IF_ERROR(absl::InvalidArgumentError(absl::StrCat(
+            "Unexpected PJRT_Buffer_MemoryLayout_Type type: ", layout->type)));
+      }
+    }
+    device_layout = &*cpp_layout;
+  }
+
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtBuffer> bitcast_buffer,
+      args->buffer->buffer->Bitcast(element_type, dims, device_layout));
+  args->out_buffer =
+      new PJRT_Buffer{std::move(bitcast_buffer), args->buffer->client};
   return nullptr;
 }
 
@@ -3630,6 +3670,7 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       /*PJRT_Client_Load=*/pjrt::PJRT_Client_Load,
       /*PJRT_LoadedExecutable_AddressableDeviceLogicalIds=*/
       pjrt::PJRT_LoadedExecutable_AddressableDeviceLogicalIds,
+      /*PJRT_Buffer_Bitcast=*/pjrt::PJRT_Buffer_Bitcast,
   };
 }
 

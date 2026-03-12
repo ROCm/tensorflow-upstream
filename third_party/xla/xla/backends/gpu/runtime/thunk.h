@@ -562,7 +562,19 @@ class Thunk {
 };
 
 // A sequence of thunks.
-using ThunkSequence = std::vector<std::unique_ptr<Thunk>>;
+class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
+ public:
+  using std::vector<std::unique_ptr<Thunk>>::vector;
+
+  // Apply transformer callback to all thunks in *this sequence.
+  absl::Status TransformNested(Thunk::Transformer callback) {
+    for (std::unique_ptr<Thunk>& thunk : *this) {
+      RETURN_IF_ERROR(thunk->TransformNested(callback));
+      ASSIGN_OR_RETURN(thunk, callback(std::move(thunk)));
+    }
+    return absl::OkStatus();
+  }
+};
 
 std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
 
@@ -570,9 +582,9 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
 // reduce-scatter).
 bool IsReductionCollective(Thunk::Kind kind);
 
-// Returns the metadata from all thunks in the given thunk graph.
+// Returns the metadata from all thunks in the given thunk sequence.
 ThunkMetadataListProto GetMetadataListProtoFromThunkGraph(
-    const Thunk& root_thunk);
+    const ThunkSequence& thunk_sequence);
 
 //===----------------------------------------------------------------------===//
 // Thunk templates implementation.

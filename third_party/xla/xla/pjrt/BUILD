@@ -330,13 +330,13 @@ cc_library(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:key_value_store_interface",
-        "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/lib/gtl:int_type",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/protobuf:coordination_service_proto_cc",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -431,6 +431,7 @@ cc_library(
     hdrs = ["pjrt_executable.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        ":compiled_memory_stats",
         ":pjrt_abi_version",
         ":pjrt_common",
         ":pjrt_device_dimensions",
@@ -440,6 +441,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/target_config",
         "//xla/client:executable_build_options",
         "//xla/ffi:execution_context",
         "//xla/hlo/ir:hlo",
@@ -1396,13 +1398,13 @@ cc_library(
 
 cc_library(
     name = "async_work_runner",
-    srcs = ["async_work_runner.cc"],
     hdrs = ["async_work_runner.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/types:span",
     ],
@@ -1614,5 +1616,47 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "stream_executor_pjrt_abi_version",
+    srcs = ["stream_executor_pjrt_abi_version.cc"],
+    hdrs = ["stream_executor_pjrt_abi_version.h"],
+    deps = [
+        ":pjrt_abi_version",
+        ":pjrt_common",
+        "//xla/stream_executor/abi:executable_abi_version",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "stream_executor_pjrt_abi_version_test",
+    srcs = ["stream_executor_pjrt_abi_version_test.cc"],
+    deps = [
+        ":pjrt_common",
+        ":stream_executor_pjrt_abi_version",
+        "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
+        "//xla/stream_executor/abi:executable_abi_version",
+        "//xla/stream_executor/abi:executable_abi_version_proto_cc",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "compiled_memory_stats",
+    srcs = ["compiled_memory_stats.cc"],
+    hdrs = ["compiled_memory_stats.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/pjrt/proto:executable_metadata_proto_cc",
+        "//xla/service:buffer_assignment",
+        "//xla/service:hlo_value",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
     ],
 )

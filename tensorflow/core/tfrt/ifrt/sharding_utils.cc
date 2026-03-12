@@ -363,7 +363,7 @@ absl::StatusOr<xla::ifrt::ArrayRef> MakeAssembledArrayFromHostBuffer(
     const xla::ifrt::LayoutRef& xla_input_layout) {
   // TODO(b/316959894): use xla::HloSharding to identifying sharding axis.
 
-  VLOG(2) << "Assembling arrays by sharding " << ifrt_sharding->DebugString();
+  VLOG(2) << "Assembling arrays by sharding " << ifrt_sharding;
 
   TF_ASSIGN_OR_RETURN(auto index_domains,
                       ifrt_sharding->IndexDomains(
@@ -656,17 +656,21 @@ H2DTransferExecutorFactory::CreateH2DTransferExecutor(
 H2DTransferExecutor::H2DTransferExecutor(xla::ifrt::Client& ifrt_client)
     : ifrt_client_(ifrt_client) {}
 
-absl::StatusOr<tsl::Future<xla::ifrt::ArrayRef>>
-H2DTransferExecutor::ScheduledH2DTransfer(
-    const tensorflow::Tensor& tensor, const xla::Shape* /*input_xla_shape*/,
-    const xla::ifrt::DeviceListRef& device_list,
-    xla::ifrt::ShardingRef sharding, tsl::thread::ThreadPool& thread_pool,
-    xla::ifrt::LayoutRef xla_input_layout) {
-  TF_ASSIGN_OR_RETURN(
-      xla::ifrt::ArrayRef array_ref,
-      MakeArrayFromTensor(ifrt_client_, tensor, device_list, sharding,
-                          thread_pool, xla_input_layout));
-  return tsl::Future<xla::ifrt::ArrayRef>(std::move(array_ref));
+absl::StatusOr<tsl::Future<std::vector<xla::ifrt::ArrayRef>>>
+H2DTransferExecutor::ScheduledH2DTransfers(
+    absl::Span<const InputHandle> handles,
+    tsl::thread::ThreadPool& thread_pool) {
+  std::vector<xla::ifrt::ArrayRef> arrays;
+  arrays.reserve(handles.size());
+  for (const auto& handle : handles) {
+    TF_ASSIGN_OR_RETURN(
+        auto array,
+        MakeArrayFromTensor(ifrt_client_, handle.tensor, handle.device_list,
+                            handle.ifrt_sharding, thread_pool,
+                            handle.xla_input_layout));
+    arrays.push_back(std::move(array));
+  }
+  return tsl::Future<std::vector<xla::ifrt::ArrayRef>>(std::move(arrays));
 }
 
 absl::Status H2DTransferExecutor::RunH2DTransfers() { return absl::OkStatus(); }
@@ -691,7 +695,7 @@ absl::StatusOr<xla::ifrt::ArrayRef> MakeArrayFromTensor(
     const xla::ifrt::DeviceListRef& device_list,
     xla::ifrt::ShardingRef sharding, const tsl::thread::ThreadPool& thread_pool,
     const xla::ifrt::LayoutRef& xla_input_layout) {
-  VLOG(1) << "Hlo sharding: " << sharding->DebugString();
+  VLOG(1) << "Hlo sharding: " << sharding;
   VLOG(1) << "Device list size: " << device_list->size();
   // Fast path for single device sharding.
   if (llvm::isa<const xla::ifrt::SingleDeviceSharding>(sharding.get())) {

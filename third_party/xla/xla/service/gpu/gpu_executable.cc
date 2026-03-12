@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_buffer_debug_pass.h"
+#include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
 #include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
 #include "xla/client/executable_build_options.h"
@@ -116,6 +117,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
@@ -236,8 +238,8 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
       hlo_module ? hlo_module->name() : "Anonymous"));
 
   ASSIGN_OR_RETURN(bool changed,
-                   pipeline.Run(root_thunk, debug_options, hlo_module,
-                                device_info, allocator));
+                   pipeline.Run(&root_thunk->thunks(), debug_options,
+                                hlo_module, device_info, allocator));
   if (changed) {
     VLOG(3) << "Thunk passes changed the thunk tree.";
     if (hlo_module && DumpingEnabledForHloModule(*hlo_module)) {
@@ -250,7 +252,7 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
 
   if (hlo_module && DumpingEnabledForHloModule(*hlo_module)) {
     ThunkMetadataListProto metadata_list_proto =
-        GetMetadataListProtoFromThunkGraph(*root_thunk);
+        GetMetadataListProtoFromThunkGraph(root_thunk->executor().thunks());
     DumpPerModuleProtobufToFile(*hlo_module, metadata_list_proto, debug_options,
                                 "thunk_metadata");
   }
@@ -437,9 +439,10 @@ absl::Status ExecuteThunksImpl(
   int32_t progress_tracking_n =
       debug_options ? debug_options->xla_gpu_execution_progress_tracking() : 0;
 
-  std::optional<SequentialThunk::ScopedProgressTracker> tracker;
+  std::optional<ThunkExecutor::ScopedProgressTracker> tracker;
   if (progress_tracking_n > 0) {
-    ASSIGN_OR_RETURN(tracker, InstallProgressTracker(executor, thunk_sequence));
+    ASSIGN_OR_RETURN(
+        tracker, InstallProgressTracker(executor, thunk_sequence.executor()));
   }
 
   // Maybe add a watch guard for this execution.
@@ -1469,7 +1472,8 @@ absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
   }
 
   proto.mutable_output_info_map()->Reserve(output_info_.size());
-  for (const auto& [shape_index, output_info] : output_info_) {
+  for (const auto& [shape_index, output_info] :
+       tsl::KeySortedRange(output_info_)) {
     auto map_entry = proto.add_output_info_map();
     *map_entry->mutable_shape_index() = shape_index.ToProto();
     *map_entry->mutable_output_info() = output_info.ToProto();

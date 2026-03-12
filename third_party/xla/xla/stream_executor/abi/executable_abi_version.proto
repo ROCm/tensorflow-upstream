@@ -13,30 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/pjrt/async_work_runner.h"
+syntax = "proto3";
 
-#include <memory>
-#include <utility>
+package stream_executor;
 
-#include "xla/tsl/concurrency/executor.h"
+option java_multiple_files = true;
+option java_outer_classname = "ExecutableAbiVersionOuter";
 
-namespace xla {
+message ExecutableAbiVersionProto {
+  string platform_name = 1;
 
-namespace {
+  message CudaPlatformVersion {
+    bytes cuda_toolkit_version = 1;
+    bytes cudnn_version = 2;
+    bytes cub_version = 3;
+  }
 
-class AsyncWorkRunnerExecutor : public tsl::Executor {
- public:
-  explicit AsyncWorkRunnerExecutor(AsyncWorkRunner* runner) : runner_(runner) {}
-
-  void Execute(Task task) override { runner_->Schedule(std::move(task)); }
-
- private:
-  AsyncWorkRunner* const runner_;
-};
-
-}  // namespace
-
-AsyncWorkRunner::AsyncWorkRunner()
-    : executor_(std::make_unique<AsyncWorkRunnerExecutor>(this)) {}
-
-}  // namespace xla
+  oneof platform_specific_version {
+    CudaPlatformVersion cuda_platform_version = 3;
+  }
+}

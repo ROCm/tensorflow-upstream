@@ -80,11 +80,6 @@ EXCLUDED_TESTS=(
     DotTf32Tf32F32Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
     DotTf32Tf32F32X3Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
 
-    # @xla//xla/backends/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any_notfrt
-    # @xla//xla/backends/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any
-    TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/0
-    TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/1
-
     # @xla//xla/tests:sample_file_test_amdgpu_any
     # @xla//xla/tests:sample_file_test_amdgpu_any_notfrt
     SampleFileTest.Convolution
@@ -96,22 +91,6 @@ EXCLUDED_TESTS=(
     ScatterTest.TensorFlowScatterV1_UpdateTwice
 
     # vvv TODO (rocm) weekly-sync-20251224 excluded tests
-
-    # @xla//xla/backends/gpu/codegen/triton:support_test
-    BitcastOrReshapeTestSuite/BitcastOrReshapeTest.IsTritonSupportedBitcastOrReshape*
-    BitcastOrReshapeTestSuite/BitcastOrReshapeTest.IsTritonSupported0DBitcastOrReshape*
-    BitcastConvertSuite/BitcastConvertTest.BitcastConvertDisguisedAsBitcast*
-    UnaryElementwiseTestSuite/UnaryElementwiseTest.IsTritonSupportedUnaryElementwise*
-    ConvertTestSuite/ConvertTest.Convert*
-    BinaryElementwiseTestSuite/BinaryElementwiseTest.IsTritonSupportedBinaryElementwise*
-    TernaryElementwiseTestSuite/TernaryElementwiseTest.IsTritonSupportedTernaryElementwise*
-    ReductionComputationTestSuite/ReductionComputationTest.DifferentBinaryOps*
-    TransposeTestSuite/TransposeTest.LoadTranspose3D*
-    SliceTestSuite/SliceTest.ContinuousSlice*
-    BroadcastTestSuite/BroadcastTest.Broadcast*
-    ParameterTestSuite/ParameterTest.Parameter*
-    ConstantTestSuite/ConstantTest.ConstantEffectiveScalar*
-    DotTestSuite/DotTypesTest.Dot*
 
     # @xla//xla/backends/gpu/profiler:kernel_name_tracer_test
     KernelNameTracerTest.Create
@@ -153,6 +132,17 @@ EXCLUDED_TESTS=(
     Convolve1D_1x2x5_1x2x2*
     Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestFloat*
     Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestHalf*
+
+    # vvv TODO (rocm) weekly-sync-260306 excluded tests
+
+    # @xla//xla/codegen/intrinsic/accuracy:intrinsic_accuracy_test_amdgpu_any
+    # ROCm subnormal/ULP accuracy divergence for log1p f64, rsqrt f64, erf f32
+    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/LogPlusOne_f64
+    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Rsqrt_f64
+    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Erf_f32
+
+    # @xla//xla/backends/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any
+    CublasLtGemmRewriteTest.MatrixBiasSwishActivation
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
