@@ -60,9 +60,6 @@ EXCLUDED_TESTS=(
     # @xla//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any
     TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_*
 
-    # @xla//xla/backends/gpu/codegen/triton:fusion_emitter_int4_device_test_amdgpu_any
-    TritonTest.FuseSubchannelDequantizationWithTranspose
-
     # @xla//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_test_amdgpu_any
     TritonNormalizationTest.CanFuseAndEmitDiamondWithBF16Converts
     ElementwiseTestSuiteF16/UnaryElementwiseTest.ElementwiseUnaryOpExecutesCorrectly/f16_cosine
