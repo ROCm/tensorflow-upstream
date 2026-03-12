@@ -39,12 +39,8 @@ namespace {
 TEST(DeviceInfoTest, DeviceInfoMatches) {
   absl::flat_hash_map<std::string, GpuDeviceInfoProto> gpu_specs;
   for (const std::string file_name :
-<<<<<<< HEAD
-       {"mi200"}) {
-=======
        {"a100_pcie_80", "a100_sxm_40", "a100_sxm_80", "a6000", "b200",
         "bmg_g21", "h100_pcie", "h100_sxm", "p100", "v100", "mi200"}) {
->>>>>>> upstream/master
     GpuTargetConfigProto proto;
     std::string spec_string;
     auto path = tsl::testing::XlaSrcRoot();

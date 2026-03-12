@@ -1495,7 +1495,6 @@ xla_test(
     ],
 )
 
-<<<<<<< HEAD
 xla_test(
     name = "convolution_1d_no_vmodule_test",
     timeout = "long",
@@ -1527,8 +1526,7 @@ xla_test(
     ],
 )
 
-=======
->>>>>>> upstream/master
+
 # Run convolution tests with auto-tuning disabled.  This just does a basic
 # sanity check that setting xla_gpu_autotune_level to 0 does not break simple
 # graphs.

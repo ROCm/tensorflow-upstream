@@ -332,13 +332,7 @@ xla_test(
         "gpu_too_many_blocks_test.cc",
     ],
     backends = ["gpu"],
-<<<<<<< HEAD
-    tags = [
-        "pjrt_migration_candidate",
-    ],
-=======
     tags = ["cuda-only"],
->>>>>>> upstream/master
     use_legacy_runtime = True,
     deps = [
         ":gpu_codegen_test",
@@ -358,13 +352,7 @@ xla_test(
         "swap_conv_operands_test.cc",
     ],
     backends = ["gpu"],
-<<<<<<< HEAD
-    tags = [
-        "pjrt_migration_candidate",
-    ],
-=======
     tags = ["cuda-only"],
->>>>>>> upstream/master
     use_legacy_runtime = True,
     deps = [
         ":gpu_codegen_test",

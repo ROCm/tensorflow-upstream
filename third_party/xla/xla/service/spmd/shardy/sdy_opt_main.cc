@@ -82,11 +82,7 @@ int main(int argc, char** argv) {
   xla::sdy::registerSdyRoundTripExportPipeline();
   xla::sdy::registerSdyRoundTripDedupMeshesPass();
   xla::sdy::registerSdyRoundTripShardMapExportPass();
-<<<<<<< HEAD
-  xla::sdy::registerSdyRoundTripCloneManualComputationCallsPass();
-=======
   xla::sdy::registerSdyRoundTripFlattenCallGraphPass();
->>>>>>> upstream/master
   xla::sdy::registerSdyRoundTripShardMapImportPass();
   xla::sdy::registerSdyRoundTripImportPipeline();
   xla::sdy::registerSdyRoundTripTestingPipeline();

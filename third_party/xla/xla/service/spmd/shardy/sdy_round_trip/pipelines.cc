@@ -71,13 +71,7 @@ void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm,
                                    bool enableHloShardingV3) {
   addCommonPreImportPasses(pm, enableConstantImport);
   pm.addPass(createSdyRoundTripImportShardyAttrsPass(enableHloShardingV3));
-<<<<<<< HEAD
-  // TODO(b/430894772): Drop the pass and handle cloning inside shard map import
-  // pass.
-  pm.addPass(createSdyRoundTripCloneManualComputationCallsPass());
-=======
   pm.addPass(createSdyRoundTripFlattenCallGraphPass());
->>>>>>> upstream/master
   pm.addPass(createSdyRoundTripShardMapImportPass());
   pm.addPass(createImportSdyCustomCallsPass());
   pm.addNestedPass<mlir::func::FuncOp>(createOpenWhileFreeVarsShardingPass());

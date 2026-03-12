@@ -3,13 +3,8 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
 load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 load("//tensorflow:pytype.default.bzl", "pytype_strict_contrib_test", "pytype_strict_library")
-<<<<<<< HEAD
-load("//tensorflow:strict.default.bzl", "py_strict_binary", "py_strict_library", "py_strict_test")
-load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable", "pywrap_binaries", "pywrap_library", "tf_python_pybind_extension")
-=======
 load("//tensorflow:tensorflow.bzl", "py_test")
 load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable", "pywrap_binaries", "pywrap_library")
->>>>>>> upstream/master
 load("//tensorflow/core/platform:build_config_root.bzl", "if_pywrap")
 load("//tensorflow/lite:special_rules.bzl", "internal_visibility_allowlist")
 

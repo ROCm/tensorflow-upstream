@@ -602,7 +602,6 @@ ENTRY main {
             HloOpcode::kAllGatherDone);
 }
 
-<<<<<<< HEAD
 class GpuCompilerTestWithAutotuneDb : public GpuCompilerTest {
  public:
   void SetUp() override {
@@ -640,13 +639,10 @@ class GpuCompilerTestWithAutotuneDb : public GpuCompilerTest {
   static void TearDownTestSuite() { AutotunerUtil::ClearAutotuneResults(); }
 };
 
-TEST_F(GpuCompilerTestWithAutotuneDb,
-=======
 // This test ensures that the pathway for using the cuBLAS fallback (forming a
 // Triton fusion and falling back to cuBLAS in the autotuner) is exactly the
 // same as using cuBLAS directly (with Triton disabled).
-TEST_F(GpuCompilerTest,
->>>>>>> upstream/master
+TEST_F(GpuCompilerTestWithAutotuneDb,
        GemmFusionIsNoOpWhenGemmFusionAutotunerFallsBackToCublas) {
   if (!get_cuda_cc().IsAtLeastAmpere()) {
     GTEST_SKIP() << "Autotuning results have only been generated for Ampere "

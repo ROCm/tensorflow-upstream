@@ -134,12 +134,7 @@ py_test(
 py_test(
     name = "tensor_list_test",
     srcs = ["tensor_list_test.py"],
-<<<<<<< HEAD
-    python_version = "PY3",
-    srcs_version = "PY3",
-=======
     strict_deps = True,
->>>>>>> upstream/master
     deps = [
         ":tensor_list",
         #internal proto upb dep

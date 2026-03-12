@@ -90,16 +90,8 @@ py_test(
     name = "framework_test",
     size = "medium",
     srcs = ["framework_test.py"],
-<<<<<<< HEAD
-    python_version = "PY3",
-    srcs_version = "PY3",
-    tags = [], # sync 251102: "no-rocm" tag set
-=======
     strict_deps = True,
-    tags = [
-        "no_rocm",
-    ],
->>>>>>> upstream/master
+    tags = [],
     deps = [
         ":framework",
         # copybara:uncomment "//third_party/py/google/protobuf:use_fast_cpp_protos",

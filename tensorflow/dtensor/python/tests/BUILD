@@ -73,11 +73,7 @@ py_test(
     srcs = [
         "api_test.py",
     ],
-<<<<<<< HEAD
-    python_version = "PY3",
-=======
     strict_deps = True,
->>>>>>> upstream/master
     deps = [
         ":test_util",
         "//tensorflow/dtensor/python:api",
