@@ -676,16 +676,6 @@ py_test(
     ],
 )
 
-# TODO(ecalubaquib): Remove this once the bug b/435507187
-tf_python_pybind_extension(
-    name = "_dummy_pybind",
-    srcs = ["dummy_pybind.cc"],
-    visibility = ["//visibility:private"],
-    deps = [
-        "@pybind11",
-    ],
-)
-
 # Use pywrap_library to avoid duplicate registration of pybind11 modules.
 # A great example on how to use pywrap_library is
 # https://github.com/vam-google/symbol-locations/blob/main/pybind/BUILD
@@ -706,17 +696,7 @@ py_library(
         "//tensorflow/lite/testing:_pywrap_string_util",
         "//tensorflow/lite/tools/optimize/python:_pywrap_modify_model_interface",
         "//tensorflow/lite/tools/optimize/sparsity:format_converter_wrapper_pybind11",
-    ] + select({
-        # This is a dummy pybind module that is never used.
-        # Its to allow using select with pywrap_library till b/435507187 is fixed.
-        # Using this allows a constant number for pywrap_count in pywrap_library.
-        "//conditions:default": [":_dummy_pybind"],
-        # Only include the pywrap_converter_api when disable_tf_lite_py is set
-        # which is only when building under LiteRT repo.
-        "//tensorflow:disable_tf_lite_py": [
-            "//tensorflow/compiler/mlir/lite/python:_pywrap_converter_api",
-        ],
-    }),
+    ],
 )
 
 pywrap_library(
@@ -731,7 +711,7 @@ pywrap_library(
             "//conditions:default": "pywrap_tflite_common.lds",
         }),
     },
-    pywrap_count = 9,
+    pywrap_count = 8,
     visibility = ["//visibility:public"],
     deps = [
         ":tflite_pywrap_deps",
