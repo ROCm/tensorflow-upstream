@@ -632,11 +632,11 @@ class GpuCompilerTestWithAutotuneDb : public GpuCompilerTest {
         contents, {{kCudnnVersionPlaceholder, dnn_version.ToString()}});
 
     TF_EXPECT_OK(tsl::WriteStringToFile(env, tmp_filepath, contents));
-    AutotunerUtil::ClearAutotuneResults();
-    TF_EXPECT_OK(AutotunerUtil::LoadAutotuneResultsFromFile(tmp_filepath));
+    AutotunerCache::ClearAutotuneResults();
+    TF_EXPECT_OK(AutotunerCache::LoadAutotuneResultsFromFile(tmp_filepath));
   }
 
-  static void TearDownTestSuite() { AutotunerUtil::ClearAutotuneResults(); }
+  static void TearDownTestSuite() { AutotunerCache::ClearAutotuneResults(); }
 };
 
 // This test ensures that the pathway for using the cuBLAS fallback (forming a
