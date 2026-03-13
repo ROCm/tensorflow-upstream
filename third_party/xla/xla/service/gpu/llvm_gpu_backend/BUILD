@@ -66,6 +66,7 @@ cc_library(
         "GOOGLE_CUDA=1",
     ]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
+        ":amdgpu_device_lib_data",
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",
@@ -119,7 +120,6 @@ cc_library(
         "@local_config_rocm//rocm:rocm_headers",
         "@llvm-project//llvm:AMDGPUCodeGen",
         "@llvm-project//llvm:AMDGPUAsmParser",
-        ":amdgpu_device_lib_data",
     ]) + if_sycl_is_configured([
         "@spirv_llvm_translator//:spirv_llvm_translator",
     ]),
