@@ -176,8 +176,7 @@ elif [[ "$DISTRO" == "bookworm" ]]; then
     echo "deb [arch=amd64 trusted=yes] http://apt.llvm.org/$DISTRO/ llvm-toolchain-$DISTRO-18 main" | tee /etc/apt/sources.list.d/llvm.list
     apt-get update --allow-insecure-repositories
 
-    # install rocm
-    /setup.packages.sh /devel.packages.rocm.txt
+    /setup.packages.sh /devel.packages.rocm.bookworm.txt
 
     MIOPENKERNELS=$( \
                         apt-cache search --names-only miopen-hip-gfx | \

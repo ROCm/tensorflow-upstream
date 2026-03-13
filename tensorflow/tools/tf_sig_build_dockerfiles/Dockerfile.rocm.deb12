@@ -18,6 +18,7 @@ ENV ROCM_PATH=${ROCM_PATH}
 COPY ${CUSTOM_INSTALL} /${CUSTOM_INSTALL}
 COPY setup.rocm.sh /setup.rocm.sh
 COPY devel.packages.rocm.txt /devel.packages.rocm.txt
+COPY devel.packages.rocm.bookworm.txt /devel.packages.rocm.bookworm.txt
 RUN /setup.rocm.sh $ROCM_VERSION bookworm
 
 # Install various tools.
