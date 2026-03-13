@@ -122,6 +122,12 @@ EXCLUDED_TESTS=(
     UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Rsqrt_f64
     UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Erf_f32
 
+    # vvv TODO (rocm) weekly-sync-260312 excluded tests
+
+    # @xla//xla/backends/gpu/runtime:cub_scan_thunk_test
+    # CUB prefix sum is CUDA-only (no ROCm/hipCUB implementation)
+    CubScanThunkTest.ToProto
+
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
