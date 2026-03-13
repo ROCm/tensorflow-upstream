@@ -332,7 +332,6 @@ xla_test(
         "gpu_too_many_blocks_test.cc",
     ],
     backends = ["gpu"],
-    tags = ["cuda-only"],
     use_legacy_runtime = True,
     deps = [
         ":gpu_codegen_test",
