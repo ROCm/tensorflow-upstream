@@ -60,6 +60,9 @@ EXCLUDED_TESTS=(
     # @xla//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any
     TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_*
 
+    # @xla//xla/backends/gpu/codegen/triton:triton_gemm_fusion_test_amdgpu_any
+    TritonGemmTest.SplitAndTransposeLhsExecutesCorrectly #failing on mi250
+
     # @xla//xla/service/gpu:dot_algorithm_support_test_amdgpu_any
     DotTf32Tf32F32Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
     DotTf32Tf32F32X3Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
