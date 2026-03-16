@@ -116,13 +116,6 @@ EXCLUDED_TESTS=(
 
     # vvv TODO (rocm) weekly-sync-260306 excluded tests
 
-    # @xla//xla/codegen/intrinsic/accuracy:intrinsic_accuracy_test_amdgpu_any
-    # ROCm ULP accuracy divergence on both gfx90a and gfx942
-    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/LogPlusOne_f64
-    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Rsqrt_f64
-    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Erf_f32
-    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Log_f32
-
     # vvv TODO (rocm) weekly-sync-260312 excluded tests
 
     # @xla//xla/backends/gpu/runtime:cub_scan_thunk_test
