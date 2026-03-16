@@ -13,13 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <string>
+
+#include "absl/status/status.h"
+#include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
 #include <forward_list>
 #include <vector>
 
 #include "tensorflow/core/common_runtime/optimization_registry.h"
 #include "tensorflow/core/framework/tensor.pb.h"
 #include "tensorflow/core/graph/node_builder.h"
-#include "tensorflow/core/lib/strings/str_util.h"
 
 namespace tensorflow {
 namespace {
@@ -271,3 +280,5 @@ REGISTER_OPTIMIZATION(OptimizationPassRegistry::POST_PLACEMENT, 0,
 
 }  // namespace
 }  // namespace tensorflow
+
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM

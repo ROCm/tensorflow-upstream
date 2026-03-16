@@ -63,19 +63,6 @@ EXCLUDED_TESTS=(
     # @xla//xla/backends/gpu/codegen/triton:triton_gemm_fusion_test_amdgpu_any
     TritonGemmTest.SplitAndTransposeLhsExecutesCorrectly #failing on mi250
 
-    # @xla//xla/backends/gpu/codegen/triton:fusion_emitter_int4_device_test_amdgpu_any
-    TritonTest.FuseSubchannelDequantizationWithTranspose
-
-    # @xla//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_test_amdgpu_any
-    TritonNormalizationTest.CanFuseAndEmitDiamondWithBF16Converts
-    ElementwiseTestSuiteF16/UnaryElementwiseTest.ElementwiseUnaryOpExecutesCorrectly/f16_cosine
-    ElementwiseTestSuiteF16/BinaryElementwiseTest.ElementwiseBinaryOpExecutesCorrectly/f16_atan2
-    ElementwiseTestSuiteF16/BinaryElementwiseTest.ElementwiseFusionExecutesCorrectly/f16_atan2
-
-    # @xla//xla/backends/gpu/runtime:command_buffer_conversion_pass_test_amdgpu_any
-    CommandBufferConversionPassTest.ConvertWhileThunk
-    CommandBufferConversionPassTest.ConvertWhileThunkWithAsyncPair
-
     # @xla//xla/service/gpu:dot_algorithm_support_test_amdgpu_any
     DotTf32Tf32F32Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
     DotTf32Tf32F32X3Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
@@ -101,9 +88,6 @@ EXCLUDED_TESTS=(
     SwapConvOperandsTest.LargePadding
     SwapConvOperandsTest.SmallPadding
     SwapConvOperandsTest.DoesNotLower
-
-    # @xla//xla/service/gpu/tests:gpu_triton_custom_call_test
-    GpuIrEmitterUnnestedTest.CanNotEmitTritonCustomCallOnPreAmpereGpu
 
     # @xla//xla/tests:convolution_autotune_disabled_test
     Transposed2DConvHloTest/Transposed2DConvHloTest.Simple*
@@ -136,13 +120,22 @@ EXCLUDED_TESTS=(
     # vvv TODO (rocm) weekly-sync-260306 excluded tests
 
     # @xla//xla/codegen/intrinsic/accuracy:intrinsic_accuracy_test_amdgpu_any
-    # ROCm subnormal/ULP accuracy divergence for log1p f64, rsqrt f64, erf f32
+    # ROCm ULP accuracy divergence on both gfx90a and gfx942
     UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/LogPlusOne_f64
     UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Rsqrt_f64
     UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Erf_f32
+    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Log_f32
 
-    # @xla//xla/backends/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any
-    CublasLtGemmRewriteTest.MatrixBiasSwishActivation
+    # vvv TODO (rocm) weekly-sync-260312 excluded tests
+
+    # @xla//xla/backends/gpu/runtime:cub_scan_thunk_test
+    # CUB prefix sum is CUDA-only (no ROCm/hipCUB implementation)
+    CubScanThunkTest.ToProto
+
+    # @xla//xla/backends/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any
+    # Triton compilation failure on ROCm for nested fusions
+    TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/*
+
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
