@@ -153,21 +153,8 @@ TEST_F(XlaCompileLibTest, LoadAutotuneDataGpuDataPresentAndAutotuningEnabled) {
   HloModuleAndMetadata mod;
   mod.hlo_module = std::move(module_);
   auto data = std::make_unique<gpu::GpuBackendSpecificData>();
-<<<<<<< HEAD
-
-  AutotuneResults autotune_results;
-  TF_ASSERT_OK(tsl::ReadTextProto(
-      tsl::Env::Default(),
-      tsl::io::JoinPath(tsl::testing::XlaSrcRoot(),
-                        "../external/xla/xla",
-	                "service", "gpu",
-                        "gpu_compiler_test_autotune_db.textproto"),
-      &autotune_results));
-  data->autotune_results = autotune_results;
-=======
   ComputeAutotuneResults(data->autotune_results.emplace());
   gpu::AutotunerCache::ClearAutotuneResults();
->>>>>>> upstream/master
   mod.backend_specific_data = std::move(data);
 
   DebugOptions opts = mod.hlo_module->config().debug_options();
@@ -185,21 +172,8 @@ TEST_F(XlaCompileLibTest, LoadAutotuneDataGpuDataPresentAndAutotuningDisabled) {
   HloModuleAndMetadata mod;
   mod.hlo_module = std::move(module_);
   auto data = std::make_unique<gpu::GpuBackendSpecificData>();
-<<<<<<< HEAD
-
-  AutotuneResults autotune_results;
-  TF_ASSERT_OK(tsl::ReadTextProto(
-      tsl::Env::Default(),
-      tsl::io::JoinPath(tsl::testing::XlaSrcRoot(),
-                        "../external/xla/xla",
-	                "service", "gpu",
-                        "gpu_compiler_test_autotune_db.textproto"),
-      &autotune_results));
-  data->autotune_results = autotune_results;
-=======
   ComputeAutotuneResults(data->autotune_results.emplace());
   gpu::AutotunerCache::ClearAutotuneResults();
->>>>>>> upstream/master
   mod.backend_specific_data = std::move(data);
 
   DebugOptions opts = mod.hlo_module->config().debug_options();
