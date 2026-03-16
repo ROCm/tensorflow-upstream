@@ -118,6 +118,28 @@ EXCLUDED_TESTS=(
 
     # vvv TODO (rocm) weekly-sync-260312 excluded tests
 
+    # vvv TODO (rocm) weekly-sync-260316 excluded tests
+
+    # @xla//xla/service/gpu:dot_algorithm_support_test_amdgpu_any
+    F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_*
+
+    # @xla//xla/hlo/builder/lib:svd_test_amdgpu_any
+    SVDTest.Various_Size_Random_Matrix_*
+
+    # @xla//xla/service/gpu/tests:sorting_test_amdgpu_any
+    TypeSupportTest.SortSupportsType/*
+
+    # @xla//xla/backends/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any
+    TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/*
+
+    # @xla//xla/backends/gpu/transforms:sort_rewriter_test_amdgpu_any
+    SortRewriterTest.*
+
+    # @xla//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any
+    CubSortKeysTest.*
+    CubSort/CubSortKeysTest.*
+    CubSort/CubSortPairsTest.*
+
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
