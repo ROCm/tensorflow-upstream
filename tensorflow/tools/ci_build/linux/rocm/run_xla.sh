@@ -118,10 +118,6 @@ EXCLUDED_TESTS=(
 
     # vvv TODO (rocm) weekly-sync-260312 excluded tests
 
-    # @xla//xla/backends/gpu/runtime:cub_scan_thunk_test
-    # CUB prefix sum is CUDA-only (no ROCm/hipCUB implementation)
-    CubScanThunkTest.ToProto
-
     # @xla//xla/backends/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any
     # Triton compilation failure on ROCm for nested fusions
     TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/*
