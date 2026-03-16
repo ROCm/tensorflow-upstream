@@ -602,47 +602,10 @@ ENTRY main {
             HloOpcode::kAllGatherDone);
 }
 
-class GpuCompilerTestWithAutotuneDb : public GpuCompilerTest {
- public:
-  void SetUp() override {
-    auto tmp_path = tsl::testing::XlaSrcRoot();
-    tmp_path = tmp_path.erase(tmp_path.length() - 4);
-    std::string path =
-        tsl::io::JoinPath(tmp_path, "external/xla/xla/",
-                          "service", "gpu",
-                          "gpu_compiler_test_autotune_db.textproto");
-
-    tsl::Env* env = tsl::Env::Default();
-    std::string tmp_filepath = ::testing::TempDir();
-    ASSERT_TRUE(env->CreateUniqueFileName(&tmp_filepath, ".textproto"));
-
-    absl::Cleanup cleanup = [&] { CHECK_OK(env->DeleteFile(tmp_filepath)); };
-
-    std::string contents;
-    CHECK_OK(tsl::ReadFileToString(env, path, &contents));
-
-    // The autotuning cache entries depend on the DNN library version, but this
-    // is not relevant for these tests. Therefore we replace the DNN version
-    // with the actual version of the DNN library so that the cache entries
-    // match.
-    stream_executor::SemanticVersion dnn_version =
-        device_description().dnn_version();
-    constexpr absl::string_view kCudnnVersionPlaceholder = "1.2.3";
-    contents = absl::StrReplaceAll(
-        contents, {{kCudnnVersionPlaceholder, dnn_version.ToString()}});
-
-    TF_EXPECT_OK(tsl::WriteStringToFile(env, tmp_filepath, contents));
-    AutotunerCache::ClearAutotuneResults();
-    TF_EXPECT_OK(AutotunerCache::LoadAutotuneResultsFromFile(tmp_filepath));
-  }
-
-  static void TearDownTestSuite() { AutotunerCache::ClearAutotuneResults(); }
-};
-
 // This test ensures that the pathway for using the cuBLAS fallback (forming a
 // Triton fusion and falling back to cuBLAS in the autotuner) is exactly the
 // same as using cuBLAS directly (with Triton disabled).
-TEST_F(GpuCompilerTestWithAutotuneDb,
+TEST_F(GpuCompilerTest,
        GemmFusionIsNoOpWhenGemmFusionAutotunerFallsBackToCublas) {
   if (!get_cuda_cc().IsAtLeastAmpere()) {
     GTEST_SKIP() << "Autotuning results have only been generated for Ampere "
@@ -696,9 +659,7 @@ ENTRY main {
   AutotuneResults results;
   ASSERT_OK(AutotunerCache::SerializeAutotuneResults(&results));
   EXPECT_FALSE(results.results().empty());
-  EXPECT_TRUE(absl::StrContains(results.DebugString(), "CUBLAS_FISSION") ||
-              // CUBLASLT_FISSION is dumpes as GemmKey in the AutotunerResult.
-              absl::StrContains(results.DebugString(), "gemm"));
+  EXPECT_TRUE(absl::StrContains(results.DebugString(), "CUBLAS_FISSION"));
 
   // Triton disabled - this will skip the GemmFusion pass and use cuBLAS.
   DebugOptions triton_disabled_debug_options = GetDebugOptionsForTest();
