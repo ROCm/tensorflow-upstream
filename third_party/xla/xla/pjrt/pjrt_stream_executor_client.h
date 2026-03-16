@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
+#include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -434,8 +435,8 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
                            absl::string_view debug_info) override;
 
-  void WaitForAllocation(se::Stream* stream,
-                         const CommonPjRtRawBuffer& raw_buffer);
+  absl::Status WaitForAllocation(se::Stream* stream,
+                                 const CommonPjRtRawBuffer& raw_buffer);
 
   void LaunchOnDevice(PjRtDevice* device,
                       absl::AnyInvocable<void()> execute_fn) const override;
@@ -563,7 +564,8 @@ class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
       const ExecuteOptions& options,
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> inputs,
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> results,
-      PjRtDeviceEventSet& extra_deps, PjRtDeviceEventSet& control_deps,
+      std::unique_ptr<PjRtDeviceEventSet> extra_deps,
+      std::unique_ptr<PjRtDeviceEventSet> control_deps,
       bool is_predetermined_error, bool fill_future) &&
       override;
 
@@ -650,6 +652,9 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
         std::make_optional<InputHloSnapshotBits>(InputHloSnapshotBits{
             HloModuleProto(std::move(hlo_module)), std::move(debug_options)});
   }
+
+  absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>> GetAbiVersion()
+      const override;
 
  protected:
   bool parameter_is_tupled_arguments() const {

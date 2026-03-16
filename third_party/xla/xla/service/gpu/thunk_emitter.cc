@@ -78,8 +78,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/convolution_thunk.h"
 #include "xla/backends/gpu/runtime/copy_done_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
-#include "xla/backends/gpu/runtime/cub_scan_thunk.h"
-#include "xla/backends/gpu/runtime/cub_sort_thunk.h"
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
@@ -372,9 +370,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceToDynamic(
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCommandBufferThunk(
     const HloInstruction* instr) {
   // Spawn a new ThunkEmitter to emit thunks for the command buffer computation.
-  // Then convert emitted thunks to a sequence of CommandBufferCmd. The
-  // resulting thunk added to the thunk sequence is a CommandBufferThunk. Thunks
-  // emitted from the command buffer computation are discarded.
+  // Then convert emitted thunks to a sequence of Commands. The resulting thunk
+  // added to the thunk sequence is a CommandBufferThunk. Thunks emitted from
+  // the command buffer computation are discarded.
   DCHECK_EQ(instr->called_computations().size(), 1);
   const HloComputation* command_buffer = instr->called_computations().front();
   TF_ASSIGN_OR_RETURN(auto thunk_sequence, EmitHloComputation(command_buffer));
@@ -820,70 +818,6 @@ absl::StatusOr<ShapedSlice> ThunkEmitter::GetShapedSliceForHlo(
   return ShapedSlice{slice, shape};
 }
 
-absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCubDeviceRadixSort(
-    const HloCustomCallInstruction* instr) {
-  if (instr->operand_count() != 1 && instr->operand_count() != 2) {
-    return Internal("Invalid number of operands for radix sort");
-  }
-
-  absl::InlinedVector<ShapedSlice, 2> operands;
-  for (int i = 0; i < instr->operand_count(); ++i) {
-    TF_ASSIGN_OR_RETURN(ShapedSlice operand,
-                        GetShapedSliceForHlo(instr->operand(i), {}));
-    operands.push_back(operand);
-  }
-
-  absl::InlinedVector<ShapedSlice, 2> results;
-  TF_ASSIGN_OR_RETURN(ShapedSlice result, GetShapedSliceForHlo(instr, {0}));
-  results.push_back(result);
-
-  BufferAllocation::Slice scratch;
-  if (instr->operand_count() == 1) {
-    TF_ASSIGN_OR_RETURN(scratch, GetAllocationSliceForHlo(instr, {1}));
-  } else {
-    TF_ASSIGN_OR_RETURN(ShapedSlice result, GetShapedSliceForHlo(instr, {1}));
-    results.push_back(result);
-    TF_ASSIGN_OR_RETURN(scratch, GetAllocationSliceForHlo(instr, {2}));
-  }
-
-  TF_ASSIGN_OR_RETURN(xla::SortOptions options,
-                      instr->backend_config<xla::SortOptions>());
-  const Shape& operand_shape = instr->operand(0)->shape();
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<CubSortThunk> thunk,
-      CubSortThunk::Create(
-          Thunk::ThunkInfo::WithProfileAnnotation(
-              instr, ir_emitter_context_->GetNextThunkId()),
-          operands, results, scratch, options.descending(),
-          Product(operand_shape.dimensions()) /
-              operand_shape.dimensions(operand_shape.dimensions().size() - 1),
-          ir_emitter_context_->platform_name()));
-  return GetThunkSequence(std::move(thunk));
-}
-
-absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCubDeviceScan(
-    const HloCustomCallInstruction* instr) {
-  absl::InlinedVector<ShapedSlice, 2> results;
-  TF_ASSIGN_OR_RETURN(ShapedSlice result, GetShapedSliceForHlo(instr, {0}));
-  results.push_back(result);
-
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice scratch,
-                      GetAllocationSliceForHlo(instr, {1}));
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice input,
-                      GetAllocationSliceForHlo(instr->operand(0), {}));
-
-  const Shape& operand_shape = instr->operand(0)->shape();
-  int64_t num_elements = Product(operand_shape.dimensions());
-
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<CubScanThunk> thunk,
-      CubScanThunk::Create(Thunk::ThunkInfo::WithProfileAnnotation(
-                               instr, ir_emitter_context_->GetNextThunkId()),
-                           operand_shape.element_type(), input, result.slice,
-                           scratch, num_elements));
-
-  return GetThunkSequence(std::move(thunk));
-}
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
     const HloCustomCallInstruction* instr) {
@@ -2010,7 +1944,7 @@ static absl::flat_hash_map<std::string, std::string> ConvertFrontendAttributes(
 
 static std::optional<GlobalDeviceId> DeviceConstraint(
     const HloInstruction* hlo) {
-  if (hlo->has_sharding() && hlo->sharding().HasUniqueDevice()) {
+  if (hlo->has_sharding() && hlo->sharding().IsSingleDevice()) {
     return GlobalDeviceId(hlo->sharding().GetUniqueDevice());
   }
   return std::nullopt;
@@ -2544,13 +2478,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallSwitch(
   if (IsTriangularSolve(*hlo)) {
     return EmitTriangularSolveCustomCall(hlo);
   }
-  if (IsCubDeviceRadixSort(*hlo)) {
-    return EmitCubDeviceRadixSort(custom_call);
-  }
-  if (IsCubDeviceScan(*hlo)) {
-    return EmitCubDeviceScan(custom_call);
-  }
-  if (custom_call->custom_call_target() == "PadToStatic") {
+  // CUB sort is handled as a generic FFI custom call via CustomCallThunk.
+  // See xla.gpu.ext.cub_sort_keys and xla.gpu.ext.cub_sort_pairs handlers.
+  if (hlo->custom_call_target() == "PadToStatic") {
     return EmitPadToStatic(custom_call);
   }
   if (hlo->custom_call_target() == "SliceToDynamic") {
