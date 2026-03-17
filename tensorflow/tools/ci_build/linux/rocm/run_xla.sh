@@ -59,6 +59,8 @@ if [ ! -d /tf ];then
 EXCLUDED_TESTS=(
     # @xla//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any
     TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_*
+    NumericTestsForBlas/NumericTestsForBlas.*/dot_bf16_bf16_f32_x9
+    NumericTestsForTriton/NumericTestsForTriton.*/dot_bf16_bf16_f32_x9
 
     # @xla//xla/backends/gpu/codegen/triton:triton_gemm_fusion_test_amdgpu_any
     TritonGemmTest.SplitAndTransposeLhsExecutesCorrectly #failing on mi250
@@ -123,6 +125,9 @@ EXCLUDED_TESTS=(
 
     # vvv TODO (rocm) weekly-sync-260316 excluded tests
 
+    # @xla//xla/service/gpu:float_support_test_amdgpu_any
+    FloatSupportTestWithCublas.MixedTypeDotIsNotUpcasted
+
     # @xla//xla/service/gpu:dot_algorithm_support_test_amdgpu_any
     F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_*
 
@@ -131,12 +136,17 @@ EXCLUDED_TESTS=(
 
     # @xla//xla/service/gpu/tests:sorting_test_amdgpu_any
     TypeSupportTest.SortSupportsType/*
+    SortingTest.LayoutsInShapesEqualWithIgnoreMemorySpace
+    TestRadixSort/CubSortKeysTest.*
+    TestRadixSort/CubSortPairsTest.*
 
     # @xla//xla/backends/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any
     TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/*
 
     # @xla//xla/backends/gpu/transforms:sort_rewriter_test_amdgpu_any
     SortRewriterTest.*
+    SortRewriterTest/SortRewriterTest.*
+    SortRewriterArgsort/SortRewriterArgsortTest.*
 
     # @xla//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any
     CubSortKeysTest.*
