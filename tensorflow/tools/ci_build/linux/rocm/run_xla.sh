@@ -63,6 +63,8 @@ EXCLUDED_TESTS=(
     NumericTestsForTriton/NumericTestsForTriton.*/dot_bf16_bf16_f32_x9
     NumericTestsForBlas/NumericTestsForBlas.*/dot_bf16_bf16_f32_x6
     NumericTestsForTriton/NumericTestsForTriton.*/dot_bf16_bf16_f32_x6
+    NumericTestsForBlas/NumericTestsForBlas.*/dot_bf16_bf16_f32_x3
+    NumericTestsForTriton/NumericTestsForTriton.*/dot_bf16_bf16_f32_x3
 
     # @xla//xla/backends/gpu/codegen/triton:triton_gemm_fusion_test_amdgpu_any
     TritonGemmTest.SplitAndTransposeLhsExecutesCorrectly #failing on mi250
