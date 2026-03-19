@@ -1,0 +1,28 @@
+{
+  "allowedTools": [
+    "Edit",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Bash(git *)",
+    "Bash(date *)",
+    "Bash(echo *)",
+    "Bash(grep *)",
+    "Bash(ls *)",
+    "Bash(test *)",
+    "Bash(bash -n *)",
+    "Bash(mkdir *)",
+    "Bash(chmod *)",
+    "Bash(./build_rocm_python3*)",
+    "Bash(.claude/skills/sync-test-check/scripts/run_single_xla_test.sh *)",
+    "Bash(.claude/skills/sync-test-check/scripts/run_single_gpu_test.sh *)",
+    "Bash(.claude/skills/sync-triage-test/scripts/run_single_xla_rbe_test.sh *)",
+    "Bash(yes *)",
+    "Bash(python3 *)",
+    "Bash(which *)",
+    "Bash(rocm-smi *)",
+    "Bash(rocminfo *)",
+    "Bash(bazel *)"
+  ]
+}
