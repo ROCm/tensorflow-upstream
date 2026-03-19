@@ -602,47 +602,10 @@ ENTRY main {
             HloOpcode::kAllGatherDone);
 }
 
-class GpuCompilerTestWithAutotuneDb : public GpuCompilerTest {
- public:
-  void SetUp() override {
-    auto tmp_path = tsl::testing::XlaSrcRoot();
-    tmp_path = tmp_path.erase(tmp_path.length() - 4);
-    std::string path =
-        tsl::io::JoinPath(tmp_path, "external/xla/xla/",
-                          "service", "gpu",
-                          "gpu_compiler_test_autotune_db.textproto");
-
-    tsl::Env* env = tsl::Env::Default();
-    std::string tmp_filepath = ::testing::TempDir();
-    ASSERT_TRUE(env->CreateUniqueFileName(&tmp_filepath, ".textproto"));
-
-    absl::Cleanup cleanup = [&] { CHECK_OK(env->DeleteFile(tmp_filepath)); };
-
-    std::string contents;
-    CHECK_OK(tsl::ReadFileToString(env, path, &contents));
-
-    // The autotuning cache entries depend on the DNN library version, but this
-    // is not relevant for these tests. Therefore we replace the DNN version
-    // with the actual version of the DNN library so that the cache entries
-    // match.
-    stream_executor::SemanticVersion dnn_version =
-        device_description().dnn_version();
-    constexpr absl::string_view kCudnnVersionPlaceholder = "1.2.3";
-    contents = absl::StrReplaceAll(
-        contents, {{kCudnnVersionPlaceholder, dnn_version.ToString()}});
-
-    TF_EXPECT_OK(tsl::WriteStringToFile(env, tmp_filepath, contents));
-    AutotunerCache::ClearAutotuneResults();
-    TF_EXPECT_OK(AutotunerCache::LoadAutotuneResultsFromFile(tmp_filepath));
-  }
-
-  static void TearDownTestSuite() { AutotunerCache::ClearAutotuneResults(); }
-};
-
 // This test ensures that the pathway for using the cuBLAS fallback (forming a
 // Triton fusion and falling back to cuBLAS in the autotuner) is exactly the
 // same as using cuBLAS directly (with Triton disabled).
-TEST_F(GpuCompilerTestWithAutotuneDb,
+TEST_F(GpuCompilerTest,
        GemmFusionIsNoOpWhenGemmFusionAutotunerFallsBackToCublas) {
   if (!get_cuda_cc().IsAtLeastAmpere()) {
     GTEST_SKIP() << "Autotuning results have only been generated for Ampere "
@@ -682,6 +645,8 @@ ENTRY main {
   triton_enabled_debug_options.clear_xla_gpu_experimental_autotune_backends();
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::CUBLAS_FISSION);
+  triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
+      autotuner::Backend::CUBLASLT_FISSION);
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::NATIVE_EMITTER);
   config.set_debug_options(triton_enabled_debug_options);
@@ -743,6 +708,8 @@ ENTRY main {
   triton_enabled_debug_options.clear_xla_gpu_experimental_autotune_backends();
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::CUBLAS_FISSION);
+  triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
+      autotuner::Backend::CUBLASLT_FISSION);
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::NATIVE_EMITTER);
   config.set_debug_options(triton_enabled_debug_options);
@@ -1481,12 +1448,23 @@ TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
   VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
 }
 
-TEST_F(PassOrderTest, HoistFusedBitcastsRunsAfterAutotuner) {
-  VerifyPassRunsAtLeastOnceBefore("autotuner", "hoist-fused-bitcasts");
+TEST_F(PassOrderTest, HoistFusedBitcastsRunsAfterGemmFusion) {
+  if (!get_cuda_cc().IsAtLeastAmpere()) {
+    GTEST_SKIP() << "GemmFusion requires Ampere+ to run.";
+  }
+  VerifyPassRunsAtLeastOnceBefore("triton-gemm-rewriter",
+                                  "hoist-fused-bitcasts");
 }
 
-TEST_F(PassOrderTest, ConvertTritonGemmConfigRunsAfterHoistFusedBitcasts) {
-  VerifyPassOrder("hoist-fused-bitcasts", "convert_triton_gemm_config");
+TEST_F(PassOrderTest, AutotunerRunsAfterHoistFusedBitcasts) {
+  if (!get_cuda_cc().IsAtLeastAmpere()) {
+    GTEST_SKIP() << "GemmFusion requires Ampere+ to run.";
+  }
+  VerifyPassRunsAtLeastOnceBefore("hoist-fused-bitcasts", "autotuner");
+}
+
+TEST_F(PassOrderTest, ConvertTritonGemmConfigRunsAfterAutotuner) {
+  VerifyPassRunsAtLeastOnceBefore("autotuner", "convert_triton_gemm_config");
 }
 
 TEST_F(PassOrderTest,
@@ -1946,9 +1924,9 @@ ENTRY main {
         // LLVM
         EXPECT_THAT(kinds, ElementsAre(Thunk::Kind::kCommandBuffer));
       } else if (kinds.size() == 4) {
-        // CUBSort
+        // CUB sort via FFI custom call
         EXPECT_THAT(kinds,
-                    ElementsAre(Thunk::Kind::kKernel, Thunk::Kind::kCubSort,
+                    ElementsAre(Thunk::Kind::kKernel, Thunk::Kind::kCustomCall,
                                 Thunk::Kind::kKernel, Thunk::Kind::kKernel));
       } else {
         FAIL() << "Unexpected thunk sequence size: " << kinds.size();

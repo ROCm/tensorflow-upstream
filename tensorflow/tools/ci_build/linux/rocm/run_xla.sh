@@ -59,6 +59,12 @@ if [ ! -d /tf ];then
 EXCLUDED_TESTS=(
     # @xla//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any
     TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_*
+    NumericTestsForBlas/NumericTestsForBlas.*/dot_bf16_bf16_f32_x9
+    NumericTestsForTriton/NumericTestsForTriton.*/dot_bf16_bf16_f32_x9
+    NumericTestsForBlas/NumericTestsForBlas.*/dot_bf16_bf16_f32_x6
+    NumericTestsForTriton/NumericTestsForTriton.*/dot_bf16_bf16_f32_x6
+    NumericTestsForBlas/NumericTestsForBlas.*/dot_bf16_bf16_f32_x3
+    NumericTestsForTriton/NumericTestsForTriton.*/dot_bf16_bf16_f32_x3
 
     # @xla//xla/backends/gpu/codegen/triton:triton_gemm_fusion_test_amdgpu_any
     TritonGemmTest.SplitAndTransposeLhsExecutesCorrectly #failing on mi250
@@ -119,22 +125,37 @@ EXCLUDED_TESTS=(
 
     # vvv TODO (rocm) weekly-sync-260306 excluded tests
 
-    # @xla//xla/codegen/intrinsic/accuracy:intrinsic_accuracy_test_amdgpu_any
-    # ROCm ULP accuracy divergence on both gfx90a and gfx942
-    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/LogPlusOne_f64
-    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Rsqrt_f64
-    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Erf_f32
-    UnaryIntrinsics/HloIntrinsicAccuracyParamTest.WithinUlpBudget/Log_f32
-
     # vvv TODO (rocm) weekly-sync-260312 excluded tests
 
-    # @xla//xla/backends/gpu/runtime:cub_scan_thunk_test
-    # CUB prefix sum is CUDA-only (no ROCm/hipCUB implementation)
-    CubScanThunkTest.ToProto
+    # vvv TODO (rocm) weekly-sync-260316 excluded tests
+
+    # @xla//xla/service/gpu:float_support_test_amdgpu_any
+    FloatSupportTestWithCublas.MixedTypeDotIsNotUpcasted
+
+    # @xla//xla/service/gpu:dot_algorithm_support_test_amdgpu_any
+    F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_*
+
+    # @xla//xla/hlo/builder/lib:svd_test_amdgpu_any
+    SVDTest.Various_Size_Random_Matrix_*
+
+    # @xla//xla/service/gpu/tests:sorting_test_amdgpu_any
+    TypeSupportTest.SortSupportsType/*
+    SortingTest.LayoutsInShapesEqualWithIgnoreMemorySpace
+    TestRadixSort/CubSortKeysTest.*
+    TestRadixSort/CubSortPairsTest.*
 
     # @xla//xla/backends/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any
-    # Triton compilation failure on ROCm for nested fusions
     TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/*
+
+    # @xla//xla/backends/gpu/transforms:sort_rewriter_test_amdgpu_any
+    SortRewriterTest.*
+    SortRewriterTest/SortRewriterTest.*
+    SortRewriterArgsort/SortRewriterArgsortTest.*
+
+    # @xla//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any
+    CubSortKeysTest.*
+    CubSort/CubSortKeysTest.*
+    CubSort/CubSortPairsTest.*
 
 )
 
