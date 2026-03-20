@@ -32,7 +32,7 @@ namespace xla {
 Compiler::TargetConfig::TargetConfig(se::StreamExecutor* s)
     : device_description(s->GetDeviceDescription()),
       platform_name(s->GetPlatform()->Name()),
-      device_description_str(s->GetDeviceDescription().name()) {
+      device_description_str(s->GetDeviceDescription().rocm_compute_capability().gcn_arch_name()) {
   se::dnn::DnnSupport* dnn = s->AsDnn();
   if (dnn != nullptr) {
     absl::StatusOr<se::dnn::VersionInfo> dnn_version = dnn->GetVersion();

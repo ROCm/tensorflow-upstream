@@ -55,7 +55,7 @@ if [ ! -d /tf ];then
 	mkdir /tf
 fi
  
-bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/cpu.bazelrc test \
+bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
 	--config=sigbuild_local_cache \
 	--config=rocm \
 	--config=xla_cpp_filters \
