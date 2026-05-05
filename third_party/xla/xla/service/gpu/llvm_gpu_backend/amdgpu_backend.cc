@@ -531,12 +531,7 @@ RegisterSpillInfo ExtractRegisterSpillingFromHsaco(
 // TargetMachine for the AMDGPU target.
 absl::StatusOr<std::string> EmitModuleToHsaco(
     llvm::Module* module, llvm::TargetMachine* target_machine,
-<<<<<<< HEAD
-    const DebugOptions& debug_options, bool keep_tempfiles,
-    llvm_ir::LLVMCommandLineOptionsLock& llvm_lock) {
-=======
     const DebugOptions& debug_options) {
->>>>>>> upstream/master
   auto* env = tsl::Env::Default();
   std::vector<std::string> tempdir_vector;
   env->GetLocalTempDirectories(&tempdir_vector);
@@ -593,13 +588,9 @@ absl::StatusOr<std::string> EmitModuleToHsaco(
 
   if (debug_options.xla_gpu_use_inprocess_lld()) {
 #ifdef HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY
-<<<<<<< HEAD
-    std::array<const char*, 7> args{
-=======
     static absl::Mutex lld_mu(absl::kConstInit);
 
     std::initializer_list<const char*> args{
->>>>>>> upstream/master
         "ld.lld",           "--threads=1",       "-shared",
         "--no-undefined",   isabin_path.c_str(), "-o",
         hsaco_path.c_str(),
@@ -609,7 +600,7 @@ absl::StatusOr<std::string> EmitModuleToHsaco(
     llvm::raw_string_ostream os(error_message);
     lld::Result result;
     {
-      llvm_lock.UpgradeToExclusiveAccessToRawLLVMCommandLine();
+      absl::MutexLock lock(&lld_mu);
       result =
           lld::lldMain(args, llvm::nulls(), os, {{lld::Gnu, &lld::elf::link}});
     }
@@ -694,10 +685,11 @@ std::string MapGCNArchNameTokenToFeatureStr(const std::string& token,
                                             const std::string& gfx) {
   if (token == "sramecc+") {
     return "+sramecc";
-  } else if (token == "sramecc-") {
-    if (gfx == "gfx90a" || gfx == "gfx942" || gfx == "gfx1101" ||
-        gfx == "gfx1102" || gfx == "gfx1200" || gfx == "gfx1201")
+  }
+  if (token == "sramecc-") {
+    if (gfx == "gfx90a" || gfx == "gfx942") {
       return "";
+    }
     return "-sramecc";
   }
   if (token == "xnack+") {
@@ -1075,67 +1067,10 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
     cache.Insert(binary_hash, bitcode_size, hsaco_temp_path,
                  cache.HsacoFilePath(hash_str), *compile_status);
   }
-<<<<<<< HEAD
-
-  bool keep_tempfiles = false;
-  TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_KEEP_XLA_TEMPFILES",
-                                      /*default_val=*/false, &keep_tempfiles));
-  TF_ASSIGN_OR_RETURN(HsacoFileResult file_result,
-                      CompileToHsacoAndReturnFilePath(
-                          module, gpu_version, debug_options, keep_tempfiles,
-                          llvm_lock));
-
-  // Read HSACO.
-  std::ifstream hsaco_file(file_result.hsaco_path,
-                           std::ios::binary | std::ios::ate);
-  std::ifstream::pos_type hsaco_file_size = hsaco_file.tellg();
-  hsaco.resize(hsaco_file_size);
-  hsaco_file.seekg(0, std::ios::beg);
-  hsaco_file.read(reinterpret_cast<char*>(hsaco.data()), hsaco_file_size);
-  hsaco_file.close();
-  if (!keep_tempfiles) {
-    remove(file_result.hsaco_path.c_str());
-  }
-  HsacoCache::Add(str, hash, gcn_arch_name, hsaco);
-
-  return HsacoResult{std::move(hsaco), std::move(file_result.module_stats)};
-}
-
-absl::StatusOr<HsacoFileResult> CompileToHsacoAndReturnFilePath(
-    llvm::Module* module, se::GpuComputeCapability gpu_version,
-    const DebugOptions& debug_options, bool keep_tempfiles,
-    llvm_ir::LLVMCommandLineOptionsLock& llvm_lock) {
-  static absl::once_flag backend_init_flag;
-  // TODO(rocm) Ideally this would be refreshed if xla_gpu_cuda_data_dir
-  // changes.
-  static std::string rocdl_dir_path;  // NOLINT: static/global vars forbidden
-  absl::call_once(backend_init_flag, AMDGPUBackendInit, debug_options,
-                  rocdl_dir_path);
-
-  llvm::Triple default_target_triple("amdgcn--amdhsa-amdgiz");
-  // Construct LLVM TargetMachine for AMDGPU.
-  std::unique_ptr<llvm::TargetMachine> target_machine =
-      AMDGPUGetTargetMachine(default_target_triple, gpu_version, debug_options);
-
-  // Link with ROCm-Device-Libs, and optimize the LLVM module.
-  TF_RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
-      module, gpu_version, debug_options, rocdl_dir_path,
-      AMDGPUTargetModuleLinker, default_target_triple, target_machine.get(),
-      kAMDGPUInlineThreshold));
-
-  // Lower optimized LLVM module to HSA code object.
-  TF_ASSIGN_OR_RETURN(EmitResult emit_result,
-                      EmitModuleToHsaco(module, target_machine.get(),
-                                        debug_options, keep_tempfiles,
-                                        llvm_lock));
-  return HsacoFileResult{std::move(emit_result.hsaco_path),
-                         emit_result.spill_info.ToModuleStats()};
-=======
   if (!cache.KeepTempFiles()) {
     std::remove(hsaco_temp_path.c_str());
   }
   return compile_status;
->>>>>>> upstream/master
 }
 
 }  // namespace amdgpu

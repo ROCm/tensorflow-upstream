@@ -17,9 +17,6 @@ glob_lit_tests(
         "layout_optimization_to_nhwc.mlir": "medium",
     },
     tags_override = {
-<<<<<<< HEAD
-        "tf-reduce-identity.mlir": ["no_windows"],
-=======
         "optimize.mlir": ["no_rocm"],
         "tf_optimize.mlir": ["no_rocm"],
         # TODO(b/495279482): Remove no_oss once the compiler crash is fixed.
@@ -27,7 +24,6 @@ glob_lit_tests(
             "no_windows",
             "no_oss",
         ],
->>>>>>> upstream/master
     },
     test_file_exts = ["mlir"],
 )

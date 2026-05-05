@@ -54,26 +54,7 @@ namespace xla::gpu {
 // clique have a well defined total execution order, enforced with events.
 TSL_LIB_GTL_DEFINE_INT_TYPE(CommunicationId, uint64_t);
 
-<<<<<<< HEAD
-bool IsP2PStreamKind(AsyncStreamKind stream_kind);
-
-inline constexpr int64_t kAsyncStreamTotal =
-    static_cast<int64_t>(AsyncStreamKind::ASYNC_STREAM_KIND_MEMCPYP2P) + 1;
-
-// Strongly-typed wrapper to represent collective stream ID.
-TSL_LIB_GTL_DEFINE_INT_TYPE(CollectiveStreamId, uint64_t);
-
-// Assigns a unique ID to a stream for asynchronous or synchronous execution.
-// These IDs can be used, for example, to look up the NCCL communicator.
-CollectiveStreamId GetCollectiveStreamId(
-    bool is_async, CollectiveStreamId stream_id = CollectiveStreamId(1),
-    AsyncStreamKind stream_kind =
-        AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
-
 // StrJoin for device groups that shortens long list of devices for readbility.
-=======
-// StrJoin for device groups that shortens long list of devices for readability.
->>>>>>> upstream/master
 std::string HumanReadableDeviceGroups(
     absl::Span<const std::vector<GlobalDeviceId>> device_groups,
     absl::string_view separator = ",", size_t first = 2, size_t last = 1);

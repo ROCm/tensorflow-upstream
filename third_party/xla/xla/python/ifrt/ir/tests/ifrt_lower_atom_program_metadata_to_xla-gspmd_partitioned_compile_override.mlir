@@ -69,28 +69,7 @@ module @arg_unspecified_sharding attributes {ifrt.num_devices = 2, ifrt.compile_
 
 // -----
 
-<<<<<<< HEAD
-// CHECK-LABEL: @arg_unspecified_sharding_sdy_partitioned
-module @arg_unspecified_sharding_sdy_partitioned attributes {ifrt.num_devices = 2, ifrt.is_sdy_partitioned} {
-  // CHECK: %arg0: tensor<2x2xi32>
-  // CHECK-SAME: {
-  // CHECK-NOT:    mhlo.sharding
-  // CHECK-DAG:    ifrt.sharding = #ifrt.sharding_param<2x1 to [0] on 2>
-  // CHECK-SAME: }
-  // CHECK: %arg1: tensor<2x2xi32> {ifrt.sharding = #ifrt.sharding_unspecified})
-  func.func @main(
-      %arg0: tensor<2x2xi32> {
-        ifrt.sharding=#ifrt.sharding_param<2x1 to [0] on 2>},
-      %arg1: tensor<2x2xi32> {ifrt.sharding=#ifrt.sharding_unspecified}) {
-    return
-  }
-}
-
-// -----
-
-=======
 // CHECK: #sp = #ifrt.sharding_param<2x1 to [0] on 2>
->>>>>>> upstream/master
 // CHECK-LABEL: @result_metadata
 module @result_metadata attributes {ifrt.num_devices = 2, ifrt.compile_options_key = "test_override"} {
   // CHECK: -> (tensor<2x2xi32>
@@ -111,30 +90,7 @@ module @result_metadata attributes {ifrt.num_devices = 2, ifrt.compile_options_k
 
 // -----
 
-<<<<<<< HEAD
-// CHECK-LABEL: @result_metadata_sdy_partitioned
-module @result_metadata_sdy_partitioned attributes {ifrt.num_devices = 2, ifrt.is_sdy_partitioned} {
-  // CHECK: -> (tensor<2x2xi32>
-  // CHECK-SAME: {
-  // CHECK-NOT:    mhlo.sharding
-  // CHECK-DAG:    ifrt.sharding = #ifrt.sharding_param<2x1 to [0] on 2>
-  // CHECK-DAG:    ifrt.memory_kind = "device"
-  // CHECK-DAG:    mhlo.memory_kind = "device"
-  // CHECK-SAME: }
-  func.func @main()
-      -> (tensor<2x2xi32> {
-        ifrt.sharding=#ifrt.sharding_param<2x1 to [0] on 2>,
-        ifrt.memory_kind = "device"}) {
-    %0 = mhlo.constant dense<1> : tensor<2x2xi32>
-    return %0 : tensor<2x2xi32>
-  }
-}
-
-// -----
-
-=======
 // CHECK: #sp = #ifrt.sharding_param<2x1 to [0] on 2>
->>>>>>> upstream/master
 // CHECK-LABEL: @result_unspecified_sharding
 module @result_unspecified_sharding attributes {ifrt.num_devices = 2, ifrt.compile_options_key = "test_override"} {
   // CHECK: -> (tensor<2x2xi32>

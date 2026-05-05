@@ -335,22 +335,12 @@ class MatrixSolveOpGpu : public AsyncOpKernel {
                                pivots_mat.data(), transposed_rhs_ptrs_base, n,
                                &host_info, batch_size),
           done);
-<<<<<<< HEAD
-
-      OP_REQUIRES_ASYNC(
-          context, host_info == 0,
-          errors::InvalidArgument("The ", -host_info,
-                                  "'th argument to cublas*getrsBatched had "
-                                  "an illegal value."),
-          done);
-=======
       OP_REQUIRES_ASYNC(context, host_info == 0,
                         absl::InvalidArgumentError(absl::StrCat(
                             "The ", -host_info,
                             "'th argument to cublas*getrsBatched had "
                             "an illegal value.")),
                         done);
->>>>>>> upstream/master
     } else {
       dev_info.push_back(solver->GetDeviceLapackInfo(batch_size, "getrs"));
       for (int batch = 0; batch < batch_size; ++batch) {

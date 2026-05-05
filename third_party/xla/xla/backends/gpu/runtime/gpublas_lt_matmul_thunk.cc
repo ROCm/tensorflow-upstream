@@ -195,14 +195,6 @@ absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(
     workspace = allocs.GetDeviceAddress(workspace_->slice);
   }
 
-<<<<<<< HEAD
-
-  return plan->ExecuteOnStream(
-      stream, allocs.GetDeviceAddress(a_.slice),
-      allocs.GetDeviceAddress(b_.slice), allocs.GetDeviceAddress(c_.slice),
-      allocs.GetDeviceAddress(d_.slice), bias, aux, a_scale, b_scale, c_scale,
-      d_scale, d_amax, workspace);
-=======
   if (is_grouped()) {
     if (!group_sizes_.has_value()) {
       return absl::InternalError(
@@ -225,7 +217,6 @@ absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(
         allocs.GetDeviceAddress(d_.slice), bias, aux, a_scale, b_scale, c_scale,
         d_scale, d_amax, workspace);
   }
->>>>>>> upstream/master
 }
 
 absl::StatusOr<se::gpu::BlasLt::MatmulPlan*>

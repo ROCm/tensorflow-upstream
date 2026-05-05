@@ -679,45 +679,6 @@ xla_test(
     ],
 )
 
-<<<<<<< HEAD
-xla_test(
-    name = "gpu_device_info_test",
-    srcs = ["gpu_device_info_test.cc"],
-    backends = ["gpu"],
-    data = ["//xla/backends/gpu/target_config:all_gpu_specs"],
-    # TODO(intel-tf): Implement device description for oneAPI and enable this test.
-    tags = ["no-oneapi"],
-    deps = [
-        "//xla/service:platform_util",
-        "//xla/stream_executor:device_description",
-        "//xla/stream_executor:device_description_proto_cc",
-        "//xla/stream_executor:platform",
-        "//xla/stream_executor:platform_manager",
-        "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/lib/core:status_test_util",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/strings",
-        "@com_google_googletest//:gtest",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-    ],
-    local_defines = if_cuda_is_configured([
-        'GPU_SPEC_FILE_NAMES=(std::string[]){\\"a100_pcie_80\\", \\"a100_sxm_40\\", \
-         \\"a100_sxm_80\\", \\"a6000\\", \\"h100_pcie\\", \\"h100_sxm\\", \\"p100\\", \\"v100\\"}',
-         'PLATFORM_NAME=\\"CUDA\\"'
-    ]) + if_rocm_is_configured([
-        'GPU_SPEC_FILE_NAMES=(std::string[]){\\"mi200\\"}',
-        'PLATFORM_NAME=\\"ROCM\\"'
-    ]),
-)
-
-=======
->>>>>>> upstream/master
 tf_proto_library(
     name = "tma_metadata_proto",
     srcs = ["tma_metadata.proto"],

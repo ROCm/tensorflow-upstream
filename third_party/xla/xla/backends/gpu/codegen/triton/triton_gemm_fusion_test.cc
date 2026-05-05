@@ -490,13 +490,8 @@ ENTRY entry {
 
   const HloFusionInstruction* fusion1 = Cast<HloFusionInstruction>(
       module1_and_metadata.computation->FusionInstruction());
-<<<<<<< HEAD
-    EXPECT_THAT(
-      TritonWrapper("test_fn", fusion1, se::GpuComputeCapability{cc},
-=======
   EXPECT_THAT(
       TritonWrapper("test_fn", *fusion1, se::GpuComputeCapability{cc},
->>>>>>> upstream/master
                     device_info, module1_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_),
       absl_testing::StatusIs(

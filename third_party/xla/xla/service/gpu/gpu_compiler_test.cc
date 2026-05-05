@@ -668,13 +668,9 @@ ENTRY main {
   AutotuneResults results;
   ASSERT_OK(AutotunerCache::SerializeAutotuneResults(&results));
   EXPECT_FALSE(results.results().empty());
-<<<<<<< HEAD
-  EXPECT_TRUE(absl::StrContains(results.DebugString(), "CUBLAS_FISSION"));
-=======
   EXPECT_TRUE(absl::StrContains(results.DebugString(), "CUBLAS_FISSION") ||
               // CUBLASLT_FISSION is dumped as GemmKey in the AutotunerResult.
               absl::StrContains(results.DebugString(), "gemm"));
->>>>>>> upstream/master
 
   // Triton disabled - this will skip the GemmFusion pass and use cuBLAS.
   DebugOptions triton_disabled_debug_options = GetDebugOptionsForTest();

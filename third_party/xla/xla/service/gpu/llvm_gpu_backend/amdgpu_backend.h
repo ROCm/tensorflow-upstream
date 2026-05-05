@@ -51,16 +51,6 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
     const DebugOptions& debug_options,
     const std::string& module_config_cache_key);
 
-<<<<<<< HEAD
-// Compiles the argument module and returns path of compiled Hsaco file
-// along with register spill information.
-absl::StatusOr<HsacoFileResult> CompileToHsacoAndReturnFilePath(
-    llvm::Module* module, stream_executor::GpuComputeCapability gpu_version,
-    const DebugOptions& debug_options, bool keep_tempfiles,
-    llvm_ir::LLVMCommandLineOptionsLock& llvm_lock);
-
-=======
->>>>>>> upstream/master
 // Returns the LLVM command line flags that we use for compilation.
 std::vector<std::string> GetAMDGPUBackendOptions(
     const DebugOptions& debug_options);
