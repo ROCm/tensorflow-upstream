@@ -4406,7 +4406,9 @@ tf_kernel_library(
     name = "lrn_op",
     features = ["-layering_check"],
     prefix = "lrn_op",
-    deps = NN_DEPS + if_rocm([":conv_ops_gpu_hdrs"]) + [":loose_headers"],
+    deps = NN_DEPS + if_rocm([":conv_ops_gpu_hdrs",
+	      "//tensorflow/core/util/autotune_maps:conv_parameters"]) +
+	   [":loose_headers"],
 )
 
 tf_kernel_library(
