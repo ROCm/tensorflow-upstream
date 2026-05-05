@@ -370,8 +370,7 @@ absl::Status LowerKernelBodiesToLowLevelIr(mlir::ModuleOp module,
   pm.addPass(::mlir::createStripDebugInfoPass());
 
   if (failed(pm.run(module))) {
-    return tensorflow::errors::Internal(
-        "Lowering to low-level device IR failed.");
+    return absl::InternalError("Lowering to low-level device IR failed.");
   }
 
   return absl::OkStatus();
@@ -388,7 +387,7 @@ absl::Status AmendKernelLLVMIRWithStaticKnowledge(mlir::ModuleOp module,
       mlir::kernel_gen::transforms::CreatePropagateTfAbiKnowledgeToKernels());
 
   return failed(pm.run(module))
-             ? tensorflow::errors::Internal(
+             ? absl::InternalError(
                    "Amending LLVMIR with static knowledge failed.")
              : absl::OkStatus();
 }
@@ -410,7 +409,7 @@ absl::Status GenerateDeviceCode(mlir::ModuleOp module,
       enable_ftz));
 
   return failed(pm.run(module))
-             ? tensorflow::errors::Internal("Generating device code failed.")
+             ? absl::InternalError("Generating device code failed.")
              : absl::OkStatus();
 }
 
@@ -425,9 +424,9 @@ absl::Status LowerHostSideToFinalForm(mlir::ModuleOp module,
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
 
-  return failed(pm.run(module)) ? tensorflow::errors::Internal(
-                                      "Final lowering of host side failed.")
-                                : absl::OkStatus();
+  return failed(pm.run(module))
+             ? absl::InternalError("Final lowering of host side failed.")
+             : absl::OkStatus();
 }
 
 }  // namespace

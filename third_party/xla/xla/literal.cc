@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/no_destructor.h"
+#include "absl/base/nullability.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
@@ -41,6 +42,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "Eigen/Core"
+#include "hwy//highway.h"
 #include "xla/index_util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -254,19 +256,20 @@ void Literal::SetShape(const Shape& shape) {
     shape_ = intered_shape_ptr;
     return;
   }
+
   auto owning_shape_ptr = std::make_unique<Shape>(shape);
-  if (!LayoutUtil::HasLayout(*owning_shape_ptr)) {
-    ShapeUtil::ForEachMutableLeafShape(
-        owning_shape_ptr.get(), [](Shape* subshape, const ShapeIndex& index) {
-          if (!subshape->has_layout()) {
-            LayoutUtil::SetToDefaultLayout(subshape);
-          }
-        });
-  }
-  if (owning_shape_ptr->IsArray() &&
-      LayoutUtil::HasCustomElementSizeInBits(*owning_shape_ptr)) {
-    owning_shape_ptr->mutable_layout()->set_element_size_in_bits(0);
-  }
+
+  ShapeUtil::ForEachMutableLeafShape(
+      owning_shape_ptr.get(), [](Shape* subshape, const ShapeIndex& /*index*/) {
+        if (!subshape->has_layout()) {
+          LayoutUtil::SetToDefaultLayout(subshape);
+        }
+        if (subshape->IsArray() &&
+            LayoutUtil::HasCustomElementSizeInBits(*subshape)) {
+          subshape->mutable_layout()->set_element_size_in_bits(0);
+        }
+      });
+
   shape_ = std::move(owning_shape_ptr);
 }
 
@@ -310,6 +313,14 @@ absl::StatusOr<Literal> Literal::Make(
   TF_RETURN_IF_ERROR(literal.SetPiece(*literal.shape_, &literal.root_piece_,
                                       allocate_arrays, leaf_array_value_state));
   return literal;
+}
+
+absl::StatusOr<absl_nonnull std::unique_ptr<Literal>> Literal::MakeUnique(
+    const Shape& shape, const bool allocate_arrays,
+    const ArrayValueState leaf_array_value_state) {
+  TF_ASSIGN_OR_RETURN(Literal literal, Literal::Make(shape, allocate_arrays,
+                                                     leaf_array_value_state));
+  return std::make_unique<Literal>(std::move(literal));
 }
 
 Literal::Literal(const Shape& shape, bool allocate_arrays,
@@ -1476,7 +1487,7 @@ absl::Status MutableLiteralBase::SetFromDouble(
     absl::Span<const int64_t> multi_index, double value) {
   CHECK(shape().IsArray());
   if (!primitive_util::IsFloatingPointType(shape().element_type())) {
-    return FailedPrecondition("Array element type is not integral: %s",
+    return FailedPrecondition("Array element type is not floating point: %s",
                               PrimitiveType_Name(shape().element_type()));
   }
   primitive_util::FloatingPointTypeSwitch(
@@ -1971,19 +1982,46 @@ bool LiteralBase::Piece::EqualElements(const LiteralBase::Piece& other) const {
       ShapeUtil::Equal(subshape(), other.subshape()) && subshape().IsArray()) {
     CHECK(subshape().IsArray())
         << __func__ << " is only supported for dense arrays: " << subshape();
-    CHECK_EQ(size_bytes_dense(), other.size_bytes_dense());
+    int64_t size_bytes = size_bytes_dense();
+    CHECK_EQ(size_bytes, other.size_bytes_dense());
     if (primitive_util::IsSubByteNonPredType(subshape().element_type())) {
-      auto one_array = buffer();
-      auto two_array = other.buffer();
+      auto one_array = reinterpret_cast<const uint8_t*>(buffer());
+      auto two_array = reinterpret_cast<const uint8_t*>(other.buffer());
       const int bits_per_element =
           primitive_util::BitWidth(subshape().element_type());
       const uint8_t mask = LsbMask<uint8_t>(bits_per_element);
-      for (int64_t i = 0; i < size_bytes_dense(); ++i) {
-        if ((one_array[i] & mask) != (two_array[i] & mask)) return false;
+
+      namespace hn = hwy::HWY_NAMESPACE;
+      const hn::ScalableTag<uint8_t> d;
+      const size_t lanes = hn::Lanes(d);
+      const auto v_mask = hn::Set(d, mask);
+
+      int64_t idx = 0;
+      for (; idx + lanes <= size_bytes; idx += lanes) {
+        auto va = hn::LoadU(d, one_array + idx);
+        auto vb = hn::LoadU(d, two_array + idx);
+        auto va_masked = hn::And(va, v_mask);
+        auto vb_masked = hn::And(vb, v_mask);
+        if (!hn::AllTrue(d, hn::Eq(va_masked, vb_masked))) {
+          return false;
+        }
       }
-      return true;
+
+      // `size_bytes` was a multiple of the vector length: already done.
+      if (HWY_UNLIKELY(idx == size_bytes)) {
+        return true;
+      }
+
+      const size_t remaining = size_bytes - idx;
+      DCHECK_GT(remaining, 0);
+      DCHECK_LT(remaining, lanes);
+      auto va = hn::LoadN(d, one_array + idx, remaining);
+      auto vb = hn::LoadN(d, two_array + idx, remaining);
+      auto va_masked = hn::And(va, v_mask);
+      auto vb_masked = hn::And(vb, v_mask);
+      return hn::AllTrue(d, hn::Eq(va_masked, vb_masked));
     }
-    return memcmp(buffer(), other.buffer(), size_bytes_dense()) == 0;
+    return memcmp(buffer(), other.buffer(), size_bytes) == 0;
   }
 
   std::vector<int64_t> multi_index;

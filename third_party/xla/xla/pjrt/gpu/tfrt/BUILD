@@ -53,9 +53,11 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/cpu:target_machine_options",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_cliques",
         "//xla/backends/gpu/collectives:gpu_collectives",
+        "//xla/backends/gpu/target_config",
         "//xla/client:executable_build_options",
         "//xla/client:local_client",
         "//xla/core/collectives",
@@ -64,7 +66,6 @@ cc_library(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:mhlo_passes",
-        "//xla/pjrt:abstract_tracked_device_buffer",
         "//xla/pjrt:async_work_runner",
         "//xla/pjrt:compiled_memory_stats",
         "//xla/pjrt:device_event",
@@ -93,6 +94,7 @@ cc_library(
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed:protocol_proto_cc",
         "//xla/pjrt/distributed:topology_util",
+        "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
         "//xla/pjrt/dump",
         "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:se_gpu_topology_description",
@@ -120,6 +122,7 @@ cc_library(
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor:device_interconnect_resource",
         "//xla/stream_executor:memory_space",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
@@ -136,7 +139,7 @@ cc_library(
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
-        "//xla/tsl/protobuf:coordination_service_proto_cc",
+        "//xla/tsl/util:maybe_owning",
         "//xla/util/split_proto:split_executable_and_options_writer",
         "//xla/util/split_proto:split_proto_reader",
         "@com_google_absl//absl/algorithm:container",
@@ -175,6 +178,7 @@ cc_library(
         "@tsl//tsl/profiler/lib:traceme",
     ] + if_cuda([
         # keep sorted
+        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm([
         # keep sorted
@@ -329,6 +333,7 @@ xla_cc_test(
     name = "tracked_gpu_device_buffer_test",
     srcs = ["tracked_gpu_device_buffer_test.cc"],
     tags = [
+        "cuda-only",
         "gpu",
         "no_oss",
         "noasan",
@@ -357,6 +362,7 @@ xla_cc_test(
         "//xla/service:shaped_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor/cuda:cuda_platform",
         "//xla/tsl/concurrency:async_value",
         # copybara:uncomment "//xla/tsl/framework:allocator",
         "//xla/tsl/platform:env",

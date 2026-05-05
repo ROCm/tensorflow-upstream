@@ -131,6 +131,7 @@ cc_library(
     hdrs = ["gpu_command_buffer.h"],
     deps = [
         "//xla:debug_options_flags",
+        "//xla:xla_proto_cc",
         "//xla/service:dump",
         "//xla/stream_executor:bit_pattern",
         "//xla/stream_executor:command_buffer",
@@ -678,6 +679,7 @@ xla_test(
     ],
 )
 
+<<<<<<< HEAD
 xla_test(
     name = "gpu_device_info_test",
     srcs = ["gpu_device_info_test.cc"],
@@ -714,6 +716,8 @@ xla_test(
     ]),
 )
 
+=======
+>>>>>>> upstream/master
 tf_proto_library(
     name = "tma_metadata_proto",
     srcs = ["tma_metadata.proto"],
@@ -828,6 +832,7 @@ cc_library(
     name = "ragged_all_to_all_kernel",
     hdrs = ["ragged_all_to_all_kernel.h"],
     deps = [
+        "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
@@ -837,6 +842,7 @@ cc_library(
     name = "multi_gpu_barrier_kernel",
     hdrs = ["multi_gpu_barrier_kernel.h"],
     deps = [
+        "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
@@ -1013,6 +1019,7 @@ cc_library(
     hdrs = ["kernel_serialization_check.h"],
     deps = [
         "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor:kernel_spec_proto_cc",
         "//xla/stream_executor:kernel_symbol_registry",
         "//xla/stream_executor:platform",
         "//xla/tsl/platform:statusor",

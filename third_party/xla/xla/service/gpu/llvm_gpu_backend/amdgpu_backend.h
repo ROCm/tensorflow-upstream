@@ -30,16 +30,11 @@ limitations under the License.
 
 namespace xla::gpu::amdgpu {
 
-// Result of compiling an LLVM module to HSACO format (in-memory bytes).
+// Result of compiling an LLVM module to HSACO format (in-memory bytes and
+// path).
 struct HsacoResult {
-  std::vector<uint8_t> hsaco;
-  ModuleStats module_stats;
-};
-
-// Result of compiling an LLVM module to HSACO format (on-disk file).
-struct HsacoFileResult {
-  std::string hsaco_path;
-  ModuleStats module_stats;
+  std::vector<uint8_t> hsaco;  // in-memory bytes of HSACO file
+  ModuleStats module_stats;    // module statistics
 };
 
 // Links ROCm-Device-Libs into the given module if the module needs it.
@@ -56,6 +51,7 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
     const DebugOptions& debug_options,
     const std::string& module_config_cache_key);
 
+<<<<<<< HEAD
 // Compiles the argument module and returns path of compiled Hsaco file
 // along with register spill information.
 absl::StatusOr<HsacoFileResult> CompileToHsacoAndReturnFilePath(
@@ -63,6 +59,8 @@ absl::StatusOr<HsacoFileResult> CompileToHsacoAndReturnFilePath(
     const DebugOptions& debug_options, bool keep_tempfiles,
     llvm_ir::LLVMCommandLineOptionsLock& llvm_lock);
 
+=======
+>>>>>>> upstream/master
 // Returns the LLVM command line flags that we use for compilation.
 std::vector<std::string> GetAMDGPUBackendOptions(
     const DebugOptions& debug_options);
