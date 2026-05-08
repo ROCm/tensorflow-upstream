@@ -291,7 +291,7 @@ tf_kernel_library(
         "//tensorflow/core/platform:tstring",
         "@eigen_archive//:eigen3",
     ],
-    alwayslink = 0,
+    alwayslink = True,
 )
 
 cc_library(
@@ -335,7 +335,7 @@ tf_kernel_library(
         "//tensorflow/core:lib_internal",
         "@eigen_archive//:eigen3",
     ] + if_cuda_or_rocm([":gpu_utils"]),
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 cc_library(
@@ -365,6 +365,7 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "@eigen_archive//:eigen3",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -738,7 +739,7 @@ cc_library(
         "@com_google_absl//absl/types:optional",
         "@xla//xla/tsl/platform:types",
     ],
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -783,7 +784,7 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "@eigen_archive//:eigen3",
     ],
-    alwayslink = 0,
+    alwayslink = True,
 )
 
 cc_library(
@@ -948,7 +949,9 @@ tf_kernel_library(
         "//tensorflow/core:gpu_runtime",
         "//tensorflow/core/debug:debug_io_utils",
         "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:hip_runtime",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -1246,7 +1249,8 @@ tf_kernel_library(
         "tile_functor_gpu_int64.cu.cc",
     ],
     prefix = "tile_ops",
-    deps = ARRAY_DEPS,
+    deps = ARRAY_DEPS + ["@local_config_rocm//rocm:hip_runtime",],
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -1271,7 +1275,9 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
+	"@local_config_rocm//rocm:hip_runtime",
     ]),
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -1303,10 +1309,12 @@ tf_kernel_library(
         "where_op_gpu_impl_7.cu.cc",
         "where_op_gpu_impl_8.cu.cc",
     ],
+    alwayslink = True,
     deps = if_cuda([
                "//tensorflow/core/util:cuda_solvers",
            ]) + if_rocm([
                "//tensorflow/core/util:rocm_solvers",
+	"@local_config_rocm//rocm:hip_runtime",
            ]) + [":gpu_prim_hdrs"] +
            ARRAY_DEPS,
 )
@@ -1595,7 +1603,9 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
+	"@local_config_rocm//rocm:hip_runtime",
     ]),
+    alwayslink = True,
 )
 
 tf_cc_test(
@@ -2132,7 +2142,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "@eigen_archive//:eigen3",
     ],
-    alwayslink = 0,
+    alwayslink = True,
 )
 
 tf_cuda_cc_test(
@@ -2440,7 +2450,7 @@ tf_kernel_library(
         "@com_google_absl//absl/log",
         "@eigen_archive//:eigen3",
     ],
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 tf_cc_test(
@@ -3711,6 +3721,7 @@ tf_kernel_library(
     deps = MATH_DEPS + [
         "//tensorflow/core/kernels/mlir_generated:cast_op",
     ],
+    alwayslink=True,
 )
 
 tf_kernel_library(
@@ -3744,6 +3755,7 @@ tf_kernel_library(
         "//tensorflow/core/kernels/mlir_generated:cwise_op",
         "@com_google_absl//absl/base:prefetch",
     ],
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -3789,6 +3801,7 @@ tf_kernel_library(
         ":gpu_prim_hdrs",
         ":transpose_functor",
     ],
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -3802,8 +3815,10 @@ tf_kernel_library(
     ]) + if_cuda([
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
+	"@local_config_rocm//rocm:hip_runtime",
         "//tensorflow/core/util:rocm_solvers",
     ]),
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -4683,7 +4698,7 @@ tf_kernel_library(
         "//tensorflow/core/util:determinism_for_kernels",
         "@eigen_archive//:eigen3",
     ],
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 cc_library(
@@ -4776,6 +4791,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "@eigen_archive//:eigen3",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -5165,8 +5181,10 @@ tf_kernel_library(
     ]) + if_cuda([
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
+	"@local_config_rocm//rocm:hip_runtime",
         "//tensorflow/core/util:rocm_solvers",
     ]),
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -5183,7 +5201,9 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
+	"@local_config_rocm//rocm:hip_runtime",
     ]),
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -5258,7 +5278,9 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
+	"@local_config_rocm//rocm:hip_runtime",
     ]),
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -5280,7 +5302,9 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
+	"@local_config_rocm//rocm:hip_runtime",
     ]),
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -5451,7 +5475,7 @@ tf_kernel_library(
         "@com_google_absl//absl/strings:str_format",
         "@eigen_archive//:eigen3",
     ],
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 cc_library(
@@ -6236,7 +6260,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
     ],
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 tf_cuda_cc_test(
@@ -6355,7 +6379,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
     ],
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 tf_cuda_cc_test(
@@ -7272,7 +7296,7 @@ cc_library(
         "@icu//:common",
         "@xla//xla/tsl/framework/fixedpoint",
     ],
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 build_test(
@@ -7290,7 +7314,7 @@ cc_library(
         "//tensorflow/core:portable_tensorflow_lib_lite",
         "//tensorflow/core/framework:reader_base_proto_cc",
     ],
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 #   Quantization-specific OpKernels
@@ -8062,7 +8086,7 @@ cc_library(
     deps = [
         "//tensorflow/core/platform:platform_strings",
     ],
-    alwayslink = 1,
+    alwayslink = True,
 )
 
 # For a more maintainable build this target should not exist and the headers

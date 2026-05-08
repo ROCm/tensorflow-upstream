@@ -101,6 +101,7 @@ cc_library(
         "@xla//xla/mlir_hlo:mhlo_passes",
         "@xla//xla/mlir_hlo:transforms_gpu_passes",
         "@xla//xla/mlir_hlo:transforms_passes",
+        "@local_config_rocm//rocm:hip",
     ],
 )
 

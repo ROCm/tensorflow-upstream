@@ -184,6 +184,7 @@ tf_kernel_library(
     prefix = "matrix_inverse_op",
     visibility = [":friends"],
     deps = LINALG_DEPS + [":loose_headers"],
+    alwayslink = True,
 )
 
 tf_kernel_library(

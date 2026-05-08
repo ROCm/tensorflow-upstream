@@ -23,4 +23,5 @@ tf_kernel_library(
         "//tensorflow/core/kernels:fill_functor",
         "@eigen_archive//:eigen3",
     ],
+    alwayslink = True,
 )

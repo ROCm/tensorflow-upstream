@@ -98,6 +98,7 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_sparse",
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
+	"@local_config_rocm//rocm:hip_runtime",
     ]),
     alwayslink = 1,
 )
