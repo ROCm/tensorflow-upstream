@@ -36,6 +36,7 @@ cc_library(
     ]) + if_rocm([
         "@local_config_rocm//rocm:rccl",
         "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocblas",
         "//tensorflow/core:gpu_runtime",
     ]) + if_cuda_or_rocm([
         "@com_google_absl//absl/base",

@@ -950,6 +950,7 @@ tf_kernel_library(
         "//tensorflow/core/debug:debug_io_utils",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocblas",
     ],
     alwayslink = True,
 )
@@ -1249,7 +1250,10 @@ tf_kernel_library(
         "tile_functor_gpu_int64.cu.cc",
     ],
     prefix = "tile_ops",
-    deps = ARRAY_DEPS + ["@local_config_rocm//rocm:hip_runtime",],
+    deps = ARRAY_DEPS + [
+        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocblas",
+    ],
     alwayslink = True,
 )
 
@@ -1276,6 +1280,7 @@ tf_kernel_library(
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
 	"@local_config_rocm//rocm:hip_runtime",
+	"@local_config_rocm//rocm:rocblas",
     ]),
     alwayslink = True,
 )
@@ -1315,6 +1320,7 @@ tf_kernel_library(
            ]) + if_rocm([
                "//tensorflow/core/util:rocm_solvers",
 	"@local_config_rocm//rocm:hip_runtime",
+	"@local_config_rocm//rocm:rocblas",
            ]) + [":gpu_prim_hdrs"] +
            ARRAY_DEPS,
 )
@@ -3816,6 +3822,7 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
 	"@local_config_rocm//rocm:hip_runtime",
+	"@local_config_rocm//rocm:rocblas",
         "//tensorflow/core/util:rocm_solvers",
     ]),
     alwayslink = True,
@@ -5182,6 +5189,7 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
 	"@local_config_rocm//rocm:hip_runtime",
+	"@local_config_rocm//rocm:rocblas",
         "//tensorflow/core/util:rocm_solvers",
     ]),
     alwayslink = True,
@@ -5279,6 +5287,7 @@ tf_kernel_library(
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
 	"@local_config_rocm//rocm:hip_runtime",
+	"@local_config_rocm//rocm:rocblas",
     ]),
     alwayslink = True,
 )
@@ -5303,6 +5312,7 @@ tf_kernel_library(
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
 	"@local_config_rocm//rocm:hip_runtime",
+	"@local_config_rocm//rocm:rocblas",
     ]),
     alwayslink = True,
 )

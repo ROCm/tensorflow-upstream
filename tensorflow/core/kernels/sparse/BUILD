@@ -99,6 +99,7 @@ tf_kernel_library(
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
 	"@local_config_rocm//rocm:hip_runtime",
+	"@local_config_rocm//rocm:rocblas",
     ]),
     alwayslink = 1,
 )
