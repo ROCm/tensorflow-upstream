@@ -60,7 +60,7 @@ TEST(EmbeddedTargetConfigTest, DeviceInfoMatches) {
   auto name = absl::AsciiStrToUpper(
       xla::PlatformUtil::CanonicalPlatformName("gpu").value());
   TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
-                          PlatformManager::PlatformWithName(PLATFORM_NAME));
+                          PlatformManager::PlatformWithName(name));
   bool all_skipped = false;
   for (int i = 0; i < platform->VisibleDeviceCount(); ++i) {
     TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
