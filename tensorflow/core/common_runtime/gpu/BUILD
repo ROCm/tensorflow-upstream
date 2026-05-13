@@ -333,7 +333,7 @@ tf_cuda_cc_test(
     ],
     extra_copts = ["-DXLA_TEST_BACKEND_GPU=1"], # This is a mess
     features = ["-layering_check"],
-    tags = tf_cuda_tests_tags(),
+    tags = ["cuda-only"] + tf_cuda_tests_tags(),
     deps = [
         ":gpu_id",
         ":gpu_runtime",
@@ -395,6 +395,7 @@ tf_cuda_cc_test(
     # Runs test on a Guitar cluster that uses P100s to test unified memory
     # allocations.
     tags = tf_cuda_tests_tags() + [
+        "cuda-only",
         "guitar",
         # "multi_gpu", # TODO(b/287692888): re-enable once the 2gpu test passes.
     ],
