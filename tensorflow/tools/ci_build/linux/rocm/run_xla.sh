@@ -58,29 +58,12 @@ if [ ! -d /tf ];then
 # vvv TODO (rocm) weekly-sync-20251021 excluded tests
 EXCLUDED_TESTS=(
     # @xla//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any
-    TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_*
-    NumericTestsForBlas/NumericTestsForBlas.*/dot_bf16_bf16_f32_x9
-    NumericTestsForTriton/NumericTestsForTriton.*/dot_bf16_bf16_f32_x9
-    NumericTestsForBlas/NumericTestsForBlas.*/dot_bf16_bf16_f32_x6
-    NumericTestsForTriton/NumericTestsForTriton.*/dot_bf16_bf16_f32_x6
-    NumericTestsForBlas/NumericTestsForBlas.*/dot_bf16_bf16_f32_x3
-    NumericTestsForTriton/NumericTestsForTriton.*/dot_bf16_bf16_f32_x3
-
-    # @xla//xla/backends/gpu/codegen/triton:triton_gemm_fusion_test_amdgpu_any
-    TritonGemmTest.SplitAndTransposeLhsExecutesCorrectly #failing on mi250
-
-    # @xla//xla/service/gpu:dot_algorithm_support_test_amdgpu_any
-    DotTf32Tf32F32Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
-    DotTf32Tf32F32X3Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
+    TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_bf16_bf16_f32_*
 
     # @xla//xla/tests:sample_file_test_amdgpu_any
-    # @xla//xla/tests:sample_file_test_amdgpu_any_notfrt
     SampleFileTest.Convolution
 
-    # @xla//xla/tests:scatter_deterministic_expander_test_amdgpu_any
-    # @xla//xla/tests:scatter_deterministic_expander_test_amdgpu_any_notfrt
     # @xla//xla/tests:scatter_test_amdgpu_any
-    # @xla//xla/tests:scatter_test_amdgpu_any_notfrt
     ScatterTest.TensorFlowScatterV1_UpdateTwice
 
     # vvv TODO (rocm) weekly-sync-20251224 excluded tests
@@ -93,69 +76,6 @@ EXCLUDED_TESTS=(
     # @xla//xla/service/gpu/tests:swap_conv_operands_test
     SwapConvOperandsTest.LargePadding
     SwapConvOperandsTest.SmallPadding
-    SwapConvOperandsTest.DoesNotLower
-
-    # @xla//xla/tests:convolution_autotune_disabled_test
-    Transposed2DConvHloTest/Transposed2DConvHloTest.Simple*
-    ConvolveWithAndWithoutCanonicalization_Instantiation/ConvolveWithAndWithoutCanonicalization.Convolve2D_NoSpatialDims*
-    ConvolutionHloTest.ConvolveBackwardInput
-    ConvolutionHloTest.TestConv0D
-    ConvolutionHloTest.TestConv2DF16
-    ConvolutionHloTest.SwappedOperandConvolveWithStride
-    ConvolutionHloTest.TestFusedConv2D
-    ConvolutionHloTest.TestFusedConv3D
-    ConvolutionHloTest.SwappedOperandConvolve
-    ConvolutionHloTest.TestBooleanInput
-    ConvolutionHloTest.SwappedOperandConvolve2
-    ConvolutionTest.Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid
-    ConvolutionTest.ConvolveF32BackwardInputGroupedConvolution
-    Convolve_1x1x4x4_1x1x2x2_Valid/2.Types
-    Convolve_1x1x4x4_1x1x2x2_Valid/1.Types
-    Convolve_1x1x4x4_1x1x2x2_Same/1.Types
-    Convolve_1x1x4x4_1x1x2x2_Same/2.Types
-    Convolve_1x1x4x4_1x1x3x3_Same/1.Types
-    Convolve_1x1x4x4_1x1x3x3_Same/2.Types
-    Convolve2D*
-
-    # @xla//xla/tests:convolution_1d_autotune_disabled_test
-    ConvolutionTest.Convolve1D*
-    Convolve1D_1x2x5_1x2x2*
-    Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestFloat*
-    Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestHalf*
-
-    # vvv TODO (rocm) weekly-sync-260306 excluded tests
-
-    # vvv TODO (rocm) weekly-sync-260312 excluded tests
-
-    # vvv TODO (rocm) weekly-sync-260316 excluded tests
-
-    # @xla//xla/service/gpu:float_support_test_amdgpu_any
-    FloatSupportTestWithCublas.MixedTypeDotIsNotUpcasted
-
-    # @xla//xla/service/gpu:dot_algorithm_support_test_amdgpu_any
-    F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_fast_accum_*
-
-    # @xla//xla/hlo/builder/lib:svd_test_amdgpu_any
-    SVDTest.Various_Size_Random_Matrix_*
-
-    # @xla//xla/service/gpu/tests:sorting_test_amdgpu_any
-    TypeSupportTest.SortSupportsType/*
-    SortingTest.LayoutsInShapesEqualWithIgnoreMemorySpace
-    TestRadixSort/CubSortKeysTest.*
-    TestRadixSort/CubSortPairsTest.*
-
-    # @xla//xla/backends/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any
-    TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/*
-
-    # @xla//xla/backends/gpu/transforms:sort_rewriter_test_amdgpu_any
-    SortRewriterTest.*
-    SortRewriterTest/SortRewriterTest.*
-    SortRewriterArgsort/SortRewriterArgsortTest.*
-
-    # @xla//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any
-    CubSortKeysTest.*
-    CubSort/CubSortKeysTest.*
-    CubSort/CubSortPairsTest.*
 
 )
 
