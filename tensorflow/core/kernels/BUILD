@@ -949,9 +949,8 @@ tf_kernel_library(
         "//tensorflow/core:gpu_runtime",
         "//tensorflow/core/debug:debug_io_utils",
         "@com_google_absl//absl/synchronization",
-        "@local_config_rocm//rocm:hip_runtime",
-        "@local_config_rocm//rocm:rocblas",
-    ],
+    ] + if_rocm(["@local_config_rocm//rocm:hip_runtime",
+                 "@local_config_rocm//rocm:rocblas",]),
     alwayslink = True,
 )
 
@@ -1250,10 +1249,10 @@ tf_kernel_library(
         "tile_functor_gpu_int64.cu.cc",
     ],
     prefix = "tile_ops",
-    deps = ARRAY_DEPS + [
+    deps = ARRAY_DEPS + if_rocm([
         "@local_config_rocm//rocm:hip_runtime",
         "@local_config_rocm//rocm:rocblas",
-    ],
+    ]),
     alwayslink = True,
 )
 
@@ -1279,8 +1278,8 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
-	"@local_config_rocm//rocm:hip_runtime",
-	"@local_config_rocm//rocm:rocblas",
+        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocblas",
     ]),
     alwayslink = True,
 )
@@ -1609,7 +1608,7 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
-	"@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:hip_runtime",
     ]),
     alwayslink = True,
 )
@@ -3724,9 +3723,9 @@ tf_kernel_library(
         ["-DMLIR_GENERATED_GPU_KERNELS_ENABLED"],
     ),
     prefix = "cast_op",
-    deps = MATH_DEPS + [
+    deps = MATH_DEPS + if_rocm([
         "//tensorflow/core/kernels/mlir_generated:cast_op",
-    ],
+    ]),
     alwayslink=True,
 )
 
@@ -3821,8 +3820,8 @@ tf_kernel_library(
     ]) + if_cuda([
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
-	"@local_config_rocm//rocm:hip_runtime",
-	"@local_config_rocm//rocm:rocblas",
+        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocblas",
         "//tensorflow/core/util:rocm_solvers",
     ]),
     alwayslink = True,
@@ -5188,8 +5187,8 @@ tf_kernel_library(
     ]) + if_cuda([
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
-	"@local_config_rocm//rocm:hip_runtime",
-	"@local_config_rocm//rocm:rocblas",
+        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocblas",
         "//tensorflow/core/util:rocm_solvers",
     ]),
     alwayslink = True,
@@ -5209,7 +5208,7 @@ tf_kernel_library(
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
-	"@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:hip_runtime",
     ]),
     alwayslink = True,
 )
