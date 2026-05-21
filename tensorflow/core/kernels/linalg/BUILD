@@ -184,6 +184,7 @@ tf_kernel_library(
     prefix = "matrix_inverse_op",
     visibility = [":friends"],
     deps = LINALG_DEPS + [":loose_headers"],
+    alwayslink = True,
 )
 
 tf_kernel_library(
@@ -238,7 +239,7 @@ tf_kernel_library(
     gpu_srcs = ["tridiagonal_matmul_op_gpu.cu.cc"],
     deps = LINALG_DEPS + if_cuda([
         "//tensorflow/core/util:cuda_sparse",
-    ]),
+    ]) + ["@com_google_absl//absl/status"],
 )
 
 tf_kernel_library(

@@ -750,7 +750,10 @@ tf_kernel_library(
         "@xla//xla/stream_executor/rocm:rocsolver_wrapper",
     ] + if_rocm([
         "@local_config_rocm//rocm:rocprim",
+	"@local_config_rocm//rocm:hip_runtime",
+	"@local_config_rocm//rocm:rocblas",
     ]),
+    alwayslink = True,
 )
 
 tf_kernel_library(

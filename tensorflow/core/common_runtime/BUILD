@@ -1615,9 +1615,19 @@ cc_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
-        "//tensorflow/core/profiler/lib:traceme",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+tf_cc_test(
+    name = "pool_allocator_test",
+    srcs = ["pool_allocator_test.cc"],
+    deps = [
+        ":pool_allocator",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
     ],
 )
 
@@ -2333,6 +2343,7 @@ tf_cuda_library(
     ],
     copts = tf_copts(),
     features = ["-layering_check"],
+    visibility = default_package_visibility,
     deps = [
         ":core_cpu_internal",
         ":local_session_selection",
@@ -2349,6 +2360,7 @@ tf_cuda_library(
         "//tensorflow/core/profiler/lib:device_profiler_session",
         "//tensorflow/core/profiler/lib:profiler_backends",
         "//tensorflow/core/profiler/lib:traceme_encode",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
@@ -2907,7 +2919,6 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
-        "//tensorflow/core/common_runtime/gpu:gpu_runtime",
         "//tensorflow/core/kernels:bcast_ops",
         "//tensorflow/core/kernels:cast_op",
         "//tensorflow/core/kernels:concat_op",
@@ -2916,7 +2927,8 @@ tf_cc_test(
         "//tensorflow/core/kernels:immutable_constant_op",
         "//tensorflow/core/kernels:matmul_op",
         "//tensorflow/core/kernels:topk_op",
-        "@eigen_archive//:eigen3",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 

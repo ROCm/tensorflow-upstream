@@ -212,15 +212,31 @@ bool IsCustomCallWithForceEarlyAttribute(const HloInstruction* instr) {
          attr.value() == "force_early";
 }
 
-bool IsCustomCallWithForceDelayAttribute(const HloInstruction* instr) {
+bool IsCustomCallorAsyncOpWithForceDelayAttribute(const HloInstruction* instr) {
   auto attr = instr->get_frontend_attribute("scheduler_hint");
-  return instr->opcode() == HloOpcode::kCustomCall && attr.has_value() &&
+  bool is_custom_call_or_async_op =
+      (instr->opcode() == HloOpcode::kCustomCall ||
+       instr->opcode() == HloOpcode::kAsyncStart ||
+       instr->opcode() == HloOpcode::kAsyncDone);
+  return is_custom_call_or_async_op && attr.has_value() &&
          attr.value() == "force_delay";
 }
 
 int GetCustomCallForceDelayPriority(const HloInstruction* instr) {
   auto attr = instr->get_frontend_attribute("scheduler_delay_priority");
-  if (instr->opcode() == HloOpcode::kCustomCall && attr.has_value()) {
+  if (attr.has_value()) {
+    int out;
+    CHECK(absl::SimpleAtoi(attr.value(), &out))
+        << "Failed to parse scheduler_delay_priority attribute: "
+        << attr.value();
+    return out;
+  }
+  return 0;
+}
+
+int GetForceDelayAsyncPriority(const HloInstruction* instr) {
+  auto attr = instr->get_frontend_attribute("scheduler_delay_priority");
+  if (attr.has_value()) {
     int out;
     CHECK(absl::SimpleAtoi(attr.value(), &out))
         << "Failed to parse scheduler_delay_priority attribute: "
@@ -233,6 +249,10 @@ int GetCustomCallForceDelayPriority(const HloInstruction* instr) {
 bool HasForceDelayAsyncAttribute(const HloInstruction* instr) {
   auto attr = instr->get_frontend_attribute("scheduler_hint");
   return attr.has_value() && attr.value() == "force_delay_async";
+}
+bool HasForceDelayAttribute(const HloInstruction* instr) {
+  auto attr = instr->get_frontend_attribute("scheduler_hint");
+  return attr.has_value() && attr.value() == "force_delay";
 }
 
 absl::flat_hash_map<int64_t, int64_t>
@@ -806,12 +826,6 @@ void AsyncTracker::SetConcurrentResourceLimits(
        resource_type <
        GetTargetDefinedResourceTypeBegin() + GetNumTargetDefinedResources();
        ++resource_type) {
-    CHECK_GT(GetNumAvailableResources(resource_type), 0)
-        << "Target-defined resource " << GetResourceName(resource_type)
-        << " with id " << resource_type
-        << " has a concurrency limit of 0. Please set it to a positive value "
-           "by making sure GetNumTargetDefinedResources returns the correct "
-           "limit.";
     max_concurrent_resource[resource_type] =
         GetNumAvailableResources(resource_type);
   }
@@ -1322,6 +1336,20 @@ class ReadySetLt {
     }                                    \
   } while (0)
 
+// Directional comparison macro that handles top-down and bottom-up scheduling.
+// It assumes that larger values of `pa` and `pb` mean that the node is more
+// desirable to be executed earlier.
+// - In top-down scheduling: prefers larger values to be scheduled earlier.
+// - In bottom-up scheduling: prefers larger values to be scheduled later.
+#define CMP_DIRECTIONAL(top_down, pa, pb, reason_str) \
+  do {                                                \
+    if (top_down) {                                   \
+      CMP_EXPLICIT((pa), (pb), reason_str);           \
+    } else {                                          \
+      CMP_EXPLICIT((pb), (pa), reason_str);           \
+    }                                                 \
+  } while (0)
+
  public:
   // Nullptr is not a valid value for 'sched_graph'. It needs to be a valid
   // schedule graph containing the nodes this comparator is meant to compare.
@@ -1477,14 +1505,17 @@ class ReadySetLt {
     HloGraphNode* an = a.node;
     HloGraphNode* bn = b.node;
     // Schedule according to ForceEarly.
-    CMP_PROPERTY(GetForceEarly(), "kForceEarly");
+    CMP_DIRECTIONAL(top_down_scheduling_, !an->GetForceEarly(),
+                    !bn->GetForceEarly(), "kForceEarly");
     // Schedule according to ForceDelay, if exactly one of the two instructions
     // has ForceDelay set.
-    CMP_EXPLICIT(!an->GetForceDelay(), !bn->GetForceDelay(), "kForceDelay");
+    CMP_DIRECTIONAL(top_down_scheduling_, an->GetForceDelay(),
+                    bn->GetForceDelay(), "kForceDelay");
     // Schedule according to highest ForceDelay first, if both instructions
     // have ForceDelay set.
-    CMP_EXPLICIT(-an->GetForceDelayPriority(), -bn->GetForceDelayPriority(),
-                 "kForceDelayPriority");
+    // returns true if priority of a is lower than b.
+    CMP_DIRECTIONAL(top_down_scheduling_, an->GetForceDelayPriority(),
+                    bn->GetForceDelayPriority(), "kForceDelayPriority");
     // Use the preference value (comes from a heuristic) to choose between
     // the two candidates. If two preferences are the same regular LHS logic
     // will run as usual, we take advantage of this fact when initializing
@@ -1508,8 +1539,8 @@ class ReadySetLt {
 
       // Schedule according to ForceDelayAfterTarget when we executed the
       // early target scheduling rule.
-      CMP_EXPLICIT(!an->GetForceDelayAfterTarget(),
-                   !bn->GetForceDelayAfterTarget(), "kForceDelayAfterTarget");
+      CMP_DIRECTIONAL(top_down_scheduling_, an->GetForceDelayAfterTarget(),
+                      bn->GetForceDelayAfterTarget(), "kForceDelayAfterTarget");
     }
 
     std::pair<int64_t, int64_t> a_increase = {0, 0};
@@ -1538,8 +1569,8 @@ class ReadySetLt {
 
       // Schedule according to ForceDelayAfterTarget when we executed the
       // early target scheduling rule.
-      CMP_EXPLICIT(!an->GetForceDelayAfterTarget(),
-                   !bn->GetForceDelayAfterTarget(), "kForceDelayAfterTarget");
+      CMP_DIRECTIONAL(top_down_scheduling_, an->GetForceDelayAfterTarget(),
+                      bn->GetForceDelayAfterTarget(), "kForceDelayAfterTarget");
     }
 
     // Some heuristic that try to prioritize unlocking "done" instructions
@@ -1553,6 +1584,20 @@ class ReadySetLt {
       CMP_EXPLICIT(ShouldScheduleAsyncDone(a, an),
                    ShouldScheduleAsyncDone(b, bn), "kScheduleDone");
     }
+    if (an->IsSupportedAsyncDone() && bn->IsSupportedAsyncDone() &&
+        an->GetInstr().opcode() == bn->GetInstr().opcode()) {
+      const HloGraphNode& start_an =
+          sched_state_.sched_graph.GetNode(an->GetInstr().operand(0));
+      const HloGraphNode& start_bn =
+          sched_state_.sched_graph.GetNode(bn->GetInstr().operand(0));
+      // Tie-breaker for comparing two async-done operations: if one's
+      // corresponding async-start was marked as `ForceDelay`, we prioritize the
+      // other one to preserve its overlap windows.
+      CMP_DIRECTIONAL(top_down_scheduling_, start_an.GetForceDelay(),
+                      start_bn.GetForceDelay(),
+                      "kDelayDoneOfForceDelayedAsyncStart");
+    }
+
     // The following rule targets the async ops using resources that should
     // be released right after the op's estimated time cost has past. It
     // prevents increasing the overlaps of such async ops more than
@@ -1861,6 +1906,7 @@ class ReadySetLt {
 #undef RETURN_LOGIC
 #undef CMP_PROPERTY
 #undef CMP_EXPLICIT
+#undef CMP_DIRECTIONAL
 };  // namespace
 
 enum SkipNodeReason {
@@ -2925,12 +2971,16 @@ HloScheduleGraph::HloScheduleGraph(
     if (IsCustomCallWithForceEarlyAttribute(instr)) {
       n->SetForceEarly(true);
     }
-    if (IsCustomCallWithForceDelayAttribute(instr)) {
+    if (IsCustomCallorAsyncOpWithForceDelayAttribute(instr)) {
       n->SetForceDelay(true);
       n->SetForceDelayPriority(GetCustomCallForceDelayPriority(instr));
     }
     if (n->IsSupportedAsyncStart() && HasForceDelayAsyncAttribute(instr)) {
       n->SetForceDelay(true);
+      n->SetForceDelayPriority(GetForceDelayAsyncPriority(instr));
+    }
+    if (n->IsSupportedAsyncDone() && HasForceDelayAsyncAttribute(instr)) {
+      n->SetForceEarly(true);
     }
     if (top_down_scheduling) {
       n->SetTopDownScheduling(true);
@@ -3093,6 +3143,40 @@ HloScheduleGraph::HloScheduleGraph(
                      nullptr /*==use latency of 1*/);
           }
           break;
+        }
+      }
+      // If sends are originally after a while loop, make sure the corresponding
+      // recv is also scheduled after the while loop. This ensure the the recv
+      // and recv-done's life times do not extend across the while loop, which
+      // can lead to overlap limit violations. This problem is common with
+      // top-down scheduling since the recv tends to be sccheduled early due
+      // to kScheduleAsyncStart heuristic.
+      //   %0 = while <---
+      //                  |
+      //   %1 = recv -----
+      //   %2 = send
+      //   %3 = send-done
+      if (top_down_scheduling) {
+        if (instr->opcode() == HloOpcode::kSendDone) {
+          for (const auto* while_hlo : while_instrs) {
+            if (!reachability->IsReachable(while_hlo, instr)) {
+              continue;
+            }
+            if (OriginalInstructionPosition(while_hlo) <
+                OriginalInstructionPosition(instr)) {
+              for (auto* recv_done : instr->control_successors()) {
+                if (recv_done->opcode() != HloOpcode::kRecvDone) {
+                  continue;
+                }
+                auto* recv = recv_done->operand(0);
+                CHECK(recv->opcode() == HloOpcode::kRecv);
+                HloGraphNode* recv_node = GetNodePtr(recv);
+                HloGraphNode* while_node = GetNodePtr(while_hlo);
+                add_edge("while", while_node, recv_node,
+                         nullptr /*==use latency of 1*/);
+              }
+            }
+          }
         }
       }
     }
@@ -4068,7 +4152,7 @@ absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
               *instr) ||
           scheduling_context_->GetAsyncTracker()->IsSupportedAsyncDone(
               *instr) ||
-          IsCustomCallWithForceDelayAttribute(instr)) {
+          IsCustomCallorAsyncOpWithForceDelayAttribute(instr)) {
         computations_to_schedule_.push_back(computation);
         break;
       }

@@ -76,9 +76,6 @@ EXCLUDED_TESTS=(
     AutotuneSerializeTest.Consistency
     AutotuneSerializeTest.VersionControl
 
-    # //tensorflow/python/kernel_tests/nn_ops:depthwise_conv_op_d9m_test
-    DepthwiseConv2DDeterministicTest.testBackwardDeterminismGPU
-
     # //tensorflow/core/profiler/backends/gpu:device_tracer_test
     DeviceTracerTest.StartTwoTracers
     DeviceTracerTest.TraceToXSpace

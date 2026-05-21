@@ -163,9 +163,9 @@ absl::Status MemoryTypesForNode(const OpRegistryInterface* op_registry,
     MemoryTypesHelper(inp_names, &host_memory_args, inp_mtypes);
     MemoryTypesHelper(out_names, &host_memory_args, out_mtypes);
     if (!host_memory_args.empty()) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(absl::StrCat(
           "HostMemory args '", absl::StrJoin(host_memory_args, "', '"),
-          "' not found in OpDef: ", SummarizeOpDef(*op_def));
+          "' not found in OpDef: ", SummarizeOpDef(*op_def)));
     }
   } else {
     inp_mtypes->resize(inp_dtypes.size(), DEVICE_MEMORY);

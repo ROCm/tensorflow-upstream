@@ -49,7 +49,7 @@ absl::Status RunTransformOnGraph(
   mlir::StatusScopedDiagnosticHandler error_handler(&context);
   if (failed(pm.run(*module)))
     return error_handler.Combine(
-        tensorflow::errors::InvalidArgument("MLIR Graph Optimizer failed: "));
+        absl::InvalidArgumentError("MLIR Graph Optimizer failed: "));
 
   // Export and replace Graph.
   tensorflow::GraphDef graphdef;

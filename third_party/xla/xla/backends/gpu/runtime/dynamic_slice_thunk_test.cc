@@ -32,10 +32,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
-#include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.pb.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
+#include "xla/backends/gpu/runtime/scratch_memory_requests.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
 #include "xla/ffi/attribute_map.h"
@@ -223,6 +223,7 @@ absl::StatusOr<std::unique_ptr<DynamicSliceThunk>> CreateSlicedGemmThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
   // Creating embedded GEMM thunk.
   ThunkSequence seq;
@@ -392,6 +393,7 @@ CreateMultipleSlicedOperandsGemmThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
 
   // Creating embedded GEMM thunk.
@@ -935,6 +937,7 @@ CreateSlicedGemmArbitraryArgumentOrderThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
 
   // Creating embedded GEMM thunk.
@@ -1109,6 +1112,7 @@ CreateSlicedGemmArbitraryNumberOfArgumentsThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
 
   // Creating embedded GEMM thunk.
@@ -1274,6 +1278,7 @@ CreateSlicedTupledOperandGemmThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
 
   // Creating embedded GEMM thunk.
@@ -1653,6 +1658,7 @@ CreateSlicedOperandsSameBufferGemmThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
 
   // Creating embedded GEMM thunk.
@@ -1860,6 +1866,7 @@ CreateHostInductionVariableAndOffsetEvaluationThunk(
           /*algorithm=*/std::nullopt,
           /*compute_precision=*/se::blas::kDefaultComputePrecision,
           /*grad_x=*/false, /*grad_y=*/false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           /*gpu_version=*/
           executor->GetDeviceDescription().gpu_compute_capability()));
 
@@ -1973,12 +1980,11 @@ TEST_F(DynamicSliceThunkTest,
 
   CollectiveCliqueRequests clique_requests;
   CollectiveMemoryRequests memory_requests(allocations);
-  CollectiveMultimemRegistry multimem_registry(
-      executor, collective_params.global_device_id);
+  ScratchMemoryRequests scratch_memory_requests;
 
-  Thunk::PrepareParams prepare_params{&collective_params, &clique_requests,
-                                      &memory_requests,   &multimem_registry,
-                                      executor,           &allocations};
+  Thunk::PrepareParams prepare_params{
+      &collective_params,       &clique_requests, &memory_requests,
+      &scratch_memory_requests, executor,         &allocations};
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, /*buffer_allocations=*/allocations, stream.get(),

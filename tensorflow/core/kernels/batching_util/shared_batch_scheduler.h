@@ -147,7 +147,7 @@ class SharedBatchScheduler
     // `use_global_scheduler` is enabled, a separate thread pool for warmup
     // requests is useful to decrease model warmup time and derisk starving the
     // thread pool with warmup requests while serving live traffic.
-    int num_warmup_threads = 0;
+    int num_warmup_batch_threads = 0;
 
     // The environment to use.
     // (Typically only overridden by test code.)
@@ -324,6 +324,9 @@ class SharedBatchScheduler
     struct PriorityAwareSchedulerOptions {
       // The maximum sum of task sizes to enqueue.
       size_t max_queue_depth = 200;
+      // If true, the priority aware batch scheduler will resplit tasks into
+      // smaller batches if needed.
+      bool enable_task_resplit = false;
     };
 
     PriorityAwareSchedulerOptions priority_aware_scheduler_options;
@@ -416,11 +419,12 @@ class PriorityTaskQueue {
                        int first_output_task_size, int input_batch_size_limit,
                        std::vector<std::unique_ptr<TaskType>>* output_tasks)>
           split_input_task_func,
-      bool enable_large_batch_splitting, size_t max_execution_batch_size,
-      int64_t batch_timeout_micros, Env* env)
+      bool enable_large_batch_splitting, bool enable_task_resplit,
+      size_t max_execution_batch_size, int64_t batch_timeout_micros, Env* env)
       : max_queue_depth_(max_queue_depth),
         split_input_task_func_(split_input_task_func),
         enable_large_batch_splitting_(enable_large_batch_splitting),
+        enable_task_resplit_(enable_task_resplit),
         max_execution_batch_size_(max_execution_batch_size),
         batch_timeout_micros_(batch_timeout_micros),
         env_(env) {}
@@ -488,6 +492,10 @@ class PriorityTaskQueue {
     while (remaining_size > 0 && !tasks_.empty()) {
       auto it = tasks_.begin();
 
+      // TODO(b/491965163): Consider optimizing by evicting the highest priority
+      // task if the shared status is an error potentially due to an evicted
+      // sibling/sub-task.
+
       // If task fits just add it to tasks_to_schedule.
       if (it->task->size() <= remaining_size) {
         QueueEntry highest_priority_entry = RemoveEntryInternal(it);
@@ -529,7 +537,7 @@ class PriorityTaskQueue {
       }
 
       // The task does not fit and we cannot split it. Leave it for the next
-      // batch.
+      // batch to prevent priority inversion.
       break;
     }
     return tasks_to_schedule;
@@ -631,7 +639,11 @@ class PriorityTaskQueue {
   size_t current_queue_size_ = 0;
   bool CanSplitTask(const TaskType& task) const {
     if constexpr (std::is_base_of_v<BatchTask, TaskType>) {
-      return enable_large_batch_splitting_ && !task.is_subtask();
+      // If a BatchTask is a subtask, we can split it if task resplitting and
+      // large batch splitting are enabled.
+      if (task.is_subtask()) {
+        return enable_task_resplit_ && enable_large_batch_splitting_;
+      }
     }
     return enable_large_batch_splitting_;
   }
@@ -642,6 +654,7 @@ class PriorityTaskQueue {
       std::vector<std::unique_ptr<TaskType>>* output_tasks)>
       split_input_task_func_;
   const bool enable_large_batch_splitting_;
+  const bool enable_task_resplit_ = false;
   const size_t max_execution_batch_size_;
   const int64_t batch_timeout_micros_;
   Env* const env_;
@@ -860,7 +873,7 @@ class Queue {
 
   // If true, queue implementation splits warmup inputs from regular inputs,
   // which will be processed by a separate pool of warmup threads.
-  // Requires: `num_warmup_threads` > 0 in the scheduler's options.
+  // Requires: `num_warmup_batch_threads` > 0 in the scheduler's options.
   bool enable_warmup_queue_ = false;
 
   // The maximum batch size to be executed by `Queue::ProcessBatch`.
@@ -1071,12 +1084,15 @@ absl::Status SharedBatchScheduler<TaskType>::AddQueueAfterRewritingOptions(
           "If enable_priority_aware_batch_scheduler is true, disable_padding "
           "must be false.");
     }
-    if (options.batch_padding_policy != kPadUpPolicy) {
+    if (options.batch_padding_policy != kPadUpPolicy &&
+        options.allowed_batch_sizes.size() > 1) {
       return absl::InvalidArgumentError(absl::StrFormat(
           "If enable_priority_aware_batch_scheduler is true, "
-          "batch_padding_policy "
-          "must be kPadUpPolicy. The batch_padding_policy is %s.",
-          options.batch_padding_policy));
+          "batch_padding_policy must be kPadUpPolicy for "
+          "more than one allowed batch sizes. The "
+          "batch_padding_policy is %s with "
+          "number of allowed batch sizes %d.",
+          options.batch_padding_policy, options.allowed_batch_sizes.size()));
     }
     if (options.mixed_priority_batching_policy !=
         MixedPriorityBatchingPolicy::kLowPriorityPaddingWithMaxBatchSize) {
@@ -1104,7 +1120,7 @@ absl::Status SharedBatchScheduler<TaskType>::AddQueueAfterRewritingOptions(
   };
   auto internal_queue =
       std::unique_ptr<internal::Queue<TaskType>>(new internal::Queue<TaskType>(
-          options, options_.env, options_.num_warmup_threads > 0,
+          options, options_.env, options_.num_warmup_batch_threads > 0,
           process_batch_callback, schedulable_batch_callback,
           schedulable_warmup_batch_callback));
   auto handle = std::unique_ptr<BatchScheduler<TaskType>>(
@@ -1130,6 +1146,7 @@ SharedBatchScheduler<TaskType>::SharedBatchScheduler(const Options& options)
       strings::StrCat(options.thread_pool_name, "_");
   periodic_fn_options.startup_delay_micros =
       options.batch_threads_startup_delay_micros;
+  periodic_fn_options.env = options.env;
   for (int i = 0; i < options.num_batch_threads; ++i) {
     std::unique_ptr<PeriodicFunction> thread(new PeriodicFunction(
         [this] { this->ThreadLogic(); },
@@ -1137,7 +1154,9 @@ SharedBatchScheduler<TaskType>::SharedBatchScheduler(const Options& options)
     batch_threads_.push_back(std::move(thread));
   }
   // Kick off the warmup threads.
-  for (int i = 0; i < options.num_warmup_threads; ++i) {
+  int num_warmup_batch_threads =
+      std::min(options.num_warmup_batch_threads, port::MaxParallelism());
+  for (int i = 0; i < num_warmup_batch_threads; ++i) {
     auto thread = std::make_unique<PeriodicFunction>(
         [this] { this->WarmupThreadLogic(); },
         0 /* function invocation interval time */, periodic_fn_options);
@@ -1282,6 +1301,7 @@ Queue<TaskType>::Queue(
     : tasks_priority_queue_(
           options.priority_aware_scheduler_options.max_queue_depth,
           options.split_input_task_func, options.enable_large_batch_splitting,
+          options.priority_aware_scheduler_options.enable_task_resplit,
           GetMaxExecutionBatchSize(options), options.batch_timeout_micros, env),
       options_(options),
       env_(env),

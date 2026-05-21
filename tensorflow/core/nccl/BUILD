@@ -35,6 +35,8 @@ cc_library(
         "//tensorflow/core/framework:tensor_proto_cc",
     ]) + if_rocm([
         "@local_config_rocm//rocm:rccl",
+        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocblas",
         "//tensorflow/core:gpu_runtime",
     ]) + if_cuda_or_rocm([
         "@com_google_absl//absl/base",
@@ -75,6 +77,7 @@ tf_cuda_cc_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@xla//xla/tsl/protobuf:error_codes_proto_impl_cc",
     ] + if_cuda_or_rocm([

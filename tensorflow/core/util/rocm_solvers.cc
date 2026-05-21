@@ -68,25 +68,25 @@ struct GpuSolverHandles {
     parent_ = parent;
     std::unique_ptr<stream_executor::ActivateContext> sac = parent_->Activate();
 #if TF_ROCM_VERSION >= 40500
-    CHECK(se::wrap::hipsolverCreate(&hipsolver_handle) ==
+    CHECK(hipsolverCreate(&hipsolver_handle) ==
           rocblas_status_success)
         << "Failed to create hipsolver instance";
 #endif
-    CHECK(se::wrap::rocblas_create_handle(&rocm_blas_handle) ==
+    CHECK(rocblas_create_handle(&rocm_blas_handle) ==
           rocblas_status_success)
         << "Failed to create rocBlas instance.";
-    CHECK(se::wrap::rocblas_set_stream(rocm_blas_handle, stream) ==
+    CHECK(rocblas_set_stream(rocm_blas_handle, stream) ==
           rocblas_status_success)
         << "Failed to set rocBlas stream.";
   }
 
   ~GpuSolverHandles() {
     std::unique_ptr<stream_executor::ActivateContext> sac = parent_->Activate();
-    CHECK(se::wrap::rocblas_destroy_handle(rocm_blas_handle) ==
+    CHECK(rocblas_destroy_handle(rocm_blas_handle) ==
           rocblas_status_success)
         << "Failed to destroy rocBlas instance.";
 #if TF_ROCM_VERSION >= 40500
-    CHECK(se::wrap::hipsolverDestroy(hipsolver_handle) ==
+    CHECK(hipsolverDestroy(hipsolver_handle) ==
           rocblas_status_success)
         << "Failed to destroy hipsolver instance.";
 #endif
@@ -278,28 +278,28 @@ Status GpuSolver::forward_input_or_allocate_scoped_tensor(
 #define TF_CALL_HIP_LAPACK_TYPES_NO_COMPLEX(m) m(float, S) m(double, D)
 
 #define BLAS_SOLVER_FN(method, type_prefix) \
-  se::wrap::rocblas##_##type_prefix##method
+  rocblas##_##type_prefix##method
 
 #if TF_ROCM_VERSION >= 40500
 #define TF_CALL_LAPACK_TYPES(m) \
   m(float, S) m(double, D) m(std::complex<float>, C) m(std::complex<double>, Z)
 #define TF_CALL_LAPACK_TYPES_NO_REAL(m) \
   m(std::complex<float>, C) m(std::complex<double>, Z)
-#define SOLVER_FN(method, hip_prefix) se::wrap::hipsolver##hip_prefix##method
+#define SOLVER_FN(method, hip_prefix) hipsolver##hip_prefix##method
 #else
 #define TF_CALL_LAPACK_TYPES(m) \
   m(float, s) m(double, d) m(std::complex<float>, c) m(std::complex<double>, z)
 #define TF_CALL_LAPACK_TYPES_NO_REAL(m) \
   m(std::complex<float>, c) m(std::complex<double>, z)
 #define SOLVER_FN(method, type_prefix) \
-  se::wrap::rocsolver##_##type_prefix##method
+  rocsolver##_##type_prefix##method
 #endif
 
 // Macros to construct rocsolver/hipsolver method names.
 #define ROCSOLVER_FN(method, type_prefix) \
-  se::wrap::rocsolver##_##type_prefix##method
+  rocsolver##_##type_prefix##method
 #define BUFSIZE_FN(method, hip_prefix) \
-  se::wrap::hipsolver##hip_prefix##method##_bufferSize
+  hipsolver##hip_prefix##method##_bufferSize
 
 //=============================================================================
 // Wrappers of hip/rocSolver computational methods begin here.
