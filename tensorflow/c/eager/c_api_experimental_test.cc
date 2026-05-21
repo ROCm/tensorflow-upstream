@@ -137,7 +137,7 @@ TEST(CAPI, MonitoringMultipleGauge) {
   TFE_MonitoringStringGaugeCellSet(cell2, "str");
   auto* buf = new TF_Buffer;
   TFE_MonitoringStringGaugeCellValue(cell2, buf);
-  string data(static_cast<const char*>(buf->data), buf->length);
+  std::string data(static_cast<const char*>(buf->data), buf->length);
   TF_DeleteBuffer(buf);
   EXPECT_EQ(data, "str");
   TFE_MonitoringDeleteStringGauge2(gauge2);
@@ -316,9 +316,8 @@ TEST(CAPI, Function_ident_CPU) {
     TFE_ContextSetExecutorForThread(ctx, executor);
     CHECK_EQ(TF_OK, TF_GetCode(status)) << TF_Message(status);
 
-    TF_Tensor* t =
-        TF_AllocateTensor(TF_INT32, nullptr, 0, 1 * sizeof(tensorflow::int32));
-    *reinterpret_cast<tensorflow::int32*>(TF_TensorData(t)) = 42;
+    TF_Tensor* t = TF_AllocateTensor(TF_INT32, nullptr, 0, 1 * sizeof(int32_t));
+    *reinterpret_cast<int32_t*>(TF_TensorData(t)) = 42;
     TFE_TensorHandle* h = TFE_NewTensorHandle(t, status);
     ASSERT_TRUE(TF_GetCode(status) == TF_OK) << TF_Message(status);
     TF_DeleteTensor(t);
@@ -338,7 +337,7 @@ TEST(CAPI, Function_ident_CPU) {
 
     TF_Tensor* r = TFE_TensorHandleResolve(result[0], status);
     ASSERT_TRUE(TF_GetCode(status) == TF_OK) << TF_Message(status);
-    EXPECT_EQ(*reinterpret_cast<tensorflow::int32*>(TF_TensorData(r)), 42);
+    EXPECT_EQ(*reinterpret_cast<int32_t*>(TF_TensorData(r)), 42);
     TFE_ContextSetExecutorForThread(ctx, old_executor);
     TFE_ExecutorWaitForAllPendingNodes(executor, status);
     ASSERT_EQ(TF_OK, TF_GetCode(status)) << TF_Message(status);
@@ -460,14 +459,14 @@ TEST(CAPI, TensorHandleNullptr) {
   const char* device_type = TFE_TensorHandleDeviceType(h, status.get());
   ASSERT_EQ(TF_INVALID_ARGUMENT, TF_GetCode(status.get()));
   ASSERT_EQ(device_type, nullptr);
-  ASSERT_EQ("Invalid handle", string(TF_Message(status.get())));
+  ASSERT_EQ("Invalid handle", std::string(TF_Message(status.get())));
 
   TF_SetStatus(status.get(), TF_OK, "");
 
   int device_id = TFE_TensorHandleDeviceID(h, status.get());
   ASSERT_EQ(TF_INVALID_ARGUMENT, TF_GetCode(status.get()));
   ASSERT_EQ(device_id, -1);
-  ASSERT_EQ("Invalid handle", string(TF_Message(status.get())));
+  ASSERT_EQ("Invalid handle", std::string(TF_Message(status.get())));
 }
 
 TEST(CAPI, TensorHandleDevices) {
@@ -487,7 +486,7 @@ TEST(CAPI, TensorHandleDevices) {
   ASSERT_EQ(0, device_id) << device_id;
 
   // Disable the test if no GPU is present.
-  string gpu_device_name;
+  std::string gpu_device_name;
   if (GetDeviceName(ctx, &gpu_device_name, "GPU")) {
     TFE_TensorHandle* hgpu = TFE_TensorHandleCopyToDevice(
         hcpu, ctx, gpu_device_name.c_str(), status.get());
@@ -587,7 +586,7 @@ TEST(CAPI, CreateLocalContextAsReset) {
   client_job->set_name("localhost");
   int client_port = tensorflow::testing::PickUnusedPortOrDie();
   client_job->mutable_tasks()->insert(
-      {0, strings::StrCat("localhost:", client_port)});
+      {0, absl::StrCat("localhost:", client_port)});
   server_def.set_job_name("localhost");
   auto serialized = server_def.SerializeAsString();
   TFE_ContextSetServerDef(ctx, 0, serialized.data(), serialized.size(), status);
@@ -599,8 +598,7 @@ TEST(CAPI, CreateLocalContextAsReset) {
   tensorflow::ClusterDef* cluster_def = server_def.mutable_cluster();
   tensorflow::JobDef* job_def = cluster_def->mutable_job(0);
   int worker_port = tensorflow::testing::PickUnusedPortOrDie();
-  job_def->mutable_tasks()->at(0) =
-      tensorflow::strings::StrCat("localhost:", worker_port);
+  job_def->mutable_tasks()->at(0) = absl::StrCat("localhost:", worker_port);
   serialized = server_def.SerializeAsString();
   TFE_InitializeLocalOnlyContext(ctx, 0, serialized.data(), serialized.size(),
                                  status);
@@ -622,8 +620,8 @@ TEST(CAPI, ShareVariableAcrossContextsAfterUpdateContextWorksWithTimeout) {
       ReplaceTaskInServerDef(server_def_0, /*task_index=*/0);
 
   // These server defs have task index set to 0.
-  string serialized_server_def_0 = server_def_0.SerializeAsString();
-  string serialized_server_def_1 = server_def_1.SerializeAsString();
+  std::string serialized_server_def_0 = server_def_0.SerializeAsString();
+  std::string serialized_server_def_1 = server_def_1.SerializeAsString();
 
   // Create two worker tasks.
   server_def_0.set_task_index(1);
@@ -692,7 +690,7 @@ TEST(CAPI, ShareVariableAcrossContextsAfterUpdateContextWorksWithTimeout) {
   // 5a. Update `ctx_0` with updated `server_def_0`.
   {
     server_def_0.set_task_index(0);
-    string serialized_update = server_def_0.SerializeAsString();
+    std::string serialized_update = server_def_0.SerializeAsString();
     TF_Status* status = TF_NewStatus();
     TFE_ContextUpdateServerDefWithTimeout(ctx_0, 0, serialized_update.data(),
                                           serialized_update.size(),
@@ -704,7 +702,7 @@ TEST(CAPI, ShareVariableAcrossContextsAfterUpdateContextWorksWithTimeout) {
   // 5b. Update `ctx_1` with updated `server_def_1`.
   {
     server_def_1.set_task_index(0);
-    string serialized_update = server_def_1.SerializeAsString();
+    std::string serialized_update = server_def_1.SerializeAsString();
     TF_Status* status = TF_NewStatus();
     TFE_ContextUpdateServerDefWithTimeout(ctx_1, 0, serialized_update.data(),
                                           serialized_update.size(),

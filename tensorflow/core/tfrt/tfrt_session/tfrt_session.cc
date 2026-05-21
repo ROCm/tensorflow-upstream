@@ -80,6 +80,9 @@ limitations under the License.
 namespace tensorflow {
 namespace {
 
+using CostAnalysisOptions =
+    tensorflow::tfrt_stub::GraphExecutionOptions::CostAnalysisOptions;
+
 // Wraps an `Eigen::ThreadPoolInterface` as a
 // `tensorflow::thread::ThreadPoolInterface`.
 class ThreadPoolInterfaceWrapper : public thread::ThreadPoolInterface {
@@ -152,15 +155,19 @@ class TfrtSession : public tensorflow::Session {
                        TfrtDeviceInfraTarget device_target,
                        bool tpu_use_tpu_runner, bool use_gpu,
                        TfrtSessionInterOpThreadPools inter_op_thread_pools,
-                       bool enable_mlrt,
+                       bool enable_mlrt, bool enable_async_native_lowering,
+                       bool enable_tpu_host_allocator_for_inputs,
                        tensorflow::BackendCompiler* backend_compiler,
                        std::unique_ptr<StaticDeviceMgr> device_manager)
       : runtime_{runtime},
         device_target_{device_target},
         tpu_use_tpu_runner_{tpu_use_tpu_runner},
         use_gpu_{use_gpu},
+        enable_tpu_host_allocator_for_inputs_(
+            enable_tpu_host_allocator_for_inputs),
         inter_op_thread_pools_{std::move(inter_op_thread_pools)},
         enable_mlrt_(enable_mlrt),
+        enable_async_native_lowering_(enable_async_native_lowering),
         options_{options},
         backend_compiler_(backend_compiler),
         device_manager_(std::move(device_manager)) {}
@@ -170,7 +177,7 @@ class TfrtSession : public tensorflow::Session {
   }
 
   absl::Status Create(GraphDef&& graph) override {
-    absl::MutexLock lock(&session_state_lock_);
+    absl::MutexLock lock(session_state_lock_);
     return CreateLocked(std::move(graph));
   }
 
@@ -231,11 +238,9 @@ class TfrtSession : public tensorflow::Session {
     // TODO(b/334641254): Offer a Session option that prunes the graph_def.
     model_context.set_graph_def(&graph);
     model_context.set_device_mgr(&fallback_state->device_manager());
-    // In the multi-host case, this prevents local Sessions from running
-    // global resource creation functions.
-    model_context.set_is_local_session(
-        !options_.config.experimental().enable_multi_host() &&
-        !options_.config.experimental().tfrt_use_ifrt());
+    if (backend_compiler_) {
+      model_context.set_is_local_session(false);
+    }
     TF_RETURN_IF_ERROR(options.runtime->CreateRuntimeResources(model_context));
 
     // Run post-partition graph optimization passes which have been registered
@@ -244,7 +249,7 @@ class TfrtSession : public tensorflow::Session {
     optimization_options.session_options = &options_;
     FunctionLibraryDefinition flib_def = fallback_state->func_lib_def();
     optimization_options.flib_def = &flib_def;
-    std::unordered_map<string, std::unique_ptr<Graph>> partition_graphs;
+    std::unordered_map<std::string, std::unique_ptr<Graph>> partition_graphs;
     auto initial_graph =
         std::make_unique<tensorflow::Graph>(tensorflow::OpRegistry::Global());
     tensorflow::GraphConstructorOptions opts;
@@ -276,7 +281,7 @@ class TfrtSession : public tensorflow::Session {
   }
 
   absl::Status Extend(GraphDef&& graph) override {
-    absl::MutexLock lock(&session_state_lock_);
+    absl::MutexLock lock(session_state_lock_);
     return ExtendLocked(std::move(graph));
   }
 
@@ -296,7 +301,7 @@ class TfrtSession : public tensorflow::Session {
       std::vector<Tensor>* outputs,
       const thread::ThreadPoolOptions& thread_pool_options) {
     {
-      absl::MutexLock lock(&session_state_lock_);
+      absl::MutexLock lock(session_state_lock_);
       if (session_state_ == SessionState::kInitialized) {
         return errors::Unavailable("Session not created yet.");
       }
@@ -398,7 +403,7 @@ class TfrtSession : public tensorflow::Session {
   // NOTE: This API is still experimental and may change.
   absl::Status MakeCallable(const CallableOptions& callable_options,
                             CallableHandle* out_handle) override {
-    absl::MutexLock lock(&callables_lock_);
+    absl::MutexLock lock(callables_lock_);
     *out_handle = next_callable_handle_++;
     assert(callables_.find(*out_handle) == callables_.end());
     callables_[*out_handle] = {callable_options};
@@ -433,7 +438,7 @@ class TfrtSession : public tensorflow::Session {
       const thread::ThreadPoolOptions& thread_pool_options) override {
     Callable callable;
     {
-      absl::MutexLock lock(&callables_lock_);
+      absl::MutexLock lock(callables_lock_);
       auto it = callables_.find(handle);
       if (it == callables_.end())
         return errors::InvalidArgument("No such callable handle: ", handle);
@@ -463,7 +468,7 @@ class TfrtSession : public tensorflow::Session {
   /// session.
   /// NOTE: This API is still experimental and may change.
   absl::Status ReleaseCallable(CallableHandle handle) override {
-    absl::MutexLock lock(&callables_lock_);
+    absl::MutexLock lock(callables_lock_);
     auto it = callables_.find(handle);
     if (it == callables_.end())
       return errors::InvalidArgument("No such callable handle: ", handle);
@@ -472,7 +477,7 @@ class TfrtSession : public tensorflow::Session {
   }
 
   absl::Status Close() override {
-    absl::MutexLock lock(&session_state_lock_);
+    absl::MutexLock lock(session_state_lock_);
     session_state_ = SessionState::kClosed;
     return absl::OkStatus();
   }
@@ -504,20 +509,33 @@ class TfrtSession : public tensorflow::Session {
     compile_options.tpu_fuse_ops = tpu_use_tpu_runner_;
     compile_options.hoist_invariant_ops = true;
     compile_options.sink_in_invariant_ops = true;
+
     compile_options.cost_threshold = 1024;
+    if (options_.config.experimental().stream_merge_threshold() > 0) {
+      compile_options.cost_threshold =
+          options_.config.experimental().stream_merge_threshold();
+    }
 
     if (use_gpu_) {
       options.enable_tfrt_gpu = true;
       options.enable_grappler_function_optimizer = true;
     }
 
-    // Enable TpuHostAllocator only for TpuRunner as it is the only
-    // implementation that supports the premapped memory optimization.
-    compile_options.use_tpu_host_allocator_for_inputs = tpu_use_tpu_runner_;
+    // Enable TpuHostAllocator for TpuRunner and IFRT (via backend_compiler_) as
+    // they are the implementations that support the premapped memory
+    // optimization.
+    compile_options.use_tpu_host_allocator_for_inputs =
+        enable_tpu_host_allocator_for_inputs_ &&
+        (tpu_use_tpu_runner_ || (backend_compiler_ != nullptr));
     options.compile_options.backend_compiler = backend_compiler_;
+    options.compile_options.enable_async_ifrt = enable_async_native_lowering_;
 
     options.model_metadata = options_.config.experimental().session_metadata();
     options.enable_mlrt = enable_mlrt_;
+    if (options_.config.experimental().online_cost_analysis()) {
+      options.cost_analysis_options.version =
+          CostAnalysisOptions::CostAnalysisVersion::kOnce;
+    }
 
     return options;
   }
@@ -550,6 +568,7 @@ class TfrtSession : public tensorflow::Session {
   const TfrtDeviceInfraTarget device_target_;
   const bool tpu_use_tpu_runner_;
   const bool use_gpu_;
+  const bool enable_tpu_host_allocator_for_inputs_;
   TfrtSessionInterOpThreadPools inter_op_thread_pools_;
 
   mutable absl::Mutex callables_lock_;
@@ -558,6 +577,7 @@ class TfrtSession : public tensorflow::Session {
       TF_GUARDED_BY(callables_lock_);
 
   bool enable_mlrt_ = false;
+  bool enable_async_native_lowering_ = false;
   SessionOptions options_ = SessionOptions();
   tensorflow::BackendCompiler* backend_compiler_ = nullptr;
   std::unique_ptr<StaticDeviceMgr> device_manager_;
@@ -709,7 +729,7 @@ class TfrtSessionFactory::ThreadPoolManager {
           "TFRT session does not yet support session local thread pool");
     }
 
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
 
     auto it = named_thread_pools_.find(name);
     // The thread pool with the given name already exists.
@@ -805,6 +825,9 @@ absl::Status TfrtSessionFactory::InitializeLocked(
     runtime_ = owned_runtime_.get();
   }
   enable_mlrt_ = options.enable_mlrt;
+  enable_async_native_lowering_ = options.enable_async_native_lowering;
+  enable_tpu_host_allocator_for_inputs_ =
+      options.enable_tpu_host_allocator_for_inputs;
   return absl::OkStatus();
 }
 
@@ -830,7 +853,7 @@ absl::Status TfrtSessionFactory::NewSession(const SessionOptions& options,
 
   *out_session = nullptr;
 
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::vector<std::unique_ptr<Device>> devices;
   TF_RETURN_IF_ERROR(DeviceFactory::AddDevices(
       options, "/job:localhost/replica:0/task:0", &devices));
@@ -844,14 +867,11 @@ absl::Status TfrtSessionFactory::NewSession(const SessionOptions& options,
       auto inter_op_thread_pools,
       thread_pool_manager_->UpdateAndGetInterOpThreadPools(options));
 
-  auto* backend_compiler = (options.config.experimental().enable_multi_host() ||
-                            options.config.experimental().tfrt_use_ifrt())
-                               ? backend_compiler_
-                               : nullptr;
-  *out_session =
-      new TfrtSession(options, runtime_, device_target_, tpu_use_tpu_runner_,
-                      use_gpu_, std::move(inter_op_thread_pools), enable_mlrt_,
-                      backend_compiler, std::move(device_manager_));
+  *out_session = new TfrtSession(
+      options, runtime_, device_target_, tpu_use_tpu_runner_, use_gpu_,
+      std::move(inter_op_thread_pools), enable_mlrt_,
+      enable_async_native_lowering_, enable_tpu_host_allocator_for_inputs_,
+      backend_compiler_, std::move(device_manager_));
   return absl::OkStatus();
 }
 
@@ -861,13 +881,13 @@ static TfrtSessionFactory* session_factory = nullptr;
 
 tfrt_stub::Runtime* TfrtSessionFactory::GetRuntime() {
   DCHECK(session_factory != nullptr);
-  absl::MutexLock lock(&session_factory->mutex_);
+  absl::MutexLock lock(session_factory->mutex_);
   return session_factory->runtime_;
 }
 
 absl::Status InitializeTfrtSession(const TfrtSessionOptions& options) {
   DCHECK(session_factory != nullptr);
-  absl::MutexLock lock(&session_factory->mutex_);
+  absl::MutexLock lock(session_factory->mutex_);
   DCHECK(!session_factory->IsInitialized());
   return UpdateTfrtSessionOptionsLocked(options);
 }

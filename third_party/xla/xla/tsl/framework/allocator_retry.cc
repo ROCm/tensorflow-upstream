@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/tsl/framework/allocator_retry.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 
@@ -23,7 +24,6 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "xla/tsl/framework/metrics.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/types.h"
 
 namespace tsl {
 
@@ -38,14 +38,14 @@ class ScopedTimeTracker {
   }
   ~ScopedTimeTracker() {
     if (start_us_) {
-      uint64 end_us = env_->NowMicros();
+      uint64_t end_us = env_->NowMicros();
       metrics::UpdateBfcAllocatorDelayTime(end_us - *start_us_);
     }
   }
 
  private:
   Env* env_;
-  std::optional<uint64> start_us_;
+  std::optional<uint64_t> start_us_;
 };
 }  // namespace
 
@@ -54,7 +54,7 @@ AllocatorRetry::AllocatorRetry() : env_(Env::Default()) {}
 AllocatorRetry::~AllocatorRetry() {
   // Lock the mutex to make sure that all memory effects are safely published
   // and available to a thread running the destructor.
-  absl::MutexLock l(&mu_);
+  absl::MutexLock l(mu_);
 }
 
 void* AllocatorRetry::AllocateRaw(
@@ -80,7 +80,7 @@ void* AllocatorRetry::AllocateRaw(
     }
     if (now < deadline) {
       tracker.Enable();
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       memory_returned_.WaitWithDeadline(&mu_, deadline);
     } else {
       return alloc_func(alignment, num_bytes, true);

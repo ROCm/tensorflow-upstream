@@ -54,6 +54,24 @@ from setuptools.dist import Distribution
 # result for pip.
 _VERSION = '0.0.0'
 
+cuda_version = 0  # placeholder
+cuda_major_version = '12'  # placeholder
+cuda_wheel_suffix = ''  # placeholder
+
+nvidia_cublas_version = ''  # placeholder
+nvidia_cuda_cupti_version = ''  # placeholder
+nvidia_cuda_nvcc_version = ''  # placeholder
+nvidia_cuda_runtime_version = ''  # placeholder
+nvidia_cudnn_version = ''  # placeholder
+nvidia_cufft_version = ''  # placeholder
+nvidia_cusolver_version = ''  # placeholder
+nvidia_cusparse_version = ''  # placeholder
+nvidia_nccl_version = ''  # placeholder
+nvidia_nvjitlink_version = ''  # placeholder
+nvidia_cuda_nvrtc_version = ''  # placeholder
+nvidia_curand_version = ''  # placeholder
+nvidia_nvshmem_version = ''  # placeholder
+
 # We use the same setup.py for all tensorflow_* packages and for the nightly
 # equivalents (tf_nightly_*). The package is controlled from the argument line
 # when building the pip package.
@@ -81,7 +99,7 @@ def standard_or_nightly(standard, nightly):
 REQUIRED_PACKAGES = [
     'absl-py >= 1.0.0',
     'astunparse >= 1.6.0',
-    'flatbuffers >= 24.3.25',
+    'flatbuffers >= 25.9.23',
     'gast >=0.2.1,!=0.5.0,!=0.5.1,!=0.5.2',
     'google_pasta >= 0.1.1',
     'libclang >= 13.0.0',
@@ -107,10 +125,10 @@ REQUIRED_PACKAGES = [
     # dependencies on the release branch is updated to the stable releases (RC
     # or final). For example, 'keras-nightly ~= 2.14.0.dev' will be replaced by
     # 'keras >= 2.14.0rc0, < 2.15' on the release branch after the branch cut.
-    'tb-nightly ~= 2.20.0.a',
-    'keras-nightly >= 3.10.0.dev',
+    'keras-nightly >= 3.12.0.dev',
     'numpy >= 1.26.0',
-    'h5py >= 3.11.0',
+    # Starting with 3.15, only MacOS 14 and 15 are supported.
+    'h5py >= 3.11.0, < 3.15.0' if sys.version_info.minor <= 13 else 'h5py ~= 3.15.1',
     'ml_dtypes >= 0.5.1, < 1.0.0',
 ]
 
@@ -145,18 +163,19 @@ if collaborator_build:
 EXTRA_PACKAGES = {
     'and-cuda': [
         # TODO(nluehr): set nvidia-* versions based on build components.
-        'nvidia-cublas-cu12 >= 12.5.3.2, < 13.0',
-        'nvidia-cuda-cupti-cu12 >= 12.5.82, < 13.0',
-        'nvidia-cuda-nvcc-cu12 >= 12.5.82, < 13.0',
-        'nvidia-cuda-nvrtc-cu12 >= 12.5.82, < 13.0',
-        'nvidia-cuda-runtime-cu12 >= 12.5.82, < 13.0',
-        'nvidia-cudnn-cu12 >= 9.3.0.75, < 10.0',
-        'nvidia-cufft-cu12 >= 11.2.3.61, < 12.0',
-        'nvidia-curand-cu12 >= 10.3.6.82, < 11.0',
-        'nvidia-cusolver-cu12 >= 11.6.3.83, < 12.0',
-        'nvidia-cusparse-cu12 >= 12.5.1.3, < 13.0',
-        'nvidia-nccl-cu12 >= 2.27.7, < 3.0',
-        'nvidia-nvjitlink-cu12 >= 12.5.82, < 13.0',
+        f'nvidia-cublas{cuda_wheel_suffix}{nvidia_cublas_version}',
+        f'nvidia-cuda-cupti{cuda_wheel_suffix}{nvidia_cuda_cupti_version}',
+        f'nvidia-cuda-nvcc{cuda_wheel_suffix}{nvidia_cuda_nvcc_version}',
+        f'nvidia-cuda-nvrtc{cuda_wheel_suffix}{nvidia_cuda_nvrtc_version}',
+        f'nvidia-cuda-runtime{cuda_wheel_suffix}{nvidia_cuda_runtime_version}',
+        f'nvidia-cudnn-cu13{nvidia_cudnn_version}' if cuda_major_version == '13' else f'nvidia-cudnn-cu12{nvidia_cudnn_version}',
+        f'nvidia-cufft{cuda_wheel_suffix}{nvidia_cufft_version}',
+        f'nvidia-curand{cuda_wheel_suffix}{nvidia_curand_version}',
+        f'nvidia-cusolver{cuda_wheel_suffix}{nvidia_cusolver_version}',
+        f'nvidia-cusparse{cuda_wheel_suffix}{nvidia_cusparse_version}',
+        f'nvidia-nccl-cu13{nvidia_nccl_version}' if cuda_major_version == '13' else f'nvidia-nccl-cu12{nvidia_nccl_version}',
+        f'nvidia-nvjitlink{cuda_wheel_suffix}{nvidia_nvjitlink_version}',
+        f'nvidia-nvshmem-cu13{nvidia_nvshmem_version}' if cuda_major_version == '13' else f'nvidia-nvshmem-cu12{nvidia_nvshmem_version}',
     ],
     'gcs-filesystem': [
         ('tensorflow-io-gcs-filesystem>=0.23.1; '
@@ -377,6 +396,32 @@ else:
       },
   }
 
+CLASSIFIERS = [
+    'Development Status :: 5 - Production/Stable',
+    # TODO(angerson) Add IFTTT when possible
+    'Intended Audience :: Developers',
+    'Intended Audience :: Education',
+    'Intended Audience :: Science/Research',
+    'License :: OSI Approved :: Apache Software License',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
+    'Programming Language :: Python :: 3 :: Only',
+    'Topic :: Scientific/Engineering',
+    'Topic :: Scientific/Engineering :: Mathematics',
+    'Topic :: Scientific/Engineering :: Artificial Intelligence',
+    'Topic :: Software Development',
+    'Topic :: Software Development :: Libraries',
+    'Topic :: Software Development :: Libraries :: Python Modules',
+]
+if cuda_major_version:
+  CLASSIFIERS.extend([
+      f'Environment :: GPU :: NVIDIA CUDA :: {cuda_major_version}',
+      f'Environment :: GPU :: NVIDIA CUDA :: {cuda_major_version} :: {cuda_major_version}.0',
+  ])
+
 setup(
     name=project_name,
     version=_VERSION.replace('-', ''),
@@ -392,32 +437,14 @@ setup(
     # Add in any packaged data.
     zip_safe=False,
     # Supported Python versions
-    python_requires='>=3.9',
+    # Python 3.9 support was dropped in TensorFlow 2.17.
+    python_requires='>=3.10',
     # PyPI package information.
-    classifiers=sorted([
-        'Development Status :: 5 - Production/Stable',
-        # TODO(angerson) Add IFTTT when possible
-        'Environment :: GPU :: NVIDIA CUDA :: 12',
-        'Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.2',
-        'Intended Audience :: Developers',
-        'Intended Audience :: Education',
-        'Intended Audience :: Science/Research',
-        'License :: OSI Approved :: Apache Software License',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.9',
-        'Programming Language :: Python :: 3.10',
-        'Programming Language :: Python :: 3.11',
-        'Programming Language :: Python :: 3.12',
-        'Programming Language :: Python :: 3.13',
-        'Programming Language :: Python :: 3 :: Only',
-        'Topic :: Scientific/Engineering',
-        'Topic :: Scientific/Engineering :: Mathematics',
-        'Topic :: Scientific/Engineering :: Artificial Intelligence',
-        'Topic :: Software Development',
-        'Topic :: Software Development :: Libraries',
-        'Topic :: Software Development :: Libraries :: Python Modules',
-    ]),
+    classifiers=sorted(CLASSIFIERS),
     license='Apache 2.0',
     keywords='tensorflow tensor machine learning',
+    nvidia_cuda_nvcc_version=nvidia_cuda_nvcc_version,
+    nvidia_cuda_nvrtc_version=nvidia_cuda_nvrtc_version,
+    nvidia_cuda_runtime_version=nvidia_cuda_runtime_version,
     **collaborator_build_dependent_options
 )

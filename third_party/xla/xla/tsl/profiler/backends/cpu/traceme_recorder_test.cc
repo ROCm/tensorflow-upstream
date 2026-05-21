@@ -22,16 +22,18 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
+#include "absl/synchronization/notification.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/math_utils.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
-#include "tsl/platform/notification.h"
+#include "xla/tsl/profiler/utils/traceme_global_flags.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace tsl {
 namespace profiler {
@@ -79,7 +81,7 @@ TEST(RecorderTest, Multithreaded) {
   std::atomic<int> thread_count = {0};
   for (int i = 0; i < kNumThreads; i++) {
     pool.Schedule([&start, &stop, &thread_count] {
-      uint64 j = 0;
+      uint64_t j = 0;
       bool was_active = false;
       auto record_event = [&j]() {
         int64_t start_time = GetCurrentTimeNanos();
@@ -118,7 +120,7 @@ TEST(RecorderTest, Multithreaded) {
   struct ThreadState {
     bool split_session = false;
     bool overlapping_sessions = false;
-    std::set<uint64> events;
+    std::set<uint64_t> events;
   };
   absl::flat_hash_map<int64_t /*tid*/, ThreadState> thread_state;
   // We expect each thread to eventually have multiple events, not all in a
@@ -151,10 +153,10 @@ TEST(RecorderTest, Multithreaded) {
       if (thread.events.empty()) continue;
       auto& state = thread_state[thread.thread.tid];
 
-      std::set<uint64> session_events;
-      uint64 current = 0;
+      std::set<uint64_t> session_events;
+      uint64_t current = 0;
       for (const auto& event : thread.events) {
-        uint64 activity_id;
+        uint64_t activity_id;
         ASSERT_TRUE(absl::SimpleAtoi(event.name, &activity_id));
         session_events.emplace(activity_id);
         // Session events should be contiguous.
@@ -185,6 +187,21 @@ TEST(RecorderTest, Multithreaded) {
     EXPECT_GT(thread.events.size(), 1)
         << "Expected gaps in thread events between sessions";
   }
+}
+
+TEST(RecorderTest, EnableSourceLocation) {
+  EXPECT_TRUE(TraceMeGlobalFlags::IsSourceLocationEnabled());
+  // Currently, _src is not implemented in TraceMeEncode.
+  EXPECT_TRUE(absl::StrContains(TraceMeEncode("Hello", {}), "_src="));
+}
+
+TEST(RecorderTest, DisableSourceLocation) {
+  bool original_value = TraceMeGlobalFlags::IsSourceLocationEnabled();
+  g_enable_source_location.store(false);
+  EXPECT_FALSE(TraceMeGlobalFlags::IsSourceLocationEnabled());
+  EXPECT_FALSE(absl::StrContains(TraceMeEncode("Hello", {}), "_src="));
+  // Reset the flag to its original value.
+  g_enable_source_location.store(original_value);
 }
 
 }  // namespace

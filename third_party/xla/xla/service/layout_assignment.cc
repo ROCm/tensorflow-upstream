@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/layout_assignment.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <iterator>
@@ -51,13 +50,14 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/map_util.h"
 #include "xla/permutation_util.h"
-#include "xla/service/call_graph.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -309,11 +309,11 @@ absl::Status LayoutAssignment::SetBufferLayout(const Layout& layout,
           << buffer_constraint->ToString();
   PushAddedConstraints(buffer_constraint.get());
   const HloInstruction* instruction = buffer.instruction();
-  if (dynamic_cast<const HloCallableInstruction*>(instruction) != nullptr) {
+  if (HloCallableInstruction::ClassOf(instruction)) {
     // Check and propagate via output-operand aliasing
     VLOG(3) << "Propagating aliasing:" << instruction->ToString() << "\n";
-    for (const std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>&
-             output_operand_pair : instruction->output_operand_aliasing()) {
+    for (const auto& output_operand_pair :
+         instruction->output_operand_aliasing()) {
       if (output_operand_pair.first != buffer.index()) {
         continue;
       }
@@ -455,9 +455,8 @@ absl::Status LayoutAssignment::SetInstructionLayout(
         if (subshape.IsArray()) {
           return SetBufferLayout(layout, *buffers[0], mandatory,
                                  /*dfs=*/true, priority);
-        } else {
-          return absl::OkStatus();
         }
+        return absl::OkStatus();
       });
 }
 
@@ -497,9 +496,8 @@ absl::Status LayoutAssignment::SetInstructionLayout(
         if (subshape.IsArray() && subshape.has_layout()) {
           return SetBufferLayout(subshape.layout(), *buffers[0], mandatory,
                                  /*dfs=*/dfs, priority);
-        } else {
-          return absl::OkStatus();
         }
+        return absl::OkStatus();
       }));
   VLOG(3) << "Setting operand layout?\n";
   if (shape_with_layout.IsArray() &&
@@ -1150,8 +1148,8 @@ absl::StatusOr<HloInstruction*> LayoutAssignment::CreateCopyWithNewLayout(
     return copy;
   }
 
-    return FailedPrecondition(
-        "Can only copy array and tuple shaped instructions");
+  return FailedPrecondition(
+      "Can only copy array and tuple shaped instructions");
 }
 
 // Creates a copy of the given operand if the operand's layout does not match
@@ -1412,7 +1410,7 @@ std::unique_ptr<Layout> LayoutAssignment::ChooseOperandLayoutFromOutputLayout(
         ShapeUtil::AlignLayouts(output_shape_with_layout, operand_shape);
     if (aligned_operand_shape) {
       auto operand_layout = aligned_operand_shape.value().layout();
-      TF_CHECK_OK(
+      CHECK_OK(
           LayoutUtil::ValidateLayoutForShape(operand_layout, operand_shape));
       return std::make_unique<Layout>(operand_layout);
     }
@@ -1428,7 +1426,7 @@ std::unique_ptr<Layout> LayoutAssignment::ChooseOperandLayoutFromOutputLayout(
       new_minor_to_major[i] = operand_dim;
     }
     Layout operand_layout = LayoutUtil::MakeLayout(new_minor_to_major);
-    TF_CHECK_OK(
+    CHECK_OK(
         LayoutUtil::ValidateLayoutForShape(operand_layout, operand->shape()));
     return std::make_unique<Layout>(operand_layout);
   }
@@ -1458,7 +1456,7 @@ std::unique_ptr<Layout> LayoutAssignment::ChooseOperandLayoutFromOutputLayout(
       new_minor_to_major.push_back(output_to_operand_mapping[output_dim]);
     }
     Layout operand_layout = LayoutUtil::MakeLayout(new_minor_to_major);
-    TF_CHECK_OK(
+    CHECK_OK(
         LayoutUtil::ValidateLayoutForShape(operand_layout, operand->shape()));
     return std::make_unique<Layout>(operand_layout);
   }
@@ -1551,8 +1549,7 @@ std::unique_ptr<Layout> LayoutAssignment::ChooseOutputLayoutFromOperandLayout(
         ShapeUtil::AlignLayouts(operand_shape_with_layout, output_shape);
     if (aligned_user_shape) {
       auto user_layout = aligned_user_shape.value().layout();
-      TF_CHECK_OK(
-          LayoutUtil::ValidateLayoutForShape(user_layout, output_shape));
+      CHECK_OK(LayoutUtil::ValidateLayoutForShape(user_layout, output_shape));
       return std::make_unique<Layout>(user_layout);
     }
   }
@@ -1568,7 +1565,7 @@ std::unique_ptr<Layout> LayoutAssignment::ChooseOutputLayoutFromOperandLayout(
       new_minor_to_major[i] = user_dim;
     }
     Layout user_layout = LayoutUtil::MakeLayout(new_minor_to_major);
-    TF_CHECK_OK(LayoutUtil::ValidateLayoutForShape(user_layout, user->shape()));
+    CHECK_OK(LayoutUtil::ValidateLayoutForShape(user_layout, user->shape()));
     return std::make_unique<Layout>(user_layout);
   }
 
@@ -1714,8 +1711,7 @@ absl::Status LayoutAssignment::PropagateOperandConstraintToResultForCustomCall(
     const HloInstruction* user,
     const OperandLayoutConstraint& operand_constraint) {
   int64_t operand_no = operand_constraint.operand_no();
-  for (const std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>&
-           output_operand_pair : user->output_operand_aliasing()) {
+  for (const auto& output_operand_pair : user->output_operand_aliasing()) {
     if (output_operand_pair.second.first != operand_no) {
       continue;
     }
@@ -1935,13 +1931,28 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
     }
     if (!InstructionCanChangeLayoutInstance(instruction)) {
       // Copy the layout to the operand.
-      if (buffer.IsArray() && operand->shape().IsArray() &&
-          operand->shape().dimensions().size() ==
-              LayoutUtil::MinorToMajor(buffer_constraint.layout()).size()) {
-        TF_RETURN_IF_ERROR(SetArrayOperandLayout(
-            buffer_constraint.layout(), instruction, operand_no,
-            /*mandatory=*/true, /*dfs=*/true, current_priority_));
+      if (buffer.IsArray() && operand->shape().IsArray()) {
+        if (operand->shape().dimensions().size() ==
+            LayoutUtil::MinorToMajor(buffer_constraint.layout()).size()) {
+          TF_RETURN_IF_ERROR(SetArrayOperandLayout(
+              buffer_constraint.layout(), instruction, operand_no,
+              /*mandatory=*/true, /*dfs=*/true, current_priority_));
+        } else if (instruction->opcode() == HloOpcode::kBitcastConvert) {
+          Shape shape = instruction->shape();
+          if (operand->shape().dimensions().size() <
+              instruction->shape().dimensions().size()) {
+            shape = ShapeUtil::DeleteDimension(shape.dimensions().size() - 1,
+                                               shape);
+          } else {
+            ShapeUtil::AppendMinorDimension(
+                operand->shape().dimensions().back(), &shape);
+          }
+          TF_RETURN_IF_ERROR(SetArrayOperandLayout(
+              shape.layout(), instruction, operand_no,
+              /*mandatory=*/true, /*dfs=*/true, current_priority_));
+        }
       }
+
     } else if (instruction->opcode() == HloOpcode::kBroadcast) {
       Layout layout =
           GetBroadcastLayoutFromOutput(buffer_constraint.layout(), instruction);
@@ -2010,11 +2021,12 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToUses(
   }
 
   // Propagate to backedges of kWhile.
-  CallGraphNode& node = call_graph_->GetNode(buffer.instruction()->parent());
-  if (node.caller_callsites().size() != 1) {
+  HloComputation* computation = buffer.instruction()->parent();
+  auto callers = computation->caller_instructions();
+  if (callers.size() != 1) {
     return absl::OkStatus();
   }
-  const HloInstruction* parent = node.caller_callsites()[0].instruction();
+  const HloInstruction* parent = callers[0];
   if (parent->opcode() != HloOpcode::kWhile) {
     return absl::OkStatus();
   }
@@ -2491,6 +2503,11 @@ absl::Status LayoutAssignment::RunOnComputation(
         } else {
           TF_RETURN_IF_ERROR(SetOperandLayout(
               custom_call->operand_shapes_with_layout()[i], custom_call, i));
+          if (instruction->operand(i)->opcode() == HloOpcode::kCopy) {
+            TF_RETURN_IF_ERROR(
+                SetOperandLayout(custom_call->operand_shapes_with_layout()[i],
+                                 custom_call->operand(i), 0));
+          }
         }
       }
     }
@@ -2552,7 +2569,10 @@ absl::Status LayoutAssignment::ConstrainChannelLayouts(
     HloComputation* computation,
     ChannelLayoutConstraints* channel_constraints) {
   for (HloInstruction* instruction : computation->MakeInstructionPostOrder()) {
-    if (instruction->IsCrossModuleAllReduce()) {
+    if (instruction->IsCrossModuleAllReduce() &&
+        instruction->opcode() != HloOpcode::kAllReduceStart &&
+        instruction->opcode() != HloOpcode::kAllReduceDone) {
+      // TODO: b/501070020 - Support asynchronous all-reduce.
       TF_ASSIGN_OR_RETURN(auto op_layout, InferArrayLayout(instruction, {}));
       VLOG(5) << "Constrain cross module all reduce: " << op_layout.ToString()
               << "\n";
@@ -2615,12 +2635,11 @@ absl::Status LayoutAssignment::PropagateComputationLayouts(
   return absl::OkStatus();
 }
 
-absl::StatusOr<bool> LayoutAssignment::Run(
+absl::StatusOr<bool> LayoutAssignment::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(2) << "Running layout assignment on module " << module->name();
   TF_RETURN_IF_ERROR(Init(module));
-  call_graph_ = CallGraph::Build(module);
 
   std::vector<std::pair<HloInstruction*, int64_t>> operands_to_copy;
   for (HloComputation* computation : module->computations(execution_threads)) {
@@ -2646,8 +2665,8 @@ absl::StatusOr<bool> LayoutAssignment::Run(
         // aliasing information depending on ordering of constraints. We expect
         // that unnecessary copies may be optimized out by later passes.
         absl::flat_hash_set<int64_t> processed;
-        for (const std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>&
-                 output_operand_pair : instruction->output_operand_aliasing()) {
+        for (const auto& output_operand_pair :
+             instruction->output_operand_aliasing()) {
           int operand_no = output_operand_pair.second.first;
           if (!processed.contains(operand_no)) {
             operands_to_copy.emplace_back(instruction, operand_no);
@@ -2663,39 +2682,45 @@ absl::StatusOr<bool> LayoutAssignment::Run(
   }
 
   // Clone Conditional computations with multiple callsites.
-  struct ComputationsToClone {
+  struct CloneRequest {
     HloInstruction* caller;
-    int64_t branch_index;
     HloComputation* computation;
   };
-  std::vector<ComputationsToClone> computations_to_clone;
+  std::vector<CloneRequest> clone_requests;
   for (HloComputation* computation : module->computations(execution_threads)) {
-    CallGraphNode& node = call_graph_->GetNode(computation);
-    if (node.caller_callsites().size() == 1) {
+    auto caller_instructions = computation->caller_instructions();
+    if (caller_instructions.size() <= 1) {
       continue;
     }
-    if (absl::c_none_of(node.caller_callsites(), [](CallSite caller) {
-          return caller.instruction()->opcode() == HloOpcode::kConditional;
-        })) {
-      continue;
-    }
-    for (int64_t i = 0; i < node.caller_callsites().size() - 1; ++i) {
-      HloInstruction* caller = node.caller_callsites()[i].instruction();
+    std::vector<HloInstruction*> cond_callers;
+    for (HloInstruction* caller : caller_instructions) {
       if (caller->opcode() == HloOpcode::kConditional) {
-        for (int64_t k = 0; k < caller->branch_count(); ++k) {
-          if (computation == caller->branch_computation(k)) {
-            // Defer cloning + adding the computation since we are iterating
-            // over the list of computations.
-            computations_to_clone.push_back({caller, k, computation});
-            break;
-          }
-        }
+        cond_callers.push_back(caller);
       }
     }
+    if (cond_callers.empty()) {
+      continue;
+    }
+    int clones_needed = cond_callers.size();
+    // If all unique caller instructions are conditionals that we want to clone,
+    // we can leave one of them to use the original computation. This avoids
+    // redundant cloning and prevents the original computation from becoming
+    // dead.
+    if (caller_instructions.size() == cond_callers.size()) {
+      clones_needed--;
+    }
+    for (int i = 0; i < clones_needed; ++i) {
+      clone_requests.push_back({cond_callers[i], computation});
+    }
   }
-  for (auto [caller, branch_index, computation] : computations_to_clone) {
-    caller->set_branch_computation(
-        branch_index, module->AddEmbeddedComputation(computation->Clone()));
+  for (const auto& request : clone_requests) {
+    HloComputation* clone =
+        module->AddEmbeddedComputation(request.computation->Clone());
+    for (int64_t k = 0; k < request.caller->branch_count(); ++k) {
+      if (request.computation == request.caller->branch_computation(k)) {
+        request.caller->set_branch_computation(k, clone);
+      }
+    }
   }
 
   // Verify computation layout is sane.
@@ -2838,10 +2863,15 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     const HloInstruction* instruction) {
   switch (instruction->opcode()) {
     case HloOpcode::kAbs:
+    case HloOpcode::kAcos:
+    case HloOpcode::kAcosh:
+    case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAdd:
     case HloOpcode::kAddDependency:
     case HloOpcode::kAnd:
     case HloOpcode::kAtan2:
+    case HloOpcode::kAtanh:
     case HloOpcode::kBitcastConvert:
     case HloOpcode::kCeil:
     case HloOpcode::kClamp:
@@ -2851,6 +2881,7 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     case HloOpcode::kConcatenate:
     case HloOpcode::kConvert:
     case HloOpcode::kCos:
+    case HloOpcode::kCosh:
     case HloOpcode::kAllGather:
     case HloOpcode::kAllGatherStart:
     case HloOpcode::kAllGatherDone:
@@ -2897,6 +2928,7 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     case HloOpcode::kShiftRightLogical:
     case HloOpcode::kSign:
     case HloOpcode::kSin:
+    case HloOpcode::kSinh:
     case HloOpcode::kSlice:
     case HloOpcode::kSort:
     case HloOpcode::kTopK:
@@ -2918,6 +2950,7 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kRaggedAllToAll:
+    case HloOpcode::kScan:
       return false;
     case HloOpcode::kAsyncStart:
     case HloOpcode::kAsyncUpdate:
@@ -2997,10 +3030,10 @@ absl::Status LayoutAssignment::Init(HloModule* module) {
     std::vector<HloInstruction*> copies_to_remove(added_copies_.begin(),
                                                   added_copies_.end());
     // Ensure determinism.
-    std::sort(copies_to_remove.begin(), copies_to_remove.end(),
-              [](const HloInstruction* a, const HloInstruction* b) {
-                return a->unique_id() < b->unique_id();
-              });
+    absl::c_sort(copies_to_remove,
+                 [](const HloInstruction* a, const HloInstruction* b) {
+                   return a->unique_id() < b->unique_id();
+                 });
     for (HloInstruction* instruction : copies_to_remove) {
       VLOG(5) << "Removing added copy: " << instruction->ToString();
       HloComputation* computation = instruction->parent();

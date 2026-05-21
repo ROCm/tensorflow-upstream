@@ -201,7 +201,7 @@ TFE_TensorHandle* TestMatrixTensorHandle3X2(TFE_Context* ctx) {
 }
 
 TFE_TensorHandle* TestVariable(TFE_Context* ctx, float value,
-                               const tensorflow::string& device_name) {
+                               const std::string& device_name) {
   TF_Status* status = TF_NewStatus();
   // Create the variable handle.
   TFE_Op* op = TFE_NewOp(ctx, "VarHandleOp", status);
@@ -365,7 +365,7 @@ TFE_Op* AllReduceOp(TFE_Context* ctx, TFE_TensorHandle* in, int group_size) {
 TFE_Op* SendOp(TFE_Context* ctx, TFE_TensorHandle* in,
                const std::string& op_name, const std::string& send_device,
                const std::string& recv_device,
-               tensorflow::uint64 send_device_incarnation) {
+               uint64_t send_device_incarnation) {
   TF_Status* status = TF_NewStatus();
   TFE_Op* op = TFE_NewOp(ctx, op_name.c_str(), status);
   CHECK_EQ(TF_OK, TF_GetCode(status)) << TF_Message(status);
@@ -386,7 +386,7 @@ TFE_Op* SendOp(TFE_Context* ctx, TFE_TensorHandle* in,
 
 TFE_Op* RecvOp(TFE_Context* ctx, const std::string& op_name,
                const std::string& send_device, const std::string& recv_device,
-               tensorflow::uint64 send_device_incarnation) {
+               uint64_t send_device_incarnation) {
   TF_Status* status = TF_NewStatus();
   TFE_Op* op = TFE_NewOp(ctx, op_name.c_str(), status);
   CHECK_EQ(TF_OK, TF_GetCode(status)) << TF_Message(status);
@@ -437,8 +437,7 @@ tensorflow::ServerDef GetServerDef(const string& job_name, int num_tasks) {
   job_def->set_name(job_name);
   for (int i = 0; i < num_tasks; i++) {
     int port = tensorflow::testing::PickUnusedPortOrDie();
-    job_def->mutable_tasks()->insert(
-        {i, tensorflow::strings::StrCat("localhost:", port)});
+    job_def->mutable_tasks()->insert({i, absl::StrCat("localhost:", port)});
     LOG(INFO) << "Picked test port: " << port << " for job: " << job_name
               << ", task: " << i;
   }
@@ -461,12 +460,11 @@ tensorflow::ServerDef GetMultiClientServerDef(const std::string& job_name,
   job_def->set_name(job_name);
   for (int i = 0; i < num_tasks; i++) {
     int port = tensorflow::testing::PickUnusedPortOrDie();
-    job_def->mutable_tasks()->insert(
-        {i, tensorflow::strings::StrCat("localhost:", port)});
+    job_def->mutable_tasks()->insert({i, absl::StrCat("localhost:", port)});
   }
   auto* config = server_def.mutable_default_session_config();
   config->mutable_experimental()->set_collective_group_leader(
-      tensorflow::strings::StrCat("/job:", job_name, "/replica:0/task:", 0));
+      absl::StrCat("/job:", job_name, "/replica:0/task:", 0));
   auto* rewrite_options =
       config->mutable_graph_options()->mutable_rewrite_options();
   rewrite_options->set_scoped_allocator_optimization(
@@ -488,8 +486,8 @@ tensorflow::ServerDef GetMultiClientServerDef(const std::string& job_name,
 }
 
 TFE_TensorHandle* CreateVarHandle(TFE_Context* ctx,
-                                  const tensorflow::string& device_name,
-                                  const tensorflow::string& variable_name) {
+                                  const std::string& device_name,
+                                  const std::string& variable_name) {
   TF_Status* status = TF_NewStatus();
   // Create the variable handle.
   TFE_Op* op = TFE_NewOp(ctx, "VarHandleOp", status);
@@ -515,8 +513,8 @@ TFE_TensorHandle* CreateVarHandle(TFE_Context* ctx,
 }
 
 TFE_TensorHandle* CreateVariable(TFE_Context* ctx, float value,
-                                 const tensorflow::string& device_name,
-                                 const tensorflow::string& variable_name) {
+                                 const std::string& device_name,
+                                 const std::string& variable_name) {
   TF_Status* status = TF_NewStatus();
   TFE_TensorHandle* var_handle =
       CreateVarHandle(ctx, device_name, variable_name);
@@ -579,16 +577,14 @@ tensorflow::ServerDef ReplaceTaskInServerDef(
   tensorflow::ClusterDef* cluster_def = server_def_copy.mutable_cluster();
   tensorflow::JobDef* job_def = cluster_def->mutable_job(0);
   const int port = tensorflow::testing::PickUnusedPortOrDie();
-  job_def->mutable_tasks()->at(task_index) =
-      tensorflow::strings::StrCat("localhost:", port);
+  job_def->mutable_tasks()->at(task_index) = absl::StrCat("localhost:", port);
   return server_def_copy;
 }
 
 void ReplaceTaskInServerDef(tensorflow::ServerDef* server_def, int task_index,
                             const string& host, int port) {
   tensorflow::JobDef* job_def = server_def->mutable_cluster()->mutable_job(0);
-  job_def->mutable_tasks()->at(task_index) =
-      tensorflow::strings::StrCat(host, ":", port);
+  job_def->mutable_tasks()->at(task_index) = absl::StrCat(host, ":", port);
 }
 
 std::vector<std::string> ListDeviceNames(TFE_Context* ctx) {

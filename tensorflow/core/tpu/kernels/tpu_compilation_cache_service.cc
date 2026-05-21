@@ -19,7 +19,7 @@ limitations under the License.
 #include <vector>
 
 #include "grpcpp/support/byte_buffer.h"
-#include "tensorflow/core/distributed_runtime/rpc/grpc_util.h"
+#include "xla/tsl/distributed_runtime/rpc/grpc_util.h"
 #include "tensorflow/core/platform/coding.h"
 #include "tensorflow/core/tpu/kernels/tpu_compilation_cache_rpc_support.h"
 
@@ -104,12 +104,13 @@ void TpuCompilationCacheService::GetTpuProgram(GetTpuProgramCall* call) {
       break;
 
     default:
-      s = errors::Internal("Bad GetTpuProgram RPC request oneof case ",
-                           call->request.key_oneof_case());
+      s = absl::InternalError(
+          absl::StrCat("Bad GetTpuProgram RPC request oneof case ",
+                       call->request.key_oneof_case()));
       break;
   }
   if (!s.ok()) {
-    return call->SendResponse(ToGrpcStatus(s));
+    return call->SendResponse(tsl::ToGrpcStatus(s));
   }
 
   s = entry->ToSubEntryRef(call->request.fetch_target());
@@ -134,7 +135,7 @@ void TpuCompilationCacheService::GetTpuProgram(GetTpuProgramCall* call) {
       tpu::SerializeCacheEntryToBufferSlices(cache_entry);
 
   if (!buffer_slices.ok()) {
-    return call->SendResponse(ToGrpcStatus(buffer_slices.status()));
+    return call->SendResponse(tsl::ToGrpcStatus(buffer_slices.status()));
   }
 
   call->response =

@@ -379,6 +379,17 @@ def BiasQuantizerPass : Pass<"tfl-bias-quantizer", "mlir::ModuleOp"> {
   ];
 }
 
+def FuseQDQPass : Pass<"tfl-fuse-qdq", "mlir::ModuleOp"> {
+  let summary = "Fuses dq and q ops before and after ops that can be quantized.";
+  let description = [{
+      Fuses dq and q ops before and after ops that can be quantized..
+  }];
+  let constructor = "CreateFuseQDQPass()";
+  let dependentDialects = [
+    "TFL::TensorFlowLiteDialect",
+  ];
+}
+
 def QuantizeVariablesPass : Pass<"tfl-quantize-variables", "mlir::ModuleOp"> {
   let summary = "Quantize variables";
   let constructor = "CreatePrepareQuantizeVariablesPass()";
@@ -429,3 +440,14 @@ def ReduceTypePrecisionPass : Pass<"tfl-reduce-type-precision", "mlir::ModuleOp"
   let dependentDialects = ["TFL::TensorFlowLiteDialect"];
 }
 
+def RankReductionPass : Pass<"tfl-rank-reduction", "mlir::func::FuncOp"> {
+  let summary = "Reduce the rank of tensors to be compatible with TFLite GPU delegate.";
+  let constructor = "CreateRankReductionPass()";
+  let dependentDialects = ["TFL::TensorFlowLiteDialect"];
+}
+
+def GpuCompatibilityPass : Pass<"tfl-gpu-compatibility", "mlir::func::FuncOp"> {
+  let summary = "Make TFLite model compatible with TFLite GPU delegate.";
+  let constructor = "CreateGpuCompatibilityPass()";
+  let dependentDialects = ["TFL::TensorFlowLiteDialect"];
+}

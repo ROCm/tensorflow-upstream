@@ -24,9 +24,12 @@ limitations under the License.
 #include <deque>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
+#include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -36,8 +39,6 @@ limitations under the License.
 #include "xla/tsl/framework/shared_counter.h"
 #include "xla/tsl/lib/core/bits.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/types.h"
-#include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "tsl/platform/numbers.h"
 
 namespace tensorflow {
@@ -76,11 +77,14 @@ class BFCAllocator : public Allocator {
     double fragmentation_fraction = 0;
   };
   BFCAllocator(std::unique_ptr<SubAllocator> sub_allocator, size_t total_memory,
-               const string& name, const Options& opts);
+               const std::string& name, const Options& opts);
 
   ~BFCAllocator() override;
 
-  string Name() override { return name_; }
+  std::string Name() override { return name_; }
+
+  static constexpr size_t kMinAllocationBits = 8;
+  static constexpr size_t kMinAllocationSize = 1 << kMinAllocationBits;
 
   void* AllocateRaw(size_t alignment, size_t num_bytes) override {
     return AllocateRaw(alignment, num_bytes, AllocationAttributes());
@@ -105,7 +109,7 @@ class BFCAllocator : public Allocator {
 
   void SetTimingCounter(SharedCounter* sc) { timing_counter_ = sc; }
 
-  void SetSafeFrontier(uint64 count) override;
+  void SetSafeFrontier(uint64_t count) override;
 
   AllocatorMemoryType GetMemoryType() const override;
 
@@ -118,7 +122,7 @@ class BFCAllocator : public Allocator {
 
   void* AllocateRawInternal(size_t alignment, size_t num_bytes,
                             bool dump_log_on_failure,
-                            uint64 freed_before_count);
+                            uint64_t freed_before_count);
 
   void* AllocateRawInternalWithRetry(
       size_t alignment, size_t num_bytes,
@@ -160,10 +164,10 @@ class BFCAllocator : public Allocator {
 
   // A ChunkHandle is an index into the chunks_ vector in BFCAllocator
   // kInvalidChunkHandle means an invalid chunk
-  typedef size_t ChunkHandle;
+  using ChunkHandle = size_t;
   static constexpr ChunkHandle kInvalidChunkHandle = SIZE_MAX;
 
-  typedef int BinNum;
+  using BinNum = int;
   static constexpr int kInvalidBinNum = -1;
   // The following means that the largest bin'd chunk size is 256 << 21 = 512MB.
   static constexpr int kNumBins = 21;
@@ -212,7 +216,7 @@ class BFCAllocator : public Allocator {
     BinNum bin_num = kInvalidBinNum;
 
     // Optional count when this chunk was most recently made free.
-    uint64 freed_at_count = 0;
+    uint64_t freed_at_count = 0;
 
     bool in_use() const { return allocation_id != -1; }
 
@@ -223,9 +227,9 @@ class BFCAllocator : public Allocator {
     int64 action_count = 0;
 #endif
 
-    string DebugString(BFCAllocator* a,
-                       bool recurse) ABSL_NO_THREAD_SAFETY_ANALYSIS {
-      string dbg;
+    std::string DebugString(BFCAllocator* a,
+                            bool recurse) ABSL_NO_THREAD_SAFETY_ANALYSIS {
+      std::string dbg;
       absl::StrAppend(
           &dbg, "  Size: ", strings::HumanReadableNumBytes(size),
           " | Requested Size: ", strings::HumanReadableNumBytes(requested_size),
@@ -271,16 +275,13 @@ class BFCAllocator : public Allocator {
       BFCAllocator* allocator_;  // The parent allocator
     };
 
-    typedef std::set<ChunkHandle, ChunkComparator> FreeChunkSet;
+    using FreeChunkSet = absl::btree_set<ChunkHandle, ChunkComparator>;
     // List of free chunks within the bin, sorted by chunk size.
     // Chunk * not owned.
     FreeChunkSet free_chunks;
     Bin(BFCAllocator* allocator, size_t bs)
         : bin_size(bs), free_chunks(ChunkComparator(allocator)) {}
   };
-
-  static constexpr size_t kMinAllocationBits = 8;
-  static constexpr size_t kMinAllocationSize = 1 << kMinAllocationBits;
 
   // BFCAllocator allocates memory into a collection of disjoint
   // AllocationRegions.  Each AllocationRegion corresponds to one call to
@@ -340,8 +341,8 @@ class BFCAllocator : public Allocator {
     }
 
     size_t IndexFor(const void* p) const {
-      std::uintptr_t p_int = safe_reinterpret_cast<std::uintptr_t>(p);
-      std::uintptr_t base_int = safe_reinterpret_cast<std::uintptr_t>(ptr_);
+      uintptr_t p_int = absl::bit_cast<uintptr_t>(p);
+      uintptr_t base_int = absl::bit_cast<uintptr_t>(ptr_);
       DCHECK_GE(p_int, base_int);
       DCHECK_LT(p_int, base_int + memory_size_);
       return static_cast<size_t>(((p_int - base_int) >> kMinAllocationBits));
@@ -368,8 +369,8 @@ class BFCAllocator : public Allocator {
   // This class is thread-compatible.
   class RegionManager {
    public:
-    RegionManager() {}
-    ~RegionManager() {}
+    RegionManager() = default;
+    ~RegionManager() = default;
 
     void AddAllocationRegion(void* ptr, size_t memory_size) {
       // Insert sorted by end_ptr.
@@ -378,7 +379,7 @@ class BFCAllocator : public Allocator {
       regions_.insert(entry, AllocationRegion(ptr, memory_size));
     }
 
-    // Adds an alloation region for the given ptr and size, potentially
+    // Adds an allocation region for the given ptr and size, potentially
     // extending a region if ptr matches the end_ptr of an existing region.
     // If a region is extended, returns a pointer to the extended region so that
     // the BFC allocator can reason about chunkification.
@@ -472,9 +473,10 @@ class BFCAllocator : public Allocator {
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Returns a pointer to an underlying allocated chunk of size
-  // 'rounded_bytes'.
+  // 'rounded_bytes' aligned to 'alignment'.
   void* FindChunkPtr(BinNum bin_num, size_t rounded_bytes, size_t num_bytes,
-                     uint64 freed_before) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+                     size_t alignment, uint64_t freed_before)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Splits the chunk specified by 'h' into two chunks, one at least
   // of size 'num_bytes'.
@@ -504,7 +506,7 @@ class BFCAllocator : public Allocator {
   // Removes the chunk metadata represented by 'h'.
   void DeleteChunk(ChunkHandle h) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  string RenderOccupancy() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  std::string RenderOccupancy() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
   void DumpMemoryLog(size_t num_bytes) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
   tensorflow::MemoryDump RecordMemoryMapInternal()
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
@@ -552,7 +554,7 @@ class BFCAllocator : public Allocator {
     return static_cast<size_t>(256) << index;
   }
   BinNum BinNumForSize(size_t bytes) {
-    uint64 v = std::max<size_t>(bytes, 256) >> kMinAllocationBits;
+    uint64_t v = std::max<size_t>(bytes, 256) >> kMinAllocationBits;
     int b = std::min(kNumBins - 1, tsl::Log2Floor64(v));
     return b;
   }
@@ -573,11 +575,11 @@ class BFCAllocator : public Allocator {
   const bool coalesce_regions_;
 
   std::unique_ptr<SubAllocator> sub_allocator_;
-  string name_;
+  std::string name_;
   SharedCounter* timing_counter_ = nullptr;
   std::deque<ChunkHandle> timestamped_chunks_;
 
-  std::atomic<uint64> safe_frontier_ = {0};
+  std::atomic<uint64_t> safe_frontier_ = {0};
 
   // Structures mutable after construction
   mutable absl::Mutex mutex_;

@@ -17,12 +17,14 @@ limitations under the License.
 #define XLA_BACKENDS_AUTOTUNER_CODEGEN_BACKEND_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "google/protobuf/any.pb.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/executable.h"
 
@@ -38,6 +40,10 @@ class CodegenBackend {
   virtual ~CodegenBackend() = default;
 
   virtual absl::string_view name() const = 0;
+
+  virtual autotuner::Backend backend() const = 0;
+
+  virtual std::string version() const = 0;
 
   // Returns all supported configs for the given HLO instruction.
   virtual absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>

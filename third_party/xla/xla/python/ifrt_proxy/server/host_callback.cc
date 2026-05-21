@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -29,16 +30,17 @@
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/python/ifrt/client.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt_proxy/common/proto_util.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
 #include "xla/python/pjrt_ifrt/xla_host_callback.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -50,7 +52,7 @@ namespace proxy {
 RemoteLoadedHostCallbackQueue::~RemoteLoadedHostCallbackQueue() { Close(); }
 
 absl::Status RemoteLoadedHostCallbackQueue::Push(ExecutionRequest request) {
-  absl::MutexLock l(&mu_);
+  absl::MutexLock l(mu_);
   if (closed_) {
     return absl::CancelledError(
         "RemoteLoadedHostCallback has stopped accepting new execution "
@@ -65,7 +67,7 @@ RemoteLoadedHostCallbackQueue::Pop() {
   auto not_empty = [this]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
     return !requests_.empty() || closed_;
   };
-  absl::MutexLock l(&mu_, absl::Condition(&not_empty));
+  absl::MutexLock l(mu_, absl::Condition(&not_empty));
   if (closed_) {
     return std::nullopt;
   }
@@ -77,7 +79,7 @@ RemoteLoadedHostCallbackQueue::Pop() {
 void RemoteLoadedHostCallbackQueue::Close() {
   std::deque<ExecutionRequest> requests;
   {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     if (!closed_) {
       requests.swap(requests_);
     }
@@ -107,13 +109,13 @@ RemoteLoadedHostCallback::CreateFromSerialized(
          arg_protos) {
       xla::HostCallbackArgInfo& arg = args.emplace_back();
       arg.channel_id = static_cast<uint16_t>(arg_proto.channel_id());
-      TF_ASSIGN_OR_RETURN(arg.shape, xla::Shape::FromProto(arg_proto.shape()));
+      ASSIGN_OR_RETURN(arg.shape, xla::Shape::FromProto(arg_proto.shape()));
     }
     return args;
   };
 
-  TF_ASSIGN_OR_RETURN(auto operands, from_proto(proto.operands()));
-  TF_ASSIGN_OR_RETURN(auto results, from_proto(proto.results()));
+  ASSIGN_OR_RETURN(auto operands, from_proto(proto.operands()));
+  ASSIGN_OR_RETURN(auto results, from_proto(proto.results()));
   return tsl::MakeRef<RemoteLoadedHostCallback>(
       client, std::move(operands), std::move(results), std::move(queue));
 }
@@ -163,12 +165,12 @@ absl::Status RemoteLoadedHostCallback::Execute(void** result_ptrs,
   to_buffer(host_callback().operands, operand_ptrs, request.operands);
   to_buffer(host_callback().results, result_ptrs, request.results);
 
-  request.status = Future<>::CreatePromise();
-  Future<> status(request.status);
+  tsl::Future<> status;
+  std::tie(request.status, status) = tsl::MakePromise<>();
 
   // Enqueue the execution request. `IfrtBackend` retrieves this by calling
   // `PopExecutionRequest` and fulfills the `results` promise.
-  TF_RETURN_IF_ERROR(queue_->Push(std::move(request)));
+  RETURN_IF_ERROR(queue_->Push(std::move(request)));
 
   // Block until the execution finishes and return its status.
   return status.Await();

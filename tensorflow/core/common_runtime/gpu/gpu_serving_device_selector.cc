@@ -14,7 +14,6 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/core/common_runtime/gpu/gpu_serving_device_selector.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -26,6 +25,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
+#include "absl/types/span.h"
 #include "xla/tsl/framework/serving_device_selector.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_scheduling_metrics_storage.h"
 
@@ -51,7 +51,7 @@ GpuServingDeviceSelector::GpuServingDeviceSelector(
 
 tsl::DeviceReservation GpuServingDeviceSelector::ReserveDevice(
     absl::string_view program_fingerprint) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   DeviceStates device_states;
   device_states.states = absl::Span<const DeviceState>(device_states_);
   auto [it, emplaced] =
@@ -79,7 +79,7 @@ void GpuServingDeviceSelector::Enqueue(int32_t index_on_host,
     return;
   }
 
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   auto [it, emplaced] =
       execution_info_.try_emplace(fingerprint, ExecutionInfo());
 
@@ -97,7 +97,7 @@ void GpuServingDeviceSelector::Enqueue(int32_t index_on_host,
 
 void GpuServingDeviceSelector::Completed(int32_t index_on_host,
                                          bool had_error) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   DeviceState& device_state = device_states_.at(index_on_host);
   ServingDeviceSelector::CompletedHelper(device_state, index_on_host, 0,
                                          min_exec_time_, had_error, NowNs());

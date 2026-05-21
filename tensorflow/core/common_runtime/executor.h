@@ -105,7 +105,7 @@ class Executor {
     const ConfigProto* session_config = nullptr;
     SessionState* session_state = nullptr;
     // Unique session identifier. Can be empty.
-    string session_handle;
+    std::string session_handle;
     TensorStore* tensor_store = nullptr;
     ScopedStepContainer* step_container = nullptr;
     CollectiveExecutor* collective_executor = nullptr;
@@ -231,7 +231,7 @@ class ExecutorBarrier {
 
     if (error_rendez != nullptr) {
       error_rendez->StartAbort(
-          errors::Aborted("Stopping remaining executors."));
+          absl::AbortedError("Stopping remaining executors."));
       error_rendez->Unref();
     }
 

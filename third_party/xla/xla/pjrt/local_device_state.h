@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_LOCAL_DEVICE_STATE_H_
 #define XLA_PJRT_LOCAL_DEVICE_STATE_H_
 
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -23,9 +24,16 @@ limitations under the License.
 #include <stack>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/client/local_client.h"
+#include "xla/pjrt/async_work_runner.h"
+#include "xla/pjrt/buffer_sequencing_event.h"
 #include "xla/pjrt/event_pool.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/semaphore.h"
@@ -107,15 +115,17 @@ class LocalDeviceState {
   // physical device ordinal if they share the same physical device.
   LocalDeviceState(se::StreamExecutor* executor, LocalClient* client,
                    AllocationModel allocation_model,
-                   int max_inflight_computations, bool allow_event_reuse,
-                   bool use_callback_stream, int device_ordinal = -1,
-                   std::optional<StreamOptions> stream_options = std::nullopt);
+                   std::optional<int> max_inflight_computations,
+                   bool allow_event_reuse, bool use_callback_stream,
+                   int device_ordinal = -1,
+                   std::optional<StreamOptions> stream_options = std::nullopt,
+                   bool schedule_async = false);
   virtual ~LocalDeviceState();
 
   se::StreamExecutor* executor() const { return executor_; }
 
-  PjRtLocalDeviceId local_device_id() { return local_device_id_; }
-  PjRtLocalHardwareId local_hardware_id() { return local_hardware_id_; }
+  LocalDeviceId local_device_id() { return local_device_id_; }
+  LocalChipId local_hardware_id() { return local_hardware_id_; }
 
   LocalClient* client() const { return client_; }
 
@@ -166,9 +176,13 @@ class LocalDeviceState {
   // Enqueues a copy of `src_buffer` to `dst_buffer` onto `transfer_stream`.
   virtual absl::Status ThenMemcpyDeviceToDevice(
       se::Stream* transfer_stream, se::Stream* dst_stream,
-      se::DeviceMemoryBase src_buffer, se::DeviceMemoryBase dst_buffer);
+      se::DeviceAddressBase src_buffer, se::DeviceAddressBase dst_buffer);
 
   WorkerThread* execute_thread() const { return execute_thread_.get(); }
+
+  WorkerThread* async_dispatch_thread() const {
+    return async_dispatch_thread_.get();
+  }
 
   WorkerThread* cleanup_thread() const { return cleanup_thread_.get(); }
 
@@ -181,8 +195,10 @@ class LocalDeviceState {
   //    runtime and cannot perform GPU operations itself. On GPU, callbacks
   //    execute in a separate thread.
   // b) ThenDoHostCallback waits for the callback to complete.
-  absl::Status ThenExecuteCallback(se::Stream* stream,
-                                   absl::AnyInvocable<void() &&> callback);
+  absl::Status ThenExecuteCallback(
+      se::Stream* stream, absl::AnyInvocable<void() &&> callback,
+      absl::AnyInvocable<void(absl::Status) &&> error_cb = nullptr,
+      absl::string_view tag = "");
 
   // Helpers for releasing values on a worker thread at the tail of a stream on
   // a worker thread. Copies `object`, and destroys the copy when the tail of
@@ -193,10 +209,11 @@ class LocalDeviceState {
   template <typename T>
   absl::Status ThenRelease(se::Stream* stream, T&& object) {
     return ThenExecuteCallback(
-        stream, [object = std::forward<T>(object)]() { /* releases object */ });
+        stream, [object = std::forward<T>(object)]() { /* releases object */ },
+        nullptr, "ThenRelease");
   }
 
-  Semaphore& compute_semaphore() { return compute_semaphore_; }
+  std::optional<Semaphore>& compute_semaphore() { return compute_semaphore_; }
 
   // Returns a fresh, PRNG-generated random seed for an XLA computation.
   int GetNewPrngSeed();
@@ -207,6 +224,21 @@ class LocalDeviceState {
     return allow_delete_before_fulfill_;
   }
 
+  absl::Status AllocateAndRecordEvent(
+      AsyncWorkRunner* async_work_runner, BufferSequencingEventRef event,
+      se::Stream* stream, absl::string_view tag = "AllocateAndRecordEvent");
+
+  size_t GetNextComputeStreamSyncPoint() {
+    return next_compute_stream_sync_point_.load();
+  }
+
+  // Allows handing out very cheap event ids (GetNextComputeStreamSyncPoint())
+  // which only incur the expense of constructing a cuda event if they're really
+  // needed. This allows constructing a definition event per buffer.
+  absl::StatusOr<BufferSequencingEventRef> GetEventForComputeStreamSyncPoint(
+      size_t sync_point, AsyncWorkRunner* async_work_runner,
+      bool nullptr_if_past = false);
+
  private:
   absl::Status SynchronizeAllActivity();
 
@@ -216,10 +248,10 @@ class LocalDeviceState {
 
   // Semaphore used to limit how many programs can be enqueued on the compute
   // stream by the host ahead of the device.
-  Semaphore compute_semaphore_;
+  std::optional<Semaphore> compute_semaphore_;
 
-  PjRtLocalDeviceId local_device_id_;
-  PjRtLocalHardwareId local_hardware_id_;
+  LocalDeviceId local_device_id_;
+  LocalChipId local_hardware_id_;
   se::StreamExecutor* const executor_;
   LocalClient* const client_;
   std::unique_ptr<se::Stream> compute_stream_;
@@ -258,6 +290,10 @@ class LocalDeviceState {
   // A worker thread, used for replicated computation launches.
   std::unique_ptr<WorkerThread> execute_thread_;
 
+  // A worker thread, used for launching executables async
+  // Only if schedule_async=true is passed in the constructor.
+  std::unique_ptr<WorkerThread> async_dispatch_thread_;
+
   // A worker thread, used for callbacks. It is necessary that this be a
   // different thread to the execute thread because we acquire the compute
   // semaphore during calls to Execute but release it from a callback and if
@@ -269,6 +305,10 @@ class LocalDeviceState {
   std::unique_ptr<WorkerThread> cleanup_thread_;
 
   bool allow_delete_before_fulfill_ = true;
+
+  std::atomic<size_t> next_compute_stream_sync_point_{0};
+  size_t base_compute_event_sequence_id_ ABSL_GUARDED_BY(mu_) = 0;
+  std::deque<BufferSequencingEventRef> compute_events_ ABSL_GUARDED_BY(mu_);
 };
 
 }  // namespace xla

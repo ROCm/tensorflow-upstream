@@ -29,8 +29,11 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include "cub/version.cuh"
 #include "absl/algorithm/container.h"
+#include "absl/base/call_once.h"
 #include "absl/base/casts.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/numeric/int128.h"
@@ -44,27 +47,38 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
+#include "third_party/gpus/cuda/nvml/include/nvml.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
+#include "xla/debug_options_flags.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
+#include "xla/stream_executor/cuda/cuda_core_info_table.h"
+#include "xla/stream_executor/cuda/cuda_device_allocator.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
+#include "xla/stream_executor/cuda/cuda_host_allocator.h"
 #include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/cuda/cuda_stream.h"
 #include "xla/stream_executor/cuda/cuda_timer.h"
+#include "xla/stream_executor/cuda/cuda_unified_allocator.h"
 #include "xla/stream_executor/cuda/cuda_version_parser.h"
+#include "xla/stream_executor/cuda/cuda_vmm_allocator.h"
+#include "xla/stream_executor/cuda/cudnn_api_wrappers.h"
+#include "xla/stream_executor/cuda/nvml_lock.h"
 #include "xla/stream_executor/cuda/tma_util.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/event_based_timer.h"
@@ -72,29 +86,36 @@ limitations under the License.
 #include "xla/stream_executor/generic_memory_allocation.h"
 #include "xla/stream_executor/generic_memory_allocator.h"
 #include "xla/stream_executor/gpu/context.h"
+#include "xla/stream_executor/gpu/gpu_executor.h"
+#include "xla/stream_executor/gpu/multicast_memory.h"
 #include "xla/stream_executor/gpu/read_numa_node.h"
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/kernel_args.h"
+#include "xla/stream_executor/kernel_args_packing_spec.h"
+#include "xla/stream_executor/kernel_metadata.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/tensor_map.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/casts.h"
+#include "xla/util.h"
 #include "tsl/platform/fingerprint.h"
-#include "tsl/platform/numbers.h"
+#include "tsl/platform/numa.h"
 
 namespace stream_executor {
 namespace gpu {
@@ -164,19 +185,21 @@ absl::StatusOr<CUmodule> LoadPtx(Context* context, const char* ptx_contents) {
         CHECK_LE(info_log_buffer_bytes, kLogBufferBytesLimit);
 
         if (!status.ok()) {
-          LOG(ERROR) << "failed to load PTX text as a module: " << status;
+          XLA_LOG_DEVICE(ERROR, context->device_ordinal())
+              << "failed to load PTX text as a module: " << status;
           // As a precaution for null termination of the API-provided value,
           // ensure that at least the last byte is null.
           error_log_buffer[error_log_buffer_bytes ? error_log_buffer_bytes - 1
                                                   : 0] = '\0';
-          LOG(ERROR) << "error log buffer (" << error_log_buffer_bytes
-                     << " bytes): " << error_log_buffer.data();
+          XLA_LOG_DEVICE(ERROR, context->device_ordinal())
+              << "error log buffer (" << error_log_buffer_bytes
+              << " bytes): " << error_log_buffer.data();
           if (absl::StrContains(error_log_buffer.data(),
                                 "Register allocation failed")) {
-            returned_status = absl::ResourceExhaustedError(
-                absl::StrFormat("Failed to load PTX text as a module (register "
-                                "allocation failed): %s",
-                                status.ToString()));
+            returned_status = absl::ResourceExhaustedError(absl::StrFormat(
+                "[%d] Failed to load PTX text as a module (register "
+                "allocation failed): %s",
+                context->device_ordinal(), status.ToString()));
           } else {
             returned_status = status;
           }
@@ -184,10 +207,12 @@ absl::StatusOr<CUmodule> LoadPtx(Context* context, const char* ptx_contents) {
           return;
         }
 
-        VLOG(3) << "PTX compilation info log (" << info_log_buffer_bytes
-                << " bytes): " << info_log_buffer.data();
-        VLOG(3) << "PTX compilation error log (" << error_log_buffer_bytes
-                << " bytes): " << error_log_buffer.data();
+        XLA_VLOG_DEVICE(3, context->device_ordinal())
+            << "PTX compilation info log (" << info_log_buffer_bytes
+            << " bytes): " << info_log_buffer.data();
+        XLA_VLOG_DEVICE(3, context->device_ordinal())
+            << "PTX compilation error log (" << error_log_buffer_bytes
+            << " bytes): " << error_log_buffer.data();
         CHECK(module != nullptr);
         notification.Notify();
       });
@@ -204,7 +229,9 @@ absl::StatusOr<CUmodule> LoadCubin(Context* context, const char* cubin_bytes) {
   CUmodule module;
   TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuModuleLoadFatBinary(&module, cubin_bytes),
-      "Failed to load in-memory CUBIN (compiled for a different GPU?)."));
+      absl::StrCat(xla::XlaFormatDevice(context->device_ordinal()),
+                   "Failed to load in-memory CUBIN "
+                   "(compiled for a different GPU?).")));
   return module;
 }
 
@@ -218,14 +245,16 @@ absl::StatusOr<CUfunction> GetModuleFunction(Context* context, CUmodule module,
   cudaError_t cuda_error = cudaPeekAtLastError();
   if (cuda_error != cudaSuccess) {
     return absl::InternalError(
-        absl::StrCat("There was an error before calling cuModuleGetFunction (",
+        absl::StrCat(xla::XlaFormatDevice(context->device_ordinal()),
+                     "There was an error before calling cuModuleGetFunction (",
                      cuda_error, "): ", cudaGetErrorName(cuda_error), " : ",
                      cudaGetErrorString(cuda_error)));
   }
   CUfunction function;
-  TF_RETURN_IF_ERROR(
-      cuda::ToStatus(cuModuleGetFunction(&function, module, kernel_name),
-                     "Failed to get module function"));
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuModuleGetFunction(&function, module, kernel_name),
+      absl::StrCat(xla::XlaFormatDevice(context->device_ordinal()),
+                   "Failed to get module function ", kernel_name)));
   return function;
 }
 
@@ -249,8 +278,8 @@ void UnloadCudaModule(Context* context, CUmodule module) {
   ScopedActivateContext activated{context};
   auto status = cuda::ToStatus(cuModuleUnload(module));
   if (!status.ok()) {
-    LOG(ERROR) << "failed to unload module " << module
-               << "; leaking: " << status;
+    XLA_LOG_DEVICE(ERROR, context->device_ordinal())
+        << "failed to unload module " << module << "; leaking: " << status;
   }
 }
 
@@ -265,12 +294,11 @@ absl::StatusOr<int> GetDeviceAttribute(CUdevice_attribute attribute,
 
 // Returns the name of the device.
 absl::StatusOr<std::string> GetDeviceName(CUdevice device) {
-  static const size_t kCharLimit = 64;
-  absl::InlinedVector<char, 4> chars(kCharLimit);
+  std::array<char, 64> chars;
   TF_RETURN_IF_ERROR(
-      cuda::ToStatus(cuDeviceGetName(chars.begin(), kCharLimit - 1, device),
+      cuda::ToStatus(cuDeviceGetName(chars.begin(), chars.size() - 1, device),
                      "Failed to get device name"));
-  chars[kCharLimit - 1] = '\0';
+  chars[chars.size() - 1] = '\0';
   return chars.begin();
 }
 
@@ -388,27 +416,8 @@ bool CanEnablePeerAccess(CUdevice from, CUdevice to) {
     LOG(ERROR) << "failed to detect peer access capability: " << status;
     return false;
   }
+
   return can_access_peer;
-}
-
-bool CanEnablePeerAccess(Context* from, Context* to) {
-  if (from == to) {
-    return true;  // A context can always access its own memory.
-  }
-
-  auto from_device = DeviceFromContext(from);
-  if (!from_device.ok()) {
-    LOG(ERROR) << "failed to resolve 'from' peer access context to a device: "
-               << from_device.status();
-    return false;
-  }
-  auto to_device = DeviceFromContext(to);
-  if (!to_device.ok()) {
-    LOG(ERROR) << "failed to resolve 'to' peer access context to a device: "
-               << to_device.status();
-    return false;
-  }
-  return CanEnablePeerAccess(from_device.value(), to_device.value());
 }
 
 absl::Status EnablePeerAccess(Context* from, Context* to) {
@@ -419,7 +428,7 @@ absl::Status EnablePeerAccess(Context* from, Context* to) {
 
   ScopedActivateContext activated{from};
   CUresult result = cuCtxEnablePeerAccess(
-      tensorflow::down_cast<CudaContext*>(to)->context(), 0 /* = flags */);
+      absl::down_cast<CudaContext*>(to)->context(), 0 /* = flags */);
   if (result != CUDA_SUCCESS &&
       result != CUDA_ERROR_PEER_ACCESS_ALREADY_ENABLED) {
     return absl::InternalError(
@@ -435,7 +444,8 @@ bool GetDeviceTotalMemory(CUdevice device, uint64_t* result) {
   size_t value{};
   auto status = cuda::ToStatus(cuDeviceTotalMem(&value, device));
   if (!status.ok()) {
-    LOG(ERROR) << "failed to query total available memory: " << status;
+    XLA_LOG_DEVICE(ERROR, device)
+        << "failed to query total available memory: " << status;
     return false;
   }
 
@@ -448,7 +458,7 @@ bool IsEccEnabled(CUdevice device, bool* result) {
   auto status = cuda::ToStatus(
       cuDeviceGetAttribute(&value, CU_DEVICE_ATTRIBUTE_ECC_ENABLED, device));
   if (!status.ok()) {
-    LOG(ERROR) << "failed to query ECC status: " << status;
+    XLA_LOG_DEVICE(ERROR, device) << "failed to query ECC status: " << status;
     return false;
   }
 
@@ -464,11 +474,12 @@ std::string GetPCIBusID(CUdevice device) {
   absl::Status status = cuda::ToStatus(
       cuDeviceGetPCIBusId(raw_pci_bus_id.data(), kBufferSize, device));
   if (!status.ok()) {
-    LOG(ERROR) << "failed to query PCI bus id for device: " << status;
+    XLA_LOG_DEVICE(ERROR, device)
+        << "failed to query PCI bus id for device: " << status;
     return "";
   }
   if (!absl::c_linear_search(raw_pci_bus_id, '\0')) {
-    LOG(ERROR) << "PCI bus id is not null terminated.";
+    XLA_LOG_DEVICE(ERROR, device) << "PCI bus id is not null terminated.";
     return "";
   }
   // Lower the hex characters to match sysfs.
@@ -499,110 +510,273 @@ bool HostUnregister(Context* context, void* location) {
   return true;
 }
 
-// Allocates memory on the GPU device.
-void* DeviceAllocate(Context* context, uint64_t bytes) {
-  if (bytes == 0) {
-    return nullptr;
+absl::StatusOr<bool> IsVmmSupported(CUdevice device) {
+  int deviceSupportsVmm = 0;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuDeviceGetAttribute(
+      &deviceSupportsVmm,
+      CU_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT_SUPPORTED, device)));
+  return deviceSupportsVmm;
+}
+
+CUmemAllocationProp GetVmmAllocationProp(
+    CUdevice device, const CudaVmmAllocator::Options& options) {
+  CUmemAllocationProp properties = {};
+  properties.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  properties.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  properties.location.id = device;
+  int handle_types = CU_MEM_HANDLE_TYPE_NONE;
+  if (options.enable_posix_fd_handle) {
+    handle_types |= CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  }
+  if (options.enable_fabric_handle) {
+    handle_types |= CU_MEM_HANDLE_TYPE_FABRIC;
+  }
+  properties.requestedHandleTypes =
+      static_cast<CUmemAllocationHandleType>(handle_types);
+  properties.allocFlags.gpuDirectRDMACapable = options.enable_rdma ? 1 : 0;
+  return properties;
+}
+
+CUmemAccessDesc GetVmmAccessDesc(int device) {
+  CUmemAccessDesc descriptor = {};
+  descriptor.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  descriptor.location.id = device;
+  descriptor.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+  return descriptor;
+}
+
+absl::StatusOr<bool> IsRdmaSupported(CUdevice device) {
+  int rdma_supported = 0;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuDeviceGetAttribute(
+      &rdma_supported,
+      CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED, device)));
+  return rdma_supported;
+}
+
+absl::StatusOr<bool> IsMulticastSupported(CUdevice device) {
+  int is_multicast_supported = 0;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuDeviceGetAttribute(&is_multicast_supported,
+                           CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device)));
+  return is_multicast_supported;
+}
+
+absl::StatusOr<bool> IsFabricSupported(CUdevice device) {
+  int fabric_supported = 0;
+  CUresult result = cuDeviceGetAttribute(
+      &fabric_supported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
+      device);
+
+  // Older drivers return INVALID_VALUE when they don't recognize the attribute.
+  if (result == CUDA_ERROR_INVALID_VALUE) {
+    XLA_VLOG_DEVICE(1, device)
+        << "CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED not supported "
+           "by driver.";
+    return false;
   }
 
-  ScopedActivateContext activated{context};
-  CUdeviceptr result = 0;
-  auto status = cuda::ToStatus(cuMemAlloc(&result, bytes));
+  TF_RETURN_IF_ERROR(cuda::ToStatus(result));
+  return fabric_supported > 0;
+}
+
+// Queries device VMM capabilities and allocation granularity, falling back to
+// simpler handle types if the environment doesn't support POSIX_FD or FABRIC
+// (e.g. MIG partitions, containers, or older drivers). Returns VMM allocator
+// options with alignment set to the queried granularity.
+absl::StatusOr<CudaVmmAllocator::Options> QueryVmmOptions(CUdevice device) {
+  TF_ASSIGN_OR_RETURN(bool rdma, IsRdmaSupported(device));
+  TF_ASSIGN_OR_RETURN(bool fabric, IsFabricSupported(device));
+
+  bool posix_fd = true;
+  size_t granularity = 0;
+
+  // Query allocation granularity
+  auto try_query = [&]() -> absl::Status {
+    CudaVmmAllocator::Options opts;
+    opts.enable_rdma = rdma;
+    opts.enable_posix_fd_handle = posix_fd;
+    opts.enable_fabric_handle = fabric;
+    CUmemAllocationProp props = GetVmmAllocationProp(device, opts);
+    return cuda::ToStatus(cuMemGetAllocationGranularity(
+        &granularity, &props, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+  };
+
+  absl::Status status = try_query();
+  if (!status.ok() && fabric && posix_fd) {
+    XLA_LOG_DEVICE(WARNING, device)
+        << "VMM granularity query with FABRIC+POSIX_FD handle types failed: "
+        << status << "; retrying without FABRIC.";
+    fabric = false;
+    status = try_query();
+  }
+
+  if (!status.ok() && posix_fd) {
+    XLA_LOG_DEVICE(WARNING, device)
+        << "VMM granularity query with POSIX_FD handle type failed: " << status
+        << "; retrying with HANDLE_TYPE_NONE.";
+    posix_fd = false;
+    status = try_query();
+  }
+
   if (!status.ok()) {
-    // LOG(INFO) because this isn't always important to users (e.g. BFCAllocator
-    // implements a retry if the first allocation fails).
-    LOG(INFO) << "failed to allocate "
-              << tsl::strings::HumanReadableNumBytes(bytes) << " (" << bytes
-              << " bytes) from device: " << status;
-    return nullptr;
+    XLA_LOG_DEVICE(WARNING, device)
+        << "VMM granularity query with HANDLE_TYPE_NONE failed: " << status
+        << "; VMM is not supported for this device.";
+    return status;
   }
-  void* ptr = reinterpret_cast<void*>(result);
-  VLOG(2) << "allocated " << ptr << " for context " << context << " of "
-          << bytes << " bytes";
-  return ptr;
+
+  CudaVmmAllocator::Options options;
+  options.alignment = granularity;
+  options.enable_rdma = rdma;
+  options.enable_posix_fd_handle = posix_fd;
+  options.enable_fabric_handle = fabric;
+  return options;
 }
 
-// Deallocates memory on the GPU device that was previously allocated via
-// DeviceAllocate.
-void DeviceDeallocate(Context* context, void* location) {
-  ScopedActivateContext activation(context);
-  CUdeviceptr pointer = absl::bit_cast<CUdeviceptr>(location);
-  auto status = cuda::ToStatus(cuMemFree(pointer));
-  if (!status.ok()) {
-    LOG(ERROR) << "failed to free device memory at " << location
-               << "; result: " << status;
-  } else {
-    VLOG(2) << "deallocated " << location << " for context " << context;
-  }
+absl::StatusOr<CUmulticastObjectProp> CreateMulticastObjectProperties(
+    int num_devices, size_t size) {
+  CUmulticastObjectProp multicast_properties;
+  memset(&multicast_properties, 0, sizeof(CUmulticastObjectProp));
+  multicast_properties.numDevices = num_devices;
+
+  multicast_properties.handleTypes = CU_MEM_HANDLE_TYPE_NONE;
+  multicast_properties.flags = 0;
+
+  size_t multicast_granularity = 0;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuMulticastGetGranularity(&multicast_granularity, &multicast_properties,
+                                CU_MULTICAST_GRANULARITY_RECOMMENDED)));
+
+  // Align up the size to the multicast granularity.
+  multicast_properties.size =
+      xla::RoundUpTo<size_t>(size, multicast_granularity);
+  return multicast_properties;
 }
 
-// Allocates memory on the host.
-absl::StatusOr<void*> HostAllocate(Context* context, int numa_node,
-                                   uint64_t size) {
-  if (numa_node != tsl::port::kNUMANoAffinity) {
-    // CUDA programming guide: "Any address of a variable ... returned by one
-    // of the memory allocation routines from the driver ... API is always
-    // aligned to at least 256 bytes."
-    auto* buffer =
-        tsl::port::NUMAMalloc(numa_node, size, /* minimum_alignment=*/256);
-    if (buffer == nullptr && size > 0) {
-      return absl::InternalError(absl::StrFormat(
-          "Failed to allocate host memory of size %d pinned to NUMA node %d",
-          size, numa_node));
-    }
-    if (size > 0 && !HostRegister(context, buffer, size)) {
-      tsl::port::NUMAFree(buffer, size);
-      return absl::InternalError(
-          absl::StrFormat("Failed to register host memory of size %d pinned to "
-                          "NUMA node %d with the GPU driver",
-                          size, numa_node));
-    }
-    return buffer;
-  } else {
-    ScopedActivateContext activation(context);
-    void* buffer = nullptr;
-    // "Portable" memory is visible to all CUDA contexts. Safe for our use
-    // model.
-    TF_RETURN_IF_ERROR(cuda::ToStatus(
-        cuMemHostAlloc(&buffer, size, CU_MEMHOSTALLOC_PORTABLE)));
-    if (!buffer && size > 0) {
-      return absl::InternalError(absl::StrFormat(
-          "Failed to allocate pinned host memory of size %d", size));
-    }
-    return buffer;
+absl::Status ToStatus(nvmlReturn_t result) {
+  if (result == NVML_SUCCESS) {
+    return absl::OkStatus();
   }
+  // NVML library is not a part of the CUDA toolkit, so there might be a
+  // situation when user is using newer CUDA, but the host NVML
+  // version doen't have the required functions.
+  if (result == NVML_ERROR_FUNCTION_NOT_FOUND) {
+    return absl::InternalError("NVML library doesn't have required functions.");
+  }
+  return absl::InternalError(absl::StrFormat("Nvml call failed with %d(%s).",
+                                             result, nvmlErrorString(result)));
 }
 
-// Deallocates memory allocated via HostAllocate.
-void HostDeallocate(Context* context, int numa_node, void* location,
-                    uint64_t size) {
-  if (numa_node != tsl::port::kNUMANoAffinity) {
-    if (size > 0) {
-      HostUnregister(context, location);
-    }
-    tsl::port::NUMAFree(location, size);
-  } else {
-    ScopedActivateContext activation(context);
-    auto status = cuda::ToStatus(cuMemFreeHost(location));
-    if (!status.ok()) {
-      LOG(ERROR) << "error deallocating host memory at " << location << ": "
-                 << status;
-    }
-  }
+// CUDA and Nvml can have different device ordering.
+absl::StatusOr<nvmlDevice_t> GetNvmlDevice(const std::string& pci_bus_id) {
+  nvmlDevice_t device;
+  TF_RETURN_IF_ERROR(
+      ToStatus(nvmlDeviceGetHandleByPciBusId_v2(pci_bus_id.c_str(), &device)));
+  return device;
 }
 
-// Creates a MemoryAllocation wrapping the given host buffer.
-absl::StatusOr<std::unique_ptr<MemoryAllocation>> AllocateHostMemory(
-    CudaContext* cuda_context, int numa_node, uint64_t size) {
-  TF_ASSIGN_OR_RETURN(void* ptr, HostAllocate(cuda_context, numa_node, size));
-  VLOG(2) << "allocated " << ptr << " for context " << cuda_context << " of "
-          << size << " bytes of host memory";
-  return std::make_unique<GenericMemoryAllocation>(
-      ptr, size, [cuda_context, numa_node](void* location, uint64_t size) {
-        HostDeallocate(cuda_context, numa_node, location, size);
-        VLOG(2) << "deallocated collective memory at " << location
-                << " for context " << cuda_context;
-      });
+absl::StatusOr<int64_t> GetDevicePcieBandwidth(nvmlDevice_t nvml_device) {
+  // nvmlDeviceGetPcieSpeed returns wrong information. Verified with
+  // nvbandwidth.
+  unsigned int link_gen, link_width;
+  nvmlReturn_t result =
+      nvmlDeviceGetCurrPcieLinkGeneration(nvml_device, &link_gen);
+  TF_RETURN_IF_ERROR(ToStatus(result));
+
+  result = nvmlDeviceGetCurrPcieLinkWidth(nvml_device, &link_width);
+  TF_RETURN_IF_ERROR(ToStatus(result));
+
+  // PCIe v1 single lane speed. 0.25 GB/s
+  int64_t lane_speed = 0.25 * 1024 * 1024 * 1024;
+  for (int i = 1; i < link_gen; i++) {
+    lane_speed *= 2;
+  }
+
+  return lane_speed * link_width;
+}
+
+absl::StatusOr<int> GetNumberOfActiveP2PNvlinks(nvmlDevice_t nvml_device) {
+  int p2p_links = 0;
+
+  constexpr int kBlackwellNvLinkCount = 18;
+  for (unsigned int i = 0; i < kBlackwellNvLinkCount; i++) {
+    nvmlEnableState_t is_active = NVML_FEATURE_DISABLED;
+    nvmlReturn_t result = nvmlDeviceGetNvLinkState(nvml_device, i, &is_active);
+    if (result == NVML_ERROR_NOT_SUPPORTED) {
+      break;
+    }
+    TF_RETURN_IF_ERROR(ToStatus(result));
+    if (is_active == NVML_FEATURE_DISABLED) {
+      break;
+    }
+
+    uint32_t supported_p2p = 0;
+    result = nvmlDeviceGetNvLinkCapability(
+        nvml_device, i, NVML_NVLINK_CAP_P2P_SUPPORTED, &supported_p2p);
+    if (result != NVML_ERROR_NOT_SUPPORTED) {
+      TF_RETURN_IF_ERROR(ToStatus(result));
+    }
+    if (supported_p2p) {
+      ++p2p_links;
+    }
+  }
+  return p2p_links;
+}
+
+struct FabricInfo {
+  std::string cluster_uuid;
+  std::string clique_id;
+};
+
+absl::StatusOr<FabricInfo> GetDeviceFabricInfo(nvmlDevice_t device) {
+#if CUDA_VERSION >= 12040
+  nvmlGpuFabricInfoV_t fabricInfo{nvmlGpuFabricInfo_v2};
+  fabricInfo.state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED;
+
+  nvmlReturn_t result = nvmlDeviceGetGpuFabricInfoV(device, &fabricInfo);
+  TF_RETURN_IF_ERROR(ToStatus(result));
+
+  if (fabricInfo.state == NVML_GPU_FABRIC_STATE_NOT_SUPPORTED) {
+    std::string error_message =
+        "[Ignore this message unless multi-node NVLink is used] "
+        "CUDA driver version is too low for extracting fabric info (550+ "
+        "required), or multi-node NVLink is not available.";
+    VLOG(2) << error_message;
+    return absl::InternalError(error_message);
+  }
+
+  static_assert(sizeof(fabricInfo.clusterUuid) == 16);
+  std::string uuid_str = absl::StrFormat(
+      "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+      fabricInfo.clusterUuid[0], fabricInfo.clusterUuid[1],
+      fabricInfo.clusterUuid[2], fabricInfo.clusterUuid[3],
+      fabricInfo.clusterUuid[4], fabricInfo.clusterUuid[5],
+      fabricInfo.clusterUuid[6], fabricInfo.clusterUuid[7],
+      fabricInfo.clusterUuid[8], fabricInfo.clusterUuid[9],
+      fabricInfo.clusterUuid[10], fabricInfo.clusterUuid[11],
+      fabricInfo.clusterUuid[12], fabricInfo.clusterUuid[13],
+      fabricInfo.clusterUuid[14], fabricInfo.clusterUuid[15]);
+
+  return FabricInfo{uuid_str, absl::StrCat(fabricInfo.cliqueId)};
+#else   // CUDA_VERSION >= 12040
+  std::string error_message = "NVML usage is not supported";
+  VLOG(2) << error_message;
+  return absl::InternalError(error_message);
+#endif  // CUDA_VERSION >= 12040
+}
+
+absl::StatusOr<SemanticVersion> GetDeviceDriverVersion() {
+  char version[NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE];
+  nvmlReturn_t result = nvmlSystemGetDriverVersion(
+      version, NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE);
+  RETURN_IF_ERROR(ToStatus(result));
+  std::string version_str{version};
+  // SemanticVersion expects a three-component X.Y.Z version, but NVIDIA driver
+  // versions sometimes only have two; append .0 to fix jax-ml/jax#36564.
+  if (absl::c_count(version_str, '.') == 1) {
+    version_str += ".0";
+  }
+  return SemanticVersion::ParseFromString(version_str);
 }
 
 }  // namespace
@@ -613,22 +787,22 @@ absl::StatusOr<std::unique_ptr<MemoryAllocation>> AllocateHostMemory(
 // N.B. we must lose constness in order to pass a suitable type to the existing
 // libcuda APIs, so the caller should take care to only pass the result of const
 // GPU memory conversions to libcuda functions which will honor constness.
-static CUdeviceptr AsCudaDevicePtr(const DeviceMemoryBase& gpu_mem) {
+static CUdeviceptr AsCudaDevicePtr(const DeviceAddressBase& gpu_mem) {
   return reinterpret_cast<CUdeviceptr>(gpu_mem.opaque());
 }
 
 // See description on const version above.
-static CUdeviceptr AsCudaDevicePtr(DeviceMemoryBase* gpu_mem) {
+static CUdeviceptr AsCudaDevicePtr(DeviceAddressBase* gpu_mem) {
   return AsCudaDevicePtr(*gpu_mem);
 }
 
-absl::StatusOr<DeviceMemoryBase> CudaExecutor::GetMemoryRange(
-    const DeviceMemoryBase& location) {
+absl::StatusOr<DeviceAddressBase> CudaExecutor::GetMemoryRange(
+    const DeviceAddressBase& location) const {
   CUdeviceptr device_pointer;
   size_t size;
   TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMemGetAddressRange(&device_pointer, &size, AsCudaDevicePtr(location))));
-  return DeviceMemoryBase(reinterpret_cast<void*>(device_pointer), size);
+  return DeviceAddressBase(reinterpret_cast<void*>(device_pointer), size);
 }
 
 std::unique_ptr<ActivateContext> CudaExecutor::Activate() {
@@ -640,92 +814,129 @@ CudaExecutor::~CudaExecutor() {
   CHECK(gpu_binary_to_module_.empty()) << "CudaExecutor has loaded modules.";
 }
 
-absl::StatusOr<xla::gpu::GpuCollectives*> GetGpuCollectives(
-    StreamExecutor* executor) {
-  std::unique_ptr<ActivateContext> activation = executor->Activate();
+static bool IsNvshmemEnabled() {
+  return xla::GetDebugOptionsFromFlags().xla_gpu_experimental_enable_nvshmem();
+}
+
+static absl::StatusOr<xla::gpu::GpuCollectives*> GetNvshmemCollectives() {
   TF_ASSIGN_OR_RETURN(xla::Collectives * collectives,
-                      xla::CollectivesRegistry::Default("gpu"));
-  return tsl::down_cast<xla::gpu::GpuCollectives*>(collectives);
+                      xla::CollectivesRegistry::Get("gpu", "nvshmem"));
+  auto* gpu_collectives =
+      absl::down_cast<xla::gpu::GpuCollectives*>(collectives);
+  if (gpu_collectives == nullptr) {
+    return absl::InternalError("Failed to get NVSHMEM collectives");
+  }
+  return gpu_collectives;
 }
 
-absl::StatusOr<void*> CollectiveMemoryAllocate(StreamExecutor* executor,
-                                               uint64_t bytes) {
-  if (bytes == 0) return nullptr;
+CudaExecutor::VmmMemoryHandle::~VmmMemoryHandle() { CHECK_OK(Release()); }
 
-  std::unique_ptr<ActivateContext> activation = executor->Activate();
-  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCollectives * gpu_collectives,
-                      GetGpuCollectives(executor));
-  return gpu_collectives->Allocate(bytes);
+absl::Status CudaExecutor::VmmMemoryHandle::Release() {
+  if (handle_ != 0) {
+    TF_RETURN_IF_ERROR(cuda::ToStatus(
+        cuMemRelease(static_cast<CUmemGenericAllocationHandle>(handle_))));
+    handle_ = 0;
+  }
+
+  return absl::OkStatus();
 }
 
-absl::Status CollectiveMemoryDeallocate(StreamExecutor* executor,
-                                        void* location) {
-  std::unique_ptr<ActivateContext> activation = executor->Activate();
+CudaExecutor::VmmMemoryHandle::VmmMemoryHandle(VmmMemoryHandle&& other) {
+  handle_ = other.handle_;
+  other.handle_ = 0;
+}
 
-  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCollectives * gpu_collectives,
-                      GetGpuCollectives(executor));
-  return gpu_collectives->Deallocate(location);
+CudaExecutor::VmmMemoryHandle& CudaExecutor::VmmMemoryHandle::operator=(
+    VmmMemoryHandle&& other) {
+  if (this != &other) {
+    CHECK_OK(Release());
+    handle_ = other.handle_;
+    other.handle_ = 0;
+  }
+  return *this;
+}
+
+absl::StatusOr<CudaExecutor::VmmMemoryHandle>
+CudaExecutor::RetainVmmMemoryHandle(void* ptr) const {
+  CUmemGenericAllocationHandle handle;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemRetainAllocationHandle(&handle, ptr)));
+
+  return CudaExecutor::VmmMemoryHandle(static_cast<uint64_t>(handle));
+}
+
+absl::StatusOr<size_t> CudaExecutor::GetVmmGranularity() const {
+  CUmemAllocationProp properties = GetVmmAllocationProp(device_, vmm_options_);
+  size_t granularity = 0;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemGetAllocationGranularity(
+      &granularity, &properties, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED)));
+  return granularity;
+}
+
+static absl::StatusOr<void*> NvshmemCollectiveMemoryAllocate(
+    StreamExecutor* executor, uint64_t bytes) {
+  if (bytes == 0) {
+    return nullptr;
+  }
+  std::unique_ptr<ActivateContext> activation = executor->Activate();
+  TF_ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectives());
+  return collectives->Allocate(bytes);
+}
+
+static absl::Status NvshmemCollectiveMemoryDeallocate(StreamExecutor* executor,
+                                                      void* location) {
+  std::unique_ptr<ActivateContext> activation = executor->Activate();
+  TF_ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectives());
+  return collectives->Deallocate(location);
 }
 
 absl::StatusOr<std::unique_ptr<MemoryAllocator>>
-CudaExecutor::CreateMemoryAllocator(MemoryType type) {
-  if (type == MemoryType::kUnified) {
-    return std::make_unique<GenericMemoryAllocator>(
-        [this](uint64_t size)
-            -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
-          std::unique_ptr<ActivateContext> activation = Activate();
-          CUdeviceptr result = 0;
-          // "Portable" memory is visible to all CUDA contexts. Safe for our use
-          // model.
-          TF_RETURN_IF_ERROR(cuda::ToStatus(
-              cuMemAllocManaged(&result, size, CU_MEM_ATTACH_GLOBAL)));
-          void* ptr = reinterpret_cast<void*>(result);
-          VLOG(2) << "allocated " << ptr << " for context " << cuda_context_
-                  << " of " << size << " bytes in unified memory";
-          return std::make_unique<GenericMemoryAllocation>(
-              ptr, size, [this](void* location, uint64_t size) {
-                std::unique_ptr<ActivateContext> activation = Activate();
-                CUdeviceptr pointer = absl::bit_cast<CUdeviceptr>(location);
-                auto status = cuda::ToStatus(cuMemFree(pointer));
-                if (!status.ok()) {
-                  LOG(ERROR) << "failed to free unified memory at " << location
-                             << "; result: " << status;
-                } else {
-                  VLOG(2) << "deallocated unified memory at " << location
-                          << " for context " << cuda_context_;
-                }
-              });
-        });
-  } else if (type == MemoryType::kCollective) {
-    return std::make_unique<GenericMemoryAllocator>(
-        [this](uint64_t size)
-            -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
-          TF_ASSIGN_OR_RETURN(void* ptr, CollectiveMemoryAllocate(this, size));
-          VLOG(2) << "allocated " << ptr << " for context " << cuda_context_
-                  << " of " << size << " bytes of collective memory";
-          return std::make_unique<GenericMemoryAllocation>(
-              ptr, size, [this](void* location, uint64_t size) {
-                auto status = CollectiveMemoryDeallocate(this, location);
-                if (!status.ok()) {
-                  LOG(ERROR) << "failed to free collective memory at "
-                             << location << "; result: " << status;
-                } else {
-                  VLOG(2) << "deallocated collective memory at " << location
-                          << " for context " << cuda_context_;
-                }
-              });
-        });
-  } else if (type == MemoryType::kHost) {
-    return std::make_unique<GenericMemoryAllocator>([this](uint64_t size) {
-      return AllocateHostMemory(cuda_context_, numa_node_, size);
-    });
+CudaExecutor::CreateMemoryAllocator(MemorySpace type) {
+  if (type == MemorySpace::kUnified) {
+    return std::make_unique<CudaUnifiedAllocator>(this);
   }
+
+  if (type == MemorySpace::kCollective) {
+    if (IsNvshmemEnabled()) {
+      return std::make_unique<GenericMemoryAllocator>(
+          [this](uint64_t size)
+              -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
+            TF_ASSIGN_OR_RETURN(void* ptr,
+                                NvshmemCollectiveMemoryAllocate(this, size));
+            return std::make_unique<GenericMemoryAllocation>(
+                ptr, size, [this](void* location, uint64_t size) {
+                  auto status =
+                      NvshmemCollectiveMemoryDeallocate(this, location);
+                  if (!status.ok()) {
+                    XLA_LOG_DEVICE(ERROR, device_ordinal())
+                        << "failed to free nvshmem collective memory at "
+                        << location << ": " << status;
+                  }
+                });
+          });
+    }
+    return std::make_unique<CudaVmmAllocator>(this, vmm_options_);
+  }
+
+  if (type == MemorySpace::kHost) {
+    return std::make_unique<CudaHostAllocator>(this, numa_node_);
+  }
+
   return absl::UnimplementedError(
       absl::StrFormat("Unsupported memory type %d", type));
 }
 
 absl::Status CudaExecutor::Init() {
   TF_ASSIGN_OR_RETURN(device_, GetDevice(device_ordinal()));
+
+  TF_ASSIGN_OR_RETURN(bool is_vmm_supported, IsVmmSupported(device_));
+  if (!is_vmm_supported) {
+    return absl::InternalError(absl::StrFormat(
+        "Device %d does not support CUDA Virtual Memory Management (VMM). "
+        "VMM is required for device memory allocation in XLA.",
+        device_ordinal()));
+  }
+
+  TF_ASSIGN_OR_RETURN(is_multicast_supported_, IsMulticastSupported(device_));
   TF_ASSIGN_OR_RETURN(CudaContext * context,
                       CudaContext::Create(device_ordinal(), device_));
   cuda_context_ = context;
@@ -733,9 +944,36 @@ absl::Status CudaExecutor::Init() {
   numa_node_ = ReadNumaNode(GetPCIBusID(device_), device_ordinal())
                    .value_or(tsl::port::kNUMANoAffinity);
   if (numa_node_ == tsl::port::kNUMANoAffinity) {
-    VLOG(2) << "Could not determine NUMA node of device ordinal "
-            << device_ordinal();
+    XLA_VLOG_DEVICE(2, device_ordinal()) << "Could not determine NUMA node";
   }
+
+  int cuda_device_count = 0;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cudaGetDeviceCount(&cuda_device_count)));
+  for (int i = 0; i < cuda_device_count; ++i) {
+    if (i == device_ordinal()) {
+      peer_access_cache_[i] = true;
+      continue;
+    }
+    peer_access_cache_[i] = CanEnablePeerAccess(device_, i);
+  }
+
+  TF_ASSIGN_OR_RETURN(vmm_options_, QueryVmmOptions(device_));
+  vmm_options_.enable_peer_access = absl::c_any_of(
+      peer_access_cache_, [](const auto& p) { return p.second; });
+
+  // Disable fabric handle if there are no active P2P NVLinks — using
+  // FABRIC+POSIX_FD without a cluster causes allocation failures.
+  if (vmm_options_.enable_fabric_handle &&
+      GetDeviceDescription().device_interconnect_info().active_links == 0) {
+    XLA_VLOG_DEVICE(2, device_ordinal())
+        << "Disabling fabric handle: no active P2P NVLinks detected.";
+    vmm_options_.enable_fabric_handle = false;
+  }
+
+  device_allocator_ = std::make_unique<CudaDeviceAllocator>(this);
+  host_allocator_ = std::make_unique<CudaHostAllocator>(this, numa_node_);
+  vmm_allocator_ = std::make_unique<CudaVmmAllocator>(this, vmm_options_);
+
   return absl::OkStatus();
 }
 
@@ -759,12 +997,14 @@ absl::StatusOr<ModuleHandle> CudaExecutor::LoadModuleFromCuBin(
   if (module == nullptr) {
     TF_ASSIGN_OR_RETURN(module, LoadCubin(cuda_context_, cubin));
     module_refcount = 1;
-    VLOG(3) << "Loaded CUBIN " << static_cast<const void*>(cubin)
-            << " as module " << module;
+    XLA_VLOG_DEVICE(3, device_ordinal())
+        << "Loaded CUBIN " << static_cast<const void*>(cubin) << " as module "
+        << module;
   } else {
     ++module_refcount;
-    VLOG(3) << "CUBIN " << static_cast<const void*>(cubin)
-            << " is already loaded as module " << module;
+    XLA_VLOG_DEVICE(3, device_ordinal())
+        << "CUBIN " << static_cast<const void*>(cubin)
+        << " is already loaded as module " << module;
   }
   gpu_binary_to_module_[module_handle] = {module, module_refcount};
   return module_handle;
@@ -778,13 +1018,15 @@ absl::StatusOr<ModuleHandle> CudaExecutor::LoadModuleFromPtx(const char* ptx) {
 
   if (module == nullptr) {
     TF_ASSIGN_OR_RETURN(module, LoadPtx(cuda_context_, ptx));
-    VLOG(3) << "Loaded PTX " << static_cast<const void*>(ptx) << " as module "
-            << module;
+    XLA_VLOG_DEVICE(3, device_ordinal())
+        << "Loaded PTX " << static_cast<const void*>(ptx) << " as module "
+        << module;
     module_refcount = 1;
   } else {
     ++module_refcount;
-    VLOG(3) << "PTX " << static_cast<const void*>(ptx)
-            << " is already loaded as module " << module;
+    XLA_VLOG_DEVICE(3, device_ordinal())
+        << "PTX " << static_cast<const void*>(ptx)
+        << " is already loaded as module " << module;
   }
   gpu_binary_to_module_[module_handle] = {module, module_refcount};
   return module_handle;
@@ -796,14 +1038,15 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
   const std::string& kernel_name = spec.kernel_name();
 
   if (spec.has_cuda_cubin_in_memory()) {
-    absl::MutexLock lock{&in_memory_modules_mu_};
+    absl::MutexLock lock{in_memory_modules_mu_};
     const char* cubin = reinterpret_cast<const char*>(
         spec.cuda_cubin_in_memory()->cubin_bytes.data());
     TF_ASSIGN_OR_RETURN(ModuleHandle module_handle, LoadModuleFromCuBin(cubin));
     kernel_to_gpu_binary_[cuda_kernel.get()] = module_handle;
 
     CUmodule module = gpu_binary_to_module_.at(module_handle).first;
-    VLOG(2) << "getting function " << kernel_name << " from module " << module;
+    XLA_VLOG_DEVICE(2, device_ordinal())
+        << "getting function " << kernel_name << " from module " << module;
     TF_ASSIGN_OR_RETURN(
         CUfunction function,
         GetModuleFunction(cuda_context_, module, kernel_name.c_str()));
@@ -812,15 +1055,17 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
   } else if (spec.has_cuda_ptx_in_memory()) {
     const char* ptx = spec.cuda_ptx_in_memory()->ptx.data();
     if (ptx == nullptr) {
-      LOG(FATAL) << "Loader spec has no ptx for kernel " << kernel_name;
+      XLA_LOG_DEVICE(FATAL, device_ordinal())
+          << "Loader spec has no ptx for kernel " << kernel_name;
     }
 
-    absl::MutexLock lock{&in_memory_modules_mu_};
+    absl::MutexLock lock{in_memory_modules_mu_};
     TF_ASSIGN_OR_RETURN(ModuleHandle module_handle, LoadModuleFromPtx(ptx));
     kernel_to_gpu_binary_[cuda_kernel.get()] = module_handle;
 
     CUmodule module = gpu_binary_to_module_.at(module_handle).first;
-    VLOG(2) << "getting function " << kernel_name << " from module " << module;
+    XLA_VLOG_DEVICE(2, device_ordinal())
+        << "getting function " << kernel_name << " from module " << module;
     TF_ASSIGN_OR_RETURN(
         CUfunction function,
         GetModuleFunction(cuda_context_, module, kernel_name.c_str()));
@@ -829,21 +1074,26 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
   } else if (spec.has_in_process_symbol()) {
     void* symbol = spec.in_process_symbol()->symbol;
 
-    VLOG(2) << "Resolve CUDA kernel " << kernel_name
-            << " from symbol pointer: " << symbol;
+    XLA_VLOG_DEVICE(2, device_ordinal())
+        << "Resolve CUDA kernel " << kernel_name
+        << " from symbol pointer: " << symbol;
     cudaFunction_t func;
-    TF_RETURN_IF_ERROR(cuda::ToStatus(cudaGetFuncBySymbol(&func, symbol),
-                                      "Failed call to cudaGetFuncBySymbol"));
+    std::unique_ptr<ActivateContext> scoped_activation = Activate();
+    TF_RETURN_IF_ERROR(cuda::ToStatus(
+        cudaGetFuncBySymbol(&func, symbol),
+        absl::StrFormat("[%d] Failed call to cudaGetFuncBySymbol",
+                        device_ordinal())));
     cuda_kernel->set_gpu_function(func);
 
   } else {
     return absl::InternalError("No method of loading CUDA kernel provided");
   }
-  VLOG(3) << "LoadKernel on kernel : " << kernel_name;
+  XLA_VLOG_DEVICE(3, device_ordinal())
+      << "LoadKernel on kernel : " << kernel_name;
 
   {
     // Keep track of loaded kernels.
-    absl::MutexLock lock{&in_memory_modules_mu_};
+    absl::MutexLock lock{in_memory_modules_mu_};
     loaded_kernels_.insert(cuda_kernel.get());
   }
 
@@ -857,7 +1107,22 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
   TF_ASSIGN_OR_RETURN(KernelMetadata kernel_metadata,
                       cuda_kernel->GetKernelMetadata());
   cuda_kernel->set_metadata(kernel_metadata);
-  cuda_kernel->set_args_packing(spec.kernel_args_packing());
+  if (std::holds_alternative<KernelLoaderSpec::KernelArgsPackingFunc>(
+          spec.kernel_args_packing())) {
+    cuda_kernel->set_args_packing(
+        std::get<KernelLoaderSpec::KernelArgsPackingFunc>(
+            spec.kernel_args_packing()));
+  } else {
+    const auto& packing_spec =
+        std::get<KernelArgsPackingSpec>(spec.kernel_args_packing());
+    cuda_kernel->set_args_packing(
+        [packing_spec](const Kernel& kernel, const KernelArgs& args) {
+          const PackableKernelArgs& mem_args =
+              dynamic_cast<const PackableKernelArgs&>(args);
+          return packing_spec.BuildArguments(mem_args.packed_args(),
+                                             args.number_of_shared_bytes());
+        });
+  }
   return std::move(cuda_kernel);
 }
 
@@ -877,14 +1142,16 @@ CudaExecutor::CreateEventBasedTimer(Stream* stream, bool use_delay_kernel) {
 bool CudaExecutor::UnloadGpuBinary(ModuleHandle gpu_binary) {
   auto module_it = gpu_binary_to_module_.find(gpu_binary);
   if (gpu_binary_to_module_.end() == module_it) {
-    VLOG(3) << "No loaded CUDA module for " << gpu_binary;
+    XLA_VLOG_DEVICE(3, device_ordinal())
+        << "No loaded CUDA module for " << gpu_binary;
     return false;
   }
   auto& module = module_it->second.first;
   auto& refcount = module_it->second.second;
-  VLOG(3) << "Found CUDA module " << module << " with refcount " << refcount;
+  XLA_VLOG_DEVICE(3, device_ordinal())
+      << "Found CUDA module " << module << " with refcount " << refcount;
   if (--refcount == 0) {
-    VLOG(3) << "Unloading CUDA module " << module;
+    XLA_VLOG_DEVICE(3, device_ordinal()) << "Unloading CUDA module " << module;
     UnloadCudaModule(cuda_context_, module);
     gpu_binary_to_module_.erase(module_it);
   }
@@ -892,21 +1159,24 @@ bool CudaExecutor::UnloadGpuBinary(ModuleHandle gpu_binary) {
 }
 
 void CudaExecutor::UnloadKernel(const Kernel* kernel) {
-  VLOG(3) << "Unloading kernel " << kernel << " : " << kernel->name();
+  XLA_VLOG_DEVICE(3, device_ordinal())
+      << "Unloading kernel " << kernel << " : " << kernel->name();
 
-  absl::MutexLock lock{&in_memory_modules_mu_};
+  absl::MutexLock lock{in_memory_modules_mu_};
   loaded_kernels_.erase(kernel);
 
   auto gpu_binary_it = kernel_to_gpu_binary_.find(kernel);
   if (kernel_to_gpu_binary_.end() == gpu_binary_it) {
     // We might never see kernel being explicitly loaded if it was resolved from
     // in process symbol pointer (CUDA C++ device function pointer).
-    VLOG(3) << "Kernel " << kernel << " : " << kernel->name()
-            << " has never been loaded.";
+    XLA_VLOG_DEVICE(3, device_ordinal())
+        << "Kernel " << kernel << " : " << kernel->name()
+        << " has never been loaded.";
     return;
   }
-  VLOG(3) << "Kernel " << kernel << " : " << kernel->name()
-          << " has loaded GPU code " << gpu_binary_it->second;
+  XLA_VLOG_DEVICE(3, device_ordinal())
+      << "Kernel " << kernel << " : " << kernel->name()
+      << " has loaded GPU code " << gpu_binary_it->second;
   UnloadGpuBinary(gpu_binary_it->second);
   kernel_to_gpu_binary_.erase(gpu_binary_it);
 }
@@ -916,22 +1186,23 @@ absl::StatusOr<ModuleHandle> CudaExecutor::LoadModule(
   // We store the pointer to the GPU binary (PTX or CUBIN) as
   // ModuleHandle::id().
   if (spec.has_cuda_cubin_in_memory()) {
-    absl::MutexLock lock{&in_memory_modules_mu_};
+    absl::MutexLock lock{in_memory_modules_mu_};
     return LoadModuleFromCuBin(
         reinterpret_cast<const char*>(spec.cuda_cubin_in_memory().data()));
-  } else if (spec.has_cuda_ptx_in_memory()) {
+  }
+  if (spec.has_cuda_ptx_in_memory()) {
     if (!spec.cuda_ptx_in_memory()) {
       return absl::InternalError("PTX not found in spec");
     }
 
-    absl::MutexLock lock{&in_memory_modules_mu_};
+    absl::MutexLock lock{in_memory_modules_mu_};
     return LoadModuleFromPtx(spec.cuda_ptx_in_memory());
   }
   return absl::InternalError("No method of loading CUDA module provided");
 }
 
 bool CudaExecutor::UnloadModule(ModuleHandle module_handle) {
-  absl::MutexLock lock{&in_memory_modules_mu_};
+  absl::MutexLock lock{in_memory_modules_mu_};
   return UnloadGpuBinary(module_handle);
 }
 
@@ -941,25 +1212,12 @@ absl::uint128 Fingerprint128(const absl::string_view s) {
   return absl::MakeUint128(fp.high64, fp.low64);
 }
 
-int fpus_per_core(int cc_major, int cc_minor) {
-  // Source:
-  // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#arithmetic-instructions
-  int n = 128;          // 5.x, 6.1, 6.2, 8.6, 9.0 -> 128.
-  if (cc_major == 3) {  // 3.x -> 192.
-    n = 192;
-  } else if ((cc_major == 6 && cc_minor == 0) || (cc_major == 7) ||
-             (cc_major == 8 && cc_minor == 0)) {
-    n = 64;  // 6.0, 7.x, 8.0 -> 64.
-  }
-  return n;
-}
-
 }  // namespace
 
-absl::StatusOr<std::shared_ptr<DeviceMemoryBase>>
+absl::StatusOr<std::shared_ptr<DeviceAddressBase>>
 CudaExecutor::CreateOrShareConstant(Stream* stream,
                                     absl::Span<const uint8_t> content) {
-  absl::MutexLock lock{&shared_constants_mu_};
+  absl::MutexLock lock{shared_constants_mu_};
   // We assume all constants are uniquely identified by this hash. In the
   // (highly unlikely) event of a hash collision, the program will likely crash
   // (because the cached constant that will be returned by mistake is unlikely
@@ -968,10 +1226,10 @@ CudaExecutor::CreateOrShareConstant(Stream* stream,
       reinterpret_cast<const char*>(content.data()), content.size()));
   // Must insert nullptr first to get an iterator to the insertion point.
   auto insert_result = shared_constants_.insert(
-      {fingerprint, std::weak_ptr<DeviceMemoryBase>()});
+      {fingerprint, std::weak_ptr<DeviceAddressBase>()});
   auto it = insert_result.first;
   bool was_already_in_cache = !insert_result.second;
-  std::shared_ptr<DeviceMemoryBase> shared_constant;
+  std::shared_ptr<DeviceAddressBase> shared_constant;
 
   if (was_already_in_cache) {
     shared_constant = it->second.lock();
@@ -980,7 +1238,7 @@ CudaExecutor::CreateOrShareConstant(Stream* stream,
   if (shared_constant == nullptr) {
     // Either the constant wasn't found in the cache, or it was but its
     // weak_ptr had expired.
-    auto new_constant = std::make_unique<DeviceMemoryBase>(
+    auto new_constant = std::make_unique<DeviceAddressBase>(
         Allocate(content.size(), /*memory_space=*/0));
     if (new_constant->opaque() == nullptr) {
       return absl::InternalError(absl::StrFormat(
@@ -999,63 +1257,95 @@ CudaExecutor::CreateOrShareConstant(Stream* stream,
 
     // Capturing 'this' in the custom deleter means this executor must
     // outlive all shared uses of this constant.
-    shared_constant = std::shared_ptr<DeviceMemoryBase>(
-        new_constant.release(), [this](DeviceMemoryBase* p) {
+    shared_constant = std::shared_ptr<DeviceAddressBase>(
+        new_constant.release(), [this](DeviceAddressBase* p) {
           Deallocate(p);
           delete p;
         });
-    it->second = std::weak_ptr<DeviceMemoryBase>(shared_constant);
+    it->second = std::weak_ptr<DeviceAddressBase>(shared_constant);
   }
 
   return shared_constant;
 }
 
-DeviceMemoryBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
-  VLOG(1) << "CudaExecutor::Allocate size: " << size
-          << " memory_space: " << memory_space;
-
-  if (memory_space == static_cast<int64_t>(MemoryType::kCollective)) {
-    auto result = CollectiveMemoryAllocate(this, size);
-    if (!result.ok()) {
-      LOG(ERROR) << "Failed to allocate collective memory: " << result.status();
-      return DeviceMemoryBase(nullptr, 0);
-    }
-    VLOG(1) << "CudaExecutor::Allocate returns " << result.value();
-    return DeviceMemoryBase(result.value(), size);
-  } else if (memory_space ==
-             static_cast<int64_t>(stream_executor::MemoryType::kHost)) {
-    auto result = HostAllocate(cuda_context_, numa_node_, size);
-    if (!result.ok()) {
-      LOG(ERROR) << "Failed to allocate host memory: " << result.status();
-      return DeviceMemoryBase(nullptr, 0);
-    }
-    VLOG(1) << "CudaExecutor::Allocate returns " << result.value();
-    return DeviceMemoryBase(result.value(), size);
+DeviceAddressBase CudaExecutor::AllocateAndTrack(MemoryAllocator& allocator,
+                                                 uint64_t size,
+                                                 absl::string_view kind) {
+  auto allocation = allocator.Allocate(size);
+  if (!allocation.ok()) {
+    XLA_LOG_DEVICE(ERROR, device_ordinal())
+        << "Failed to allocate " << kind << " memory: " << allocation.status();
+    return DeviceAddressBase(nullptr, 0);
   }
-  CHECK_EQ(memory_space, 0);
-  auto device_buf_base = DeviceAllocate(cuda_context_, size);
-  VLOG(1) << "CudaExecutor::Allocate returns " << device_buf_base;
-  return DeviceMemoryBase(device_buf_base, size);
+
+  auto addr = allocation_tracker_.Track(std::move(*allocation));
+  if (!addr.ok()) {
+    XLA_LOG_DEVICE(ERROR, device_ordinal())
+        << "Failed to track " << kind << " allocation: " << addr.status();
+    return DeviceAddressBase(nullptr, 0);
+  }
+
+  return *addr;
+}
+
+DeviceAddressBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
+  XLA_VLOG_DEVICE(1, device_ordinal())
+      << "CudaExecutor::Allocate size: " << size
+      << " memory_space: " << memory_space;
+
+  if (memory_space == static_cast<int64_t>(MemorySpace::kCollective)) {
+    if (IsNvshmemEnabled()) {
+      auto result = NvshmemCollectiveMemoryAllocate(this, size);
+      if (!result.ok()) {
+        XLA_LOG_DEVICE(ERROR, device_ordinal())
+            << "Failed to allocate nvshmem collective memory: "
+            << result.status();
+        return DeviceAddressBase();
+      }
+      return DeviceAddressBase(*result, size);
+    }
+    return AllocateAndTrack(*vmm_allocator_, size, "collective");
+  }
+
+  if (memory_space == static_cast<int64_t>(MemorySpace::kHost)) {
+    return AllocateAndTrack(*host_allocator_, size, "host");
+  }
+
+  if (memory_space == static_cast<int64_t>(MemorySpace::kP2P)) {
+    return AllocateAndTrack(*vmm_allocator_, size, "vmm");
+  }
+
+  CHECK(memory_space == static_cast<int64_t>(MemorySpace::kDevice) ||
+        memory_space == static_cast<int64_t>(MemorySpace::kP2P));
+
+  return AllocateAndTrack(*device_allocator_, size, "device");
 }
 
 absl::StatusOr<std::unique_ptr<MemoryAllocation>>
 CudaExecutor::HostMemoryAllocate(uint64_t size) {
-  return AllocateHostMemory(cuda_context_, numa_node_, size);
+  return host_allocator_->Allocate(size);
 }
 
-void CudaExecutor::Deallocate(DeviceMemoryBase* mem) {
-  VLOG(1) << "CudaExecutor::Deallocate mem: " << mem->opaque();
+void CudaExecutor::Deallocate(DeviceAddressBase* mem) {
+  XLA_VLOG_DEVICE(1, device_ordinal())
+      << "CudaExecutor::Deallocate mem: " << mem->opaque();
 
-  auto status_or_memory_space = GetPointerMemorySpace(mem->opaque());
-  if (!status_or_memory_space.ok()) {
-    LOG(ERROR) << status_or_memory_space.status();
+  // Try to free from the allocation tracker first. This handles host, device,
+  // and VMM allocations made through the allocators.
+  if (allocation_tracker_.IsTracked(*mem)) {
+    absl::Status free_status = allocation_tracker_.Free(*mem);
+    if (!free_status.ok()) {
+      XLA_LOG_DEVICE(ERROR, device_ordinal())
+          << "Failed to free tracked allocation: " << free_status;
+    }
     return;
   }
-  auto memory_space = status_or_memory_space.value();
-  if (memory_space == MemoryType::kHost) {
-    HostDeallocate(cuda_context_, numa_node_, mem->opaque(), mem->size());
-  } else {
-    DeviceDeallocate(cuda_context_, mem->opaque());
+
+  // Untracked allocations are nvshmem collective memory.
+  absl::Status status = NvshmemCollectiveMemoryDeallocate(this, mem->opaque());
+  if (!status.ok()) {
+    XLA_LOG_DEVICE(ERROR, device_ordinal())
+        << "Failed to deallocate memory at " << mem->opaque() << ": " << status;
   }
 }
 
@@ -1064,71 +1354,61 @@ bool CudaExecutor::SynchronizeAllActivity() {
 }
 
 bool CudaExecutor::HostMemoryRegister(void* location, uint64_t size) {
-  VLOG(1) << "Called StreamExecutor::HostMemoryRegister(data=" << location
-          << ")";
+  XLA_VLOG_DEVICE(1, device_ordinal())
+      << "Called StreamExecutor::HostMemoryRegister(data=" << location << ")";
   return HostRegister(cuda_context_, location, size);
 }
 
 bool CudaExecutor::HostMemoryUnregister(void* location) {
-  VLOG(1) << "Called StreamExecutor::HostUnregister(data=" << location << ")";
+  XLA_VLOG_DEVICE(1, device_ordinal())
+      << "Called StreamExecutor::HostUnregister(data=" << location << ")";
   return HostUnregister(cuda_context_, location);
 }
 
-absl::Status CudaExecutor::SynchronousMemZero(DeviceMemoryBase* location,
-                                              uint64_t size) {
-  std::unique_ptr<ActivateContext> activation = Activate();
-  CUdeviceptr cuda_location = AsCudaDevicePtr(location);
-  if (reinterpret_cast<uintptr_t>(location->opaque()) % sizeof(uint32_t) == 0 &&
-      size % sizeof(uint32_t) == 0) {
-    return cuda::ToStatus(
-        cuMemsetD32(cuda_location, 0x0, size / sizeof(uint32_t)),
-        "Failed to memset memory");
-  }
-  return cuda::ToStatus(cuMemsetD8(cuda_location, 0x0, size),
-                        "Failed to memset memory");
-}
-
-absl::Status CudaExecutor::SynchronousMemcpy(DeviceMemoryBase* gpu_dst,
+absl::Status CudaExecutor::SynchronousMemcpy(DeviceAddressBase* gpu_dst,
                                              const void* host_src,
                                              uint64_t size) {
   std::unique_ptr<ActivateContext> activation = Activate();
   TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMemcpyHtoD(AsCudaDevicePtr(gpu_dst), host_src, size),
-      absl::StrFormat(
-          "failed to synchronous memcpy from host to device: GPU dst: %llx;"
-          " host src: %p; size: %u=0x%x",
-          AsCudaDevicePtr(gpu_dst), host_src, size, size)));
-  VLOG(2) << "successfully enqueued sync memcpy h2d of " << size << " bytes";
+      absl::StrFormat("%sfailed to synchronous memcpy from "
+                      "host to device: GPU dst: %llx;"
+                      " host src: %p; size: %u=0x%x",
+                      xla::XlaFormatDevice(device_ordinal()),
+                      AsCudaDevicePtr(gpu_dst), host_src, size, size)));
+  XLA_VLOG_DEVICE(2, device_ordinal())
+      << "successfully enqueued sync memcpy h2d of " << size << " bytes";
   return absl::OkStatus();
 }
 
 absl::Status CudaExecutor::SynchronousMemcpy(void* host_dst,
-                                             const DeviceMemoryBase& gpu_src,
+                                             const DeviceAddressBase& gpu_src,
                                              uint64_t size) {
   std::unique_ptr<ActivateContext> activation = Activate();
   TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMemcpyDtoH(host_dst, AsCudaDevicePtr(gpu_src), size),
-      absl::StrFormat("failed to synchronous memcpy from device to host "
+      absl::StrFormat("%sfailed to synchronous memcpy from device to host "
                       "host dst: %p; GPU src: %llx; size: %u=0x%x",
-                      host_dst, AsCudaDevicePtr(gpu_src), size, size)));
-  VLOG(2) << "successfully sync memcpy'd d2h of " << size << " bytes to "
-          << host_dst;
+                      xla::XlaFormatDevice(device_ordinal()), host_dst,
+                      AsCudaDevicePtr(gpu_src), size, size)));
+  XLA_VLOG_DEVICE(2, device_ordinal()) << "successfully sync memcpy'd d2h of "
+                                       << size << " bytes to " << host_dst;
   return absl::OkStatus();
 }
 
 void CudaExecutor::DeallocateStream(Stream* stream) {
   {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     if (dnn_ != nullptr) {
       dnn_->NotifyStreamDestroyed(stream);
     }
   }
-  absl::MutexLock l(&alive_gpu_streams_mu_);
+  absl::MutexLock l(alive_gpu_streams_mu_);
   alive_gpu_streams_.erase(stream->platform_specific_handle().stream);
 }
 
 blas::BlasSupport* CudaExecutor::AsBlas() {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (blas_ != nullptr) {
     return blas_.get();
   }
@@ -1148,7 +1428,7 @@ blas::BlasSupport* CudaExecutor::AsBlas() {
 }
 
 dnn::DnnSupport* CudaExecutor::AsDnn() {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (dnn_ != nullptr) {
     return dnn_.get();
   }
@@ -1169,7 +1449,7 @@ dnn::DnnSupport* CudaExecutor::AsDnn() {
 }
 
 fft::FftSupport* CudaExecutor::AsFft() {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (fft_ != nullptr) {
     return fft_.get();
   }
@@ -1190,7 +1470,25 @@ fft::FftSupport* CudaExecutor::AsFft() {
 
 bool CudaExecutor::CanEnablePeerAccessTo(StreamExecutor* other) {
   CudaExecutor* cuda_other = static_cast<CudaExecutor*>(other);
-  return CanEnablePeerAccess(cuda_context_, cuda_other->cuda_context_);
+  absl::StatusOr<int> to_device = DeviceFromContext(cuda_other->cuda_context_);
+  if (!to_device.ok()) {
+    LOG(ERROR) << "failed to resolve 'to' peer access context to a device: "
+               << to_device.status();
+    return false;
+  }
+  return CanEnablePeerAccessTo(*to_device);
+}
+
+bool CudaExecutor::CanEnablePeerAccessTo(int other_device_ordinal) {
+  auto it = peer_access_cache_.find(other_device_ordinal);
+  if (it != peer_access_cache_.end()) {
+    return it->second;
+  }
+
+  LOG(WARNING) << "Attempting to enable peer access from: " << device_ordinal()
+               << " to: " << other_device_ordinal
+               << " which was not available during initialization.";
+  return false;
 }
 
 absl::Status CudaExecutor::EnablePeerAccessTo(StreamExecutor* other) {
@@ -1214,14 +1512,14 @@ bool CudaExecutor::DeviceMemoryUsage(int64_t* free_out,
   return true;
 }
 
-absl::StatusOr<DeviceMemoryBase> CudaExecutor::GetSymbol(
+absl::StatusOr<DeviceAddressBase> CudaExecutor::GetSymbol(
     const std::string& symbol_name, ModuleHandle module_handle) {
   void* mem = nullptr;
   size_t bytes = 0;
   CHECK(static_cast<bool>(module_handle));
 
   {  // give limited scope to MutexLock
-    absl::MutexLock lock{&in_memory_modules_mu_};
+    absl::MutexLock lock{in_memory_modules_mu_};
     auto it = gpu_binary_to_module_.find(module_handle);
     CHECK(it != gpu_binary_to_module_.end());
 
@@ -1230,7 +1528,7 @@ absl::StatusOr<DeviceMemoryBase> CudaExecutor::GetSymbol(
     TF_RETURN_IF_ERROR(
         GetModuleSymbol(cuda_context_, gpu_module_handle, symbol_name.c_str(),
                         reinterpret_cast<CUdeviceptr*>(&mem), &bytes));
-    return DeviceMemoryBase(mem, bytes);
+    return DeviceAddressBase(mem, bytes);
   }
 
   return absl::NotFoundError(
@@ -1246,7 +1544,7 @@ absl::Status FillBlockDimLimit(CUdevice device, BlockDim* block_dim_limit) {
   // (as opposed to ThreadDim which expresses the dimensions of threads
   // within a block).
   int x, y, z;
-  TF_RETURN_IF_ERROR(GetGridLimits(&x, &y, &z, device));
+  RETURN_IF_ERROR(GetGridLimits(&x, &y, &z, device));
   block_dim_limit->x = x;
   block_dim_limit->y = y;
   block_dim_limit->z = z;
@@ -1255,28 +1553,29 @@ absl::Status FillBlockDimLimit(CUdevice device, BlockDim* block_dim_limit) {
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<Event>> CudaExecutor::CreateEvent() {
-  TF_ASSIGN_OR_RETURN(auto event, CudaEvent::Create(this, false));
+  ASSIGN_OR_RETURN(auto event, CudaEvent::Create(this, false));
   return std::make_unique<CudaEvent>(std::move(event));
 }
 
 absl::StatusOr<std::unique_ptr<Stream>> CudaExecutor::CreateStream(
     std::optional<std::variant<StreamPriority, int>> priority) {
-  TF_ASSIGN_OR_RETURN(auto stream, CudaStream::Create(this, priority));
-  absl::MutexLock l(&alive_gpu_streams_mu_);
+  ASSIGN_OR_RETURN(auto stream, CudaStream::Create(this, priority));
+  absl::MutexLock l(alive_gpu_streams_mu_);
   alive_gpu_streams_[stream->stream_handle()] = stream.get();
   return std::move(stream);
 }
 
 absl::StatusOr<std::unique_ptr<CommandBuffer>>
 CudaExecutor::CreateCommandBuffer(CommandBuffer::Mode mode) {
-  VLOG(2) << "Create CUDA command buffer (CUDA graph)";
+  XLA_VLOG_DEVICE(2, device_ordinal())
+      << "Create CUDA command buffer (CUDA graph)";
   return CudaCommandBuffer::Create(mode, this, cuda_context_);
 }
 
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
 CudaExecutor::CreateDeviceDescription(int device_ordinal) {
-  TF_ASSIGN_OR_RETURN(CUdevice device, GetDevice(device_ordinal));
-  TF_ASSIGN_OR_RETURN(CudaComputeCapability cc, GetComputeCapability(device));
+  ASSIGN_OR_RETURN(CUdevice device, GetDevice(device_ordinal));
+  ASSIGN_OR_RETURN(CudaComputeCapability cc, GetComputeCapability(device));
 
   DeviceDescription desc;
   int32_t driver_version{};
@@ -1291,6 +1590,12 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   }
   desc.set_driver_version(
       ParseCudaVersion(driver_version).value_or(SemanticVersion{0, 0, 0}));
+
+  if (auto version = GetDeviceDriverVersion(); version.ok()) {
+    desc.set_kernel_mode_driver_version(*version);
+  } else {
+    LOG(ERROR) << "Could not get kernel mode driver version: " << version;
+  }
 
   int32_t runtime_version{};
   {
@@ -1307,11 +1612,32 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
       ParseCudaVersion(runtime_version).value_or(SemanticVersion{0, 0, 0}));
   desc.set_compile_time_toolkit_version(
       ParseCudaVersion(CUDA_VERSION).value_or(SemanticVersion{0, 0, 0}));
+  desc.set_cub_version(SemanticVersion{CUB_MAJOR_VERSION, CUB_MINOR_VERSION,
+                                       CUB_SUBMINOR_VERSION});
+
+  // cudnnGetProperty (the function that backs GetLoadedCudnnVersion()) needs
+  // 64KiB of stack, so we call it from a separate thread to avoid stack
+  // overflows.
+  absl::Notification cudnn_version_ready;
+  GetDriverExecutor()->Schedule([&]() {
+    absl::StatusOr<SemanticVersion> cudnn_version =
+        cuda::GetLoadedCudnnVersion();
+    if (cudnn_version.ok()) {
+      desc.set_dnn_version(*cudnn_version);
+    } else {
+      LOG(WARNING)
+          << "Failed to determine cuDNN version (Note that this is expected if "
+             "the application doesn't link the cuDNN plugin): "
+          << cudnn_version.status();
+    }
+    cudnn_version_ready.Notify();
+  });
+  cudnn_version_ready.WaitForNotification();
+
+  std::string pci_bus_id = GetPCIBusID(device);
+  desc.set_pci_bus_id(pci_bus_id);
 
   {
-    std::string pci_bus_id = GetPCIBusID(device);
-    desc.set_pci_bus_id(pci_bus_id);
-
     // Read the NUMA node corresponding to the PCI bus ID out of sysfs.
     std::optional<int> numa_node = ReadNumaNode(pci_bus_id, device_ordinal);
     // If the kernel reports -1, adjust to 0; leave as -1 if no value could be
@@ -1337,7 +1663,8 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
 
   int sm_clock_khz =
       GetDeviceAttribute(CU_DEVICE_ATTRIBUTE_CLOCK_RATE, device).value();
-  desc.set_clock_rate_ghz(static_cast<float>(sm_clock_khz) / 1e6);
+  float device_clock_rate_ghz = static_cast<float>(sm_clock_khz) / 1e6;
+  desc.set_clock_rate_ghz(device_clock_rate_ghz);
 
   {
     bool ecc_enabled = false;
@@ -1358,10 +1685,57 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   absl::StatusOr<int> mem_bus_width_bits = GetDeviceAttribute(
       CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH, device_ordinal);
   if (mem_clock_khz.ok() && mem_bus_width_bits.ok()) {
+    // Temporary fix when driver reports 0.
+    // Affected CUDA 13.1, driver r590, should be fixed in later releases.
+    if (mem_clock_khz.value() == 0 || mem_bus_width_bits.value() == 0) {
+      LOG(WARNING) << "Memory clock rate or bus width is 0";
+      if (cc.major == 11 && cc.minor == 0) {  // Thor
+        LOG(WARNING) << "Using hardcoded values for Thor";
+        mem_clock_khz = 4266000;
+        mem_bus_width_bits = 256;
+      }
+    }
     // Times 2 because HBM is DDR memory; it gets two data bits per each data
     // lane.
     desc.set_memory_bandwidth(2 * int64_t{mem_clock_khz.value()} * 1000 *
                               int64_t{mem_bus_width_bits.value()} / 8);
+  }
+
+  {
+    absl::MutexLock l(::stream_executor::gpu::GetNVMLLock());
+    if (absl::StatusOr<nvmlDevice_t> device = GetNvmlDevice(pci_bus_id);
+        device.ok()) {
+      absl::StatusOr<int64_t> bandwidth = GetDevicePcieBandwidth(*device);
+      if (bandwidth.ok()) {
+        desc.set_pcie_bandwidth(*bandwidth);
+      } else {
+        LOG(ERROR) << bandwidth.status().message()
+                   << " Assuming PCIe gen 3 x16 bandwidth.";
+        bandwidth = 16LL * 1024 * 1024 * 1024;
+      }
+
+      absl::StatusOr<int64_t> p2p_link_count =
+          GetNumberOfActiveP2PNvlinks(*device);
+      DeviceInterconnectInfo info;
+      if (p2p_link_count.ok()) {
+        info.active_links = *p2p_link_count;
+      } else {
+        LOG(ERROR) << p2p_link_count;
+      }
+      // nvmlDeviceGetGpuFabricInfoV is only available in driver r545+
+      if (desc.kernel_mode_driver_version().major_version() >= 545) {  // NOLINT
+        absl::StatusOr<FabricInfo> fabric_info = GetDeviceFabricInfo(*device);
+        if (fabric_info.ok()) {
+          info.cluster_uuid = fabric_info->cluster_uuid;
+          info.clique_id = fabric_info->clique_id;
+        }
+        desc.set_device_interconnect_info(info);
+      } else {
+        VLOG(1) << "Skipping GPU Fabric info retrieval; NVIDIA driver r545+ "
+                   "is required. Current driver version: "
+                << desc.kernel_mode_driver_version();
+      }
+    }
   }
 
   {
@@ -1389,7 +1763,7 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
       GetMaxSharedMemoryPerBlockOptin(device).value());
   int core_count = GetMultiprocessorCount(device).value();
   desc.set_core_count(core_count);
-  desc.set_fpus_per_core(fpus_per_core(cc.major, cc.minor));
+  desc.set_fpus_per_core(GetFpusPerCore(cc));
   desc.set_threads_per_core_limit(
       GetMaxThreadsPerMultiprocessor(device).value());
   desc.set_registers_per_block_limit(GetMaxRegistersPerBlock(device).value());
@@ -1399,8 +1773,12 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
                          device)
           .value());
 
+  FillExecutionUnitDesc(cc, device_clock_rate_ghz, desc);
+
   auto value_or = [](const auto& status_or, auto default_val) {
-    if (status_or.ok()) return *status_or;
+    if (status_or.ok()) {
+      return *status_or;
+    }
     return default_val;
   };
 
@@ -1420,26 +1798,71 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   return std::make_unique<DeviceDescription>(std::move(desc));
 }
 
-absl::StatusOr<MemoryType> CudaExecutor::GetPointerMemorySpace(
+bool CudaExecutor::IsVmmMemory(const DeviceAddressBase& address) {
+  auto handler_or = RetainVmmMemoryHandle(address.opaque());
+  if (handler_or.ok()) {
+    return true;
+  }
+  return false;
+}
+
+absl::StatusOr<MemorySpace> CudaExecutor::GetPointerMemorySpace(
     const void* ptr) {
   CUdeviceptr pointer = reinterpret_cast<CUdeviceptr>(const_cast<void*>(ptr));
+  unsigned int is_managed;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuPointerGetAttribute(
+      &is_managed, CU_POINTER_ATTRIBUTE_IS_MANAGED, pointer)));
+
+  if (is_managed) {
+    return MemorySpace::kUnified;
+  }
+
   unsigned int value;
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuPointerGetAttribute(
       &value, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, pointer)));
   switch (value) {
     case CU_MEMORYTYPE_DEVICE:
-      return MemoryType::kDevice;
+      return MemorySpace::kDevice;
     case CU_MEMORYTYPE_HOST:
-      return MemoryType::kHost;
+      return MemorySpace::kHost;
     default:
       return absl::InternalError(
           absl::StrCat("unknown memory space provided by CUDA API: ", value));
   }
 }
 
+int CudaExecutor::GetGpuStreamPriority(StreamPriority priority) {
+  if (priority == StreamPriority::Default) {
+    return 0;
+  }
+
+  absl::call_once(stream_priority_once_, [this]() {
+    std::unique_ptr<ActivateContext> activation = Activate();
+    int lowest = 0;
+    int highest = 0;
+    absl::Status status =
+        cuda::ToStatus(cuCtxGetStreamPriorityRange(&lowest, &highest));
+    if (!status.ok()) {
+      LOG(ERROR) << "Could not query stream priority range. Returning default "
+                    "priority.";
+      stream_priority_query_ok_ = false;
+      return;
+    }
+    stream_priority_lowest_ = lowest;
+    stream_priority_highest_ = highest;
+    stream_priority_query_ok_ = true;
+  });
+
+  if (!stream_priority_query_ok_) {
+    return 0;
+  }
+  return priority == StreamPriority::Highest ? stream_priority_highest_
+                                             : stream_priority_lowest_;
+}
+
 absl::StatusOr<const CudaKernel*> CudaExecutor::GetCudaKernel(
     const Kernel* kernel) {
-  absl::MutexLock lock{&in_memory_modules_mu_};
+  absl::MutexLock lock{in_memory_modules_mu_};
   auto it = loaded_kernels_.find(kernel);
   if (it == loaded_kernels_.end()) {
     return absl::NotFoundError("Kernel not loaded in this executor.");
@@ -1447,8 +1870,8 @@ absl::StatusOr<const CudaKernel*> CudaExecutor::GetCudaKernel(
   return static_cast<const CudaKernel*>(*it);
 }
 
-absl::StatusOr<TensorMap> CudaExecutor::CreateTensorMap(TmaDescriptor tma_desc,
-                                                        void* global_address) {
+absl::StatusOr<TensorMap> CudaExecutor::CreateTensorMap(
+    const TmaDescriptor& tma_desc, void* global_address) {
   TF_ASSIGN_OR_RETURN(CUtensorMapDataType data_type,
                       GetTensorMapDataType(tma_desc.element_size()));
   CUtensorMapSwizzle swizzle = GetTensorMapSwizzle(tma_desc.swizzle());
@@ -1473,6 +1896,164 @@ absl::StatusOr<TensorMap> CudaExecutor::CreateTensorMap(TmaDescriptor tma_desc,
         error_message));
   }
   return absl::bit_cast<TensorMap>(tensor_map);
+}
+
+absl::StatusOr<std::unique_ptr<MulticastMemory>>
+CudaExecutor::CreateMulticastMemory(uint64_t size, int num_devices) const {
+  if (!is_multicast_supported_) {
+    return absl::FailedPreconditionError(
+        "Multicast memory is not supported on this platform.");
+  }
+  if (size == 0 || num_devices <= 1) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Multicast memory size must be > 0 and number of devices "
+                     "must be greater than 1, but got size: ",
+                     size, " and num_devices: ", num_devices, "."));
+  }
+
+  auto multicast_memory = std::make_unique<CudaMulticastMemory>();
+  TF_RETURN_IF_ERROR(multicast_memory->Initialize(size, num_devices, this));
+  return multicast_memory;
+}
+
+CudaExecutor::CudaMulticastMemory::~CudaMulticastMemory() {
+  if (handle_ != 0) {
+    for (auto const& [device_ordinal, mapped_memory_ptr] : mapped_devices_) {
+      XLA_VLOG_DEVICE(3, device_ordinal) << "Unbind multicast: " << handle_;
+      CHECK_OK(cuda::ToStatus(cuMulticastUnbind(handle_, device_ordinal,
+                                                /*mcOffset=*/0, padded_size_)));
+
+      XLA_VLOG_DEVICE(3, device_ordinal) << "Unmap ptr: " << mapped_memory_ptr;
+      CHECK_OK(cuda::ToStatus(cuMemUnmap(mapped_memory_ptr, padded_size_)));
+      XLA_VLOG_DEVICE(3, device_ordinal)
+          << "Release address space: " << mapped_memory_ptr;
+      CHECK_OK(
+          cuda::ToStatus(cuMemAddressFree(mapped_memory_ptr, padded_size_)));
+    }
+    CHECK_OK(cuda::ToStatus(
+        cuMemRelease(static_cast<CUmemGenericAllocationHandle>(handle_))));
+  }
+}
+
+absl::Status CudaExecutor::CudaMulticastMemory::Initialize(
+    uint64_t size, int num_devices, const GpuExecutor* gpu_executor) {
+  const CudaExecutor* cuda_executor =
+      dynamic_cast<const CudaExecutor*>(gpu_executor);
+  if (cuda_executor == nullptr) {
+    return absl::InvalidArgumentError("GpuExecutor is not a CudaExecutor.");
+  }
+
+  if (handle_ != 0) {
+    return absl::FailedPreconditionError(
+        "Multicast memory is already initialized.");
+  }
+
+  if (num_devices <= 1) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Number of devices must be greater than 1, but got ",
+                     num_devices, "."));
+  }
+
+  CUmemAllocationProp properties =
+      GetVmmAllocationProp(cuda_executor->device_, cuda_executor->vmm_options_);
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemGetAllocationGranularity(
+      &granularity_, &properties, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED)));
+
+  padded_size_ = xla::RoundUpTo<size_t>(size, granularity_);
+  num_devices_ = num_devices;
+  TF_ASSIGN_OR_RETURN(CUmulticastObjectProp multicast_properties,
+                      CreateMulticastObjectProperties(num_devices_, size));
+
+  TF_RETURN_IF_ERROR(
+      cuda::ToStatus(cuMulticastCreate(&handle_, &multicast_properties)));
+  XLA_VLOG_DEVICE(3, cuda_executor->device_ordinal())
+      << "Created multicast memory: " << static_cast<uint64_t>(handle_)
+      << " size: " << padded_size_ << " with granularity: " << granularity_
+      << " for " << num_devices_ << " devices.";
+  return absl::OkStatus();
+}
+
+absl::Status CudaExecutor::CudaMulticastMemory::SubscribeDevice(
+    int device_number) {
+  if (handle_ == 0) {
+    return absl::FailedPreconditionError(
+        "Multicast memory is not initialized.");
+  }
+
+  if (subscribed_devices_ >= num_devices_) {
+    return absl::InvalidArgumentError("All devices are already subscribed.");
+  }
+
+  XLA_VLOG_DEVICE(3, device_number) << "Subscribe to multicast: " << handle_;
+  TF_RETURN_IF_ERROR(
+      cuda::ToStatus(cuMulticastAddDevice(handle_, device_number)));
+  subscribed_devices_++;
+  return absl::OkStatus();
+}
+
+absl::StatusOr<void*> CudaExecutor::CudaMulticastMemory::MapMemory(
+    const DeviceAddressBase& location, const GpuExecutor* gpu_executor) {
+  const CudaExecutor* cuda_executor =
+      dynamic_cast<const CudaExecutor*>(gpu_executor);
+  if (cuda_executor == nullptr) {
+    return absl::InvalidArgumentError("GpuExecutor is not a CudaExecutor.");
+  }
+
+  if (location.is_null()) {
+    return absl::InvalidArgumentError("Device pointer is null.");
+  }
+
+  if (handle_ == 0) {
+    return absl::FailedPreconditionError(
+        "Multicast memory is not initialized.");
+  }
+
+  if (subscribed_devices_ != num_devices_) {
+    return absl::FailedPreconditionError("All devices should be subscribed.");
+  }
+
+  TF_ASSIGN_OR_RETURN(CudaExecutor::VmmMemoryHandle memory_handle,
+                      cuda_executor->RetainVmmMemoryHandle(location.opaque()));
+
+  CUmemGenericAllocationHandle retained_memory_handle =
+      static_cast<CUmemGenericAllocationHandle>(memory_handle.handle());
+
+  TF_ASSIGN_OR_RETURN(auto base_address,
+                      cuda_executor->GetMemoryRange(location));
+  uint64_t offset = reinterpret_cast<uint64_t>(location.opaque()) -
+                    reinterpret_cast<uint64_t>(base_address.opaque());
+
+  // Bind the memory to the multicast object.
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuMulticastBindMem(handle_, /*mcOffset=*/0, retained_memory_handle,
+                         /*memOffset=*/offset, padded_size_, /*flags=*/0)));
+
+  XLA_VLOG_DEVICE(3, cuda_executor->device_ordinal())
+      << "Mapped multicast memory: " << static_cast<uint64_t>(handle_)
+      << " size: " << padded_size_ << " with granularity: " << granularity_
+      << " to address: " << location.opaque()
+      << " offset from base range: " << offset;
+
+  // Map a virtual address range for the multicast memory. Multicast
+  // memory is used to reduce the data stored in the multicast object.
+  CUdeviceptr multicast_device_ptr;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemAddressReserve(
+      &multicast_device_ptr, padded_size_, granularity_, 0, 0)));
+
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuMemMap(multicast_device_ptr, padded_size_, 0, handle_, 0)));
+
+  CUmemAccessDesc accessDesc = GetVmmAccessDesc(cuda_executor->device_);
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuMemSetAccess(multicast_device_ptr, padded_size_, &accessDesc, 1)));
+
+  absl::MutexLock subscription_lock(mapped_devices_mu_);
+  mapped_devices_.emplace(cuda_executor->device_, multicast_device_ptr);
+  void* multicast_address = reinterpret_cast<void*>(multicast_device_ptr);
+  XLA_VLOG_DEVICE(3, cuda_executor->device_ordinal())
+      << "Mapped address: " << location.opaque()
+      << " to multimem address: " << multicast_address;
+  return multicast_address;
 }
 
 }  // namespace gpu

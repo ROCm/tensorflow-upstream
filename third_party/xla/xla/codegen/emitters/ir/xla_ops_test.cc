@@ -39,6 +39,7 @@ limitations under the License.
 #include "mlir/Parser/Parser.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/indexing_map_serialization.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/mlir/utils/error_util.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
@@ -69,6 +70,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ParseMlirModuleString(
 
 class XLAOpsTest : public HloPjRtTestBase {
  public:
+  XLAOpsTest() { RegisterSymbolicExprStorage(&mlir_context_); }
   mlir::MLIRContext mlir_context_;
 };
 
@@ -86,7 +88,7 @@ std::string VariableConstraintsToString(const IndexingMap& map) {
     constraint_strings.reserve(dim_constraints.size());
     for (const auto& [expr, range] : dim_constraints) {
       constraint_strings.push_back(absl::StrCat(
-          ToString(expr, dim_names, symbol_names), " in ", range.ToString()));
+          expr.ToString(dim_names, symbol_names), " in ", range.ToString()));
     }
     std::sort(constraint_strings.begin(), constraint_strings.end());
     if (constraint_strings.empty()) {
@@ -102,7 +104,7 @@ std::string VariableConstraintsToString(const IndexingMap& map) {
     constraint_strings.reserve(symbol_constraints.size());
     for (const auto& [expr, range] : symbol_constraints) {
       constraint_strings.push_back(absl::StrCat(
-          ToString(expr, dim_names, symbol_names), " in ", range.ToString()));
+          expr.ToString(dim_names, symbol_names), " in ", range.ToString()));
     }
     std::sort(constraint_strings.begin(), constraint_strings.end());
     if (constraint_strings.empty()) {

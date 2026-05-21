@@ -17,9 +17,11 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <queue>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -32,16 +34,19 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/host_offload_utils.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
@@ -240,13 +245,13 @@ absl::StatusOr<std::vector<InstructionAndIndex>> WalkDownMemoryOffload(
                             absl::StrAppend(out, instr->name());
                           })));
       }
-      TF_RETURN_IF_ERROR(add_gte_for_idx(callers[0], current_value.index));
+      RETURN_IF_ERROR(add_gte_for_idx(callers[0], current_value.index));
       return results;
     }
   }
   if (current_value.instruction->opcode() == HloOpcode::kParameter &&
       current_value.instruction->shape().IsTuple()) {
-    TF_RETURN_IF_ERROR(
+    RETURN_IF_ERROR(
         add_gte_for_idx(current_value.instruction, current_value.index));
     return results;
   }
@@ -378,6 +383,183 @@ Shape AddMajormostDimension(const Shape& shape) {
   return new_shape;
 }
 
+absl::StatusOr<std::pair<Shape, Shape>> GetNewShapesAfterBitcastReducedRank(
+    const HloInstruction* bitcast, const HloInstruction* copy_to_move,
+    const Shape& shape_before_copy, const Shape& shape_after_copy) {
+  const Shape& before_bitcast_shape = bitcast->operand(0)->shape();
+  if (!(ShapeUtil::IsEffectivelyMostMajorDimension(before_bitcast_shape, 0) &&
+        before_bitcast_shape.dimensions(0) == 1)) {
+    return absl::InternalError(
+        absl::StrFormat("Only handling bitcasts with majormost dimension "
+                        "of size 1. This bitcast is \"%s\"",
+                        bitcast->ToString()));
+  }
+  const Shape new_bitcast_shape = RemoveMajormostDimension(shape_before_copy);
+  VLOG(2) << absl::StreamFormat(
+      " Encountered bitcast \"%s\", updating current shape from %s to "
+      "%s",
+      bitcast->name(), shape_before_copy.ToString(true),
+      new_bitcast_shape.ToString(true));
+  const Shape new_copy_shape = RemoveMajormostDimension(shape_after_copy);
+  VLOG(2) << absl::StreamFormat(" Also updating shape after copy from %s to %s",
+                                shape_after_copy.ToString(true),
+                                new_copy_shape.ToString(true));
+  return std::make_pair(new_bitcast_shape, new_copy_shape);
+}
+
+absl::StatusOr<std::pair<Shape, Shape>> GetNewShapesAfterBitcastIncreasedRank(
+    const HloInstruction* bitcast, const HloInstruction* copy_to_move,
+    const Shape& shape_before_copy, const Shape& shape_after_copy) {
+  const Shape& after_bitcast_shape = bitcast->shape();
+  if (!(ShapeUtil::IsEffectivelyMostMajorDimension(after_bitcast_shape, 0) &&
+        after_bitcast_shape.dimensions(0) == 1)) {
+    return absl::UnimplementedError(
+        absl::StrFormat("Only handling bitcasts with majormost dimension "
+                        "of size 1. This bitcast is \"%s\"",
+                        bitcast->ToString()));
+  }
+  const Shape new_bitcast_shape = AddMajormostDimension(shape_before_copy);
+  VLOG(2) << absl::StreamFormat(
+      " Encountered bitcast \"%s\", updating current shape from %s to "
+      "%s",
+      bitcast->name(), shape_before_copy.ToString(true),
+      new_bitcast_shape.ToString(true));
+  const Shape new_copy_shape = AddMajormostDimension(shape_after_copy);
+  VLOG(2) << absl::StreamFormat(" Also updating shape after copy from %s to %s",
+                                shape_after_copy.ToString(true),
+                                new_copy_shape.ToString(true));
+  return std::make_pair(new_bitcast_shape, new_copy_shape);
+}
+
+absl::StatusOr<std::pair<Shape, Shape>> GetNewShapesAfterBitcastSameRank(
+    const HloInstruction* bitcast, const HloInstruction* copy_to_move,
+    const Shape& shape_before_copy, const Shape& shape_after_copy) {
+  const Shape& before_bitcast_shape = bitcast->operand(0)->shape();
+  const Shape& after_bitcast_shape = bitcast->shape();
+
+  // Maybe is a transposing bitcast.
+  if (!Shape::Equal().IgnoreLayout()(after_bitcast_shape,
+                                     before_bitcast_shape)) {
+    // Something about the shape other than the layout changes. This is not
+    // supported.
+    return absl::UnimplementedError(absl::StrFormat(
+        "Only handling bitcasts which change the layout. This bitcast (\"%s\") "
+        "has input shape \"%s\" and output shape \"%s\".",
+        bitcast->name(),
+        bitcast->operand(0)->shape().ToString(/*print_layout=*/true),
+        bitcast->shape().ToString(/*print_layout=*/true)));
+  }
+
+  if (Shape::Equal()(after_bitcast_shape, before_bitcast_shape)) {
+    // This bitcast did nothing. We do not need to adjust the copy shapes at
+    // all.
+    return std::make_pair(shape_before_copy, shape_after_copy);
+  }
+
+  // We know the shapes are equal ignoring layout.
+  const auto& before_layout = before_bitcast_shape.layout();
+  const auto& after_layout = after_bitcast_shape.layout();
+
+  // First, check if the dimension ordering is actually different. If not,
+  // it's not a transpose.
+  const bool minor_to_major_is_different = !absl::c_equal(
+      before_layout.minor_to_major(), after_layout.minor_to_major());
+
+  if (minor_to_major_is_different) {
+    // To confirm that *only* the dimension order has changed, we can create
+    // copies of the layouts, clear the minor_to_major field, and then
+    // compare the remaining properties (tiling, memory space, etc.).
+    Layout before_layout_copy = before_layout;
+    Layout after_layout_copy = after_layout;
+    before_layout_copy.clear_minor_to_major();
+    after_layout_copy.clear_minor_to_major();
+
+    if (LayoutUtil::Equal(before_layout_copy, after_layout_copy)) {
+      // This is a pure transposing bitcast where other layout properties are
+      // preserved.
+      VLOG(2) << "Bitcast is a transposing bitcast: " << bitcast->ToString();
+      // We now need to identify the permutation of dimensions and apply the
+      // same tranpose to the before & after shapes of the copy.
+      std::vector<int> permutation(before_layout.minor_to_major().size());
+      const auto before_minor_to_major = before_layout.minor_to_major();
+      const auto after_minor_to_major = after_layout.minor_to_major();
+      for (int i = 0; i < before_minor_to_major.size(); ++i) {
+        // Find the index of this item in the after layout.
+        const int j = std::distance(
+            after_minor_to_major.begin(),
+            absl::c_find(after_minor_to_major, before_minor_to_major[i]));
+        permutation[i] = j;
+      }
+      // Now that the permutation is known, apply it to the shape before and
+      // after the copy.
+      auto apply_permutation = [&permutation](Shape& new_shape,
+                                              const Shape& original_shape) {
+        DimensionVector& major_to_minor =
+            *new_shape.mutable_layout()->mutable_minor_to_major();
+        for (int i = 0; i < permutation.size(); ++i) {
+          major_to_minor[i] =
+              original_shape.layout().minor_to_major(permutation[i]);
+        }
+      };
+      Shape new_shape_before_copy = shape_before_copy;
+      Shape new_shape_after_copy = shape_after_copy;
+      apply_permutation(new_shape_before_copy, shape_before_copy);
+      apply_permutation(new_shape_after_copy, shape_after_copy);
+      return std::make_pair(new_shape_before_copy, new_shape_after_copy);
+    }
+  }
+  return absl::UnimplementedError(absl::StrFormat(
+      "Something about this layout changed other than the minor-to-major "
+      "ordering. This is unsuppored. Bitcast: \"%s\"",
+      bitcast->ToString()));
+}
+
+// This function is to be called when we are moving a copy down the graph. The
+// bitcast presumably changes the shape in some way. Since the copy will be move
+// down after this bitcast, we need to adjust the input and output shape of the
+// copy as if this bitcast applied before the copy.
+absl::StatusOr<std::pair<Shape, Shape>> GetNewShapesAfterBitcast(
+    const HloInstruction* bitcast, const HloInstruction* copy_to_move,
+    const Shape& shape_before_copy, const Shape& shape_after_copy) {
+  if (!Shape::Equal().IgnoreLayout()(copy_to_move->operand(0)->shape(),
+                                     copy_to_move->shape())) {
+    return absl::InternalError(absl::StrFormat(
+        "Expecting copy to only change instruction's layout. Copy: %s",
+        copy_to_move->ToString()));
+  }
+
+  const Shape& before_bitcast_shape = bitcast->operand(0)->shape();
+  const Shape& after_bitcast_shape = bitcast->shape();
+
+  // Dimensionality decreases.
+  if (after_bitcast_shape.dimensions().size() ==
+      before_bitcast_shape.dimensions().size() - 1) {
+    // This bitcast is removing a dimension.
+    return GetNewShapesAfterBitcastReducedRank(
+        bitcast, copy_to_move, shape_before_copy, shape_after_copy);
+  }
+
+  // Dimensionality increases.
+  if (after_bitcast_shape.dimensions().size() ==
+      before_bitcast_shape.dimensions().size() + 1) {
+    // This bitcast is adding a dimension.
+    return GetNewShapesAfterBitcastIncreasedRank(
+        bitcast, copy_to_move, shape_before_copy, shape_after_copy);
+  }
+
+  // Dimensionality does not change.
+  if (after_bitcast_shape.dimensions().size() ==
+      before_bitcast_shape.dimensions().size()) {
+    return GetNewShapesAfterBitcastSameRank(
+        bitcast, copy_to_move, shape_before_copy, shape_after_copy);
+  }
+
+  // Dimensionality changes in some other way.
+  return absl::UnimplementedError(absl::StrFormat(
+      "Bitcast changes dimensionality in an unsupported way. Bitcast: \"%s\"",
+      bitcast->ToString()));
+}
+
 absl::Status MoveCopyDown(
     const InstructionAndIndex& copy_to_move_instruction_and_index,
     const CallGraph* call_graph,
@@ -406,17 +588,17 @@ absl::Status MoveCopyDown(
             << current_instruction_and_index.instruction->ToString()
             << ", index: " << current_instruction_and_index.index;
     // Get the users of the current instruction.
-    absl::StatusOr<std::vector<InstructionAndIndex>> current_value_down =
+    absl::StatusOr<std::vector<InstructionAndIndex>> current_instruction_users =
         WalkDownMemoryOffload(current_instruction_and_index, *call_graph,
                               /*for_move_copy_phase=*/true);
-    if (!current_value_down.ok()) {
+    if (!current_instruction_users.ok()) {
       VLOG(5) << "WalkDownMemoryOffload failed: "
-              << current_value_down.status();
+              << current_instruction_users.status();
       break;
     }
 
     for (InstructionAndIndex& instruction_and_index :
-         current_value_down.value()) {
+         current_instruction_users.value()) {
       HloInstruction* instruction = instruction_and_index.instruction;
       Shape shape_before_copy =
           current_instruction_and_shapes.shape_before_copy;
@@ -424,70 +606,12 @@ absl::Status MoveCopyDown(
       VLOG(5) << "Evaluating successor: " << instruction->ToString();
       const int index = instruction_and_index.index;
       if (instruction->opcode() == HloOpcode::kBitcast) {
-        // For now, we only know how to move a copy over a bitcast which
-        // "reshapes" away the majormost dimension (which must be a degenerate
-        // dimension), or reshapes to add a degenerate majormost dimension.
-        const Shape& before_bitcast_shape = instruction->operand(0)->shape();
-        const Shape& after_bitcast_shape = instruction->shape();
-        if (!Shape::Equal().IgnoreLayout()(copy_to_move->operand(0)->shape(),
-                                           copy_to_move->shape())) {
-          return absl::InternalError(absl::StrFormat(
-              "Expecting copy to only change instructions layout. Copy: %s",
-              copy_to_move->ToString()));
-        }
-        if (after_bitcast_shape.dimensions().size() ==
-            before_bitcast_shape.dimensions().size() - 1) {
-          if (!(ShapeUtil::IsEffectivelyMostMajorDimension(before_bitcast_shape,
-                                                           0) &&
-                before_bitcast_shape.dimensions(0) == 1)) {
-            return absl::InternalError(absl::StrFormat(
-                "Only handling bitcasts with majormost dimension "
-                "of size 1. This bitcast is \"%s\"",
-                instruction->ToString()));
-          }
-          const Shape new_bitcast_shape =
-              RemoveMajormostDimension(shape_before_copy);
-          VLOG(2) << absl::StreamFormat(
-              " Encountered bitcast \"%s\", updating current shape from %s to "
-              "%s",
-              instruction->name(), shape_before_copy.ToString(true),
-              new_bitcast_shape.ToString(true));
-          shape_before_copy = new_bitcast_shape;
-          const Shape new_copy_shape =
-              RemoveMajormostDimension(shape_after_copy);
-          VLOG(2) << absl::StreamFormat(
-              " Also updating shape after copy from %s to %s",
-              shape_after_copy.ToString(true), new_copy_shape.ToString(true));
-          shape_after_copy = new_copy_shape;
-        } else if (after_bitcast_shape.dimensions().size() ==
-                   before_bitcast_shape.dimensions().size() + 1) {
-          if (!(ShapeUtil::IsEffectivelyMostMajorDimension(after_bitcast_shape,
-                                                           0) &&
-                after_bitcast_shape.dimensions(0) == 1)) {
-            return absl::InternalError(absl::StrFormat(
-                "Only handling bitcasts with majormost dimension "
-                "of size 1. This bitcast is \"%s\"",
-                instruction->ToString()));
-          }
-          const Shape new_bitcast_shape =
-              AddMajormostDimension(shape_before_copy);
-          VLOG(2) << absl::StreamFormat(
-              " Encountered bitcast \"%s\", updating current shape from %s to "
-              "%s",
-              instruction->name(), shape_before_copy.ToString(true),
-              new_bitcast_shape.ToString(true));
-          shape_before_copy = new_bitcast_shape;
-          const Shape new_copy_shape = AddMajormostDimension(shape_after_copy);
-          VLOG(2) << absl::StreamFormat(
-              " Also updating shape after copy from %s to %s",
-              shape_after_copy.ToString(true), new_copy_shape.ToString(true));
-          shape_after_copy = new_copy_shape;
-        } else {
-          return absl::InternalError(
-              absl::StrFormat("Only handling bitcasts which add or remove a "
-                              "0'th dimension. This bitcast is \"%s\"",
-                              instruction->ToString()));
-        }
+        std::pair<Shape, Shape> new_shapes;
+        ASSIGN_OR_RETURN(new_shapes, GetNewShapesAfterBitcast(
+                                         instruction, copy_to_move,
+                                         shape_before_copy, shape_after_copy));
+        shape_before_copy = new_shapes.first;
+        shape_after_copy = new_shapes.second;
       } else if (instruction->opcode() == HloOpcode::kSlice ||
                  instruction->opcode() == HloOpcode::kDynamicSlice) {
         // Since we're moving the copy over a Slice/DynamicSlice, we need to
@@ -553,12 +677,12 @@ absl::Status MoveCopyDown(
           if (use == new_copy || use == new_annotation) {
             continue;
           }
-          TF_RETURN_IF_ERROR(
+          RETURN_IF_ERROR(
               instruction->ReplaceUseWithDifferentShape(use, new_copy));
         }
         // Move the copy here.
         if (new_annotation != annotation) {
-          TF_RETURN_IF_ERROR(annotation->ReplaceAllUsesWithDifferentShape(
+          RETURN_IF_ERROR(annotation->ReplaceAllUsesWithDifferentShape(
               annotation->mutable_operand(0)));
           to_remove.insert(annotation);
         }
@@ -577,8 +701,8 @@ absl::Status MoveCopyDown(
             instruction->AddInstruction(annotation->CloneWithNewOperands(
                 instruction->operand(1)->shape(),
                 {instruction->mutable_operand(1)}));
-        TF_RETURN_IF_ERROR(instruction->ReplaceOperandWith(1, new_annotation));
-        TF_RETURN_IF_ERROR(
+        RETURN_IF_ERROR(instruction->ReplaceOperandWith(1, new_annotation));
+        RETURN_IF_ERROR(
             annotation->ReplaceAllUsesWith(annotation->mutable_operand(0)));
         processed_annotations.insert(annotation);
         processed_annotations.insert(new_annotation);
@@ -597,7 +721,7 @@ absl::Status MoveCopyDown(
               update_slice->AddInstruction(HloInstruction::CreateUnary(
                   update_slice->shape(), HloOpcode::kCopy,
                   update_slice->mutable_operand(0)));
-          TF_RETURN_IF_ERROR(update_slice->ReplaceOperandWith(0, new_copy));
+          RETURN_IF_ERROR(update_slice->ReplaceOperandWith(0, new_copy));
         }
       }
       stack.emplace_back(instruction_and_index, shape_before_copy,
@@ -606,17 +730,17 @@ absl::Status MoveCopyDown(
   }
   VLOG(2) << absl::StreamFormat("Removing copy \"%s\"",
                                 copy_to_move->ToString());
-  TF_RETURN_IF_ERROR(copy_to_move->ReplaceAllUsesWithDifferentShape(
+  RETURN_IF_ERROR(copy_to_move->ReplaceAllUsesWithDifferentShape(
       copy_to_move->mutable_operand(0)));
-  TF_RETURN_IF_ERROR(copy_to_move->parent()->RemoveInstruction(copy_to_move));
+  RETURN_IF_ERROR(copy_to_move->parent()->RemoveInstruction(copy_to_move));
   return absl::OkStatus();
 }
 
 // Returns true if the copy should be moved. A copy can be moved if there is
 // always a place for it after being moved back to device.
-bool ShouldMoveCopyDown(InstructionAndIndex copy_to_move) {
+bool ShouldMoveCopyDown(HloInstruction* copy_to_move) {
   std::queue<host_offload_utils::InstructionAndShapeIndex> queue;
-  queue.push({copy_to_move.instruction, {}});
+  queue.push(host_offload_utils::InstructionAndShapeIndex(copy_to_move));
   while (!queue.empty()) {
     host_offload_utils::InstructionAndShapeIndex current = queue.front();
     queue.pop();
@@ -819,9 +943,9 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
   for (auto it = copies_to_move.rbegin(); it != copies_to_move.rend(); ++it) {
     InstructionAndIndex& copy_to_move_and_index = *it;
     HloInstruction* copy_to_move = copy_to_move_and_index.instruction;
-    if (ShouldMoveCopyDown(copy_to_move_and_index)) {
-      TF_RETURN_IF_ERROR(MoveCopyDown(copy_to_move_and_index, call_graph,
-                                      processed_annotations, to_remove));
+    if (ShouldMoveCopyDown(copy_to_move)) {
+      RETURN_IF_ERROR(MoveCopyDown(copy_to_move_and_index, call_graph,
+                                   processed_annotations, to_remove));
       changed = true;
     } else {
       // We should not move this copy down; maybe we can move it up. For now, we
@@ -830,10 +954,10 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
       if (copy_to_move->operand(0)->IsCustomCall(
               memory_annotations::kMoveToHostCustomCallTarget)) {
         HloInstruction* custom_call = copy_to_move->mutable_operand(0);
-        TF_RETURN_IF_ERROR(copy_to_move->ReplaceAllUsesWith(custom_call));
-        TF_RETURN_IF_ERROR(copy_to_move->ReplaceOperandWith(
+        RETURN_IF_ERROR(copy_to_move->ReplaceAllUsesWith(custom_call));
+        RETURN_IF_ERROR(copy_to_move->ReplaceOperandWith(
             0, custom_call->mutable_operand(0)));
-        TF_RETURN_IF_ERROR(custom_call->ReplaceOperandWith(0, copy_to_move));
+        RETURN_IF_ERROR(custom_call->ReplaceOperandWith(0, copy_to_move));
         copy_to_move->mutable_shape()->mutable_layout()->set_memory_space(
             Layout::kDefaultMemorySpace);
         *custom_call->mutable_shape()->mutable_layout() =
@@ -856,14 +980,14 @@ absl::StatusOr<bool> FixupInterveningCopies(
     if (processed_annotations.contains(instruction)) {
       continue;
     }
-    TF_ASSIGN_OR_RETURN(bool changed_annotation_for_copy_movement,
-                        ProcessAnnotationForCopyMovement(
-                            instruction, call_graph, processed_annotations,
-                            annotations_to_remove));
+    ASSIGN_OR_RETURN(bool changed_annotation_for_copy_movement,
+                     ProcessAnnotationForCopyMovement(instruction, call_graph,
+                                                      processed_annotations,
+                                                      annotations_to_remove));
     changed |= changed_annotation_for_copy_movement;
   }
   for (HloInstruction* instruction : annotations_to_remove) {
-    TF_RETURN_IF_ERROR(instruction->parent()->RemoveInstruction(instruction));
+    RETURN_IF_ERROR(instruction->parent()->RemoveInstruction(instruction));
   }
   return changed;
 }
@@ -901,7 +1025,7 @@ HostOffloadLegalize::FindStartingInstructionsOfHostMemoryOffload(
   return starting_instructions;
 }
 
-absl::StatusOr<bool> HostOffloadLegalize::Run(
+absl::StatusOr<bool> HostOffloadLegalize::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
@@ -916,7 +1040,7 @@ absl::StatusOr<bool> HostOffloadLegalize::Run(
                       return absl::StrAppend(out, instruction->name());
                     }));
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       bool changed_intervening_copies,
       FixupInterveningCopies(starting_instructions, call_graph.get()));
   changed |= changed_intervening_copies;

@@ -18,6 +18,8 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -25,11 +27,11 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/subprocess.h"
-#include "tsl/platform/env.h"
+#include "xla/tsl/platform/test.h"
 #include "tsl/platform/path.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {
@@ -147,7 +149,7 @@ TEST_F(RunHloModuleTest, MustAliasWithSharding) {
   EXPECT_TRUE(exited_normally_);
   EXPECT_EQ(exit_status_, 255);
   EXPECT_THAT(stderr_output_,
-              testing::HasSubstr("Failed to execute on Interpreter"));
+              testing::HasSubstr("Failed to execute on HloRunnerPjRt"));
   EXPECT_THAT(stderr_output_,
               testing::Not(testing::HasSubstr("memory allocation bug")));
 }
@@ -197,7 +199,7 @@ ENTRY f {
       testing::HasSubstr("Results on Host and Interpreter are close enough."));
   // Test that the arguments in the HloSnapshot are used by checking output.
   ASSERT_THAT(stdout_output_, testing::HasSubstr(R"(
-** Result with test runner Host **
+** Result with test runner HloRunnerPjRt **
 f32[2,2] {
   { 2, 2 },
   { 2, 2 }
@@ -244,10 +246,13 @@ TEST_F(RunHloModuleTest, DumpAndParseDebugOptions) {
   EXPECT_THAT(data, testing::Not(testing::HasSubstr(
                         "xla_gpu_dot_merger_threshold_mb: 1234")));
   // Read the dumped module and we should see large constant.
-  TF_ASSERT_OK(tsl::ReadFileToString(
-      env,
-      tsl::io::JoinPath(tmp_dir2, "module_0000.f.cpu_after_optimizations.txt"),
-      &data));
+  std::vector<std::string> cpu_after_optimizations_files;
+  TF_ASSERT_OK(tsl::Env::Default()->GetMatchingPaths(
+      absl::StrCat(tmp_dir2, "/module*.f.*cpu_after_optimizations.txt"),
+      &cpu_after_optimizations_files));
+  ASSERT_THAT(cpu_after_optimizations_files, testing::SizeIs(1));
+  TF_ASSERT_OK(
+      tsl::ReadFileToString(env, cpu_after_optimizations_files[0], &data));
   EXPECT_THAT(data, testing::HasSubstr(
                         "constant({10, 6, 3, 2, 5, 3, 7, 4, 2, 3, 1, 0})"));
 }

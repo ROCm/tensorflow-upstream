@@ -19,6 +19,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -42,47 +43,53 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+using ::mlir::MLIRContext;
+
 using KernelEmitter = emitters::ConcatenateFusionKernelEmitter;
 
 ConcatenateFusion::ConcatenateFusion(const HloFusionAnalysis& analysis)
     : analysis_(analysis),
       largest_shape_(KernelEmitter::GetIndexingShape(analysis_.fusion_spec())),
-      config_(ComputeLoopFusionConfig(analysis_, largest_shape_)) {
-  config_.unroll_factor = KernelEmitter::GetValidUnrollFactor(
-      analysis_.fusion_spec(), config_.unroll_factor);
+      unroll_factor_(ComputeLoopFusionConfig(analysis_, largest_shape_)) {
+  unroll_factor_ = KernelEmitter::GetValidUnrollFactor(analysis_.fusion_spec(),
+                                                       unroll_factor_);
 }
 
 LaunchDimensions ConcatenateFusion::launch_dimensions() const {
   return CalculateLaunchDimensions(largest_shape_, analysis_.device_info(),
-                                   config_);
+                                   unroll_factor_);
 }
 
 std::optional<IndexingMap> ConcatenateFusion::ComputeThreadIdToOutputIndexing(
-    int64_t root_index, mlir::MLIRContext* ctx) const {
+    int64_t root_index, MLIRContext* ctx) const {
   return std::nullopt;
 }
 
-std::optional<IndexingMap> ConcatenateFusion::ComputeThreadIdToInputIndexing(
-    int64_t root_index, int64_t hero_operand_index,
-    mlir::MLIRContext* ctx) const {
-  // TODO(b/331356433): Add constraints depending on the `hero_operand_index`.
-  return KernelEmitter::ComputeWorkItemIdToOutputIndexing(GetWorkDimensions(),
-                                                          largest_shape_, ctx);
+std::optional<std::vector<IndexingMap>>
+ConcatenateFusion::ComputeThreadIdToInputIndexing(int64_t root_index,
+                                                  MLIRContext* ctx) const {
+  IndexingMap map_for_largest_shape =
+      KernelEmitter::ComputeWorkItemIdToOutputIndexing(GetWorkDimensions(),
+                                                       largest_shape_, ctx);
+  // TODO(b/331356433): Handle other hero operands correctly.
+  std::vector<IndexingMap> result(
+      analysis_.fusion_hero(root_index).GetOperands().size(),
+      map_for_largest_shape);
+  return result;
 }
 
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>>
 ConcatenateFusion::CreateMLIRModule(
-    mlir::MLIRContext& context, const HloFusionInstruction& fusion,
+    mlir::MLIRContext& mlir_context, const HloFusionInstruction& fusion,
     const std::string& entry_function_name,
     const BufferAssignment* buffer_assignment) const {
   emitters::ConcatenateFusionKernelEmitter emitter(
-      context, fusion, analysis_.fusion_spec(), buffer_assignment,
+      mlir_context, fusion, analysis_.fusion_spec(), buffer_assignment,
       GetDefaultBufferAlignment(), GetWorkDimensions(), entry_function_name,
       BackendKind::kGpu);
 
   TF_ASSIGN_OR_RETURN(auto kernel_definition, emitter.EmitKernelDefinition());
-  auto [spec, source] = std::move(kernel_definition).ReleaseStorage();
-  return std::move(source).ReleaseStorage().module;
+  return std::move(kernel_definition).TakeSource().TakeModule();
 }
 
 absl::Status ConcatenateFusion::EmitEntryFunction(
@@ -95,7 +102,7 @@ absl::Status ConcatenateFusion::EmitEntryFunction(
 
 WorkDimensions ConcatenateFusion::GetWorkDimensions() const {
   WorkDimensions work_dimensions = launch_dimensions().AsWorkDimensions();
-  work_dimensions.work_tile_size.dimensions.push_back(config_.unroll_factor);
+  work_dimensions.work_tile_size.dimensions.push_back(unroll_factor_);
   return work_dimensions;
 }
 

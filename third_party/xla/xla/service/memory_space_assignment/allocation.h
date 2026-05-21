@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/heap_simulator/allocation_block.h"
@@ -138,7 +139,9 @@ class Allocation {
   // Replaces all uses of the allocation with the copy_complete instruction.
   absl::Status UpdateUses(HloComputation* computation,
                           HloInstruction* producing_instruction,
-                          const BitcastSplitFn& bitcast_split_fn);
+                          const BitcastSplitFn& bitcast_split_fn,
+                          const HloLiveRange& hlo_live_range,
+                          const HloAliasAnalysis& alias_analysis);
 
   // Allocation type methods
   // --------------------------------------------------------------------------
@@ -159,7 +162,9 @@ class Allocation {
   // After all of the time ranges for the allocations have been assigned,
   // Process morphs the instructions affected to assign the memory spaces and
   // insert asynchronous copy instructions if necessary.
-  virtual absl::Status Process(const BitcastSplitFn& bitcast_split_fn) = 0;
+  virtual absl::Status Process(const BitcastSplitFn& bitcast_split_fn,
+                               const HloLiveRange& hlo_live_range,
+                               const HloAliasAnalysis& alias_analysis) = 0;
   // An optional post-process step that will be called after all allocations
   // have been processed.
   virtual absl::Status PostProcess() = 0;
@@ -232,7 +237,9 @@ class PinnedAllocation final : public Allocation {
   bool is_window_prefetched_allocation() const override { return false; }
   bool is_scoped_allocation() const override { return false; }
   bool is_reserved_allocation() const override { return false; }
-  absl::Status Process(const BitcastSplitFn& bitcast_split_fn) override;
+  absl::Status Process(const BitcastSplitFn& bitcast_split_fn,
+                       const HloLiveRange& hlo_live_range,
+                       const HloAliasAnalysis& alias_analysis) override;
   absl::Status PostProcess() override { return absl::OkStatus(); }
   void MarkIfNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
       const override;
@@ -267,7 +274,9 @@ class ReservedAllocation final : public Allocation {
   bool is_window_prefetched_allocation() const override { return false; }
   bool is_scoped_allocation() const override { return false; }
   bool is_reserved_allocation() const override { return true; }
-  absl::Status Process(const BitcastSplitFn& bitcast_split_fn) override;
+  absl::Status Process(const BitcastSplitFn& bitcast_split_fn,
+                       const HloLiveRange& hlo_live_range,
+                       const HloAliasAnalysis& alias_analysis) override;
   absl::Status PostProcess() override { return absl::OkStatus(); }
   void MarkIfNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
       const override;
@@ -280,17 +289,29 @@ class ReservedAllocation final : public Allocation {
   bool operator==(const ReservedAllocation& other) const;
 
   bool is_chunk_reserved_in_interval_tree() const { return reserved_; }
-  void chunk_freed_in_interval_tree() { reserved_ = false; }
+  void mark_chunk_freed_in_interval_tree() { reserved_ = false; }
+  void mark_chunk_reserved_in_interval_tree() { reserved_ = true; }
 
  private:
   // Indicates whether the chunk is still reserved in the interval_tree_.
   bool reserved_;
 };
 
-// This class represents an allocation as a result of an asynchronous copy.
-// Note: CopyStart instructions are inserted after
-// `copy_start_schedule_after`, while CopyDone instructions are inserted
-// before `copy_done_schedule_before_time`.
+// This class represents an allocation as a result of a single asynchronous
+// data movement operation. The data movement operation is a copy, except when
+// certain arguments are set, as described below.
+// * CopyStart instructions are inserted after `copy_start_schedule_after`,
+//   while CopyDone instructions are inserted before
+//   `copy_done_schedule_before_time`.
+// * When `sync_mem_op` is set, it points to a sync data movement instruction
+//   that we intend to turn into an asynchronous data movement operation.
+// * When `async_mem_op_start` and `async_mem_op_done` are set, it indicates
+//   that an asynchronous data movement operation already exists, but MSA
+//   needs to appropriately schedule the operation.
+// * If `sync_mem_op` is non-null, `async_mem_op_start` and `async_mem_op_done`
+//   must be null.
+// * If are `async_mem_op_start` and `async_mem_op_done` are non-null,
+//   `sync_mem_op` must be null.
 class CopyAllocation final : public Allocation {
  public:
   CopyAllocation(
@@ -299,7 +320,9 @@ class CopyAllocation final : public Allocation {
       int64_t copy_start_schedule_after_time,
       int64_t copy_done_schedule_before_time, int64_t end_time,
       std::optional<int64_t> cross_program_prefetch_index = std::nullopt,
-      HloInstruction* sync_mem_op = nullptr);
+      HloInstruction* sync_mem_op = nullptr,
+      HloInstruction* async_mem_op_start = nullptr,
+      HloInstruction* async_mem_op_done = nullptr);
 
   // Overridden methods
   //
@@ -314,7 +337,9 @@ class CopyAllocation final : public Allocation {
   bool is_window_prefetched_allocation() const override { return false; }
   bool is_scoped_allocation() const override { return false; }
   bool is_reserved_allocation() const override { return false; }
-  absl::Status Process(const BitcastSplitFn& bitcast_split_fn) override;
+  absl::Status Process(const BitcastSplitFn& bitcast_split_fn,
+                       const HloLiveRange& hlo_live_range,
+                       const HloAliasAnalysis& alias_analysis) override;
   absl::Status PostProcess() override { return absl::OkStatus(); }
   void MarkIfNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
       const override;
@@ -352,8 +377,8 @@ class CopyAllocation final : public Allocation {
   HloInstruction* sync_mem_op_ = nullptr;
 };
 
-// This class represents an allocation resulting from asynchronous sliced
-// copies.
+// This class represents an allocation resulting from a collection of
+// asynchronous sliced copies that work together to copy a single tensor.
 //
 // Let the sliced allocation be represented as follows, and imagine that t3
 // is the time when the entire buffer [p0, p3) is available for use
@@ -425,7 +450,9 @@ class SlicedCopyAllocation final : public Allocation {
   // MemorySpaceAssignment::Process() calls Process(const BitcastSplitFn&
   // bitcast_split_fn) to create asynchronous slice copies, and a bitcast-concat
   // call to glue the slices back together.
-  absl::Status Process(const BitcastSplitFn& bitcast_split_fn) override;
+  absl::Status Process(const BitcastSplitFn& bitcast_split_fn,
+                       const HloLiveRange& hlo_live_range,
+                       const HloAliasAnalysis& alias_analysis) override;
   absl::Status PostProcess() override { return absl::OkStatus(); }
   // Marks the allocation as needed.
   void MarkIfNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
@@ -502,7 +529,9 @@ class WindowPrefetchedAllocation final : public Allocation {
   bool is_reserved_allocation() const override { return false; }
   // MemorySpaceAssignment::Process() calls Process(const BitcastSplitFn&
   // bitcast_split_fn) to create asynchronous window prefetches.
-  absl::Status Process(const BitcastSplitFn& bitcast_split_fn) override;
+  absl::Status Process(const BitcastSplitFn& bitcast_split_fn,
+                       const HloLiveRange& hlo_live_range,
+                       const HloAliasAnalysis& alias_analysis) override;
   absl::Status PostProcess() override { return absl::OkStatus(); }
   // Marks the allocation as needed.
   void MarkIfNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
@@ -531,7 +560,7 @@ class WindowPrefetchedAllocation final : public Allocation {
 
   Options options_;
   HloInstruction* prefetch_instruction_ = nullptr;
-  Allocation& prev_allocation_;
+  HloPosition defining_position_;
   HloUse use_;
   int64_t prefetch_start_schedule_after_;
   int64_t prefetch_done_schedule_before_;
@@ -557,7 +586,9 @@ class MirroredAllocation final : public Allocation {
   bool is_window_prefetched_allocation() const override { return false; }
   bool is_scoped_allocation() const override { return false; }
   bool is_reserved_allocation() const override { return false; }
-  absl::Status Process(const BitcastSplitFn& bitcast_split_fn) override;
+  absl::Status Process(const BitcastSplitFn& bitcast_split_fn,
+                       const HloLiveRange& hlo_live_range,
+                       const HloAliasAnalysis& alias_analysis) override;
   absl::Status PostProcess() override { return absl::OkStatus(); }
   void MarkIfNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
       const override;
@@ -593,7 +624,9 @@ class ParentAllocation final : public Allocation {
   bool is_window_prefetched_allocation() const override { return false; }
   bool is_scoped_allocation() const override { return false; }
   bool is_reserved_allocation() const override { return false; }
-  absl::Status Process(const BitcastSplitFn& bitcast_split_fn) override;
+  absl::Status Process(const BitcastSplitFn& bitcast_split_fn,
+                       const HloLiveRange& hlo_live_range,
+                       const HloAliasAnalysis& alias_analysis) override;
   absl::Status PostProcess() override;
   void MarkIfNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
       const override;
@@ -627,7 +660,9 @@ class ScopedAllocation final : public Allocation {
   bool is_window_prefetched_allocation() const override { return false; }
   bool is_scoped_allocation() const override { return true; }
   bool is_reserved_allocation() const override { return false; }
-  absl::Status Process(const BitcastSplitFn& bitcast_split_fn) override;
+  absl::Status Process(const BitcastSplitFn& bitcast_split_fn,
+                       const HloLiveRange& hlo_live_range,
+                       const HloAliasAnalysis& alias_analysis) override;
   absl::Status PostProcess() override { return absl::OkStatus(); }
   void MarkIfNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
       const override;

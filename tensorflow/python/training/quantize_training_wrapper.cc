@@ -27,9 +27,9 @@ limitations under the License.
 namespace py = pybind11;
 
 namespace tensorflow {
-static PyObject* DoQuantizeTrainingOnGraphDefHelper(const string& input_graph,
-                                                    int num_bits) {
-  string result;
+static PyObject* DoQuantizeTrainingOnGraphDefHelper(
+    const std::string& input_graph, int num_bits) {
+  std::string result;
   // TODO(suharshs): Make the QuantizeAndDequantizeV2 configurable.
   tensorflow::MaybeRaiseFromStatus(
       tensorflow::DoQuantizeTrainingOnSerializedGraphDef(
@@ -37,7 +37,7 @@ static PyObject* DoQuantizeTrainingOnGraphDefHelper(const string& input_graph,
 
   PyObject* py_str = PyBytes_FromStringAndSize(result.data(), result.size());
   if (!py_str) {
-    tensorflow::MaybeRaiseFromStatus(tensorflow::errors::Internal(
+    tensorflow::MaybeRaiseFromStatus(absl::InternalError(
         "Failed to generate serialized string of the rewritten graph."));
   }
   return py_str;

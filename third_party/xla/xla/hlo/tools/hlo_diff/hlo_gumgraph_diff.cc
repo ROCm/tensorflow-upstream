@@ -15,6 +15,7 @@
 #include "xla/hlo/tools/hlo_diff/hlo_gumgraph_diff.h"
 
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -22,8 +23,6 @@
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
-#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph.h"
@@ -49,8 +48,8 @@ namespace {
 
 absl::StatusOr<std::unique_ptr<const HloGumgraphMappings>> FindMappings(
     const HloGumgraph& left, const HloGumgraph& right,
-    absl::Span<const std::pair<absl::string_view, absl::string_view>>
-        manual_mappings = {},
+    const std::vector<std::pair<std::string, std::string>>& manual_mappings =
+        {},
     const MatchOptions& options = {}) {
   LOG(INFO) << "Running Matchers";
   auto mappings = std::make_unique<HloGumgraphMappings>();
@@ -78,14 +77,17 @@ absl::StatusOr<std::unique_ptr<const HloGumgraphMappings>> FindMappings(
   matchers.push_back(
       std::make_unique<GreedySubGraphExactMatcher>(&left, &right));
   matchers.push_back(std::make_unique<GreedyTopDownMatcher>(
-      &left, &right, options.debug_mode, /*require_same_children=*/true));
+      &left, &right, options.debug_mode, /*require_same_children=*/true,
+      options.phase_zero_threshold));
   matchers.push_back(std::make_unique<GreedyLimitedCandidatesBottomUpMatcher>(
       &left, &right, options.debug_mode));
   if (options.use_top_down_matcher) {
     matchers.push_back(std::make_unique<GreedyTopDownMatcher>(
-        &left, &right, options.debug_mode, /*require_same_children=*/true));
+        &left, &right, options.debug_mode, /*require_same_children=*/true,
+        options.phase_zero_threshold));
     matchers.push_back(std::make_unique<GreedyTopDownMatcher>(
-        &left, &right, options.debug_mode));
+        &left, &right, options.debug_mode, /*require_same_children=*/false,
+        options.phase_zero_threshold));
   }
 
   for (auto& matcher : matchers) {
@@ -100,15 +102,19 @@ absl::StatusOr<HloGumgraphDiffResults> ComputeDiff(const HloModule& left,
                                                    const HloModule& right,
                                                    const DiffOptions& options) {
   LOG(INFO) << "Initializing left module graph";
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<const HloGumgraph> left_graph,
-                      HloGumgraph::Create(&left, options.fingerprint_options));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<const HloGumgraph> left_graph,
+      HloGumgraph::Create(&left, options.fingerprint_options,
+                          options.precompute_instruction_dependencies));
   LOG(INFO) << "Initialized left module graph of size: "
             << left_graph->GetNodeCount()
             << " and height: " << left_graph->GetRoot().props.height;
 
   LOG(INFO) << "Initializing right module graph";
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<const HloGumgraph> right_graph,
-                      HloGumgraph::Create(&right, options.fingerprint_options));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<const HloGumgraph> right_graph,
+      HloGumgraph::Create(&right, options.fingerprint_options,
+                          options.precompute_instruction_dependencies));
   LOG(INFO) << "Initialized right module graph of size: "
             << right_graph->GetNodeCount()
             << " and height: " << right_graph->GetRoot().props.height;
@@ -121,7 +127,7 @@ absl::StatusOr<HloGumgraphDiffResults> ComputeDiff(const HloModule& left,
   std::unique_ptr<const DiffResult> diff_result =
       ConstructDiffResult(*left_graph, *right_graph, *mappings);
   std::unique_ptr<const DiffSummary> diff_summary =
-      ConstructDiffSummary(left, right, *diff_result);
+      ConstructDiffSummary(*left_graph, *right_graph, *diff_result);
   std::unique_ptr<const DiffEval> diff_eval = nullptr;
   if (options.run_eval) {
     diff_eval = ComputeDiffEval(*left_graph, *right_graph, *mappings,

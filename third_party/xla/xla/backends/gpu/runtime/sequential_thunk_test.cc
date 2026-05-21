@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -25,21 +27,33 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
 
+class DummyThunk : public Thunk {
+ public:
+  explicit DummyThunk(Thunk::Kind kind, Thunk::ThunkInfo thunk_info)
+      : Thunk(kind, std::move(thunk_info)) {}
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    return absl::OkStatus();
+  }
+  absl::StatusOr<ThunkProto> ToProto() const override {
+    return absl::UnimplementedError("DummyThunk::ToProto is not implemented");
+  }
+};
+
 using ::testing::IsEmpty;
 
-constexpr ExecutionStreamId kExecutionStreamId{123};
 constexpr absl::string_view kProfileAnnotation = "profile_annotation";
 
 Thunk::ThunkInfo GetExampleThunkInfo() {
   Thunk::ThunkInfo thunk_info{};
-  thunk_info.execution_stream_id = kExecutionStreamId;
   thunk_info.profile_annotation = kProfileAnnotation;
+  thunk_info.thunk_id = ThunkId(1);
   return thunk_info;
 }
 
@@ -50,7 +64,6 @@ TEST(SequentialThunkTest, EmptySequentialThunkToProto) {
   EXPECT_EQ(proto.sequential_thunk().thunks_size(), 0);
 
   ASSERT_TRUE(proto.has_thunk_info());
-  EXPECT_EQ(proto.thunk_info().execution_stream_id(), kExecutionStreamId);
   EXPECT_EQ(proto.thunk_info().profile_annotation(), kProfileAnnotation);
 }
 
@@ -67,7 +80,6 @@ TEST(SequentialThunkTest, EmptySequentialThunkFromProto) {
       SequentialThunk::FromProto(GetExampleThunkInfo(), proto, deserializer));
 
   ASSERT_NE(sequential_thunk, nullptr);
-  EXPECT_EQ(sequential_thunk->execution_stream_id(), kExecutionStreamId);
   EXPECT_EQ(sequential_thunk->profile_annotation(), kProfileAnnotation);
   EXPECT_THAT(sequential_thunk->thunks(), IsEmpty());
 }
@@ -78,10 +90,7 @@ TEST(SequentialThunkTest, SequentialThunkChainFromProto) {
   // sequential thunk.
   ThunkProto* inner_proto = outer_proto.add_thunks();
   inner_proto->mutable_sequential_thunk();
-  inner_proto->mutable_thunk_info()->set_profile_annotation(
-      std::string{kProfileAnnotation});
-  inner_proto->mutable_thunk_info()->set_execution_stream_id(
-      kExecutionStreamId.value());
+  inner_proto->mutable_thunk_info()->set_profile_annotation(kProfileAnnotation);
 
   Thunk::Deserializer always_fail_deserializer = [](const ThunkProto&) {
     return absl::InternalError("This should never be called.");
@@ -104,7 +113,6 @@ TEST(SequentialThunkTest, SequentialThunkChainFromProto) {
                                  only_supports_sequential_thunk_deserializer));
 
   ASSERT_NE(outer_thunk, nullptr);
-  EXPECT_EQ(outer_thunk->execution_stream_id(), kExecutionStreamId);
   EXPECT_EQ(outer_thunk->profile_annotation(), kProfileAnnotation);
 
   ASSERT_EQ(outer_thunk->thunks().size(), 1);
@@ -112,8 +120,67 @@ TEST(SequentialThunkTest, SequentialThunkChainFromProto) {
       dynamic_cast<const SequentialThunk*>(outer_thunk->thunks().front().get());
   ASSERT_NE(inner_thunk, nullptr);
   EXPECT_THAT(inner_thunk->thunks(), IsEmpty());
-  EXPECT_EQ(inner_thunk->execution_stream_id(), kExecutionStreamId);
   EXPECT_EQ(inner_thunk->profile_annotation(), kProfileAnnotation);
+}
+
+TEST(SequentialThunkTest, ToString) {
+  Thunk::ThunkInfo thunk_info;
+  thunk_info.profile_annotation = "profile_annotation";
+  thunk_info.thunk_id = ThunkId(1);
+
+  ThunkSequence thunks;
+  thunks.push_back(
+      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, thunk_info));
+
+  thunk_info.thunk_id = ThunkId(2);
+  thunks.push_back(
+      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, thunk_info));
+
+  thunk_info.thunk_id = ThunkId(3);
+  thunks.push_back(
+      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, thunk_info));
+
+  thunk_info.thunk_id = ThunkId(4);
+  SequentialThunk sequential_thunk(thunk_info, std::move(thunks));
+  EXPECT_EQ(sequential_thunk.ToString(/*indent=*/0),
+            "001: kGemm [source | sink] (no description)\n"
+            "002: kGemm [source | sink] (no description)\n"
+            "003: kGemm [source | sink] (no description)\n");
+  EXPECT_EQ(sequential_thunk.ToString(/*indent=*/1),
+            "  001: kGemm [source | sink] (no description)\n"
+            "  002: kGemm [source | sink] (no description)\n"
+            "  003: kGemm [source | sink] (no description)\n");
+}
+
+TEST(SequentialThunkTest, TransformNested) {
+  auto make_info = [](uint64_t id) {
+    Thunk::ThunkInfo info;
+    info.thunk_id = ThunkId(id);
+    return info;
+  };
+  ThunkSequence thunks;
+  thunks.push_back(
+      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, make_info(1)));
+  thunks.push_back(
+      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, make_info(2)));
+  thunks.push_back(
+      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, make_info(3)));
+  SequentialThunk sequential_thunk(Thunk::ThunkInfo(), std::move(thunks));
+
+  TF_EXPECT_OK(sequential_thunk.TransformNested(
+      [&](std::unique_ptr<Thunk> thunk) -> std::unique_ptr<Thunk> {
+        return std::make_unique<DummyThunk>(
+            Thunk::Kind::kCopy,
+            make_info(thunk->thunk_info().thunk_id.value() + 10));
+      }));
+
+  EXPECT_EQ(sequential_thunk.thunks().size(), 3);
+  EXPECT_EQ(sequential_thunk.thunks()[0]->kind(), Thunk::Kind::kCopy);
+  EXPECT_EQ(sequential_thunk.thunks()[0]->thunk_info().thunk_id, ThunkId(11));
+  EXPECT_EQ(sequential_thunk.thunks()[1]->kind(), Thunk::Kind::kCopy);
+  EXPECT_EQ(sequential_thunk.thunks()[1]->thunk_info().thunk_id, ThunkId(12));
+  EXPECT_EQ(sequential_thunk.thunks()[2]->kind(), Thunk::Kind::kCopy);
+  EXPECT_EQ(sequential_thunk.thunks()[2]->thunk_info().thunk_id, ThunkId(13));
 }
 
 }  // namespace

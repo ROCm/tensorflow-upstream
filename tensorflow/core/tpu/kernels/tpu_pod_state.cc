@@ -123,18 +123,18 @@ TpuPodState::~TpuPodState() {
   VLOG(1) << "Shutting down Compilation Cache Service done.";
 }
 
-string TpuPodState::DebugString() const {
+std::string TpuPodState::DebugString() const {
   return "Wrapper for distributed TPU state";
 }
 
 absl::Status GetTPUPodState(const ResourceMgr* rmgr, TpuPodState** pod_state) {
   if (!rmgr) {
-    return errors::Internal("No resource manager.");
+    return absl::InternalError("No resource manager.");
   }
   if (!rmgr->Lookup(rmgr->default_container(), kTpuPodStateResourceName,
                     pod_state)
            .ok()) {
-    return errors::FailedPrecondition(
+    return absl::FailedPreconditionError(
         "The TPU system has not been initialized.");
   }
   return absl::OkStatus();

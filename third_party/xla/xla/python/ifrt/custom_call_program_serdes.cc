@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/python/ifrt/array_spec.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/serdes_version.h"
 #include "xla/python/ifrt/sharding.pb.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {
@@ -69,12 +71,12 @@ class CustomCallProgramSerDes
     // generates `absl::Cord` support on all platforms.
     absl::CopyCordToString(program.serialized_program_text,
                            proto.mutable_serialized_program_text());
-    *proto.mutable_devices() = program.devices->ToProto(version);
+    program.devices->ToProto(*proto.mutable_devices(), version);
     for (const ArraySpec& spec : program.input_specs) {
-      TF_ASSIGN_OR_RETURN(*proto.add_input_specs(), spec.ToProto(version));
+      RETURN_IF_ERROR(spec.ToProto(*proto.add_input_specs(), version));
     }
     for (const ArraySpec& spec : program.output_specs) {
-      TF_ASSIGN_OR_RETURN(*proto.add_output_specs(), spec.ToProto(version));
+      RETURN_IF_ERROR(spec.ToProto(*proto.add_output_specs(), version));
     }
     return proto.SerializeAsString();
   }
@@ -83,7 +85,11 @@ class CustomCallProgramSerDes
       const std::string& serialized,
       std::unique_ptr<DeserializeOptions> options) override {
     const auto* deserialize_program_options =
-        llvm::cast<DeserializeProgramOptions>(options.get());
+        llvm::dyn_cast_or_null<DeserializeProgramOptions>(options.get());
+    if (deserialize_program_options == nullptr) {
+      return absl::InvalidArgumentError(
+          "DeserializeProgramOptions must be provided");
+    }
 
     CustomCallProgramProto proto;
     if (!proto.ParseFromString(serialized)) {
@@ -97,24 +103,23 @@ class CustomCallProgramSerDes
                        " for CustomCallProgram deserialization"));
     }
 
-    TF_ASSIGN_OR_RETURN(
-        DeviceListRef devices,
-        DeviceList::FromProto(deserialize_program_options->client,
-                              proto.devices()));
+    ASSIGN_OR_RETURN(DeviceListRef devices,
+                     DeviceList::FromProto(deserialize_program_options->client,
+                                           proto.devices()));
     std::vector<ArraySpec> input_specs;
     input_specs.reserve(proto.input_specs_size());
     for (const ArraySpecProto& spec_proto : proto.input_specs()) {
-      TF_ASSIGN_OR_RETURN(ArraySpec spec,
-                          ArraySpec::FromProto(
-                              deserialize_program_options->client, spec_proto));
+      ASSIGN_OR_RETURN(ArraySpec spec,
+                       ArraySpec::FromProto(deserialize_program_options->client,
+                                            spec_proto));
       input_specs.push_back(std::move(spec));
     }
     std::vector<ArraySpec> output_specs;
     output_specs.reserve(proto.output_specs_size());
     for (const ArraySpecProto& spec_proto : proto.output_specs()) {
-      TF_ASSIGN_OR_RETURN(ArraySpec spec,
-                          ArraySpec::FromProto(
-                              deserialize_program_options->client, spec_proto));
+      ASSIGN_OR_RETURN(ArraySpec spec,
+                       ArraySpec::FromProto(deserialize_program_options->client,
+                                            spec_proto));
       output_specs.push_back(std::move(spec));
     }
 

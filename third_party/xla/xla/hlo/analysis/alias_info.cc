@@ -32,13 +32,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 
 namespace xla {
-namespace {
-bool IsDefaultInPlaceOperation(const HloInstruction* hlo) {
-  HloOpcode opcode = hlo->opcode();
-  return opcode == HloOpcode::kDynamicUpdateSlice ||
-         opcode == HloOpcode::kScatter || opcode == HloOpcode::kAllReduceStart;
-}
-}  // namespace
 
 // Returns in-place input/output pairs for the given fusion instruction,
 // according to the aliasing rules for the corresponding fusion computation.
@@ -192,16 +185,21 @@ AliasInfo::GetInPlaceInputOutputPairs(const HloInstruction* user) const {
   }
   if (user->opcode() == HloOpcode::kCollectivePermuteStart &&
       user->operands().size() == 4) {
-    if (user->operand(1)->shape().IsTuple()) {
-      std::vector<std::pair<HloOperandIndex, ShapeIndex>> in_place_pairs(
-          {{HloOperandIndex{1, {}}, {1}}});
-      for (int i = 0; i < user->operand(1)->shape().tuple_shapes().size();
-           i++) {
-        in_place_pairs.push_back({HloOperandIndex{1, {i}}, {1, i}});
+    auto cp = Cast<HloCollectivePermuteInstruction>(user);
+    if (cp->inplace()) {
+      if (user->operand(1)->shape().IsTuple()) {
+        std::vector<std::pair<HloOperandIndex, ShapeIndex>> in_place_pairs(
+            {{HloOperandIndex{1, {}}, {1}}});
+        for (int i = 0; i < user->operand(1)->shape().tuple_shapes().size();
+             i++) {
+          in_place_pairs.push_back({HloOperandIndex{1, {i}}, {1, i}});
+        }
+        return in_place_pairs;
       }
-      return in_place_pairs;
+      return {{HloOperandIndex{1, {}}, {1}}};
+    } else {
+      return {};
     }
-    return {{HloOperandIndex{1, {}}, {1}}};
   }
   if (user->opcode() == HloOpcode::kCustomCall) {
     // Custom Calls previously assumed that aliased operands were
@@ -238,6 +236,23 @@ AliasInfo::GetInPlaceInputOutputPairs(const HloInstruction* user) const {
             {HloOperandIndex{operand_index, {operand_shape_index}},
              output_shape_index});
       }
+    }
+    return in_place_pairs;
+  }
+  if (user->opcode() == HloOpcode::kAsyncStart) {
+    // Custom Calls previously assumed that aliased operands were
+    // forwarded, but now supports modification semantics.
+    const auto& aliasing_pairs =
+        Cast<HloAsyncStartInstruction>(user)->output_to_operand_aliasing();
+    std::vector<std::pair<HloOperandIndex, ShapeIndex>> in_place_pairs;
+    in_place_pairs.reserve(aliasing_pairs.size());
+    for (const auto& pair : aliasing_pairs) {
+      ShapeIndex output_shape_index = pair.first;
+      int64_t operand_index = pair.second.first;
+      ShapeIndex operand_shape_index = pair.second.second;
+      in_place_pairs.push_back(
+          {HloOperandIndex{operand_index, {operand_shape_index}},
+           output_shape_index});
     }
     return in_place_pairs;
   }

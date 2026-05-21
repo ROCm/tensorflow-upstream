@@ -15,25 +15,31 @@ limitations under the License.
 #include "tensorflow/core/kernels/data/interleave_dataset_op.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "xla/tsl/platform/errors.h"
-#include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/common_runtime/input_colocation_exemption_registry.h"
+#include "tensorflow/core/data/captured_function.h"
 #include "tensorflow/core/data/dataset_utils.h"
 #include "tensorflow/core/data/name_utils.h"
 #include "tensorflow/core/framework/dataset.h"
 #include "tensorflow/core/framework/model.h"
-#include "tensorflow/core/framework/partial_tensor_shape.h"
+#include "tensorflow/core/framework/op_requires.h"
 #include "tensorflow/core/framework/tensor.h"
-#include "tensorflow/core/lib/random/random.h"
+#include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/platform/cpu_info.h"
+#include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/mutex.h"
-#include "tensorflow/core/platform/status.h"
-#include "tensorflow/core/platform/stringprintf.h"
 #include "tsl/platform/thread_annotations.h"
 
 namespace tensorflow {
@@ -80,16 +86,16 @@ class InterleaveDatasetOp::Dataset : public DatasetBase {
         output_shapes_(output_shapes),
         traceme_metadata_(
             {{"block_length",
-              strings::Printf("%lld", static_cast<long long>(block_length))},
+              absl::StrFormat("%lld", static_cast<long long>(block_length))},
              {"cycle_length",
-              strings::Printf("%lld", static_cast<long long>(cycle_length))}}) {
+              absl::StrFormat("%lld", static_cast<long long>(cycle_length))}}) {
     input_->Ref();
   }
 
   ~Dataset() override { input_->Unref(); }
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
-      const string& prefix) const override {
+      const std::string& prefix) const override {
     return std::make_unique<Iterator>(Iterator::Params{
         this, name_utils::IteratorPrefix(kDatasetType, prefix)});
   }
@@ -100,7 +106,7 @@ class InterleaveDatasetOp::Dataset : public DatasetBase {
     return output_shapes_;
   }
 
-  string DebugString() const override {
+  std::string DebugString() const override {
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
@@ -296,6 +302,11 @@ class InterleaveDatasetOp::Dataset : public DatasetBase {
       TF_RETURN_IF_ERROR(ctx->HandleCheckExternalStateStatus(
           dataset()->captured_func_->CheckExternalState()));
       mutex_lock l(mu_);
+      if (input_impl_ == nullptr) {
+        return absl::FailedPreconditionError(
+            "`Initialize` should be called before saving/restoring from "
+            "tf.data checkpoints.");
+      }
       TF_RETURN_IF_ERROR(SaveInput(ctx, writer, input_impl_));
       TF_RETURN_IF_ERROR(
           writer->WriteScalar(prefix(), kCycleIndex, cycle_index_));
@@ -318,6 +329,11 @@ class InterleaveDatasetOp::Dataset : public DatasetBase {
     absl::Status RestoreInternal(IteratorContext* ctx,
                                  IteratorStateReader* reader) override {
       mutex_lock l(mu_);
+      if (input_impl_ == nullptr) {
+        return absl::FailedPreconditionError(
+            "`Initialize` should be called before saving/restoring from "
+            "tf.data checkpoints.");
+      }
       TF_RETURN_IF_ERROR(RestoreInput(ctx, reader, input_impl_));
       int64_t cycle_index;
       TF_RETURN_IF_ERROR(
@@ -394,7 +410,7 @@ class InterleaveDatasetOp::Dataset : public DatasetBase {
       for (int idx = 0; idx < current_elements_.size(); idx++) {
         TF_RETURN_IF_ERROR(writer->WriteScalar(
             prefix(),
-            strings::StrCat(kCurrentElementsUninitialized, "[", idx, "]"),
+            absl::StrCat(kCurrentElementsUninitialized, "[", idx, "]"),
             !current_elements_[idx]));
 
         if (!current_elements_[idx]) {
@@ -405,8 +421,7 @@ class InterleaveDatasetOp::Dataset : public DatasetBase {
               SaveInput(ctx, writer, current_elements_[idx]->iterator));
           const auto& args = current_elements_[idx]->args;
           TF_RETURN_IF_ERROR(writer->WriteScalar(
-              prefix(), strings::StrCat(kArgsSize, "[", idx, "]"),
-              args.size()));
+              prefix(), absl::StrCat(kArgsSize, "[", idx, "]"), args.size()));
           for (int i = 0; i < args.size(); i++) {
             TF_RETURN_IF_ERROR(writer->WriteTensor(
                 prefix(), strings::StrCat(kArgsList, "[", idx, "][", i, "]"),
@@ -414,7 +429,7 @@ class InterleaveDatasetOp::Dataset : public DatasetBase {
           }
         } else {
           TF_RETURN_IF_ERROR(writer->WriteScalar(
-              prefix(), strings::StrCat(kInputElementIndices, "[", idx, "]"),
+              prefix(), absl::StrCat(kInputElementIndices, "[", idx, "]"),
               current_elements_[idx]->input_element_index));
         }
       }
@@ -430,15 +445,14 @@ class InterleaveDatasetOp::Dataset : public DatasetBase {
         int64_t current_element_uninitialized;
         TF_RETURN_IF_ERROR(reader.ReadScalar(
             prefix(),
-            strings::StrCat(kCurrentElementsUninitialized, "[", cycle_idx, "]"),
+            absl::StrCat(kCurrentElementsUninitialized, "[", cycle_idx, "]"),
             &current_element_uninitialized));
 
         if (!current_element_uninitialized) {
           int64_t input_element_index;
 
           TF_RETURN_IF_ERROR(reader.ReadScalar(
-              prefix(),
-              strings::StrCat(kInputElementIndices, "[", cycle_idx, "]"),
+              prefix(), absl::StrCat(kInputElementIndices, "[", cycle_idx, "]"),
               &input_element_index));
 
           input_offsets.push_back(
@@ -586,7 +600,7 @@ class InterleaveDatasetOp::Dataset : public DatasetBase {
         int64_t current_element_uninitialized;
         TF_RETURN_IF_ERROR(reader->ReadScalar(
             prefix(),
-            strings::StrCat(kCurrentElementsUninitialized, "[", idx, "]"),
+            absl::StrCat(kCurrentElementsUninitialized, "[", idx, "]"),
             &current_element_uninitialized));
         if (!current_element_uninitialized) {
           if (!ctx->symbolic_checkpoint()) {
@@ -597,8 +611,7 @@ class InterleaveDatasetOp::Dataset : public DatasetBase {
             std::vector<Tensor> current_element_args;
 
             TF_RETURN_IF_ERROR(reader->ReadScalar(
-                prefix(), strings::StrCat(kArgsSize, "[", idx, "]"),
-                &args_size));
+                prefix(), absl::StrCat(kArgsSize, "[", idx, "]"), &args_size));
             current_element_args.resize(args_size);
 
             for (int i = 0; i < args_size; i++) {

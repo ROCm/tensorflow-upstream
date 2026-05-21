@@ -23,7 +23,9 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
@@ -32,6 +34,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
+#include "absl/time/time.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "tsl/platform/env.h"
@@ -49,7 +52,7 @@ class LocalConnectionState : public ConnectionState {
             bool is_largest, absl::AnyInvocable<void() &&> on_done) override {
     tsl::RCReference<ChunkDestination> dest;
     {
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       auto it = dests_.find(req_id);
       CHECK(it != dests_.end());
       if (is_largest) {
@@ -71,7 +74,7 @@ class LocalConnectionState : public ConnectionState {
             tsl::RCReference<ChunkDestination> dest) {
     size_t req_id;
     {
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       dests_[next_req_id_].dest = std::move(dest);
       req_id = next_req_id_;
       ++next_req_id_;
@@ -91,6 +94,43 @@ class LocalConnectionState : public ConnectionState {
     tsl::RCReference<ChunkDestination> dest;
   };
   absl::flat_hash_map<uint64_t, DestState> dests_;
+};
+
+class ErrorCapturingConnectionState : public ConnectionState {
+ public:
+  void Send(size_t req_id, const void* data, size_t offset, size_t size,
+            bool is_largest, absl::AnyInvocable<void() &&> on_done) override {
+    std::move(on_done)();
+  }
+
+  void SendError(size_t req_id, size_t offset, size_t size, bool is_largest,
+                 absl::Status status) override {
+    absl::MutexLock l(mu);
+    errors.push_back(status);
+  }
+
+  absl::Mutex mu;
+  std::vector<absl::Status> errors;
+};
+
+class MockEntry : public PullTable::Entry {
+ public:
+  bool Handle(tsl::RCReference<ConnectionState> state,
+              const SocketTransferPullRequest& req,
+              size_t base_req_id) override {
+    absl::MutexLock l(mu);
+    called = true;
+    return true;
+  }
+
+  bool IsCalled() {
+    absl::MutexLock l(mu);
+    return called;
+  }
+
+ private:
+  absl::Mutex mu;
+  bool called = false;
 };
 
 TEST(BulkTransferInterface, PullTableInterfaces) {
@@ -118,7 +158,7 @@ TEST(BulkTransferInterface, AwaitAfterInterfaces) {
 TEST(BulkTransferInterface, LocalTransport) {
   auto transport_factory = BulkTransportFactory::CreateLocal();
   auto a = transport_factory->InitBulkTransport();
-  auto b = transport_factory->RecvBulkTransport(a.request);
+  ASSERT_OK_AND_ASSIGN(auto b, transport_factory->RecvBulkTransport(a.request));
   std::move(a.start_bulk_transport)(b.request);
 
   std::string test_message = "secret message";
@@ -152,7 +192,7 @@ TEST(BulkTransferInterface, LocalTransport) {
 TEST(BulkTransferInterface, ClosedLocalTransport) {
   auto transport_factory = BulkTransportFactory::CreateLocal();
   auto a = transport_factory->InitBulkTransport();
-  auto b = transport_factory->RecvBulkTransport(a.request);
+  ASSERT_OK_AND_ASSIGN(auto b, transport_factory->RecvBulkTransport(a.request));
   std::move(a.start_bulk_transport)(b.request);
   a.bulk_transport = nullptr;
   absl::Notification recv_done;
@@ -213,7 +253,7 @@ TEST(SlabAllocator, BasicSubAllocations) {
     auto thread = std::unique_ptr<tsl::Thread>(
         tsl::Env::Default()->StartThread({}, "test-thread", [&] {
           for (size_t i = 0; i < 200; ++i) {
-            absl::MutexLock l(&mu);
+            absl::MutexLock l(mu);
             auto cond = [&]() {
               return allocs.size() >= std::min(static_cast<size_t>(200 - i),
                                                static_cast<size_t>(4));
@@ -226,7 +266,7 @@ TEST(SlabAllocator, BasicSubAllocations) {
     SlabAllocator allocator(alloc, 4096);
     for (size_t i = 0; i < 200; ++i) {
       auto alloc = allocator.Allocate(allocator.max_allocation_size());
-      absl::MutexLock l(&mu);
+      absl::MutexLock l(mu);
       allocs.push_back(std::move(alloc));
     }
   }
@@ -240,6 +280,81 @@ TEST(InvalidAllocator, InvalidPinnedAlloc) {
 TEST(InvalidAllocator, InvalidAlignedAlloc) {
   auto alloc2_or = AllocateAlignedMemory(1l << 49);
   ASSERT_FALSE(alloc2_or.ok());
+}
+
+class SelfResettingPullTableEntry : public PullTable::Entry {
+ public:
+  explicit SelfResettingPullTableEntry(std::shared_ptr<PullTable> table)
+      : table_(std::move(table)) {}
+
+  bool Handle(tsl::RCReference<ConnectionState> state,
+              const SocketTransferPullRequest& req,
+              size_t base_req_id) override {
+    table_->Reset();
+    return true;
+  }
+
+ private:
+  std::shared_ptr<PullTable> table_;
+};
+
+TEST(PullTable, PullTableRace) {
+  auto table = std::make_shared<PullTable>();
+  table->AwaitPull(6, tsl::MakeRef<SelfResettingPullTableEntry>(table));
+  SocketTransferPullRequest req;
+  req.set_uuid(6);
+  table->Handle({}, req, 0);
+}
+
+TEST(PullTable, DropExpiredAwaitPulls) {
+  auto table = std::make_shared<PullTable>();
+  uint64_t uuid = 1234;
+  auto entry = PullTable::MakeStringEntry({"data"});
+
+  absl::Time now = absl::UnixEpoch();
+  absl::Time timeout = now - absl::Seconds(10);
+
+  table->AwaitPull(uuid, entry, timeout);
+
+  table->DropExpiredPulls(now);
+
+  auto state = tsl::MakeRef<ErrorCapturingConnectionState>();
+  SocketTransferPullRequest req;
+  req.set_uuid(uuid);
+  req.add_buffer_ids(0);
+  table->Handle(state, req, 0);
+
+  auto mock_entry = tsl::MakeRef<MockEntry>();
+  table->AwaitPull(uuid, mock_entry);
+
+  EXPECT_TRUE(mock_entry->IsCalled());
+}
+
+TEST(PullTable, DropExpiredPausedPulls) {
+  auto table = std::make_shared<PullTable>();
+  uint64_t uuid = 1234;
+  auto state = tsl::MakeRef<ErrorCapturingConnectionState>();
+
+  absl::Time now = absl::UnixEpoch();
+  absl::Time timeout = now - absl::Seconds(10);
+
+  SocketTransferPullRequest req;
+  req.set_uuid(uuid);
+  req.add_buffer_ids(0);
+  table->Handle(state, req, 0, timeout);
+
+  table->DropExpiredPulls(now);
+
+  {
+    absl::MutexLock l(state->mu);
+    ASSERT_EQ(state->errors.size(), 1);
+    EXPECT_EQ(state->errors[0].code(), absl::StatusCode::kDeadlineExceeded);
+  }
+
+  auto mock_entry = tsl::MakeRef<MockEntry>();
+  table->AwaitPull(uuid, mock_entry);
+
+  EXPECT_FALSE(mock_entry->IsCalled());
 }
 
 }  // namespace

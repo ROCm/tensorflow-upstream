@@ -167,6 +167,26 @@ def FastAppendFloat8e5m2fnuzArrayToTensorProto(tensor_proto, proto_values):
   )
 
 
+def SlowAppendFloat4e2m1fnArrayToTensorProto(tensor_proto, proto_values):
+  tensor_proto.float8_val += (
+      numpy_compat.np_asarray(
+          proto_values, dtype=dtypes.float4_e2m1fn.as_numpy_dtype)
+      .view(np.uint8)
+      .tobytes()
+  )
+
+
+def FastAppendFloat4e2m1fnArrayToTensorProto(tensor_proto, proto_values):
+  # Note: This requires a corresponding C++ binding in
+  # fast_tensor_util.AppendFloat8ArrayToTensorProto
+  fast_tensor_util.AppendFloat8ArrayToTensorProto(
+      tensor_proto,
+      numpy_compat.np_asarray(
+          proto_values, dtype=dtypes.float4_e2m1fn.as_numpy_dtype
+      ).view(np.uint8),
+  )
+
+
 def SlowAppendInt4ArrayToTensorProto(tensor_proto, proto_values):
   # The actual bit representation of int4 as a bit-field is
   # implementation-defined, so we need to explicitly cast each
@@ -249,6 +269,9 @@ if _FAST_TENSOR_UTIL_AVAILABLE:
       dtypes.float8_e5m2fnuz.as_numpy_dtype: (
           FastAppendFloat8e5m2fnuzArrayToTensorProto
       ),
+      dtypes.float4_e2m1fn.as_numpy_dtype: (
+          FastAppendFloat4e2m1fnArrayToTensorProto
+      ),
       dtypes.int4.as_numpy_dtype: SlowAppendInt4ArrayToTensorProto,
       dtypes.uint4.as_numpy_dtype: SlowAppendUInt4ArrayToTensorProto,
       dtypes.int2.as_numpy_dtype: SlowAppendInt2ArrayToTensorProto,
@@ -296,6 +319,9 @@ else:
       dtypes.float8_e5m2.as_numpy_dtype: SlowAppendFloat8e5m2ArrayToTensorProto,
       dtypes.float8_e4m3fn.as_numpy_dtype: (
           SlowAppendFloat8e4m3fnArrayToTensorProto
+      ),
+      dtypes.float4_e2m1fn.as_numpy_dtype: (
+          SlowAppendFloat4e2m1fnArrayToTensorProto
       ),
       np.float16: SlowAppendFloat16ArrayToTensorProto,
       np.float32: SlowAppendFloat32ArrayToTensorProto,
@@ -397,6 +423,7 @@ _TENSOR_CONTENT_TYPES = frozenset([
     dtypes.float8_e4m3fnuz,
     dtypes.float8_e4m3b11fnuz,
     dtypes.float8_e5m2fnuz,
+    dtypes.float4_e2m1fn,
     dtypes.bfloat16,
     # int4 / uint4 / int2 / uint2 intentionally not listed, since their binary
     # representation is implementation-dependent.
@@ -779,13 +806,14 @@ def MakeNdarray(tensor):
   elif tensor_dtype in [
       dtypes.float8_e5m2,
       dtypes.float8_e4m3fn,
+      dtypes.float4_e2m1fn
   ]:
     values = np.fromiter(tensor.float8_val, dtype=np.uint8)
     values.dtype = dtype
   elif tensor_dtype == dtypes.float32:
-    values = np.fromiter(tensor.float_val, dtype=dtype)
+    values = np.array(tensor.float_val, dtype=dtype)
   elif tensor_dtype == dtypes.float64:
-    values = np.fromiter(tensor.double_val, dtype=dtype)
+    values = np.array(tensor.double_val, dtype=dtype)
   elif tensor_dtype in [
       dtypes.int32,
       dtypes.uint8,
@@ -802,13 +830,13 @@ def MakeNdarray(tensor):
       dtypes.int2,
       dtypes.uint2,
   ]:
-    values = np.fromiter(tensor.int_val, dtype=dtype)
+    values = np.array(tensor.int_val, dtype=dtype)
   elif tensor_dtype == dtypes.int64:
-    values = np.fromiter(tensor.int64_val, dtype=dtype)
+    values = np.array(tensor.int64_val, dtype=dtype)
   elif tensor_dtype == dtypes.uint32:
-    values = np.fromiter(tensor.uint32_val, dtype=dtype)
+    values = np.array(tensor.uint32_val, dtype=dtype)
   elif tensor_dtype == dtypes.uint64:
-    values = np.fromiter(tensor.uint64_val, dtype=dtype)
+    values = np.array(tensor.uint64_val, dtype=dtype)
   elif tensor_dtype == dtypes.complex64:
     it = iter(tensor.scomplex_val)
     values = np.array([complex(x[0], x[1]) for x in zip(it, it)], dtype=dtype)
@@ -816,7 +844,7 @@ def MakeNdarray(tensor):
     it = iter(tensor.dcomplex_val)
     values = np.array([complex(x[0], x[1]) for x in zip(it, it)], dtype=dtype)
   elif tensor_dtype == dtypes.bool:
-    values = np.fromiter(tensor.bool_val, dtype=dtype)
+    values = np.array(tensor.bool_val, dtype=dtype)
   else:
     raise TypeError(f"Unsupported tensor type: {tensor.dtype}. See "
                     "https://www.tensorflow.org/api_docs/python/tf/dtypes "
@@ -854,7 +882,9 @@ def ShapeEquals(tensor_proto, shape):
     raise TypeError("`shape` must be a list or tuple, but got type "
                     f"{type(shape)}.")
   tensor_shape_list = [d.size for d in tensor_proto.tensor_shape.dim]
-  return all(x == y for x, y in zip(tensor_shape_list, shape))
+  return len(tensor_shape_list) == len(shape) and all(
+      x == y for x, y in zip(tensor_shape_list, shape)
+  )
 
 
 def _ConstantValue(tensor, partial):
@@ -1251,6 +1281,12 @@ def is_tf_type(x):  # pylint: disable=invalid-name
   Returns:
     `True` if `x` is a TensorFlow-native type.
   """
+  # ObjectProxy is a special type of object that is used by wrapt to wrap
+  # objects. It is not a Tensor.
+  if (type(x).__name__ == "ObjectProxy"):
+    return False
+  if (type(x).__name__ == "_DictWrapper"):
+    return False
   return isinstance(x, tf_type_classes)
 
 

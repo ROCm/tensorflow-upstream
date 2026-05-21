@@ -33,33 +33,47 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/evaluator/hlo_evaluator.h"
+#include "xla/hlo/evaluator/hlo_evaluator_interface.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
 #include "xla/literal_comparison.h"
+#include "xla/pjrt/interpreter/interpreter_client.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
+#include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_runner_interface.h"
+#include "xla/service/hlo_runner_pjrt.h"
 #include "xla/service/hlo_verifier.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tools/hlo_control_flow_flattening.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tools/hlo_module_loader.h"
 #include "xla/tools/prepare_reference_module.h"
 #include "xla/tools/run_hlo_module.pb.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/path.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -115,8 +129,8 @@ void WriteLiteralToTempFile(const LiteralSlice& literal,
     text_filename = tsl::io::GetTempFilename(absl::StrCat(name, ".txt"));
   }
 
-  TF_CHECK_OK(tsl::WriteBinaryProto(env, binary_filename, literal.ToProto()));
-  TF_CHECK_OK(tsl::WriteStringToFile(env, text_filename, literal.ToString()));
+  CHECK_OK(tsl::WriteBinaryProto(env, binary_filename, literal.ToProto()));
+  CHECK_OK(tsl::WriteStringToFile(env, text_filename, literal.ToString()));
   LOG(ERROR) << "wrote Literal to " << name << " binary: " << binary_filename
              << " text: " << text_filename;
 }
@@ -167,12 +181,6 @@ absl::StatusOr<Literal> ExecuteWithRunner(
   return std::move(result_status).value();
 }
 
-void UseCpuThunkRuntime(HloModule& module) {
-  auto debug_options = module.config().debug_options();
-  debug_options.set_xla_cpu_use_thunk_runtime(true);
-  module.mutable_config().set_debug_options(debug_options);
-}
-
 absl::Status RunAndCompareInternal(
     std::unique_ptr<HloModule> test_module,
     const BufferAssignmentProto* buffer_assignment_proto,
@@ -201,18 +209,18 @@ absl::Status RunAndCompareInternal(
   if (options.flatten_control_flow) {
     HloControlFlowFlattening control_flow_flattening(
         HloControlFlowFlattening::Options{/*while_execution_count=*/1});
-    TF_RETURN_IF_ERROR(
+    RETURN_IF_ERROR(
         copy_result_on_failure(control_flow_flattening.Run(test_module.get()),
                                ModuleResult::kCompilationError, test_run_result)
             .status());
   }
 
-  TF_ASSIGN_OR_RETURN(
-      auto args, copy_result_on_failure(
-                     MakeFakeArguments(test_module.get(), engine,
-                                       options.use_large_float_range,
-                                       options.treat_gte_as_data_formatting),
-                     ModuleResult::kOtherError, test_run_result));
+  ASSIGN_OR_RETURN(auto args,
+                   copy_result_on_failure(
+                       MakeFakeArguments(test_module.get(), engine,
+                                         options.use_large_float_range,
+                                         options.treat_gte_as_data_formatting),
+                       ModuleResult::kOtherError, test_run_result));
   // Use provided input literals as arguments, if any.
   if (iteration_literals_proto != nullptr &&
       iteration_literals_proto->arguments_size() != 0) {
@@ -225,10 +233,9 @@ absl::Status RunAndCompareInternal(
           "number of expected arguments.");
     } else {
       for (int i = 0; i < args.size(); ++i) {
-        TF_ASSIGN_OR_RETURN(
-            auto expected_shape,
-            xla::Shape::FromProto(
-                iteration_literals_proto->arguments(i).shape()));
+        ASSIGN_OR_RETURN(auto expected_shape,
+                         xla::Shape::FromProto(
+                             iteration_literals_proto->arguments(i).shape()));
         if (!literal_comparison::EqualShapes(xla::Shape(args[i].shape()),
                                              expected_shape)
                  .ok()) {
@@ -240,7 +247,7 @@ absl::Status RunAndCompareInternal(
               "because of a shape mismatch.",
               i);
         }
-        TF_ASSIGN_OR_RETURN(
+        ASSIGN_OR_RETURN(
             args[i],
             copy_result_on_failure(xla::Literal::CreateFromProto(
                                        iteration_literals_proto->arguments(i)),
@@ -269,7 +276,7 @@ absl::Status RunAndCompareInternal(
 
     // PrepareReferenceModule needs to know the *test* runner, in order to
     // properly match the test runner's numerics.
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         reference_module,
         copy_result_on_failure(
             PrepareReferenceModule(
@@ -278,13 +285,7 @@ absl::Status RunAndCompareInternal(
             ModuleResult::kCompilationError, reference_run_result));
   }
 
-  // Now when reference_module is ready, we can modify test_module without
-  // impacting the reference run.
-  if (options.force_use_cpu_thunk_runtime_for_test) {
-    UseCpuThunkRuntime(*test_module);
-  }
-
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       auto test_result,
       copy_result_on_failure(
           ExecuteWithRunner(std::move(test_module), buffer_assignment_proto,
@@ -319,7 +320,7 @@ absl::Status RunAndCompareInternal(
     return absl::OkStatus();
   }
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       auto reference_result,
       copy_result_on_failure(
           ExecuteWithRunner(std::move(reference_module),
@@ -454,7 +455,7 @@ absl::Status RunIsolatedAndCompare(
 
   std::vector<ChunkResult> chunk_results;
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<HloModule>> modules,
       DecomposeHloModule(*test_module, /*deduplicate_modules=*/true));
 
@@ -518,19 +519,19 @@ absl::Status RunAndCompare(
     input_format = std::string(tsl::io::Extension(hlo_filename));
   }
   BufferAssignmentProto buffer_assignment_proto;
-  TF_ASSIGN_OR_RETURN(
-      auto test_module,
-      LoadModuleFromFile(
-          hlo_filename, input_format, hlo_module_loader_details::Config(),
-          config_modifier_hook,
-          options.use_buffer_assignment_from_proto ? &buffer_assignment_proto
-                                                   : nullptr));
+  ASSIGN_OR_RETURN(auto test_module,
+                   LoadModuleFromFile(hlo_filename, input_format,
+                                      hlo_module_loader_details::Config(),
+                                      config_modifier_hook,
+                                      options.use_buffer_assignment_from_proto
+                                          ? &buffer_assignment_proto
+                                          : nullptr));
   HloVerifier verifier(
       HloVerifierOpts{}.WithLayoutSensitive(false).WithAllowMixedPrecision(
           true));
-  TF_RETURN_IF_ERROR(verifier.Run(test_module.get()).status());
+  RETURN_IF_ERROR(verifier.Run(test_module.get()).status());
   if (compilation_env_modifier_hook) {
-    TF_CHECK_OK(compilation_env_modifier_hook(options, *test_module))
+    CHECK_OK(compilation_env_modifier_hook(options, *test_module))
         << "Could not adjust the compilation environment for user provided "
            "hlo module.";
   }
@@ -546,8 +547,8 @@ absl::Status RunAndCompare(
         (input_format == "pb" || input_format == "pbtxt")) {
       // User is giving a snapshot (which contains inputs)
       LOG(INFO) << "Using input data from the user-provided snapshot.";
-      TF_ASSIGN_OR_RETURN(iteration_literals_proto_local,
-                          LoadInputFromFile(hlo_filename, input_format));
+      ASSIGN_OR_RETURN(iteration_literals_proto_local,
+                       LoadInputFromFile(hlo_filename, input_format));
       iteration_literals_proto = iteration_literals_proto_local.get();
     } else if (input_format == "pb" || input_format == "pbtxt") {
       LOG(INFO)
@@ -560,6 +561,34 @@ absl::Status RunAndCompare(
                                                : nullptr,
       test_runner, reference_runner, engine, options, iteration_literals_proto,
       reference_module_modifier_hook, config_modifier_hook);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtClient>> GetPjRtClientForPlatform(
+    absl::string_view platform_name) {
+  std::string name = absl::AsciiStrToLower(platform_name);
+  if (name == "interpreter") {
+    return std::make_unique<InterpreterClient>(
+        []() -> std::unique_ptr<HloEvaluatorInterface> {
+          return std::make_unique<HloEvaluator>();
+        });
+  }
+  if (name == "gpu" || name == "cuda" || name == "rocm" || name == "sycl") {
+    GpuAllocatorConfig gpu_config;
+    gpu_config.kind = GpuAllocatorConfig::Kind::kDefault;
+    gpu_config.preallocate = false;
+    gpu_config.collective_memory_size = 0;
+    GpuClientOptions options;
+    options.allocator_config = std::move(gpu_config);
+    options.use_tfrt_gpu_client = false;
+    return GetXlaPjrtGpuClient(options);
+  }
+  if (name == "host" || name == "cpu") {
+    CpuClientOptions options;
+    options.cpu_device_count = 4;
+    return GetXlaPjrtCpuClient(std::move(options));
+  }
+  return absl::InvalidArgumentError(
+      absl::StrCat("Unknown platform name ", platform_name));
 }
 
 void ReadInputLiteralsFromFile(const std::string& file_path,

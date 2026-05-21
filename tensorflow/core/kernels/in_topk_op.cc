@@ -47,22 +47,24 @@ class InTopK : public OpKernel {
     if (context->num_inputs() == 3) {
       const auto& k_in = context->input(2);
 
-      OP_REQUIRES(context, TensorShapeUtils::IsScalar(k_in.shape()),
-                  errors::InvalidArgument("k must be 0-D, got shape ",
-                                          k_in.shape().DebugString()));
+      OP_REQUIRES(
+          context, TensorShapeUtils::IsScalar(k_in.shape()),
+          absl::InvalidArgumentError(absl::StrCat("k must be 0-D, got shape ",
+                                                  k_in.shape().DebugString())));
 
       k_tensor = &k_in;
     }
 
-    OP_REQUIRES(context, predictions_in.dims() == 2,
-                errors::InvalidArgument("predictions must be 2-dimensional"));
+    OP_REQUIRES(
+        context, predictions_in.dims() == 2,
+        absl::InvalidArgumentError("predictions must be 2-dimensional"));
     OP_REQUIRES(context, targets_in.dims() == 1,
-                errors::InvalidArgument("targets must be 1-dimensional"));
-    OP_REQUIRES(context, predictions_in.dim_size(0) == targets_in.dim_size(0),
-                errors::InvalidArgument("First dimension of predictions ",
-                                        predictions_in.dim_size(0),
-                                        " must match length of targets ",
-                                        targets_in.dim_size(0)));
+                absl::InvalidArgumentError("targets must be 1-dimensional"));
+    OP_REQUIRES(
+        context, predictions_in.dim_size(0) == targets_in.dim_size(0),
+        absl::InvalidArgumentError(absl::StrCat(
+            "First dimension of predictions ", predictions_in.dim_size(0),
+            " must match length of targets ", targets_in.dim_size(0))));
 
     const auto predictions = predictions_in.matrix<T>();
     const auto targets = targets_in.vec<TARGET_T>();
@@ -89,15 +91,15 @@ REGISTER_KERNEL_BUILDER(Name("InTopK")
                             .HostMemory("predictions")
                             .HostMemory("targets")
                             .HostMemory("precision")
-                            .TypeConstraint<int32>("T"),
-                        InTopK<CPUDevice, float, int32>);
+                            .TypeConstraint<int32_t>("T"),
+                        InTopK<CPUDevice, float, int32_t>);
 REGISTER_KERNEL_BUILDER(Name("InTopK")
                             .Device(DEVICE_CPU)
                             .HostMemory("predictions")
                             .HostMemory("targets")
                             .HostMemory("precision")
                             .TypeConstraint<int64_t>("T"),
-                        InTopK<CPUDevice, float, int64>);
+                        InTopK<CPUDevice, float, int64_t>);
 
 REGISTER_KERNEL_BUILDER(Name("InTopKV2")
                             .Device(DEVICE_CPU)
@@ -105,8 +107,8 @@ REGISTER_KERNEL_BUILDER(Name("InTopKV2")
                             .HostMemory("targets")
                             .HostMemory("k")
                             .HostMemory("precision")
-                            .TypeConstraint<int32>("T"),
-                        InTopK<CPUDevice, float, int32>);
+                            .TypeConstraint<int32_t>("T"),
+                        InTopK<CPUDevice, float, int32_t>);
 REGISTER_KERNEL_BUILDER(Name("InTopKV2")
                             .Device(DEVICE_CPU)
                             .HostMemory("predictions")
@@ -114,7 +116,7 @@ REGISTER_KERNEL_BUILDER(Name("InTopKV2")
                             .HostMemory("k")
                             .HostMemory("precision")
                             .TypeConstraint<int64_t>("T"),
-                        InTopK<CPUDevice, float, int64>);
+                        InTopK<CPUDevice, float, int64_t>);
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
@@ -129,18 +131,18 @@ namespace functor {
       typename TTypes<bool>::Vec output);                           \
   extern template struct InTopKFunctor<GPUDevice, T, TARGET_T>;
 
-DECLARE_GPU_SPEC(float, int32);
+DECLARE_GPU_SPEC(float, int32_t);
 DECLARE_GPU_SPEC(float, int64_t);
 
 #undef DECLARE_GPU_SPEC
 }  // namespace functor
 
 REGISTER_KERNEL_BUILDER(
-    Name("InTopKV2").Device(DEVICE_GPU).TypeConstraint<int32>("T"),
-    InTopK<GPUDevice, float, int32>);
+    Name("InTopKV2").Device(DEVICE_GPU).TypeConstraint<int32_t>("T"),
+    InTopK<GPUDevice, float, int32_t>);
 REGISTER_KERNEL_BUILDER(
     Name("InTopKV2").Device(DEVICE_GPU).TypeConstraint<int64_t>("T"),
-    InTopK<GPUDevice, float, int64>);
+    InTopK<GPUDevice, float, int64_t>);
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 

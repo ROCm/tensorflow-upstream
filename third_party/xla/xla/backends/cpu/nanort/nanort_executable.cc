@@ -39,12 +39,14 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/cpu/cpu_aot_loader.h"
 #include "xla/service/cpu/cpu_executable.h"
+#include "xla/service/cpu/executable.pb.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
@@ -77,7 +79,11 @@ static absl::StatusOr<std::vector<size_t>> ResolveArgumentsMapping(
   for (size_t i = 0; i < entry_layout.parameter_count(); ++i) {
     ShapeUtil::ForEachLeafShape(
         entry_layout.parameter_shape(i),
-        [&](const Shape&, const ShapeIndex& index) {
+        [&](const Shape& shape, const ShapeIndex& index) {
+          // Tokens are not backed by buffers, skip them.
+          if (shape.IsToken()) {
+            return;
+          }
           size_t arg_index = executable_arg_index.size();
           executable_arg_index[ArgumentIndex{i, index}] = arg_index;
         });
@@ -117,7 +123,11 @@ static absl::StatusOr<std::vector<size_t>> ResolveResultMapping(
   // Mapping from result index to flattened executable result index.
   absl::flat_hash_map<ShapeIndex, size_t> executable_res_index;
   ShapeUtil::ForEachLeafShape(entry_layout.result_shape(),
-                              [&](const Shape&, const ShapeIndex& index) {
+                              [&](const Shape& shape, const ShapeIndex& index) {
+                                // Tokens are not backed by buffers, skip them.
+                                if (shape.IsToken()) {
+                                  return;
+                                }
                                 size_t res_index = executable_res_index.size();
                                 executable_res_index[index] = res_index;
                               });
@@ -246,7 +256,7 @@ absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtExecutable::Create(
   VLOG(3) << "Create NanoRtExecutable: name = " << module.name();
 
   // NanoRtExecutable requires a CPU executable with thunks.
-  auto* cpu_executable = tsl::down_cast<cpu::CpuExecutable*>(executable.get());
+  auto* cpu_executable = absl::down_cast<CpuExecutable*>(executable.get());
   if (cpu_executable == nullptr) {
     return Internal("NanoRtExecutable requires CPU executable");
   }
@@ -281,6 +291,15 @@ absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtExecutable::Create(
                            temp_allocation_index, program_shape));
 }
 
+absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtExecutable::Create(
+    CompilationResultProto aot_compilation_result,
+    std::optional<ProgramShape> program_shape) {
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<Executable> executable,
+      CpuAotLoader::LoadExecutable(std::move(aot_compilation_result)));
+  return Create(std::move(executable), program_shape);
+}
+
 NanoRtExecutable::NanoRtExecutable(
     std::unique_ptr<Executable> executable,
     std::vector<size_t> allocation_sizes,
@@ -295,23 +314,23 @@ NanoRtExecutable::NanoRtExecutable(
       temp_allocation_index_(temp_allocation_index),
       program_shape_(program_shape) {}
 
-static se::DeviceMemoryBase ToDeviceMemory(
+static se::DeviceAddressBase ToDeviceMemory(
     const NanoRtExecutable::Argument& argument) {
-  return se::DeviceMemoryBase(
+  return se::DeviceAddressBase(
       const_cast<void*>(reinterpret_cast<const void*>(argument.data().data())),
       argument.data().size());
 }
 
-static se::DeviceMemoryBase ToDeviceMemory(
+static se::DeviceAddressBase ToDeviceMemory(
     const NanoRtExecutable::Result& result) {
-  return se::DeviceMemoryBase(reinterpret_cast<void*>(result.data().data()),
-                              result.data().size());
+  return se::DeviceAddressBase(reinterpret_cast<void*>(result.data().data()),
+                               result.data().size());
 }
 
-static se::DeviceMemoryBase ToDeviceMemory(
+static se::DeviceAddressBase ToDeviceMemory(
     const NanoRtExecutable::PreallocatedTemp& temp) {
-  return se::DeviceMemoryBase(reinterpret_cast<void*>(temp.data()),
-                              temp.size());
+  return se::DeviceAddressBase(reinterpret_cast<void*>(temp.data()),
+                               temp.size());
 }
 
 tsl::AsyncValueRef<NanoRtExecutable::ExecuteEvent> NanoRtExecutable::Execute(
@@ -322,7 +341,7 @@ tsl::AsyncValueRef<NanoRtExecutable::ExecuteEvent> NanoRtExecutable::Execute(
                          {{"name", executable_->module().name()}});
   });
 
-  auto* executable = tsl::down_cast<cpu::CpuExecutable*>(executable_.get());
+  auto* executable = absl::down_cast<CpuExecutable*>(executable_.get());
 
   size_t num_arguments = argument_to_allocation_index_.size();
   size_t num_results = result_to_allocation_index_.size();
@@ -376,7 +395,7 @@ tsl::AsyncValueRef<NanoRtExecutable::ExecuteEvent> NanoRtExecutable::Execute(
     // vector of buffer allocations, and only allocations corresponding to
     // constants have a valid index.
     if (constant.index >= 0) {
-      buffers[constant.index] = constant.AsDeviceMemoryBase();
+      buffers[constant.index] = constant.AsDeviceAddress();
     }
   }
 

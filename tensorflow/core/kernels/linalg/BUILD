@@ -222,7 +222,7 @@ tf_kernel_library(
         "//tensorflow/core/platform:stream_executor",
         "@eigen_archive//:eigen3",
     ] + if_cuda([
-        "@local_xla//xla/stream_executor/cuda:cublas_plugin",
+        "@xla//xla/stream_executor/cuda:cublas_plugin",
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
         "@local_config_rocm//rocm:rocprim",
@@ -238,7 +238,7 @@ tf_kernel_library(
     gpu_srcs = ["tridiagonal_matmul_op_gpu.cu.cc"],
     deps = LINALG_DEPS + if_cuda([
         "//tensorflow/core/util:cuda_sparse",
-    ]),
+    ]) + ["@com_google_absl//absl/status"],
 )
 
 tf_kernel_library(
@@ -279,6 +279,7 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
         "@eigen_archive//:eigen3",
     ],
 )

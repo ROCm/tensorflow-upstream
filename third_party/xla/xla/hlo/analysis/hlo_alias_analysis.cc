@@ -43,10 +43,10 @@ limitations under the License.
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -315,6 +315,11 @@ const HloBuffer& HloAliasAnalysis::GetUniqueBufferAt(
   return *buffers[0];
 }
 
+const HloBuffer& HloAliasAnalysis::GetUniqueBufferAt(
+    const HloPosition& position) const {
+  return GetUniqueBufferAt(position.instruction, position.index);
+}
+
 std::vector<const HloBuffer*> HloAliasAnalysis::ComputeBuffersAt(
     const HloInstruction* instruction, const ShapeIndex& index) const {
   const HloValueSet& value_set =
@@ -420,7 +425,7 @@ absl::StatusOr<std::unique_ptr<HloAliasAnalysis>> HloAliasAnalysis::Run(
   }
 
   CHECK_EQ(alias_analysis->value_to_buffer_.size(), num_values);
-  TF_DCHECK_OK(alias_analysis->Verify());
+  DCHECK_OK(alias_analysis->Verify());
 
   HloInstruction* root = module->entry_computation()->root_instruction();
   ShapeUtil::ForEachSubshape(root->shape(), [&](const Shape& /*subshape*/,

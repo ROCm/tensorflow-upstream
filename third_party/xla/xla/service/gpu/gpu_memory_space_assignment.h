@@ -17,122 +17,66 @@ limitations under the License.
 #define XLA_SERVICE_GPU_GPU_MEMORY_SPACE_ASSIGNMENT_H_
 
 #include <cstdint>
+#include <utility>
+#include <vector>
 
-#include "absl/base/no_destructor.h"
-#include "absl/container/flat_hash_set.h"
-#include "absl/status/status.h"
-#include "absl/strings/match.h"
-#include "xla/hlo/analysis/hlo_alias_analysis.h"
-#include "xla/hlo/analysis/hlo_ordering.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/buffer_value.h"
-#include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/hlo_value.h"
+#include "xla/service/gpu_topology.h"
+#include "xla/xla.pb.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 
-inline constexpr int64_t kCollectiveMemorySpaceColor = 1;
-inline constexpr int64_t kTempBufferMemorySpaceColor = 2;
+// Frontend attribute names for specifying memory spaces on custom call
+// operands and results. The format is {index:memory_space,...}, e.g.
+// "{0:1,2:1}" means operand/result 0 and 2 should be in memory space 1.
+inline constexpr absl::string_view kOperandsMemorySpacesAttr =
+    "operands_memory_spaces";
+inline constexpr absl::string_view kResultsMemorySpacesAttr =
+    "results_memory_spaces";
 
-// Set memory space to kCollectiveMemorySpaceColor for all allocations used by
-// all-reduce, all-gather, and reduce-scatter. This memory space maps to
-// collective memory using ncclMemAlloc in the runtime.
-inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
-                                                 bool use_nvshmem) {
-  return [use_user_buffers, use_nvshmem](HloAliasAnalysis* alias_analysis,
-                                         const HloOrdering&) {
-    // NOTE: The explicit internal constructor is needed as an explicitly typed
-    // variable to avoid a method ambiguity error when compiling for CUDA 12.4.
-    static const absl::NoDestructor<absl::flat_hash_set<HloOpcode>>
-        kSupportedOpcodes(absl::flat_hash_set<HloOpcode>{
-            HloOpcode::kAllReduce,
-            HloOpcode::kAllReduceStart,
-            HloOpcode::kAllReduceDone,
-            HloOpcode::kAllGather,
-            HloOpcode::kAllGatherStart,
-            HloOpcode::kAllGatherDone,
-            HloOpcode::kReduceScatter,
-            HloOpcode::kCollectivePermute,
-            HloOpcode::kCollectivePermuteStart,
-            HloOpcode::kCollectivePermuteDone,
-            HloOpcode::kAllToAll,
-        });
+enum class MemorySpaceColor {
+  // Corresponds to stream_executor::MemoryTypes::kDefault or kUnified.
+  // This memory can be allocated with any device allocation API.
+  kDefault = 0,
 
-    auto is_nvshmem_op = [](const HloInstruction* inst) {
-      bool is_nvshmem_collective = false;
-      if (inst->has_backend_config()) {
-        auto gpu_config = inst->backend_config<GpuBackendConfig>();
-        if (!gpu_config.ok()) {
-          return false;
-        }
-        const CollectiveBackendConfig& backend_config =
-            gpu_config.value().collective_backend_config();
-        is_nvshmem_collective =
-            backend_config.backend() == CollectiveBackendConfig::NVSHMEM;
-      }
-      return is_nvshmem_collective;
-    };
+  // Corresponds to stream_executor::MemoryTypes::kCollective. This memory
+  // should be compatible with symmetric memory requirements.
+  kCollective = 1,
 
-    auto is_mosaic_gpu_nvshmem_instr = [](const HloInstruction* instr) {
-      return instr->opcode() == HloOpcode::kCustomCall &&
-             (instr->custom_call_target() == "mosaic_gpu" ||
-              instr->custom_call_target() == "mosaic_gpu_v2") &&
-             absl::StrContains(instr->raw_backend_config_string(), "nvshmem");
-    };
-    auto is_collective_memory_instr = [&](const HloInstruction* instr) {
-      if (use_user_buffers) {
-        return kSupportedOpcodes->contains(instr->opcode()) ||
-               // opcode or async wrapped opcode is in kSupportedOpcodes.
-               ((instr->opcode() == HloOpcode::kAsyncStart ||
-                 instr->opcode() == HloOpcode::kAsyncDone) &&
-                kSupportedOpcodes->contains(instr->async_wrapped_opcode()));
-      }
-      if (use_nvshmem) {
-        return is_mosaic_gpu_nvshmem_instr(instr) || is_nvshmem_op(instr);
-      }
-      return false;
-    };
-    auto has_collective_memory_in_uses = [&](const HloValue* input_alias) {
-      // If any use is a collective instruction, we must color the value to use
-      // collective memory space.
-      for (auto& use : input_alias->GetUses()) {
-        if (is_collective_memory_instr(use.instruction)) {
-          return true;
-        }
-      }
-      return false;
-    };
-    for (HloValue* value : alias_analysis->dataflow_analysis().values()) {
-      // If the value has a layout with non-default memory space, use the memory
-      // space from the layout.
-      const HloPosition& defining_position = value->defining_position();
-      if (defining_position.shape().has_layout()) {
-        auto memory_space = defining_position.shape().layout().memory_space();
-        if (memory_space != 0) {
-          value->set_color(BufferValue::Color(memory_space));
-          continue;
-        }
-      }
+  // Temp buffers can be allocated within separate memory space (if
+  // xla_gpu_temp_buffer_use_separate_color is set). This improves cuda-graphs
+  // performance. See more details in the corresponding flag description.
+  kTempBuffer = 2,
+};
 
-      auto& buffer = alias_analysis->GetBufferContainingValue(*value);
-      for (const auto& alias : buffer.values()) {
-        if (is_collective_memory_instr(alias->instruction()) ||
-            has_collective_memory_in_uses(alias)) {
-          value->set_color(kCollectiveMemorySpaceColor);
-        }
-      }
-      if (!value->has_color()) {
-        value->set_color(0);
-      }
-    }
-    return absl::OkStatus();
-  };
-}
+// Converts an integer to a MemorySpaceColor, returning an error if the value
+// does not correspond to a known color.
+absl::StatusOr<MemorySpaceColor> AsMemorySpaceColor(int64_t memory_space);
 
-}  // namespace gpu
-}  // namespace xla
+// Parses a string of the form "{index:memory_space,...}" into a vector of
+// (index, memory_space) pairs. For example, "{0:1,2:1}" means index 0 and 2
+// should be in memory space 1.
+absl::StatusOr<std::vector<std::pair<int64_t, MemorySpaceColor>>>
+ParseIndexMemorySpacePairs(absl::string_view str);
+
+// Returns true if the instruction's collectives mode requires symmetric
+// (collective) memory. Device-initiated and one-sided collectives need all
+// buffers registered with the collective runtime ahead of time.
+bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst);
+
+// Creates a buffer colorer that assigns memory space colors to HLO values
+// during buffer assignment. It handles:
+//  - Collective operations (all-reduce, all-gather, etc.) → kCollective
+//  - Mosaic with NVSHMEM/multimem → kCollective
+//  - Custom call `operands_memory_spaces` / `results_memory_spaces` frontend
+//    attributes → requested memory space
+//  - Everything else → kDefault
+BufferAssigner::Colorer CreateColorer(const DebugOptions& option,
+                                      const GpuTopology& gpu_topology);
+
+}  // namespace xla::gpu
 
 #endif  // XLA_SERVICE_GPU_GPU_MEMORY_SPACE_ASSIGNMENT_H_

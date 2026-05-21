@@ -27,13 +27,15 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
-#include "xla/python/ifrt/user_context.h"
+#include "xla/python/pjrt_ifrt/pjrt_layout.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -92,13 +94,6 @@ bool CanUseMakeArrayFromHostBuffer(
 
 }  // namespace
 
-UserContextRef GetUserContext(Client* client) {
-  if (UserContextScope::current() != nullptr) {
-    return UserContextScope::current();
-  }
-  return client->CreateUserContext();
-}
-
 absl::StatusOr<std::vector<ArrayRef>> ClientMakeArraysFromHostBufferShards(
     Client* client,
     absl::Span<Client::MakeArraysFromHostBufferShardsSpec> specs,
@@ -133,15 +128,14 @@ absl::StatusOr<std::vector<ArrayRef>> ClientMakeArraysFromHostBufferShards(
       // Fast-path for fully replicated arrays. Assumes that
       // `MakeArrayFromHostBuffer` can handle fully replicated array creation.
       auto& [addressable_shard_indices, host_buffer] = spec.buffers.front();
-      TF_RETURN_IF_ERROR(CheckHostBuffer(spec, host_buffer, shard_shape));
+      RETURN_IF_ERROR(CheckHostBuffer(spec, host_buffer, shard_shape));
 
-      TF_ASSIGN_OR_RETURN(
+      ASSIGN_OR_RETURN(
           ArrayRef array,
           client->MakeArrayFromHostBuffer(
               host_buffer.data, host_buffer.dtype, std::move(host_buffer.shape),
-              std::move(host_buffer.byte_strides),
-              std::move(spec.array_spec.sharding), semantics,
-              std::move(host_buffer.on_done)));
+              host_buffer.byte_strides, std::move(spec.array_spec.sharding),
+              /*layout=*/nullptr, semantics, std::move(host_buffer.on_done)));
       arrays.push_back(std::move(array));
       continue;
     }
@@ -157,7 +151,7 @@ absl::StatusOr<std::vector<ArrayRef>> ClientMakeArraysFromHostBufferShards(
     // from it because the same instance may be used multiple times if the same
     // index domain shows up in `addressable_index_domains` multiple times.
     for (const auto& [addressable_shard_indices, host_buffer] : spec.buffers) {
-      TF_RETURN_IF_ERROR(CheckHostBuffer(spec, host_buffer, shard_shape));
+      RETURN_IF_ERROR(CheckHostBuffer(spec, host_buffer, shard_shape));
 
       std::function<void()> on_done_with_host_buffer_per_device;
       if (host_buffer.on_done != nullptr) {
@@ -187,10 +181,15 @@ absl::StatusOr<std::vector<ArrayRef>> ClientMakeArraysFromHostBufferShards(
         auto sharding = xla::ifrt::SingleDeviceSharding::Create(
             addressable_devices[addressable_shard_index],
             spec.array_spec.sharding->memory_kind());
-        TF_ASSIGN_OR_RETURN(
+        LayoutRef layout;
+        if (spec.array_spec.layout != nullptr) {
+          layout = PjRtLayout::Create(spec.array_spec.layout);  // NOLINT
+        }
+        ASSIGN_OR_RETURN(
             shard, client->MakeArrayFromHostBuffer(
                        host_buffer.data, host_buffer.dtype, host_buffer.shape,
-                       host_buffer.byte_strides, std::move(sharding), semantics,
+                       host_buffer.byte_strides, std::move(sharding),
+                       std::move(layout), semantics,
                        on_done_with_host_buffer_per_device));
       }
       num_processed_shards += addressable_shard_indices.size();
@@ -202,7 +201,7 @@ absl::StatusOr<std::vector<ArrayRef>> ClientMakeArraysFromHostBufferShards(
           num_processed_shards, " vs. ", addressable_devices.size()));
     }
 
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         ArrayRef array,
         client->AssembleArrayFromSingleDeviceArrays(
             spec.array_spec.dtype, std::move(spec.array_spec.shape),

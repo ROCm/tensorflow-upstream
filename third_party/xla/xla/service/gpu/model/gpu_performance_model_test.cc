@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -48,8 +49,11 @@ namespace xla {
 namespace gpu {
 namespace {
 
+using ::mlir::MLIRContext;
+
 class GpuPerformanceModelTest : public HloHardwareIndependentTestBase {
  public:
+  GpuPerformanceModelTest() { RegisterSymbolicExprStorage(&mlir_context_); }
   GpuPerformanceModel::RunTimes EstimateRunTimes(
       const HloInstruction* producer,
       std::vector<HloInstruction*> fused_consumers = {}) {
@@ -62,7 +66,7 @@ class GpuPerformanceModelTest : public HloHardwareIndependentTestBase {
                                                    fused_consumers);
   }
 
-  mlir::MLIRContext mlir_context_;
+  MLIRContext mlir_context_;
   GpuHloCostAnalysis::Options options_{.count_multiple_input_accesses = true};
   // The reference times in the test cases below are measured
   // on A6000 by profiling the execution of the HLOs.
@@ -71,10 +75,7 @@ class GpuPerformanceModelTest : public HloHardwareIndependentTestBase {
   GpuHloCostAnalysis analysis_{options_, device_info_};
   GpuPerformanceModelCache gpu_performance_model_cache_;
   GpuPerformanceModel gpu_performance_model_{
-      device_info_, fusion_analysis_cache_, gpu_performance_model_cache_};
-
-  GpuPerformanceModelWithIndexingAnalysis indexing_cost_model_{
-      &device_info_, &fusion_analysis_cache_, HloCostAnalysis::DefaultShapeSize,
+      device_info_, fusion_analysis_cache_, gpu_performance_model_cache_,
       &mlir_context_};
 };
 
@@ -99,9 +100,6 @@ ENTRY e {
   auto t = EstimateRunTimes(root);
   // Dominated by the DRAM bandwidth.
   EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 53, 10);
-
-  auto indexing_t = indexing_cost_model_.EstimateRunTimes(root);
-  EXPECT_NEAR(absl::ToInt64Microseconds(indexing_t.time_unfused), 53, 10);
 }
 
 TEST_F(GpuPerformanceModelTest, SmallReadWrite) {
@@ -134,9 +132,6 @@ ENTRY e {
       root->backend_config<GpuBackendConfig>()->reification_cost()[0];
   EXPECT_NEAR(reification_cost.end_to_end_cycles(), 38.4, 0.1);
   EXPECT_NEAR(reification_cost.exec_time_us(), 0, 1);
-
-  auto indexing_t = indexing_cost_model_.EstimateRunTimes(root);
-  EXPECT_NEAR(absl::ToInt64Microseconds(indexing_t.time_unfused), 1, 1);
 }
 
 TEST_F(GpuPerformanceModelTest, LargeReadWrite) {
@@ -758,8 +753,8 @@ ENTRY entry_computation.1 {
 
   auto t = gpu_performance_model_.EstimateRunTimesForMultiOutputFusion(
       producer, consumer, &analysis_);
-  EXPECT_NEAR(absl::ToInt64Milliseconds(t.time_unfused), 162, 1);
-  EXPECT_NEAR(absl::ToInt64Milliseconds(t.time_fused), 145, 1);
+  EXPECT_NEAR(absl::ToInt64Milliseconds(t.time_unfused), 120, 1);
+  EXPECT_NEAR(absl::ToInt64Milliseconds(t.time_fused), 103, 1);
 }
 
 }  // namespace

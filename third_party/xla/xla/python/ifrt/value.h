@@ -16,12 +16,14 @@ limitations under the License.
 #ifndef XLA_PYTHON_IFRT_VALUE_H_
 #define XLA_PYTHON_IFRT_VALUE_H_
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
-#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "llvm/Support/ExtensibleRTTI.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/user_context.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 
 namespace xla {
@@ -46,9 +48,14 @@ class Value : public tsl::ReferenceCounted<Value>,
   // Returns the user context associated with the creation of this array.
   virtual UserContextRef user_context() const = 0;
 
+  // Returns a byte size of a value. It follows the same semantics as
+  // `Layout::ByteSize()`. If the value represents multiple nested objects, it
+  // returns the sum of the byte sizes of all nested objects inside the value.
+  virtual absl::StatusOr<std::optional<int64_t>> ByteSize() const = 0;
+
   // Returns a future that becomes ready when the buffer is computed or has an
   // error.
-  virtual Future<> GetReadyFuture() const = 0;
+  virtual tsl::Future<> GetReadyFuture() const = 0;
 
   // Deletes the value from the devices. The operation may be asynchronous. The
   // returned future will have the result of the deletion on the devices, and
@@ -59,7 +66,7 @@ class Value : public tsl::ReferenceCounted<Value>,
   // Deletion is idempotent. Deleting an already deleted value is allowed, and
   // all the futures returned by different calls to Delete() will become ready
   // with the same status.
-  virtual Future<> Delete() = 0;
+  virtual tsl::Future<> Delete() = 0;
 
   // Returns whether the value has been enqueued for deletion from the devices.
   virtual bool IsDeleted() const = 0;

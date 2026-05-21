@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/layout.h"
 #include "tsl/platform/statusor.h"
@@ -45,7 +46,7 @@ class PjRtLayout {
 
   static absl::StatusOr<std::shared_ptr<const PjRtLayout>> Deserialize(
       absl::string_view serialized) {
-    TF_ASSIGN_OR_RETURN(Layout xla_layout, ParseLayout(serialized));
+    ASSIGN_OR_RETURN(Layout xla_layout, ParseLayout(serialized));
     return std::make_shared<PjRtLayout>(std::move(xla_layout));
   }
 
@@ -60,6 +61,8 @@ class PjRtLayout {
   bool operator==(const PjRtLayout& other) const {
     return xla_layout_ == other.xla_layout_;
   }
+
+  bool operator!=(const PjRtLayout& other) const { return !(*this == other); }
 
   template <typename H>
   friend H AbslHashValue(H state, const PjRtLayout& layout) {

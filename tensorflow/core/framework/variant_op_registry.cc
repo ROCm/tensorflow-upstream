@@ -46,9 +46,10 @@ const char* VariantBinaryOpToString(VariantBinaryOp op) {
   }
 }
 
-std::unordered_set<string>* UnaryVariantOpRegistry::PersistentStringStorage() {
-  static std::unordered_set<string>* string_storage =
-      new std::unordered_set<string>();
+std::unordered_set<std::string>*
+UnaryVariantOpRegistry::PersistentStringStorage() {
+  static std::unordered_set<std::string>* string_storage =
+      new std::unordered_set<std::string>();
   return string_storage;
 }
 
@@ -70,7 +71,7 @@ UnaryVariantOpRegistry::VariantDecodeFn* UnaryVariantOpRegistry::GetDecodeFn(
 }
 
 void UnaryVariantOpRegistry::RegisterDecodeFn(
-    const string& type_name, const VariantDecodeFn& decode_fn) {
+    const std::string& type_name, const VariantDecodeFn& decode_fn) {
   CHECK(!type_name.empty()) << "Need a valid name for UnaryVariantDecode";
   VariantDecodeFn* existing = GetDecodeFn(type_name);
   CHECK_EQ(existing, nullptr)
@@ -98,7 +99,7 @@ bool DecodeUnaryVariant(Variant* variant) {
   if (decode_fn == nullptr) {
     return false;
   }
-  const string type_name = variant->TypeName();
+  const std::string type_name = variant->TypeName();
   bool decoded = (*decode_fn)(variant);
   if (!decoded) return false;
   if (variant->TypeName() != type_name) {
@@ -133,10 +134,10 @@ absl::Status VariantDeviceCopy(
       UnaryVariantOpRegistry::Global()->GetDeviceCopyFn(direction,
                                                         from.TypeId());
   if (device_copy_fn == nullptr) {
-    return errors::Internal(
+    return absl::InternalError(absl::StrCat(
         "No unary variant device copy function found for direction: ",
         direction, " and Variant type_index: ",
-        port::MaybeAbiDemangle(from.TypeId().name()));
+        port::MaybeAbiDemangle(from.TypeId().name())));
   }
   return (*device_copy_fn)(from, to, copy_fn);
 }

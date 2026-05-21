@@ -69,7 +69,7 @@ absl::Status CreateDeviceMgr(Env* env, std::unique_ptr<DeviceMgr>* device_mgr) {
   std::vector<std::unique_ptr<Device>> devices;
   DeviceFactory* device_factory = DeviceFactory::GetFactory(DEVICE_TPU_SYSTEM);
   if (device_factory == nullptr) {
-    return errors::Internal("Unable to initialize DeviceFactory.");
+    return absl::InternalError("Unable to initialize DeviceFactory.");
   }
   TF_RETURN_IF_ERROR(
       device_factory->CreateDevices(session_options, kTaskSpec, &devices));
@@ -150,7 +150,7 @@ absl::Status InitializeTPUSystemGlobally(absl::string_view job_name,
                                          tpu::TopologyProto* tpu_topology) {
   VLOG(1) << "InitializeTpuSystemGlobally";
 
-  absl::MutexLock lock(&global_init_tpu_mutex);
+  absl::MutexLock lock(global_init_tpu_mutex);
   if (global_tpu_topology != nullptr) {
     *tpu_topology = *global_tpu_topology;
     return absl::OkStatus();
@@ -189,12 +189,12 @@ absl::Status InitializeTPUSystemGlobally(absl::string_view job_name,
   }
 
   if (outputs.empty()) {
-    return errors::Internal("No output from running TPU initialization.");
+    return absl::InternalError("No output from running TPU initialization.");
   }
 
   global_tpu_topology = new tpu::TopologyProto();
   if (!global_tpu_topology->ParseFromString(outputs[0].scalar<tstring>()())) {
-    return errors::Internal(
+    return absl::InternalError(
         "Unable to parse output from running TPU initialization as "
         "TopologyProto proto.");
   }

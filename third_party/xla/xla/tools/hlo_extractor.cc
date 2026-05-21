@@ -19,6 +19,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/service/call_inliner.h"
+#include "xla/tsl/platform/errors.h"
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -35,6 +36,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -47,7 +49,6 @@ limitations under the License.
 #include "xla/service/hlo_verifier.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 namespace {
@@ -178,7 +179,7 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
   // Replace the `hlo` with Constant of the same shape.
   absl::Status ReplaceWithConstant(const HloInstruction* hlo) {
     absl::StatusOr<Literal> literal_status = MakeFakeLiteral(hlo->shape());
-    TF_CHECK_OK(literal_status.status());
+    CHECK_OK(literal_status.status());
     auto new_const =
         HloInstruction::CreateConstant(std::move(literal_status.value()));
     clone_context_.MapInstruction(hlo, new_const.get());
@@ -234,7 +235,7 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
       } else {
         absl::StatusOr<Literal> literal_status =
             MakeFakeLiteral(constant_shape);
-        TF_CHECK_OK(literal_status.status());
+        CHECK_OK(literal_status.status());
         constant_instruction = builder->AddInstruction(
             HloInstruction::CreateConstant(std::move(literal_status.value())));
       }
@@ -324,21 +325,21 @@ absl::Status Inline(HloModule* module) {
                 /*operands=*/instruction->operands(),
                 /*computation=*/
                 instruction->fused_instructions_computation()));
-        TF_RETURN_IF_ERROR(computation
-                               ->ReplaceInstruction(
-                                   /*old_instruction=*/instruction,
-                                   /*new_instruction=*/new_instruction,
-                                   /*preserve_sharding=*/false,
-                                   /*relay_control_dependency=*/true,
-                                   /*remove_unused_operands=*/true)
-                               .status());
+        RETURN_IF_ERROR(computation
+                            ->ReplaceInstruction(
+                                /*old_instruction=*/instruction,
+                                /*new_instruction=*/new_instruction,
+                                /*preserve_sharding=*/false,
+                                /*relay_control_dependency=*/true,
+                                /*remove_unused_operands=*/true)
+                            .status());
       }
     }
   }
-  TF_RETURN_IF_ERROR(CallInliner().Run(module).status());
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(CallInliner().Run(module).status());
+  RETURN_IF_ERROR(
       AlgebraicSimplifier(AlgebraicSimplifierOptions{}).Run(module).status());
-  TF_RETURN_IF_ERROR(HloDCE(true).Run(module).status());
+  RETURN_IF_ERROR(HloDCE(true).Run(module).status());
   return absl::OkStatus();
 }
 
@@ -358,14 +359,14 @@ std::unique_ptr<HloModule> ExtractModule(
   ExtractionVisitor visitor(instruction, &boundary, extract_selector,
                             replace_type_selector);
 
-  TF_CHECK_OK(instruction->Accept(&visitor, /*call_finish_visit=*/true,
-                                  /*ignore_control_predecessors=*/false,
-                                  /*cross_computation=*/cross_computation));
+  CHECK_OK(instruction->Accept(&visitor, /*call_finish_visit=*/true,
+                               /*ignore_control_predecessors=*/false,
+                               /*cross_computation=*/cross_computation));
 
   // Inline called computations and fusions if the flag
   // `inline_calls_and_fusions` is true.
   if (inline_calls_and_fusions) {
-    TF_CHECK_OK(Inline(visitor.module()));
+    CHECK_OK(Inline(visitor.module()));
   }
 
   // The first pass may leave unused parameter instructions in the entry
@@ -378,7 +379,7 @@ std::unique_ptr<HloModule> ExtractModule(
       /*extract_selector=*/nullptr,
       /*replace_type_selector=*/nullptr);
 
-  TF_CHECK_OK(visitor.module()->entry_computation()->root_instruction()->Accept(
+  CHECK_OK(visitor.module()->entry_computation()->root_instruction()->Accept(
       &cleanup_visitor, /*call_finish_visit=*/true,
       /*ignore_control_predecessors=*/false,
       /*cross_computation=*/false));
@@ -386,7 +387,7 @@ std::unique_ptr<HloModule> ExtractModule(
   if (run_verifier) {
     HloVerifier verifier(/*layout_sensitive=*/false,
                          /*allow_mixed_precision=*/true);
-    TF_CHECK_OK(verifier.Run(cleanup_visitor.module()).status());
+    CHECK_OK(verifier.Run(cleanup_visitor.module()).status());
   }
   return cleanup_visitor.ConsumeModule();
 }

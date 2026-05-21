@@ -35,6 +35,8 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/op_requires.h"
 #include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/resource_handle.h"
+#include "tensorflow/core/framework/resource_mgr.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/kernels/dense_update_functor.h"
 #include "tensorflow/core/kernels/inplace_ops_functor.h"
@@ -190,8 +192,8 @@ class StridedSliceOp : public OpKernel {
   }
 
  private:
-  int32 begin_mask, end_mask;
-  int32 ellipsis_mask, new_axis_mask, shrink_axis_mask;
+  int32_t begin_mask, end_mask;
+  int32_t ellipsis_mask, new_axis_mask, shrink_axis_mask;
 };
 
 template <typename Device, typename T>
@@ -223,9 +225,9 @@ class StridedSliceGradOp : public OpKernel {
         errors::InvalidArgument("shape must be 1-D, got shape.shape = ",
                                 input_shape_tensor.shape().DebugString()));
     if (input_shape_tensor.dtype() == DT_INT32) {
-      OP_REQUIRES_OK(
-          context, TensorShapeUtils::MakeShape(input_shape_tensor.vec<int32>(),
-                                               &input_shape));
+      OP_REQUIRES_OK(context,
+                     TensorShapeUtils::MakeShape(
+                         input_shape_tensor.vec<int32_t>(), &input_shape));
     } else if (input_shape_tensor.dtype() == DT_INT64) {
       OP_REQUIRES_OK(context,
                      TensorShapeUtils::MakeShape(
@@ -284,8 +286,8 @@ class StridedSliceGradOp : public OpKernel {
   }
 
  private:
-  int32 begin_mask, end_mask;
-  int32 ellipsis_mask, new_axis_mask, shrink_axis_mask;
+  int32_t begin_mask, end_mask;
+  int32_t ellipsis_mask, new_axis_mask, shrink_axis_mask;
 };
 
 template <typename Device, typename T, bool isTensor>
@@ -328,8 +330,9 @@ class StridedSliceAssignOp : public OpKernel {
     } else {
       if (context->input_dtype(0) == DT_RESOURCE) {
         core::RefCountPtr<Var> v;
-        OP_REQUIRES_OK(
-            context, LookupResource(context, HandleFromInput(context, 0), &v));
+        ResourceHandle handle;
+        OP_REQUIRES_OK(context, HandleFromInput(context, 0, &handle));
+        OP_REQUIRES_OK(context, LookupResource(context, handle, &v));
         OP_REQUIRES_OK(context,
                        EnsureSparseVariableAccess<Device, T>(context, v.get()));
         mutex_lock ml(*v->mu());
@@ -411,8 +414,8 @@ class StridedSliceAssignOp : public OpKernel {
   }
 
  private:
-  int32 begin_mask, end_mask;
-  int32 ellipsis_mask, new_axis_mask, shrink_axis_mask;
+  int32_t begin_mask, end_mask;
+  int32_t ellipsis_mask, new_axis_mask, shrink_axis_mask;
 };
 
 #define REGISTER_STRIDED_SLICE(type)                                    \
@@ -510,51 +513,51 @@ TF_CALL_GPU_ALL_TYPES(REGISTER_GPU);
 // registration requires all int32 inputs and outputs to be in host memory.
 REGISTER_KERNEL_BUILDER(Name("StridedSlice")
                             .Device(DEVICE_GPU)
-                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32_t>("T")
                             .HostMemory("input")
                             .HostMemory("begin")
                             .HostMemory("end")
                             .HostMemory("strides")
                             .HostMemory("output"),
-                        StridedSliceOp<CPUDevice, int32>);
+                        StridedSliceOp<CPUDevice, int32_t>);
 REGISTER_KERNEL_BUILDER(Name("StridedSliceGrad")
                             .Device(DEVICE_GPU)
-                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32_t>("T")
                             .HostMemory("shape")
                             .HostMemory("begin")
                             .HostMemory("end")
                             .HostMemory("strides")
                             .HostMemory("dy")
                             .HostMemory("output"),
-                        StridedSliceGradOp<CPUDevice, int32>);
+                        StridedSliceGradOp<CPUDevice, int32_t>);
 REGISTER_KERNEL_BUILDER(Name("StridedSliceAssign")
                             .Device(DEVICE_GPU)
-                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32_t>("T")
                             .HostMemory("ref")
                             .HostMemory("begin")
                             .HostMemory("end")
                             .HostMemory("strides")
                             .HostMemory("value"),
-                        StridedSliceAssignOp<CPUDevice, int32, false>);
+                        StridedSliceAssignOp<CPUDevice, int32_t, false>);
 REGISTER_KERNEL_BUILDER(Name("ResourceStridedSliceAssign")
                             .Device(DEVICE_GPU)
-                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32_t>("T")
                             .HostMemory("ref")
                             .HostMemory("begin")
                             .HostMemory("end")
                             .HostMemory("strides")
                             .HostMemory("value"),
-                        StridedSliceAssignOp<CPUDevice, int32, false>);
+                        StridedSliceAssignOp<CPUDevice, int32_t, false>);
 REGISTER_KERNEL_BUILDER(Name("TensorStridedSliceUpdate")
                             .Device(DEVICE_GPU)
-                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32_t>("T")
                             .HostMemory("input")
                             .HostMemory("begin")
                             .HostMemory("end")
                             .HostMemory("strides")
                             .HostMemory("value")
                             .HostMemory("output"),
-                        StridedSliceAssignOp<CPUDevice, int32, true>);
+                        StridedSliceAssignOp<CPUDevice, int32_t, true>);
 #undef REGISTER_GPU
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM

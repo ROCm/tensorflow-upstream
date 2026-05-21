@@ -23,6 +23,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/side_effect_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/status_matchers.h"
 
 namespace xla {
 namespace {
@@ -43,7 +43,6 @@ namespace {
 using LegalizeSchedulingAnnotationsTest = HloHardwareIndependentTestBase;
 using SchedulingAnnotationPropagationTest = HloHardwareIndependentTestBase;
 using RemoveLoopIterationAnnotationTest = HloHardwareIndependentTestBase;
-using ::tsl::testing::IsOkAndHolds;
 
 TEST_F(LegalizeSchedulingAnnotationsTest, NonIntegerAnnotation) {
   constexpr absl::string_view hlo_string = R"(
@@ -196,6 +195,55 @@ TEST_F(LegalizeSchedulingAnnotationsTest, AnnotationWithGaps2) {
   LegalizeSchedulingAnnotations::Config config;
   EXPECT_IS_NOT_OK(
       LegalizeSchedulingAnnotations(config).Run(hlo_module.get()).status());
+}
+
+TEST_F(LegalizeSchedulingAnnotationsTest, GapSearchSkipsTuple) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[16]{0} parameter(0)
+  p1 = f32[16]{0} parameter(1)
+  b0 = f32[16]{0} bitcast(p0), frontend_attributes={_scheduling_group_id="1"}
+  b1 = f32[16]{0} bitcast(b0)
+  tuple = (f32[16]{0}, f32[16]{0}) tuple(b1, p1)
+  gte0 = f32[16]{0} get-tuple-element(tuple), index=0
+  gte1 = f32[16]{0} get-tuple-element(tuple), index=1
+  b2 = f32[16]{0} bitcast(gte1), frontend_attributes={_scheduling_group_id="1"}
+  ROOT add = f32[16]{0} add(b2, b2)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  LegalizeSchedulingAnnotations::Config config;
+  config.skip_opt_barriers = true;
+  auto result = LegalizeSchedulingAnnotations(config).Run(hlo_module.get());
+  EXPECT_IS_OK(result);
+}
+
+TEST_F(LegalizeSchedulingAnnotationsTest, GapSearchSkipsOptBarrier) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[16]{0} parameter(0)
+  p1 = f32[16]{0} parameter(1)
+  b0 = f32[16]{0} bitcast(p0), frontend_attributes={_scheduling_group_id="1"}
+  b1 = f32[16]{0} bitcast(b0)
+  tuple = (f32[16]{0}, f32[16]{0}) tuple(b1, p1)
+  opt_barrier = (f32[16]{0}, f32[16]{0}) opt-barrier(tuple)
+  gte0 = f32[16]{0} get-tuple-element(opt_barrier), index=0
+  gte1 = f32[16]{0} get-tuple-element(opt_barrier), index=1
+  b2 = f32[16]{0} bitcast(gte1), frontend_attributes={_scheduling_group_id="1"}
+  ROOT add = f32[16]{0} add(b2, b2)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  LegalizeSchedulingAnnotations::Config config;
+  config.skip_opt_barriers = true;
+  auto result = LegalizeSchedulingAnnotations(config).Run(hlo_module.get());
+  EXPECT_IS_OK(result);
 }
 
 TEST_F(LegalizeSchedulingAnnotationsTest, MissingAnnotationInStart) {
@@ -830,7 +878,7 @@ ENTRY %entry (p0: bf16[5,8,128], p1: bf16[5,1,2,128]) -> bf16[5,8,128] {
   EXPECT_FALSE(annotation->iteration_id);
 }
 
-TEST_F(SchedulingAnnotationPropagationTest, VerifyCycle) {
+TEST_F(SchedulingAnnotationPropagationTest, VerifyNoCycle) {
   absl::string_view hlo_string = R"(
 HloModule module, is_scheduled=true
 
@@ -849,6 +897,31 @@ ENTRY entry {
                           ParseAndReturnVerifiedModule(hlo_string));
   LegalizeSchedulingAnnotations::Config config;
   config.run_verification = true;
+  config.keep_sync_annotation = HloPredicateFalse;
+
+  auto result = LegalizeSchedulingAnnotations(config).Run(hlo_module.get());
+  EXPECT_IS_OK(result);
+}
+
+TEST_F(SchedulingAnnotationPropagationTest, VerifyCycle) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[16]{0} parameter(0)
+  p1 = f32[16]{0} parameter(1)
+  a0 = f32[16]{0} collective-permute(p0), source_target_pairs={{0,1},{1,2},{2,3},{3,0}}, frontend_attributes={_scheduling_group_id="1"}
+  a1 = f32[16]{0} collective-permute(a0), source_target_pairs={{0,1},{1,2},{2,3},{3,0}}, frontend_attributes={_scheduling_group_id="2"}
+  a2 = f32[16]{0} collective-permute(a1), source_target_pairs={{0,1},{1,2},{2,3},{3,0}}, frontend_attributes={_scheduling_group_id="3"}
+  a3 = f32[16]{0} collective-permute(a2), source_target_pairs={{0,1},{1,2},{2,3},{3,0}}, frontend_attributes={_scheduling_group_id="2"}
+  a4 = f32[16]{0} collective-permute(a3), source_target_pairs={{0,1},{1,2},{2,3},{3,0}}, frontend_attributes={_scheduling_group_id="1"}
+  ROOT tuple = (f32[16]{0}, f32[16]{0}) tuple(a3, a4)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  LegalizeSchedulingAnnotations::Config config;
+  config.run_verification = true;
 
   auto result = LegalizeSchedulingAnnotations(config).Run(hlo_module.get());
   EXPECT_IS_NOT_OK(result);
@@ -858,6 +931,97 @@ ENTRY entry {
   EXPECT_TRUE(absl::StrContains(error_message,
                                 "Detected scheduling group annotation "
                                 "cycle"));
+}
+
+TEST_F(SchedulingAnnotationPropagationTest, ContainsOnlyFormattingOps) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%called_computation.441 (param_0.14479: bf16[2048,1,7168]) -> bf16[2048,1,7168] {
+  %param_0.14479 = bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)} parameter(0)
+  ROOT %copy.6583 = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} copy(%param_0.14479), frontend_attributes={_scheduling_group_id="47"}, backend_config={"flag_configs":[],"scoped_memory_configs":[],"compute_type":"COMPUTE_TYPE_TILE","used_scoped_memory_configs":[]}
+}, execution_thread="sparsecore"
+
+%async_computation.510 (param_0.14480: bf16[2048,1,7168]) -> bf16[2048,1,7168] {
+  %param_0.14480 = bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)} parameter(0)
+  ROOT %copy.6584.cloned.1 = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} call(%param_0.14480), to_apply=%called_computation.441
+}, execution_thread="sparsecore"
+
+%called_computation.47 (param_0.13516: bf16[2048,1,7168]) -> bf16[2048,1,7168] {
+  %param_0.13516 = bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)} parameter(0), backend_config={"flag_configs":[],"scoped_memory_configs":[],"compute_type":"COMPUTE_TYPE_SCALAR","used_scoped_memory_configs":[]}
+  %copy.6584.cloned.1.call-start = ((bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)}), bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)}, u32[]{:S(8)}) async-start(%param_0.13516), async_execution_thread="sparsecore", calls=%async_computation.510
+  ROOT %copy.6584.cloned.1.call-done = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} async-done(%copy.6584.cloned.1.call-start)
+}, execution_thread="sparsecore"
+
+%async_computation.116 (param_0.13518: bf16[2048,1,7168]) -> bf16[2048,1,7168] {
+  %param_0.13518 = bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)} parameter(0)
+  ROOT %sparse-core-data-format-call.47.cloned.1 = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} call(%param_0.13518), to_apply=%called_computation.47, frontend_attributes={_scheduling_group_id="47"}
+}, execution_thread="sparsecore"
+
+ENTRY entry {
+  p0 = bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)} parameter(0)
+  %sparse-core-data-format-call.47.cloned.1.call-start = ((bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)}), bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)}, u32[]) async-start(%p0), async_execution_thread="sparsecore", calls=%async_computation.116,
+    frontend_attributes={_scheduling_group_id="47"}, backend_config={"flag_configs":[],"scoped_memory_configs":[],"megachip_parallelism_config":{"cores":["0","1"]},"used_scoped_memory_configs":[],"sparse_core_config":{"offload":"OFFLOAD_DATA_FORMATTING","comp_env":{"enable_scs_overlays":false,"enable_tile_overlays":"off"},"enable_megacore":true,"load_dat":false}}
+  %sparse-core-data-format-call.47.cloned.1.call-done = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} async-done(%sparse-core-data-format-call.47.cloned.1.call-start), frontend_attributes={_scheduling_group_id="47"}, backend_config={"flag_configs":[],"scoped_memory_configs":[],"used_scoped_memory_configs":[]}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  LegalizeSchedulingAnnotations::Config config;
+  config.keep_sync_annotation = HloPredicateFalse;
+  EXPECT_IS_OK(
+      LegalizeSchedulingAnnotations(config).Run(hlo_module.get()).status());
+  VLOG(1) << "module after: " << hlo_module->ToString();
+  HloInstruction* async_start = FindInstruction(
+      hlo_module.get(), "sparse-core-data-format-call.47.cloned.1.call-start");
+  auto annotation = GetSchedulingAnnotation(async_start).value();
+  EXPECT_FALSE(annotation);
+}
+
+TEST_F(SchedulingAnnotationPropagationTest, ContainsFormattingOpsAndOthers) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%called_computation.441 (param_0.14479: bf16[2048,1,7168]) -> bf16[2048,1,7168] {
+  %param_0.14479 = bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)} parameter(0)
+  ROOT %copy.6583 = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} copy(%param_0.14479), frontend_attributes={_scheduling_group_id="47"}, backend_config={"flag_configs":[],"scoped_memory_configs":[],"compute_type":"COMPUTE_TYPE_TILE","used_scoped_memory_configs":[]}
+}, execution_thread="sparsecore"
+
+%async_computation.510 (param_0.14480: bf16[2048,1,7168]) -> bf16[2048,1,7168] {
+  %param_0.14480 = bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)} parameter(0)
+  ROOT %copy.6584.cloned.1 = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} call(%param_0.14480), to_apply=%called_computation.441
+}, execution_thread="sparsecore"
+
+%called_computation.47 (param_0.13516: bf16[2048,1,7168]) -> bf16[2048,1,7168] {
+  %param_0.13516 = bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)} parameter(0)
+  %add = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} add(%param_0.13516, %param_0.13516)
+  %copy.6584.cloned.1.call-start = ((bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)}), bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)}, u32[]{:S(8)}) async-start(%add), async_execution_thread="sparsecore", calls=%async_computation.510
+  ROOT %copy.6584.cloned.1.call-done = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} async-done(%copy.6584.cloned.1.call-start)
+}, execution_thread="sparsecore"
+
+%async_computation.116 (param_0.13518: bf16[2048,1,7168]) -> bf16[2048,1,7168] {
+  %param_0.13518 = bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)} parameter(0)
+  ROOT %sparse-core-data-format-call.47.cloned.1 = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} call(%param_0.13518), to_apply=%called_computation.47, frontend_attributes={_scheduling_group_id="47"}
+}, execution_thread="sparsecore"
+
+ENTRY entry {
+  p0 = bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)} parameter(0)
+  %sparse-core-data-format-call.47.cloned.1.call-start = ((bf16[2048,1,7168]{0,2,1:T(8,128)(2,1)}), bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)}, u32[]) async-start(%p0), async_execution_thread="sparsecore", calls=%async_computation.116,
+    frontend_attributes={_scheduling_group_id="47"}, backend_config={"flag_configs":[],"scoped_memory_configs":[],"megachip_parallelism_config":{"cores":["0","1"]},"used_scoped_memory_configs":[],"sparse_core_config":{"offload":"OFFLOAD_DATA_FORMATTING","comp_env":{"enable_scs_overlays":false,"enable_tile_overlays":"off"},"enable_megacore":true,"load_dat":false}}
+  %sparse-core-data-format-call.47.cloned.1.call-done = bf16[2048,1,7168]{2,0,1:T(16,128)(2,1)} async-done(%sparse-core-data-format-call.47.cloned.1.call-start), frontend_attributes={_scheduling_group_id="47"}, backend_config={"flag_configs":[],"scoped_memory_configs":[],"used_scoped_memory_configs":[]}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  LegalizeSchedulingAnnotations::Config config;
+  config.keep_sync_annotation = HloPredicateFalse;
+  EXPECT_IS_OK(
+      LegalizeSchedulingAnnotations(config).Run(hlo_module.get()).status());
+  VLOG(1) << "module after: " << hlo_module->ToString();
+  HloInstruction* async_start = FindInstruction(
+      hlo_module.get(), "sparse-core-data-format-call.47.cloned.1.call-start");
+  auto annotation = GetSchedulingAnnotation(async_start).value();
+  EXPECT_TRUE(annotation);
 }
 
 }  // namespace

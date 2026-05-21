@@ -50,20 +50,6 @@ absl::string_view GetCusparseVersion() { return TF_CUSPARSE_VERSION; }
 absl::string_view GetNcclVersion() { return TF_NCCL_VERSION; }
 absl::string_view GetTensorRTVersion() { return TF_TENSORRT_VERSION; }
 absl::string_view GetNvshmemVersion() { return XLA_NVSHMEM_VERSION; }
-absl::string_view GetHipVersion() {
-#if TENSORFLOW_USE_ROCM
-  return TF_HIPRUNTIME_SOVERSION;
-#else   // TENSORFLOW_USE_ROCM
-  return "";
-#endif  // TENSORFLOW_USE_ROCM
-}
-absl::string_view GetRocBlasVersion() {
-#if TENSORFLOW_USE_ROCM
-  return TF_ROCBLAS_SOVERSION;
-#else   // TENSORFLOW_USE_ROCM
-  return "";
-#endif  // TENSORFLOW_USE_ROCM
-}
 
 absl::StatusOr<void*> GetDsoHandle(const std::string& name,
                                    absl::string_view version) {
@@ -81,7 +67,7 @@ absl::StatusOr<void*> GetDsoHandle(const std::string& name,
                               "'; dlerror: ", status.message());
 #if !defined(PLATFORM_WINDOWS)
   if (const char* ld_library_path = getenv("LD_LIBRARY_PATH")) {
-    message += absl::StrCat("; LD_LIBRARY_PATH: ", ld_library_path);
+    absl::StrAppend(&message, "; LD_LIBRARY_PATH: ", ld_library_path);
   }
 #endif
   VLOG(1) << message;
@@ -102,6 +88,14 @@ absl::StatusOr<void*> GetCudaDriverDsoHandle() {
   }
 #endif
   return GetDsoHandle("cuda", "1");
+}
+
+absl::StatusOr<void*> GetNvmlDsoHandle() {
+  return GetDsoHandle("nvidia-ml", "1");
+}
+
+absl::StatusOr<void*> GetNvrtcDsoHandle() {
+  return GetDsoHandle("nvrtc", GetCudaRtVersion());
 }
 
 absl::StatusOr<void*> GetCudaRuntimeDsoHandle() {
@@ -164,48 +158,6 @@ absl::StatusOr<void*> GetNvInferPluginDsoHandle() {
 #endif
 }
 
-absl::StatusOr<void*> GetRocblasDsoHandle() {
-  return GetDsoHandle("rocblas", GetRocBlasVersion());
-}
-
-absl::StatusOr<void*> GetMiopenDsoHandle() {
-  return GetDsoHandle("MIOpen", "");
-}
-
-absl::StatusOr<void*> GetHipfftDsoHandle() {
-  return GetDsoHandle("hipfft", "");
-}
-
-absl::StatusOr<void*> GetRocrandDsoHandle() {
-  return GetDsoHandle("rocrand", "");
-}
-
-absl::StatusOr<void*> GetRocsolverDsoHandle() {
-  return GetDsoHandle("rocsolver", "");
-}
-
-#if TF_ROCM_VERSION >= 40500
-absl::StatusOr<void*> GetHipsolverDsoHandle() {
-  return GetDsoHandle("hipsolver", "");
-}
-#endif
-
-absl::StatusOr<void*> GetRoctracerDsoHandle() {
-  return GetDsoHandle("roctracer64", "");
-}
-
-absl::StatusOr<void*> GetHipsparseDsoHandle() {
-  return GetDsoHandle("hipsparse", "");
-}
-
-absl::StatusOr<void*> GetHipblasltDsoHandle() {
-  return GetDsoHandle("hipblaslt", "");
-}
-
-absl::StatusOr<void*> GetHipDsoHandle() {
-  return GetDsoHandle("amdhip64", GetHipVersion());
-}
-
 }  // namespace DsoLoader
 
 namespace CachedDsoLoader {
@@ -251,58 +203,6 @@ absl::StatusOr<void*> GetCuptiDsoHandle() {
 
 absl::StatusOr<void*> GetCudnnDsoHandle() {
   static auto result = new auto(DsoLoader::GetCudnnDsoHandle());
-  return *result;
-}
-
-absl::StatusOr<void*> GetRocblasDsoHandle() {
-  static auto result = new auto(DsoLoader::GetRocblasDsoHandle());
-  return *result;
-}
-
-absl::StatusOr<void*> GetMiopenDsoHandle() {
-  static auto result = new auto(DsoLoader::GetMiopenDsoHandle());
-  return *result;
-}
-
-absl::StatusOr<void*> GetHipfftDsoHandle() {
-  static auto result = new auto(DsoLoader::GetHipfftDsoHandle());
-  return *result;
-}
-
-absl::StatusOr<void*> GetRocrandDsoHandle() {
-  static auto result = new auto(DsoLoader::GetRocrandDsoHandle());
-  return *result;
-}
-
-absl::StatusOr<void*> GetRoctracerDsoHandle() {
-  static auto result = new auto(DsoLoader::GetRoctracerDsoHandle());
-  return *result;
-}
-
-absl::StatusOr<void*> GetRocsolverDsoHandle() {
-  static auto result = new auto(DsoLoader::GetRocsolverDsoHandle());
-  return *result;
-}
-
-#if TF_ROCM_VERSION >= 40500
-absl::StatusOr<void*> GetHipsolverDsoHandle() {
-  static auto result = new auto(DsoLoader::GetHipsolverDsoHandle());
-  return *result;
-}
-#endif
-
-absl::StatusOr<void*> GetHipsparseDsoHandle() {
-  static auto result = new auto(DsoLoader::GetHipsparseDsoHandle());
-  return *result;
-}
-
-absl::StatusOr<void*> GetHipblasltDsoHandle() {
-  static auto result = new auto(DsoLoader::GetHipblasltDsoHandle());
-  return *result;
-}
-
-absl::StatusOr<void*> GetHipDsoHandle() {
-  static auto result = new auto(DsoLoader::GetHipDsoHandle());
   return *result;
 }
 

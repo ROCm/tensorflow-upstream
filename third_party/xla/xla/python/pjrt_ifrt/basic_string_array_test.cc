@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
@@ -29,22 +28,24 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/Support/Casting.h"
-#include "xla/pjrt/pjrt_future.h"
+#include "xla/future.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/test_util.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
@@ -58,7 +59,6 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
-using ::tsl::testing::StatusIs;
 
 // ////////////////////////////////////////////////////////////////////////////
 //
@@ -70,7 +70,7 @@ using ::tsl::testing::StatusIs;
 // factory method: `BasicStringArray::Create`. Uses the first device from the
 // `client->addressable_devices()`.
 absl::StatusOr<ArrayRef> CreateTestArray(
-    Client* client, Future<BasicStringArray::Buffers> buffers,
+    Client* client, tsl::Future<BasicStringArray::Buffers> buffers,
     BasicStringArray::OnDoneWithBuffer on_done_with_buffer) {
   Shape shape({1});
   Device* device = client->addressable_devices().at(0);
@@ -105,19 +105,19 @@ MakeBuffersAndOnDoneWithBuffer(
 // then they must ensure that the underlying strings live until the
 // `on-host-buffer-done` callback they provided is run.
 absl::StatusOr<std::pair<tsl::RCReference<BasicStringArray>,
-                         Promise<BasicStringArray::Buffers>>>
+                         tsl::Promise<BasicStringArray::Buffers>>>
 CreateNonReadyTestArray(
     Client* client, Device* const device,
     BasicStringArray::OnDoneWithBuffer on_done_with_buffer) {
-  auto buffers_promise = Future<BasicStringArray::Buffers>::CreatePromise();
-  auto buffers_future = Future<BasicStringArray::Buffers>(buffers_promise);
+  auto [buffers_promise, buffers_future] =
+      tsl::MakePromise<BasicStringArray::Buffers>();
   Shape shape({1});
   ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
 
-  TF_ASSIGN_OR_RETURN(auto array,
-                      BasicStringArray::Create(client, shape, sharding,
-                                               std::move(buffers_future),
-                                               std::move(on_done_with_buffer)));
+  ASSIGN_OR_RETURN(auto array,
+                   BasicStringArray::Create(client, shape, sharding,
+                                            std::move(buffers_future),
+                                            std::move(on_done_with_buffer)));
 
   return std::make_pair(std::move(array), std::move(buffers_promise));
 }
@@ -136,16 +136,17 @@ TEST(BasicStringArrayTest, CreateSuccess) {
   // and that the destruction of the BasicStringArray object completes
   // successfully (even when the callback is a nullptr).
   TF_EXPECT_OK(CreateTestArray(client.get(),
-                               Future<BasicStringArray::Buffers>(buffers),
+                               tsl::Future<BasicStringArray::Buffers>(buffers),
                                /*on_done_with_buffer=*/nullptr));
 }
 
 TEST(BasicStringArrayTest, CreateFailureWithInvalidFuture) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
   // Create fails if with invalid future.
-  EXPECT_THAT(CreateTestArray(client.get(), Future<BasicStringArray::Buffers>(),
-                              /*on_done_with_buffer=*/nullptr),
-              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(
+      CreateTestArray(client.get(), tsl::Future<BasicStringArray::Buffers>(),
+                      /*on_done_with_buffer=*/nullptr),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST(BasicStringArrayTest, Destruction) {
@@ -158,19 +159,19 @@ TEST(BasicStringArrayTest, Destruction) {
   BasicStringArray::OnDoneWithBuffer on_done_with_buffer =
       [&on_done_with_buffer_called]() { on_done_with_buffer_called.Notify(); };
 
-  auto array_creation_status_promise = PjRtFuture<>::CreatePromise();
+  auto [array_creation_promise, array_creation_future] = tsl::MakePromise<>();
 
-  tsl::Env::Default()->SchedClosure(([&]() {
-    auto array = CreateTestArray(client.get(),
-                                 Future<BasicStringArray::Buffers>(buffers),
-                                 std::move(on_done_with_buffer));
-
-    array_creation_status_promise.Set(array.status());
-    // `array` goes out of scope and gets destroyed.
-  }));
+  tsl::Env::Default()->SchedClosure(
+      ([&, promise = std::move(array_creation_promise)]() mutable {
+        auto array = CreateTestArray(
+            client.get(), tsl::Future<BasicStringArray::Buffers>(buffers),
+            std::move(on_done_with_buffer));
+        promise.Set(array.status());
+        // `array` goes out of scope and gets destroyed.
+      }));
 
   // Make sure that the array has been created successfully.
-  TF_ASSERT_OK(Future<>(array_creation_status_promise).Await());
+  TF_ASSERT_OK(array_creation_future.Await());
 
   // Destruction must release the buffer. That is, the `on_done_with_buffer`
   // callback must be called.
@@ -198,8 +199,8 @@ TEST(BasicStringArrayTest, InvalidBuffersAreHandledCorrectly) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto ret, CreateNonReadyTestArray(client.get(), devices[0],
                                         std::move(on_done_with_buffer)));
-  auto array = ret.first;
-  auto promise = ret.second;
+  auto& array = ret.first;
+  auto& promise = ret.second;
   auto basic_string_array = llvm::dyn_cast<BasicStringArray>(array.get());
 
   // Buffers with two shards and a single-device array are inconsistent.
@@ -222,7 +223,8 @@ TEST(BasicStringArrayTest, Delete) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto array,
-      CreateTestArray(client.get(), Future<BasicStringArray::Buffers>(buffers),
+      CreateTestArray(client.get(),
+                      tsl::Future<BasicStringArray::Buffers>(buffers),
                       std::move(on_done_with_buffer)));
 
   tsl::Env::Default()->SchedClosure([&]() { array->Delete(); });
@@ -237,8 +239,8 @@ TEST(BasicStringArrayTest, Delete) {
 TEST(GetReadyFutureTest, SuccessCase) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
   // Make a BasicStringArray with a future that is not ready.
-  auto promise = Future<BasicStringArray::Buffers>::CreatePromise();
-  auto buffers_future = Future<BasicStringArray::Buffers>(promise);
+  auto [promise, buffers_future] =
+      tsl::MakePromise<BasicStringArray::Buffers>();
   TF_ASSERT_OK_AND_ASSIGN(auto array,
                           CreateTestArray(client.get(), buffers_future,
                                           /*on_done_with_buffer=*/nullptr));
@@ -250,15 +252,16 @@ TEST(GetReadyFutureTest, SuccessCase) {
   // Make the buffers future ready asynchronously.
   BasicStringArray::Buffers buffers;
   buffers.push_back({absl::Cord("abc"), absl::Cord("def")});
-  tsl::Env::Default()->SchedClosure([&]() { promise.Set(buffers); });
+  tsl::Env::Default()->SchedClosure(
+      [&, promise = std::move(promise)]() mutable { promise.Set(buffers); });
   TF_EXPECT_OK(ready_future.Await());
 }
 
 TEST(GetReadyFutureTest, FailureCases) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
   // Make a BasicStringArray with a future that is not ready.
-  auto promise = Future<BasicStringArray::Buffers>::CreatePromise();
-  auto buffers_future = Future<BasicStringArray::Buffers>(promise);
+  auto [promise, buffers_future] =
+      tsl::MakePromise<BasicStringArray::Buffers>();
   TF_ASSERT_OK_AND_ASSIGN(auto array,
                           CreateTestArray(client.get(), buffers_future,
                                           /*on_done_with_buffer=*/nullptr));
@@ -269,7 +272,9 @@ TEST(GetReadyFutureTest, FailureCases) {
 
   // Make the buffers future ready with an error asynchronously
   tsl::Env::Default()->SchedClosure(
-      [&]() { promise.Set(absl::InternalError("injected error")); });
+      [&, promise = std::move(promise)]() mutable {
+        promise.Set(absl::InternalError("injected error"));
+      });
 
   EXPECT_THAT(ready_future.Await(),
               absl_testing::StatusIs(absl::StatusCode::kInternal));
@@ -290,7 +295,7 @@ TEST(MakeArrayFromHostBufferTest, SuccessCase) {
   TF_ASSERT_OK(client->MakeArrayFromHostBuffer(
       data, DType(DType::kString), shape,
       /*byte_strides=*/std::nullopt, std::move(sharding),
-      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+      /*layout=*/nullptr, Client::HostBufferSemantics::kImmutableOnlyDuringCall,
       std::move(on_done_with_host_buffer)));
 }
 
@@ -313,6 +318,7 @@ TEST(MakeArrayFromHostBufferTest, FailureCases) {
           data, DType(DType::kString), shape,
           /*byte_strides=*/std::optional<absl::Span<const int64_t>>({8}),
           single_device_sharding,
+          /*layout=*/nullptr,
           Client::HostBufferSemantics::kImmutableOnlyDuringCall,
           on_done_with_host_buffer),
       absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
@@ -326,6 +332,7 @@ TEST(MakeArrayFromHostBufferTest, FailureCases) {
   EXPECT_THAT(client->MakeArrayFromHostBuffer(
                   data, DType(DType::kString), shape,
                   /*byte_strides=*/std::nullopt, opaque_sharding,
+                  /*layout=*/nullptr,
                   Client::HostBufferSemantics::kImmutableOnlyDuringCall,
                   on_done_with_host_buffer),
               absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
@@ -340,7 +347,8 @@ TEST(MakeArrayFromHostBufferTest, FailureCases) {
     EXPECT_THAT(client->MakeArrayFromHostBuffer(
                     data, DType(DType::kString), shape,
                     /*byte_strides=*/std::nullopt, single_device_sharding,
-                    host_buffer_semantics, on_done_with_host_buffer),
+                    /*layout=*/nullptr, host_buffer_semantics,
+                    on_done_with_host_buffer),
                 absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
   }
 }
@@ -363,7 +371,7 @@ absl::StatusOr<ArrayRef> MakeSingleDeviceStringTestArray(
   return client->MakeArrayFromHostBuffer(
       data, DType(DType::kString), shape,
       /*byte_strides=*/std::nullopt, std::move(sharding),
-      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+      /*layout=*/nullptr, Client::HostBufferSemantics::kImmutableOnlyDuringCall,
       std::move(on_done_with_host_buffer));
 }
 
@@ -374,13 +382,13 @@ absl::StatusOr<ArrayRef> MakeSingleDeviceFloatTestArray(Client* client,
   DType dtype(DType::kF32);
   Shape shape({2, 3});
   auto data = std::make_unique<std::vector<float>>(6);
-  std::iota(data->begin(), data->end(), 0);
+  absl::c_iota(*data, 0);
   ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
 
   return client->MakeArrayFromHostBuffer(
       data->data(), dtype, shape,
       /*byte_strides=*/std::nullopt, sharding,
-      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+      /*layout=*/nullptr, Client::HostBufferSemantics::kImmutableOnlyDuringCall,
       /*on_done_with_host_buffer=*/nullptr);
 }
 
@@ -415,22 +423,22 @@ absl::StatusOr<ArrayRef> MakeShardedStringTestArray(
         "Test client has too few devices. Need 4, got:", devices.size()));
   }
 
-  TF_ASSIGN_OR_RETURN(DeviceListRef device_list,
-                      client->MakeDeviceList(devices));
+  ASSIGN_OR_RETURN(DeviceListRef device_list, client->MakeDeviceList(devices));
   ShardingRef sharding = ConcreteEvenSharding::Create(
       std::move(device_list), MemoryKind(), Shape({2, 1}), Shape({1}),
       is_fully_replicated);
 
   std::vector<ArrayRef> arrays;
   for (int i = 0; i < 2; ++i) {
-    TF_ASSIGN_OR_RETURN(auto array, MakeSingleDeviceStringTestArray(
-                                        {data[i]}, client, devices[i]));
+    ASSIGN_OR_RETURN(auto array, MakeSingleDeviceStringTestArray(
+                                     {data[i]}, client, devices[i]));
     arrays.push_back(std::move(array));
   }
 
   return client->AssembleArrayFromSingleDeviceArrays(
-      Shape({2, 1}), std::move(sharding), absl::MakeSpan(arrays),
-      ArrayCopySemantics::kAlwaysCopy);
+      DType(DType::kString), Shape({2, 1}), std::move(sharding),
+      absl::MakeSpan(arrays), ArrayCopySemantics::kAlwaysCopy,
+      xla::ifrt::SingleDeviceShardSemantics::kAddressableShards);
 }
 
 TEST(AssembleArrayFromSingleDeviceArraysTest,
@@ -471,8 +479,9 @@ TEST(AssembleArrayFromSingleDeviceArraysTest, FailsWithNonStringArrays) {
                                                  client.get(), devices[1]));
 
   EXPECT_THAT(client->AssembleArrayFromSingleDeviceArrays(
-                  Shape({2}), std::move(opaque_sharding),
-                  absl::MakeSpan(arrays), ArrayCopySemantics::kAlwaysCopy),
+                  DType(DType::kString), Shape({2}), std::move(opaque_sharding),
+                  absl::MakeSpan(arrays), ArrayCopySemantics::kAlwaysCopy,
+                  xla::ifrt::SingleDeviceShardSemantics::kAddressableShards),
               absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
@@ -496,8 +505,9 @@ TEST(AssembleArrayFromSingleDeviceArraysTest,
                                                  client.get(), devices[1]));
 
   EXPECT_THAT(client->AssembleArrayFromSingleDeviceArrays(
-                  Shape({2}), std::move(opaque_sharding),
-                  absl::MakeSpan(arrays), ArrayCopySemantics::kAlwaysCopy),
+                  DType(DType::kString), Shape({2}), std::move(opaque_sharding),
+                  absl::MakeSpan(arrays), ArrayCopySemantics::kAlwaysCopy,
+                  xla::ifrt::SingleDeviceShardSemantics::kAddressableShards),
               absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
@@ -513,7 +523,7 @@ TEST(AssembleArrayFromSingleDeviceArraysTest,
 
   // Make two non-ready single device sharded arrays.
   std::vector<ArrayRef> arrays;
-  std::vector<Promise<BasicStringArray::Buffers>> promises;
+  std::vector<tsl::Promise<BasicStringArray::Buffers>> promises;
   arrays.reserve(2);
   auto buf_and_on_done_with_buffer = MakeBuffersAndOnDoneWithBuffer({"abc"});
   auto buffers0 = buf_and_on_done_with_buffer.first;
@@ -534,9 +544,11 @@ TEST(AssembleArrayFromSingleDeviceArraysTest,
   promises.push_back(std::move(ret.second));
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->AssembleArrayFromSingleDeviceArrays(
-                      Shape({1}), std::move(opaque_sharding),
-                      absl::MakeSpan(arrays), ArrayCopySemantics::kAlwaysCopy));
+      auto array,
+      client->AssembleArrayFromSingleDeviceArrays(
+          DType(DType::kString), Shape({1}), std::move(opaque_sharding),
+          absl::MakeSpan(arrays), ArrayCopySemantics::kAlwaysCopy,
+          xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
 
   tsl::Env::Default()->SchedClosure(([&]() mutable {
     promises[0].Set(buffers0);
@@ -565,7 +577,7 @@ TEST(AssembleArrayFromSingleDeviceArraysTest,
 
   // Make two non-ready single device sharded arrays.
   std::vector<ArrayRef> arrays;
-  std::vector<Promise<BasicStringArray::Buffers>> promises;
+  std::vector<tsl::Promise<BasicStringArray::Buffers>> promises;
   arrays.reserve(2);
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -582,9 +594,11 @@ TEST(AssembleArrayFromSingleDeviceArraysTest,
 
   // Make a sharded BasicStringArray out of the single device arrays.
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->AssembleArrayFromSingleDeviceArrays(
-                      Shape({1}), std::move(opaque_sharding),
-                      absl::MakeSpan(arrays), ArrayCopySemantics::kAlwaysCopy));
+      auto array,
+      client->AssembleArrayFromSingleDeviceArrays(
+          DType(DType::kString), Shape({1}), std::move(opaque_sharding),
+          absl::MakeSpan(arrays), ArrayCopySemantics::kAlwaysCopy,
+          xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
 
   // Make the single device arrays become ready with an error.
   absl::Notification done_readying_single_device_arrays;
@@ -616,7 +630,8 @@ TEST(DisassembleArrayIntoSingleDeviceArrays,
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto array,
-      CreateTestArray(client.get(), Future<BasicStringArray::Buffers>(buffers),
+      CreateTestArray(client.get(),
+                      tsl::Future<BasicStringArray::Buffers>(buffers),
                       std::move(on_done_with_buffer)));
 
   TF_ASSERT_OK_AND_ASSIGN(auto disassembled_arrays,
@@ -666,7 +681,8 @@ TEST(DisassembleArrayIntoSingleDeviceArrays, FailsIfTheArrayHasBeenDeleted) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto array,
-      CreateTestArray(client.get(), Future<BasicStringArray::Buffers>(buffers),
+      CreateTestArray(client.get(),
+                      tsl::Future<BasicStringArray::Buffers>(buffers),
                       std::move(on_done_with_buffer)));
 
   array->Delete();
@@ -686,7 +702,8 @@ TEST(CopyTest, SuccessSingleDeviceShardedArray) {
   std::vector<ArrayRef> arrays;
   TF_ASSERT_OK_AND_ASSIGN(
       arrays.emplace_back(),
-      CreateTestArray(client.get(), Future<BasicStringArray::Buffers>(buffers),
+      CreateTestArray(client.get(),
+                      tsl::Future<BasicStringArray::Buffers>(buffers),
                       std::move(on_done_with_buffer)));
 
   // CreateTestArray above would place the array on the first device. Use the
@@ -755,7 +772,8 @@ TEST(CopyTest, FailsAfterDeletion) {
   std::vector<ArrayRef> arrays;
   TF_ASSERT_OK_AND_ASSIGN(
       arrays.emplace_back(),
-      CreateTestArray(client.get(), Future<BasicStringArray::Buffers>(buffers),
+      CreateTestArray(client.get(),
+                      tsl::Future<BasicStringArray::Buffers>(buffers),
                       std::move(on_done_with_buffer)));
 
   arrays[0]->Delete();
@@ -776,7 +794,8 @@ TEST(CopyTest, FailsWithDifferentNumbersDevices) {
   std::vector<ArrayRef> arrays;
   TF_ASSERT_OK_AND_ASSIGN(
       arrays.emplace_back(),
-      CreateTestArray(client.get(), Future<BasicStringArray::Buffers>(buffers),
+      CreateTestArray(client.get(),
+                      tsl::Future<BasicStringArray::Buffers>(buffers),
                       std::move(on_done_with_buffer)));
 
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
@@ -875,7 +894,8 @@ TEST(FullyReplicatedShardTest, SuccessSingleDeviceShardedArray) {
       MakeBuffersAndOnDoneWithBuffer({kContents});
   TF_ASSERT_OK_AND_ASSIGN(
       auto array,
-      CreateTestArray(client.get(), Future<BasicStringArray::Buffers>(buffers),
+      CreateTestArray(client.get(),
+                      tsl::Future<BasicStringArray::Buffers>(buffers),
                       std::move(on_done_with_buffer)));
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -920,7 +940,8 @@ TEST(FullyReplicatedShardTest, FailsAfterDeletion) {
       MakeBuffersAndOnDoneWithBuffer({kContents});
   TF_ASSERT_OK_AND_ASSIGN(
       auto array,
-      CreateTestArray(client.get(), Future<BasicStringArray::Buffers>(buffers),
+      CreateTestArray(client.get(),
+                      tsl::Future<BasicStringArray::Buffers>(buffers),
                       std::move(on_done_with_buffer)));
 
   array->Delete();
@@ -936,10 +957,10 @@ TEST(LayoutTest, Success) {
   auto [buffers, on_done_with_buffer] =
       MakeBuffersAndOnDoneWithBuffer({kContents});
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array,
-      CreateTestArray(client.get(),
-                      Future<BasicStringArray::Buffers>(std::move(buffers)),
-                      std::move(on_done_with_buffer)));
+      auto array, CreateTestArray(client.get(),
+                                  tsl::Future<BasicStringArray::Buffers>(
+                                      std::move(buffers)),
+                                  std::move(on_done_with_buffer)));
 }
 
 TEST(LayoutTest, FailsAfterDeletion) {
@@ -950,7 +971,8 @@ TEST(LayoutTest, FailsAfterDeletion) {
       MakeBuffersAndOnDoneWithBuffer({kContents});
   TF_ASSERT_OK_AND_ASSIGN(
       auto array,
-      CreateTestArray(client.get(), Future<BasicStringArray::Buffers>(buffers),
+      CreateTestArray(client.get(),
+                      tsl::Future<BasicStringArray::Buffers>(buffers),
                       std::move(on_done_with_buffer)));
 
   array->Delete();

@@ -23,9 +23,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/service/backend.h"
@@ -54,6 +54,7 @@ class CollectivePerfTableGen {
     ALL_GATHER,
     REDUCE_SCATTER,
     ALL_TO_ALL,
+    COLLECTIVE_PERMUTE,
   };
 
   struct Config {
@@ -62,12 +63,20 @@ class CollectivePerfTableGen {
     // Search space.
     StepSpec tensor_size_bytes_spec;
     std::vector<CollectiveType> collective_types = {
-        CollectiveType::ALL_REDUCE,
-        CollectiveType::ALL_GATHER,
-        CollectiveType::REDUCE_SCATTER,
-        CollectiveType::ALL_TO_ALL,
+        CollectiveType::ALL_REDUCE,         CollectiveType::ALL_GATHER,
+        CollectiveType::REDUCE_SCATTER,     CollectiveType::ALL_TO_ALL,
+        CollectiveType::COLLECTIVE_PERMUTE,
+    };
+    std::vector<CollectivePermuteCostModelType> collective_permute_patterns = {
+        CollectivePermuteCostModelType::kIntraPartitionOneWay,
+        CollectivePermuteCostModelType::kIntraPartitionTwoWayAllMutual,
+        CollectivePermuteCostModelType::kIntraPartitionTwoWayHasNonMutual,
     };
     std::vector<std::string> replica_groups_list;
+    // Data types to test. Defaults to F32 only.
+    std::vector<PrimitiveType> data_types = {F32};
+    // Whether to test 2D shapes for all-gather. Defaults to false (1D only).
+    bool test_2d_shapes = false;
 
     // Execution opts.
     bool dry_run = false;
@@ -79,7 +88,7 @@ class CollectivePerfTableGen {
   };
 
   struct ProfilingData {
-    absl::Duration runtime = absl::Nanoseconds(42);
+    absl::Duration runtime = absl::Nanoseconds(420);
   };
 
   // Factory method to create the perf table gen.
@@ -94,16 +103,21 @@ class CollectivePerfTableGen {
   // content (but not deduplicating).
   absl::Status Dump(const DeviceHloInstructionProfiles& table);
 
+  // Merges all of the profile files, deduplicates them
+  // based on fingerprint and writes them to a single
+  // `DeviceHloInstructionProfiles` proto.
+  DeviceHloInstructionProfiles Merge(const std::vector<std::string>& files);
+
   // Merges all of the profiled files under `merge_path`, deduplicates them
   // based on fingerprint and writes them to a single
   // `DeviceHloInstructionProfiles` proto.
   DeviceHloInstructionProfiles Merge(absl::string_view merge_path);
 
  private:
-  explicit CollectivePerfTableGen(Config config, PjRtEnvironment&& pjrt_env)
-      : config_(std::move(config)),
-        backend_(std::move(Backend::CreateDefaultBackend().value())),
-        pjrt_env_(std::move(pjrt_env)) {}
+  explicit CollectivePerfTableGen(Config config) : config_(std::move(config)) {}
+
+  PjRtEnvironment& GetPjRtEnv();
+  Backend& GetBackend();
 
   ProfilingData Profile(std::unique_ptr<HloModule> module);
 
@@ -113,9 +127,13 @@ class CollectivePerfTableGen {
   std::vector<ExecutionProfile> Run(PjRtLoadedExecutable& executable);
 
   Config config_;
-  std::unique_ptr<Backend> backend_;
-  PjRtEnvironment pjrt_env_;
+  std::unique_ptr<PjRtEnvironment> pjrt_env_;
 };
+
+// Builds a string of source target pairs for collective permute.
+// Right now, this only supports the intra-partition cases.
+std::string BuildSourceTargetPairs(CollectivePermuteCostModelType pattern,
+                                   int num_devices);
 
 }  // namespace xla::gpu
 

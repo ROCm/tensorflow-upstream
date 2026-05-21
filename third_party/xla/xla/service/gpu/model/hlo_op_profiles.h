@@ -22,11 +22,12 @@ limitations under the License.
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/types.h"
+#include "xla/types.h"  // IWYU pragma: export
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -47,6 +48,10 @@ class HloOpProfiles {
   // For CUDA, the format is "sm_XX".
   // Returns "<unknown>" for unknown devices.
   static std::string GetProfileName(const se::DeviceDescription& device_info);
+
+  // Returns profile name for performance tables that need device-specific data.
+  static std::string GetDeviceSpecificProfileName(
+      const se::DeviceDescription& device_info);
 
   // Loads profiles from the given text proto data.
   static std::unique_ptr<HloOpProfiles> Load(

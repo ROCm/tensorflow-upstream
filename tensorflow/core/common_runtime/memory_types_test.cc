@@ -30,7 +30,7 @@ namespace tensorflow {
 TEST(MemoryTypeChecker, Int32OK) {
   Graph* g = new Graph(OpRegistry::Global());
   Tensor v(DT_INT32, {});
-  v.scalar<int32>().setZero();
+  v.scalar<int32_t>().setZero();
   auto in0 = test::graph::Constant(g, v);
   auto in1 = test::graph::Constant(g, v);
   test::graph::Add(g, in0, in1);
@@ -45,14 +45,14 @@ TEST(MemoryTypeChecker, Int32OK) {
 TEST(MemoryTypeChecker, Int32NotOk) {
   Graph* g = new Graph(OpRegistry::Global());
   Tensor v(DT_INT32, {});
-  v.scalar<int32>().setZero();
+  v.scalar<int32_t>().setZero();
   auto x = test::graph::Constant(g, v);
   test::graph::Cast(g, x, DT_FLOAT);
   TF_EXPECT_OK(ValidateMemoryTypes(DEVICE_CPU, g));
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   // There is no kernel for casting int32/host memory to float/device
   // memory.
-  EXPECT_TRUE(errors::IsInternal(ValidateMemoryTypes(DEVICE_GPU, g)));
+  EXPECT_TRUE(absl::IsInternal(ValidateMemoryTypes(DEVICE_GPU, g)));
 
   // But we can insert _HostSend/_HostRecv to ensure the invariant.
   TF_EXPECT_OK(EnsureMemoryTypes(DEVICE_GPU, "/device:GPU:0", g));

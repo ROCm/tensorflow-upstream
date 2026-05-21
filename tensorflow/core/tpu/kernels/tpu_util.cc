@@ -42,13 +42,14 @@ absl::StatusOr<TpuCompilationCacheKey> ParseCompilationCacheKey(
     // No guaranteed_const.
     return TpuCompilationCacheKey(key);
   } else if (splits.size() != 3) {
-    return errors::InvalidArgument("Invalid TPU compilation cache key:", key);
+    return absl::InvalidArgumentError(
+        absl::StrCat("Invalid TPU compilation cache key:", key));
   }
 
   TpuCompilationCacheKey parsed_key(splits.at(0));
   parsed_key.has_guaranteed_const = true;
   parsed_key.session_handle = splits.at(1);
-  const string fingerprint = splits.at(2);
+  const std::string fingerprint = splits.at(2);
   parsed_key.guaranteed_const_fingerprint = [fingerprint] {
     return fingerprint;
   };
@@ -71,7 +72,7 @@ absl::Status ShapeTensorToTensorShape(const Tensor& tensor,
                                       TensorShape* shape) {
   if (tensor.dtype() != DT_INT64 ||
       !TensorShapeUtils::IsVector(tensor.shape())) {
-    return errors::InvalidArgument("Shape tensor must be an int64 vector.");
+    return absl::InvalidArgumentError("Shape tensor must be an int64 vector.");
   }
   const int64_t rank = tensor.NumElements();
   auto tensor_dims = tensor.flat<int64_t>();

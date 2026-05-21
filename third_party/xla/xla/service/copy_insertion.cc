@@ -1183,7 +1183,7 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
         // have been copied.
         absl::flat_hash_set<int64_t> copied_operands;
         for (const auto& operand_and_output_index :
-             HloDataflowAnalysis::GetInPlaceInputOutputPairs(
+             alias_info_->GetInPlaceInputOutputPairs(
                  // Input/output buffer aliasing analysis needs to be done
                  // directly with the wrapped instruction when the compiler sees
                  // an async box.
@@ -1226,10 +1226,12 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads,
     std::function<bool(const HloValue* value)>
-        should_add_target_specific_copies) {
+        should_add_target_specific_copies,
+    CustomBufferAnalysisFn custom_buffer_analysis) {
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
   return AddSpecialCaseCopies(*call_graph, execution_threads, module,
-                              should_add_target_specific_copies);
+                              should_add_target_specific_copies,
+                              custom_buffer_analysis);
 }
 
 absl::Status CopyInsertion::AddSpecialCaseCopies(
@@ -1237,7 +1239,8 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
     const absl::flat_hash_set<absl::string_view>& execution_threads,
     HloModule* module,
     std::function<bool(const HloValue* value)>
-        should_add_target_specific_copies) {
+        should_add_target_specific_copies,
+    CustomBufferAnalysisFn custom_buffer_analysis) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, alias_info_));
 
@@ -1297,8 +1300,7 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
       HloPosition position = value2->defining_position();
       for (const HloUse& use : value->GetUses()) {
         // We already handle the copy of pin custom-call operands and shouldn't
-        // add
-        // another copy here.
+        // add another copy here.
         if (!use.instruction->IsCustomCall(kPinCustomCallTarget) &&
             use.instruction == position.instruction) {
           VLOG(3) << "Same instruction: " << position.instruction->ToString();
@@ -1321,6 +1323,11 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
         }
       }
     }
+  }
+
+  if (custom_buffer_analysis) {
+    VLOG(2) << "Running custom buffer analysis";
+    custom_buffer_analysis(module, *alias_analysis, add_index_to_copy);
   }
 
   // Identify copies which must be added at root instructions
@@ -1478,7 +1485,8 @@ absl::Status CopyInsertion::RemoveUnnecessaryCopies(
                            use_region_based_live_range_analysis_);
         if (copy_remover.TryElideCopy(
                 instruction, &region_analysis_cost_now,
-                insert_post_scheduling_control_dependencies)) {
+                insert_post_scheduling_control_dependencies,
+                should_skip_removal_)) {
           changed = true;
           TF_RETURN_IF_ERROR(StripControlDependenciesFrom(instruction));
           TF_RETURN_IF_ERROR(
@@ -1500,7 +1508,7 @@ absl::Status CopyInsertion::RemoveUnnecessaryCopies(
   return absl::OkStatus();
 }
 
-absl::StatusOr<bool> CopyInsertion::Run(
+absl::StatusOr<bool> CopyInsertion::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   // Copy insertion is performed in three steps:
@@ -1552,8 +1560,9 @@ absl::StatusOr<bool> CopyInsertion::Run(
   TF_RETURN_IF_ERROR(RemoveUnnecessaryCopies(module, execution_threads));
   DumpHloModuleDuringPassIfEnabled(name(), "after removing unnecessary copies",
                                    *module);
-  TF_RETURN_IF_ERROR(
-      AddSpecialCaseCopies(*call_graph, execution_threads, module, nullptr));
+  TF_RETURN_IF_ERROR(AddSpecialCaseCopies(*call_graph, execution_threads,
+                                          module, nullptr,
+                                          /*custom_buffer_analysis=*/nullptr));
   DumpHloModuleDuringPassIfEnabled(name(), "after adding special-case copies",
                                    *module);
 

@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <vector>
 
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/device_id.h"
@@ -33,8 +34,9 @@ class DeviceMemAllocator : public tsl::SubAllocator {
   // Note: stream_exec cannot be null.
   DeviceMemAllocator(StreamExecutor* stream_exec,
                      tsl::PlatformDeviceId device_id,
-                     const std::vector<Visitor>& alloc_visitors = {})
-      : SubAllocator(alloc_visitors, {}),
+                     const std::vector<Visitor>& alloc_visitors = {},
+                     const std::vector<Visitor>& free_visitors = {})
+      : SubAllocator(alloc_visitors, free_visitors),
         stream_exec_(stream_exec),
         device_id_(device_id) {
     CHECK(stream_exec_ != nullptr);
@@ -49,8 +51,10 @@ class DeviceMemAllocator : public tsl::SubAllocator {
     void* ptr = nullptr;
     *bytes_received = num_bytes;
     if (num_bytes > 0) {
-      ptr = stream_exec_->AllocateArray<char>(num_bytes).opaque();
-      VisitAlloc(ptr, device_id_.value(), num_bytes);
+      auto result = stream_exec_->AllocateArray<char>(num_bytes);
+      ptr = result.opaque();
+      *bytes_received = result.size();
+      VisitAlloc(ptr, device_id_.value(), *bytes_received);
     }
     return ptr;
   }
@@ -60,7 +64,7 @@ class DeviceMemAllocator : public tsl::SubAllocator {
 
     if (ptr != nullptr) {
       VisitFree(ptr, device_id_.value(), num_bytes);
-      DeviceMemoryBase device_ptr(ptr);
+      DeviceAddressBase device_ptr(ptr);
       stream_exec_->Deallocate(&device_ptr);
     }
   }

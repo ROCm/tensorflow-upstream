@@ -153,9 +153,8 @@ void TF_TensorFromProto(const TF_Buffer* from, TF_Tensor* to,
   if (!status->status.ok()) {
     return;
   }
-  status->status =
-      tensorflow::down_cast<tensorflow::TensorInterface*>(to->tensor)
-          ->FromProto(from_tensor_proto);
+  status->status = absl::down_cast<tensorflow::TensorInterface*>(to->tensor)
+                       ->FromProto(from_tensor_proto);
 }
 // --------------------------------------------------------------------------
 
@@ -373,7 +372,7 @@ static Status TF_TensorToTensorV1(const TF_Tensor* src, Tensor* dst) {
   }
   if (dst->dtype() == tensorflow::DT_RESOURCE) {
     const auto tensor_interface =
-        tensorflow::down_cast<const tensorflow::TensorInterface*>(src->tensor);
+        absl::down_cast<const tensorflow::TensorInterface*>(src->tensor);
 
     if (dst->dims() != 0) {
       return InvalidArgument(
@@ -660,7 +659,7 @@ TF_Operation* ToOperation(Node* node) {
 }
 
 string OutputName(const TF_Output& output) {
-  return StrCat(output.oper->node.name(), ":", output.index);
+  return absl::StrCat(output.oper->node.name(), ":", output.index);
 }
 
 const tensorflow::AttrValue* GetAttrValue(TF_Operation* oper,
@@ -827,7 +826,7 @@ void TF_AddControlInput(TF_OperationDescription* desc, TF_Operation* input) {
 
 void TF_ColocateWith(TF_OperationDescription* desc, TF_Operation* op) {
   desc->colocation_constraints.emplace(
-      StrCat(tensorflow::kColocationGroupPrefix, op->node.name()));
+      absl::StrCat(tensorflow::kColocationGroupPrefix, op->node.name()));
 }
 
 void TF_SetAttrString(TF_OperationDescription* desc, const char* attr_name,
@@ -2015,12 +2014,14 @@ TF_WhileParams TF_NewWhile(TF_Graph* g, TF_Output* inputs, int ninputs,
 
   for (int i = 0; i < ninputs; ++i) {
     // TODO(skyewm): prefix names with underscore (requires some plumbing)
-    if (!CreateInput(inputs[i], cond_graph, StrCat("cond_input", i).c_str(),
-                     &cond_inputs[i], status)) {
+    if (!CreateInput(inputs[i], cond_graph,
+                     absl::StrCat("cond_input", i).c_str(), &cond_inputs[i],
+                     status)) {
       break;
     }
-    if (!CreateInput(inputs[i], body_graph, StrCat("body_input", i).c_str(),
-                     &body_inputs[i], status)) {
+    if (!CreateInput(inputs[i], body_graph,
+                     absl::StrCat("body_input", i).c_str(), &body_inputs[i],
+                     status)) {
       break;
     }
   }

@@ -15,14 +15,23 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 
 #include <optional>
+#include <string>
+#include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
+#include "absl/strings/str_cat.h"
+#include "google/protobuf/descriptor.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.pb.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
 
 namespace stream_executor::gpu {
+using absl_testing::StatusIs;
+using ::testing::ValuesIn;
 
 // Helper to compare MatrixLayout structs.
 void ExpectMatrixLayoutEq(const MatrixLayout& lhs, const MatrixLayout& rhs) {
@@ -50,6 +59,39 @@ void ExpectGemmConfigEq(const GemmConfig& lhs, const GemmConfig& rhs) {
   EXPECT_EQ(lhs.algorithm, rhs.algorithm);
   EXPECT_EQ(lhs.grad_x, rhs.grad_x);
   EXPECT_EQ(lhs.grad_y, rhs.grad_y);
+  EXPECT_EQ(lhs.scale_mode, rhs.scale_mode);
+  EXPECT_EQ(lhs.compute_type, rhs.compute_type);
+}
+
+// Helper to compare GemmConfig structs.
+void ExpectGroupedGemmConfigEq(const GroupedGemmConfig& lhs,
+                               const GroupedGemmConfig& rhs) {
+  EXPECT_EQ(lhs.m, rhs.m);
+  EXPECT_EQ(lhs.n, rhs.n);
+  EXPECT_EQ(lhs.k, rhs.k);
+  EXPECT_EQ(lhs.batch_count, rhs.batch_count);
+  EXPECT_EQ(lhs.group_count, rhs.group_count);
+  EXPECT_EQ(lhs.lhs_leading_dim_stride, rhs.lhs_leading_dim_stride);
+  EXPECT_EQ(lhs.rhs_leading_dim_stride, rhs.rhs_leading_dim_stride);
+  EXPECT_EQ(lhs.c_leading_dim_stride, rhs.c_leading_dim_stride);
+  EXPECT_EQ(lhs.output_leading_dim_stride, rhs.output_leading_dim_stride);
+  EXPECT_EQ(lhs.trans_a, rhs.trans_a);
+  EXPECT_EQ(lhs.trans_b, rhs.trans_b);
+  EXPECT_EQ(lhs.must_swap_operands, rhs.must_swap_operands);
+  EXPECT_EQ(lhs.alpha.real(), rhs.alpha.real());
+  EXPECT_EQ(lhs.alpha.imag(), rhs.alpha.imag());
+  EXPECT_EQ(lhs.beta, rhs.beta);
+  EXPECT_EQ(lhs.type_a, rhs.type_a);
+  EXPECT_EQ(lhs.type_b, rhs.type_b);
+  EXPECT_EQ(lhs.type_c, rhs.type_c);
+  EXPECT_EQ(lhs.type_d, rhs.type_d);
+  EXPECT_EQ(lhs.stride_ragged_dim, rhs.stride_ragged_dim);
+  EXPECT_EQ(lhs.stride_group_dim, rhs.stride_group_dim);
+  EXPECT_EQ(lhs.c_stride_ragged_dim, rhs.c_stride_ragged_dim);
+  EXPECT_EQ(lhs.output_stride_ragged_dim, rhs.output_stride_ragged_dim);
+  EXPECT_EQ(lhs.precision_algorithm, rhs.precision_algorithm);
+  EXPECT_EQ(lhs.compute_precision, rhs.compute_precision);
+  EXPECT_EQ(lhs.ragged_mode, rhs.ragged_mode);
   EXPECT_EQ(lhs.compute_type, rhs.compute_type);
 }
 
@@ -68,6 +110,7 @@ TEST(GemmConfigTest, ProtoConversion) {
       std::nullopt,                     // algorithm
       false,                            // grad_x
       false,                            // grad_y
+      ScaleMode::kNone,                 // scale_mode
       std::nullopt                      // compute_type
   };
 
@@ -101,6 +144,7 @@ TEST(GemmConfigTest, ProtoConversionWithOptionals) {
       7,                                          // algorithm
       true,                                       // grad_x
       false,                                      // grad_y
+      ScaleMode::kNone,                           // scale_mode
       blas::ComputationType::kTF32AsF32           // compute_type
   };
 
@@ -110,5 +154,160 @@ TEST(GemmConfigTest, ProtoConversionWithOptionals) {
 
   ExpectGemmConfigEq(original_config, round_tripped_config);
 }
+
+TEST(GroupedGemmConfigTest, ProtoConversionWithOptionals) {
+  GroupedGemmConfig original_config = {
+      32,                                         // m
+      48,                                         // n
+      64,                                         // k
+      1,                                          // batch count
+      4,                                          // group count
+      128,                                        // lhs_leading_dim_stride
+      256,                                        // rhs_leading_dim_stride
+      128,                                        // c_leading_dim_stride
+      128,                                        // output_leading_dim_stride
+      blas::Transpose::kTranspose,                // trans_a
+      blas::Transpose::kNoTranspose,              // trans_b
+      true,                                       // must_swap_operands
+      {0.5, 0.1},                                 // alpha
+      1.5,                                        // beta
+      blas::DataType::kBF16,                      // type_a
+      blas::DataType::kBF16,                      // type_b
+      blas::DataType::kFloat,                     // type_c
+      blas::DataType::kFloat,                     // type_d
+      64,                                         // stride_ragged_dim
+      64 * 48,                                    // stride_group_dim
+      48,                                         // c_stride_ragged_dim
+      48,                                         // output_stride_ragged_dim
+      xla::PrecisionConfig::ALG_DOT_F32_F32_F32,  // precision_algorithm
+      1,                                          // compute_precision
+      RaggedDotMode::kRaggedNonContracting,       // ragged_mode
+      blas::ComputationType::kTF32AsF32           // compute_type
+  };
+
+  xla::GroupedGemmConfigProto proto = original_config.ToProto();
+  TF_ASSERT_OK_AND_ASSIGN(auto round_tripped_config,
+                          GroupedGemmConfig::FromProto(proto));
+
+  ExpectGroupedGemmConfigEq(original_config, round_tripped_config);
+}
+
+TEST(EpilogueTest, ToProtoSucceedsForValidValues) {
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kDefault),
+            xla::BlasLtEpilogueProto::EPILOGUE_DEFAULT);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kReLU),
+            xla::BlasLtEpilogueProto::EPILOGUE_RELU);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kBias),
+            xla::BlasLtEpilogueProto::EPILOGUE_BIAS);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kBiasThenReLU),
+            xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_RELU);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kGELU),
+            xla::BlasLtEpilogueProto::EPILOGUE_GELU);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kSILU),
+            xla::BlasLtEpilogueProto::EPILOGUE_SILU);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kSILUWithAux),
+            xla::BlasLtEpilogueProto::EPILOGUE_SILU_WITH_AUX);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kGELUWithAux),
+            xla::BlasLtEpilogueProto::EPILOGUE_GELU_WITH_AUX);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kBiasThenGELU),
+            xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_GELU);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kBiasThenSILU),
+            xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_SILU);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kBiasThenGELUWithAux),
+            xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_GELU_WITH_AUX);
+  EXPECT_EQ(BlasLt::EpilogueToProto(BlasLt::Epilogue::kBiasThenSILUWithAux),
+            xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_SILU_WITH_AUX);
+}
+
+using EpilogueFromProtoTest =
+    ::testing::TestWithParam<xla::BlasLtEpilogueProto>;
+
+TEST_P(EpilogueFromProtoTest, SucceedsForValidValue) {
+  TF_EXPECT_OK(BlasLt::EpilogueFromProto(GetParam()));
+}
+
+std::vector<xla::BlasLtEpilogueProto> EnumerateBlasLtEpilogueProtoValues() {
+  const google::protobuf::EnumDescriptor* descriptor =
+      xla::BlasLtEpilogueProto_descriptor();
+  std::vector<xla::BlasLtEpilogueProto> values;
+  values.reserve(descriptor->value_count());
+  for (int i = 0; i < descriptor->value_count(); ++i) {
+    values.push_back(
+        static_cast<xla::BlasLtEpilogueProto>(descriptor->value(i)->number()));
+  }
+  return values;
+}
+
+std::string ToString(const xla::BlasLtEpilogueProto& proto) {
+  const google::protobuf::EnumDescriptor* descriptor =
+      xla::BlasLtEpilogueProto_descriptor();
+  const google::protobuf::EnumValueDescriptor* value =
+      descriptor->FindValueByNumber(proto);
+  if (value == nullptr) {
+    return absl::StrCat("Unknown(", proto, ")");
+  }
+  return std::string(value->name());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    EpilogueFromProtoTests, EpilogueFromProtoTest,
+    ValuesIn(EnumerateBlasLtEpilogueProtoValues()),
+    [](const testing::TestParamInfo<xla::BlasLtEpilogueProto>& info) {
+      return ToString(info.param);
+    });
+
+TEST(BlasLtTest, EpilogueFromProtoReturnsErrorForInvalidValues) {
+  constexpr int kInvalidProtoValue = 123456789;
+  EXPECT_FALSE(xla::BlasLtEpilogueProto_IsValid(kInvalidProtoValue));
+  EXPECT_THAT(BlasLt::EpilogueFromProto(
+                  static_cast<xla::BlasLtEpilogueProto>(kInvalidProtoValue)),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(RaggedDotModeTest, ToProtoSucceedsForValidValues) {
+  EXPECT_EQ(RaggedDotModeToProto(RaggedDotMode::kRaggedNonContracting),
+            xla::RaggedDotModeProto::RAGGED_NON_CONTRACTING);
+  EXPECT_EQ(RaggedDotModeToProto(RaggedDotMode::kRaggedContracting),
+            xla::RaggedDotModeProto::RAGGED_CONTRACTING);
+  EXPECT_EQ(RaggedDotModeToProto(RaggedDotMode::kRaggedBatch),
+            xla::RaggedDotModeProto::RAGGED_BATCH);
+}
+
+using RaggedDotModeFromProtoTest =
+    ::testing::TestWithParam<xla::RaggedDotModeProto>;
+
+TEST_P(RaggedDotModeFromProtoTest, SucceedsForValidValue) {
+  TF_EXPECT_OK(RaggedDotModeFromProto(GetParam()));
+}
+
+std::vector<xla::RaggedDotModeProto> EnumerateRaggedDotModeValues() {
+  const google::protobuf::EnumDescriptor* descriptor =
+      xla::RaggedDotModeProto_descriptor();
+  std::vector<xla::RaggedDotModeProto> values;
+  values.reserve(descriptor->value_count());
+  for (int i = 0; i < descriptor->value_count(); ++i) {
+    values.push_back(
+        static_cast<xla::RaggedDotModeProto>(descriptor->value(i)->number()));
+  }
+  return values;
+}
+
+std::string ToString(const xla::RaggedDotModeProto& proto) {
+  const google::protobuf::EnumDescriptor* descriptor =
+      xla::RaggedDotModeProto_descriptor();
+  const google::protobuf::EnumValueDescriptor* value =
+      descriptor->FindValueByNumber(proto);
+  if (value == nullptr) {
+    return absl::StrCat("Unknown(", proto, ")");
+  }
+  return std::string(value->name());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    RaggedDotModeFromProtoTests, RaggedDotModeFromProtoTest,
+    ValuesIn(EnumerateRaggedDotModeValues()),
+    [](const testing::TestParamInfo<xla::RaggedDotModeProto>& info) {
+      return ToString(info.param);
+    });
 
 }  // namespace stream_executor::gpu

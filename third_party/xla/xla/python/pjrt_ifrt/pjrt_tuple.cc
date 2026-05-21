@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/python/pjrt_ifrt/pjrt_tuple.h"
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,11 +28,16 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
-#include "xla/python/ifrt/future.h"
+#include "xla/python/ifrt/value.h"
+#include "xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace ifrt {
@@ -40,8 +47,21 @@ namespace ifrt {
   return tsl::MakeRef<PjRtTuple>(client, values);
 }
 
-Future<> PjRtTuple::GetReadyFuture() const {
-  std::vector<Future<>> futures;
+absl::StatusOr<std::optional<int64_t>> PjRtTuple::ByteSize() const {
+  int64_t byte_size = 0;
+  for (const auto& value : values_) {
+    ASSIGN_OR_RETURN(std::optional<int64_t> element_byte_size,
+                     value->ByteSize());
+    if (!element_byte_size.has_value()) {
+      return std::nullopt;
+    }
+    byte_size += *element_byte_size;
+  }
+  return byte_size;
+}
+
+tsl::Future<> PjRtTuple::GetReadyFuture() const {
+  std::vector<tsl::Future<>> futures;
   futures.reserve(values_.size());
   for (const auto& value : values_) {
     futures.push_back(value->GetReadyFuture());
@@ -49,14 +69,14 @@ Future<> PjRtTuple::GetReadyFuture() const {
   return JoinFutures(absl::MakeSpan(futures));
 }
 
-Future<> PjRtTuple::Delete() {
+tsl::Future<> PjRtTuple::Delete() {
   {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     if (!is_deleted_.HasBeenNotified()) {
       is_deleted_.Notify();
     }
   }
-  std::vector<Future<>> futures;
+  std::vector<tsl::Future<>> futures;
   futures.reserve(values_.size());
   for (const auto& value : values_) {
     futures.push_back(value->Delete());

@@ -37,27 +37,31 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/attributes.h"
+#include "absl/base/macros.h"
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/hash/hash.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/backend_config.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_domain_metadata.h"
+#include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/ptrvec.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/printer.h"
@@ -65,6 +69,7 @@ limitations under the License.
 #include "xla/service/mapped_ptr_container_sorter.h"
 #include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
+#include "xla/shape_pool.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/platform/errors.h"
@@ -202,6 +207,8 @@ using HloInstructionUnwrappingIterator =
 using HloInstructionUnwrappingConstIterator =
     HloInstructionUnwrappingIteratorBase<HloInstructionConstIterator>;
 
+static constexpr uintptr_t kInstructionTypeMask = 0b111;
+
 // HLO instructions are the atomic unit of the high-level compiler's IR.
 //
 // HloInstructions live inside of an HloComputation, which is analogous to a
@@ -292,6 +299,8 @@ class HloInstruction {
 
   inline static constexpr char kMainExecutionThread[] = "main";
   inline static constexpr char kHostThread[] = "host";
+  // Iota based id unique inside parent computation.
+  using LocalId = int32_t;
 
   virtual ~HloInstruction() { DetachFromOperandsAndUsers(); }
 
@@ -309,8 +318,9 @@ class HloInstruction {
   // Creates an instruction from the given proto. Arguments:
   //
   //   proto: the proto to convert from.
-  //   instruction_map: a map from instruction id to HloInstruction*. This map
-  //     must contain all operands of the newly constructed instruction.
+  //   instruction_map: a map from local instruction id (as defined in the
+  //     proto) to HloInstruction*. This map must contain all operands of the
+  //     newly constructed instruction.
   //   computation_map: a map from computation id to HloComputation*. This map
   //     must contain all computations which the newly constructed instruction
   //     calls.
@@ -318,7 +328,9 @@ class HloInstruction {
       const HloInstructionProto& proto,
       const absl::flat_hash_map<int64_t, HloInstruction*>& instruction_map,
       const absl::flat_hash_map<int64_t, HloComputation*>& computation_map = {},
-      bool prohibit_empty_literal = true);
+      bool prohibit_empty_literal = true,
+      absl::Span<const std::shared_ptr<BackendConfigWrapper>> backend_configs =
+          {});
 
   // Creates a parameter-retrieving instruction.
   static std::unique_ptr<HloInstruction> CreateParameter(
@@ -414,7 +426,9 @@ class HloInstruction {
       int64_t feature_group_count, int64_t batch_group_count,
       const Window& window,
       const ConvolutionDimensionNumbers& dimension_numbers,
-      const PrecisionConfig& precision_config);
+      const PrecisionConfig& precision_config,
+      const SparsityConfig& sparsity_config = {},
+      ConvolutionKind convolution_kind = CONVOLUTION_KIND_UNSET);
 
   // Creates an FFT op, of the type indicated by fft_type.
   static std::unique_ptr<HloInstruction> CreateFft(
@@ -470,8 +484,8 @@ class HloInstruction {
   // 'rhs_scale', with contracting, batch, ragged, and group dimensions
   // specified in 'dimension_numbers'.
   static std::unique_ptr<HloInstruction> CreateScaledDot(
-      const Shape& shape, HloInstruction* lhs, HloInstruction* lhs_scale,
-      HloInstruction* rhs, HloInstruction* rhs_scale,
+      const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+      HloInstruction* lhs_scale, HloInstruction* rhs_scale,
       const DotDimensionNumbers& dimension_numbers,
       const PrecisionConfig& precision_config);
 
@@ -489,7 +503,8 @@ class HloInstruction {
   // order of inputs from different participants.
   static std::unique_ptr<HloInstruction> CreateAllGather(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
-      int64_t all_gather_dimension, const CollectiveDeviceList& device_list,
+      int64_t all_gather_dimension,
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
       bool constrain_layout, const std::optional<int64_t>& channel_id,
       bool use_global_device_ids);
 
@@ -509,7 +524,8 @@ class HloInstruction {
   // conjunction of a AllGatherDone op that synchronizes and returns the result.
   static std::unique_ptr<HloInstruction> CreateAllGatherStart(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
-      int64_t all_gather_dimension, const CollectiveDeviceList& device_list,
+      int64_t all_gather_dimension,
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
       bool constrain_layout, const std::optional<int64_t>& channel_id,
       bool use_global_device_ids);
 
@@ -536,8 +552,9 @@ class HloInstruction {
   static std::unique_ptr<HloInstruction> CreateAllReduce(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       HloComputation* reduce_computation,
-      const CollectiveDeviceList& device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
+      bool constrain_layout, const std::optional<int64_t>& channel_id,
+      bool use_global_device_ids);
 
   ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
   static std::unique_ptr<HloInstruction> CreateAllReduce(
@@ -552,9 +569,9 @@ class HloInstruction {
   static std::unique_ptr<HloInstruction> CreateReduceScatter(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       HloComputation* reduce_computation,
-      const CollectiveDeviceList& device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id, bool use_global_device_ids,
-      int64_t scatter_dimension);
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
+      bool constrain_layout, const std::optional<int64_t>& channel_id,
+      bool use_global_device_ids, int64_t scatter_dimension);
 
   ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
   static std::unique_ptr<HloInstruction> CreateReduceScatter(
@@ -580,8 +597,9 @@ class HloInstruction {
   static std::unique_ptr<HloInstruction> CreateAllReduceStart(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       HloComputation* reduce_computation,
-      const CollectiveDeviceList& device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
+      bool constrain_layout, const std::optional<int64_t>& channel_id,
+      bool use_global_device_ids);
 
   ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
   static std::unique_ptr<HloInstruction> CreateAllReduceStart(
@@ -618,8 +636,8 @@ class HloInstruction {
   // performs AllToAll and then concatenates the results into a single array.
   static std::unique_ptr<HloInstruction> CreateAllToAll(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
-      const CollectiveDeviceList& device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id,
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
+      bool constrain_layout, const std::optional<int64_t>& channel_id,
       const std::optional<int64_t>& split_dimension = std::nullopt);
 
   ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
@@ -726,7 +744,7 @@ class HloInstruction {
   //
   static std::unique_ptr<HloInstruction> CreateRaggedAllToAll(
       const Shape& shape, absl::Span<HloInstruction* const> operands,
-      const CollectiveDeviceList& device_list,
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
       const std::optional<int64_t>& channel_id);
 
   ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
@@ -741,8 +759,8 @@ class HloInstruction {
   // on that replica is a tensor consists of 0(s) in `shape`.
   static std::unique_ptr<HloInstruction> CreateCollectiveBroadcast(
       const Shape& shape, absl::Span<HloInstruction* const> operand,
-      const CollectiveDeviceList& device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id);
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
+      bool constrain_layout, const std::optional<int64_t>& channel_id);
 
   ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
   static std::unique_ptr<HloInstruction> CreateCollectiveBroadcast(
@@ -943,6 +961,12 @@ class HloInstruction {
       const Shape& shape, absl::Span<HloInstruction* const> operands,
       absl::Span<HloInstruction* const> init_values, const Window& window,
       HloComputation* reduce_computation);
+
+  static std::unique_ptr<HloInstruction> CreateScan(
+      const Shape& shape, absl::Span<HloInstruction* const> inputs,
+      absl::Span<HloInstruction* const> inits, HloComputation* to_apply,
+      int64_t scan_dimension, bool is_reverse,
+      TriState is_associative = TRI_STATE_UNSPECIFIED);
 
   // Creates a batch-norm-training instruction.
   static std::unique_ptr<HloInstruction> CreateBatchNormTraining(
@@ -1208,10 +1232,34 @@ class HloInstruction {
   virtual bool HasSideEffect() const;
 
   // Returns the result shape of this instruction.
-  const Shape& shape() const;
+  const Shape& shape() const {
+    DCHECK(shape_) << "Instruction shape must be set";
+    return *shape_;
+  }
 
   // Returns the (mutable) result shape of this instruction.
-  Shape* mutable_shape() { return &shape_; }
+  Shape* mutable_shape() {
+    DCHECK(shape_) << "Instruction shape must be set";
+    if (shape_is_canonicalized_) {
+      shape_ = std::make_shared<Shape>(*shape_);
+      shape_is_canonicalized_ = false;
+    }
+    return &*shape_;
+  }
+
+  // Canonicalize instruction shape using the given shape pool.
+  bool Canonicalize(ShapePool* shape_pool) {
+    DCHECK(shape_) << "Instruction shape must be set";
+    if (shape_pool) {
+      std::shared_ptr<Shape> canonical = shape_pool->GetCanonicalShape(shape_);
+      shape_is_canonicalized_ = true;
+      if (canonical != shape_) {
+        shape_ = std::move(canonical);
+        return true;
+      }
+    }
+    return false;
+  }
 
   // Returns the ith operand to this instruction.
   const HloInstruction* operand(int64_t i) const;
@@ -1624,7 +1672,13 @@ class HloInstruction {
                                  CanonicalNameMap* canonical_name_map) const;
 
   // Returns a serialized representation of this instruction.
-  virtual HloInstructionProto ToProto() const;
+  HloInstructionProto ToProto() const {
+    HloInstructionProto proto;
+    ToProto(&proto);
+    return proto;
+  }
+
+  virtual void ToProto(HloInstructionProto* proto) const;
 
   // Returns a category for the HLO. This could be something like "convolution"
   // or "elementwise".
@@ -1684,7 +1738,7 @@ class HloInstruction {
   void set_single_sharding(const HloSharding& sharding);
   // Sets a sharding that assigns the current instruction to device.
   void set_device_sharding(int64_t device) {
-    set_single_sharding(HloSharding::AssignDevice(device));
+    set_single_sharding(HloSharding::SingleDevice(device));
   }
   // Remove any sharding from this operator.
   void clear_sharding() { sharding_ = nullptr; }
@@ -1800,6 +1854,19 @@ class HloInstruction {
   absl::InlinedVector<int64_t, 4> OperandIndices(
       const HloInstruction* operand) const;
 
+  // Returns the dimension index of the operand that corresponds to the given
+  // output dimension index, if the instruction is a "transparent" unary
+  // operation (e.g., Broadcast, Bitcast, Reshape, Elementwise Unary).
+  //
+  // Returns std::nullopt if:
+  // 1. The operation is not supported or not unary.
+  // 2. The output dimension is "new" (e.g., created by Broadcast or Reshape
+  // insertion).
+  // 3. The reshape is not a "trivial" reshape (i.e., not just
+  // inserting/deleting 1-sized dims).
+  std::optional<int64_t> MapUnaryOutputDimToOperandDim(
+      int64_t output_dim_idx) const;
+
   // Convenience helper for ShapeUtil::InsertedOrDeleted1SizedDimensions. If
   // this reshape merely inserts or deletes 1-sized dimensions, return the input
   // indices of the deleted dimensions and the output indices of the inserted
@@ -1832,47 +1899,46 @@ class HloInstruction {
   // instruction based on the instruction's existing name.
   void UniquifyName(HloModule* module);
 
-  // Use the `module`s `NewUniqueInstructionId` to set the id of this
-  // instruction.
-  void UniquifyId(HloModule* module);
+  // Return the unique ID assigned to this node via SetLocalId (or -1 if no id
+  // has been assigned yet) prefixed by the parent's unique ID. This is a
+  // concatenation of the parent's unique ID and the local ID. This is
+  // guaranteed to be unique across all instructions in a module.
+  int64_t unique_id() const;
 
-  // Clear the unique ID of the instruction so that it can be re-assigned, such
-  // as for the purpose of compacting the instruction unique IDs.
-  void ClearUniqueIdInternal() { unique_id_ = -1; }
+  // Returns the computation-specific ID assigned to this node. This is
+  // equivalent to the least significant 32 bits of the unique ID. This is not
+  // guaranteed to be unique across all instructions in a module, only within
+  // the computation.
+  int32_t local_id() const { return local_id_; }
 
-  // Set the unique id for this instruction to "id"
-  // TODO(b/399394039): Remove this function once the bug is fixed.
-  void SetUniqueId(int id) { SetUniqueId(static_cast<int64_t>(id)); }
+  // Returns the unique ID that would be assigned to this instruction if it were
+  // inserted into the given parent without an internal ID change. Can be used
+  // to recreate the unique ID of an instruction that has been removed from its
+  // parent.
+  static int64_t CalculateUniqueId(int32_t computation_unique_id,
+                                   int32_t instruction_local_id);
 
-  // Set the unique id for this instruction to "id"
-  void SetUniqueId(int64_t id) {
-    CHECK_EQ(unique_id_, -1);  // Should not be assigned already
-    CHECK_GE(id, 0);
-    unique_id_ = id;
+  // Returns the local ID of the instruction by extracting it from the more
+  // general unique ID.
+  static int32_t CalculateLocalId(int64_t unique_id) {
+    return static_cast<int32_t>(unique_id & 0xFFFFFFFF);
   }
 
-  // Return the unique ID assigned to this node via SetUniqueId (or -1
-  // if no id has been assigned yet).
-  int unique_id() const {
-    CHECK_LT(unique_id_, INT32_MAX)
-        << "int32_t unique_id was requested but unique_id was written as a "
-           "64-bit integer: "
-        << unique_id_;
-    return static_cast<int>(unique_id_);
+  // Returns the parent ID of the instruction by extracting it from the more
+  // general unique ID. The method does not differentiate between a parentless
+  // unique id and a unique id with a parent id of 0.
+  static int32_t CalculateParentId(int64_t unique_id) {
+    return static_cast<int32_t>(unique_id >> 32);
   }
 
-  // Return the unique ID assigned to this node via SetUniqueId (or -1
-  // if no id has been assigned yet).Returns the entire unique ID as a 64-bit
-  // integer.
-  // TODO(b/399394039): Remove this function once the bug is fixed.
-  int64_t unique_id_64_bits() const { return unique_id_; }
+  bool has_backend_config() const { return !backend_config_->empty(); }
 
-  bool has_backend_config() const { return !backend_config_.empty(); }
-
-  void clear_backend_config() { backend_config_ = BackendConfigWrapper(); }
+  void clear_backend_config() {
+    backend_config_ = std::make_shared<BackendConfigWrapper>();
+  }
 
   void CopyBackendConfigFrom(const HloInstruction* other) {
-    backend_config_ = BackendConfigWrapper(other->backend_config_);
+    backend_config_ = other->backend_config_;
   }
 
   // Replaces the frontend attributes with the provided argument.
@@ -2005,26 +2071,44 @@ class HloInstruction {
   template <typename ConfigProto, EnableIfProto<ConfigProto>* = nullptr>
   absl::StatusOr<ConfigProto> backend_config() const {
     ConfigProto proto;
-    TF_RETURN_IF_ERROR(backend_config_.GetProto(&proto));
+    RETURN_IF_ERROR(backend_config_->GetProto(&proto));
     return proto;
   }
 
+  // Applies a function `fn` to the underlying backend config proto. The
+  // function receives a mutable pointer to a proto of type `ConfigProto`.
+  //
+  // If the proto is not already parsed, it will return an error.
+  template <typename ConfigProto, EnableIfProto<ConfigProto>* = nullptr>
+  absl::Status MutateBackendConfig(
+      const std::function<absl::Status(ConfigProto*)>& fn) {
+    if (backend_config_.use_count() > 1) {
+      backend_config_ =
+          std::make_shared<BackendConfigWrapper>(*backend_config_);
+    }
+    return backend_config_->ApplyFnOnProto(fn);
+  }
+
   absl::Status set_backend_config(const tsl::protobuf::Message& proto) {
-    backend_config_ = BackendConfigWrapper(proto);
+    backend_config_ = std::make_shared<BackendConfigWrapper>(proto);
     return absl::OkStatus();
   }
 
   // Getter/setter for raw JSON-encoded backend config.  Prefer the
   // functions above that deal in proto Messages where possible.
   const std::string& raw_backend_config_string() const {
-    return backend_config_.GetRawString();
+    return backend_config_->GetRawString();
   }
   void set_raw_backend_config_string(std::string config_str) {
-    backend_config_ = BackendConfigWrapper(std::move(config_str));
+    backend_config_ =
+        std::make_shared<BackendConfigWrapper>(std::move(config_str));
   }
 
   bool is_default_config() const { return is_default_config_; }
   void set_default_config() { is_default_config_ = true; }
+
+  // Returns true if the instruction supports precision config.
+  bool SupportsPrecisionConfig() const;
 
   // Returns the information used to tell the implementation information about
   // what sort of precision is requested. The meaning of the field is backend
@@ -2071,10 +2155,19 @@ class HloInstruction {
     mutable_metadata().set_scheduling_name(name);
   }
 
+  bool has_metadata() const { return metadata_ != nullptr; }
+
   const OpMetadata& metadata() const {
     OpMetadata* m = metadata_.get();
     return (m == nullptr) ? *kEmptyMetadata : *m;
   }
+
+  // Reconstructs the full Python call stack from HloMetadata.
+  std::vector<HloStackFrame> GetStackTraceFromMetadata() const;
+
+  // Formats the stack trace reconstructed from metadata into a human-readable
+  // string.
+  std::string GetStackTraceStringFromMetadata(int indent = 0) const;
 
   OpMetadata& mutable_metadata() {
     if (metadata_ == nullptr) {
@@ -2096,6 +2189,13 @@ class HloInstruction {
   void SortInstructionUsersAndControlLists(
       const MappedPtrContainerSorter<HloInstruction>::MapPtrFn& map_fn,
       const HloInstruction& sorted_instruction);
+
+  // Sorts the users of this instruction using the given comparison function.
+  void SortUsers(
+      absl::FunctionRef<bool(const HloInstruction*, const HloInstruction*)>
+          compare) {
+    users_.SortInstructionUsers(compare);
+  }
 
   // Old methods kept for smooth subclassing transition BEGIN.
   // NOTE: Refrain from adding more delegates, prefer down casting to subclasses
@@ -2172,11 +2272,16 @@ class HloInstruction {
   HloInstruction* AddFusionOperand(HloInstruction* new_operand);
 
   // Delegates to HloFusionInstruction::MergeFusionInstruction.
-  void MergeFusionInstruction(HloInstruction* instruction_to_merge);
+  // remove_computation: when false, allows to defer the call to
+  // RemoveEmbeddedComputation to a later time.
+  void MergeFusionInstruction(HloInstruction* instruction_to_merge,
+                              bool remove_computation = true);
 
   // Delegates to HloFusionInstruction::MergeFusionInstructionIntoMultiOutput.
+  // remove_computation: when false, allows to defer the call to
+  // RemoveEmbeddedComputation to a later time.
   void MergeFusionInstructionIntoMultiOutput(
-      HloInstruction* instruction_to_merge);
+      HloInstruction* instruction_to_merge, bool remove_computation = true);
 
   // Delegates to HloFusionInstruction::FuseInstruction.
   HloInstruction* FuseInstruction(HloInstruction* instruction_to_fuse);
@@ -2270,7 +2375,10 @@ class HloInstruction {
   const std::vector<ReplicaGroup>& replica_groups() const;
 
   // Delegates to HloCollectiveInstruction::device_list.
-  const CollectiveDeviceList& device_list() const;
+  const std::shared_ptr<CollectiveDeviceListBase>& device_list() const;
+
+  // Returns true if device_list()->num_replica_groups() > 0.
+  bool has_replica_groups() const;
 
   // Delegates to HloCollectivePermuteInstruction::source_target_pairs.
   const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs() const;
@@ -2363,9 +2471,13 @@ class HloInstruction {
   // Delegates to HloDomainInstruction::user_side_metadata().
   const DomainMetadata& user_side_metadata() const;
 
+  // Delegates to HloConvolutionInstruction::sparsity_config.
+  const SparsityConfig& sparsity_config() const;
+  void set_sparsity_config(const SparsityConfig& config);
+
   // Returns true if the instruction is an async-start, async-update, or
   // async-done.
-  bool IsAsynchronous() const;
+  bool IsAsynchronous() const { return HloOpcodeIsAsync(opcode_); }
 
   // Delagates to HloAsyncInstruction::async_chain_start().
   HloInstruction* async_chain_start() const;
@@ -2429,13 +2541,16 @@ class HloInstruction {
   std::shared_ptr<OriginalValue> original_value() const;
   void set_original_value(std::shared_ptr<OriginalValue> original_value);
 
-  // Copy original value from the input instruction. This performs a deep copy
-  // if clone is set to true. Otherwise, it performs a shallow copy.
-  void CopyOriginalValue(const HloInstruction* instruction, bool clone);
+  // Copies original value from the input instruction if the source and
+  // destination shapes are compatible. This performs a deep copy if clone is
+  // set to true. Otherwise, it performs a shallow copy. Print a warning if the
+  // shapes are not compatible and issue_warning is set to true.
+  void CopyOriginalValue(const HloInstruction* instruction, bool clone = false,
+                         bool issue_warning = false);
 
  protected:
-  // Internal constructor for a given opcode/shape, other fields must be filled
-  // by factory methods.
+  // Internal constructor for a given opcode/shape, other fields must be
+  // filled by factory methods.
   HloInstruction(HloOpcode opcode, const Shape& shape);
 
   void RemoveAllOperands() { operands_.clear(); }
@@ -2534,6 +2649,19 @@ class HloInstruction {
   // HloInstruction.
   bool IsMarkedAsDead() const { return marked_as_dead_; }
 
+  // Set the unique id for this instruction to "id". Should only be called by
+  // the instruction's parent computation to set an internal unique id that fits
+  // in an int32_t.
+  void SetLocalId(int32_t id) {
+    CHECK_EQ(local_id_, -1);  // Should not be assigned already
+    CHECK_GE(id, 0);
+    local_id_ = id;
+  }
+
+  // Clear the unique ID of the instruction so that it can be re-assigned, such
+  // as for the purpose of compacting the instruction unique IDs.
+  void ClearUniqueIdInternal() { local_id_ = -1; }
+
   // Rare is allocated lazily, only when any of its constituent fields are
   // non-empty.  This reduces the memory footprint of HloInstruction objects.
   struct Rare {
@@ -2612,6 +2740,9 @@ class HloInstruction {
     void RemoveUser(HloInstruction* user);       // REQUIRES: Contains(user)
     int64_t UserId(HloInstruction* user);
     void SortInstructionUsers(
+        absl::FunctionRef<bool(const HloInstruction*, const HloInstruction*)>
+            compare);
+    void SortInstructionUsers(
         const MappedPtrContainerSorter<HloInstruction>::MapPtrFn& map_fn,
         const Users& sorted_instruction_users);
     bool CheckInvariants();
@@ -2630,8 +2761,9 @@ class HloInstruction {
         user_map_;
   };
 
-  int64_t unique_id_;  // Unique to this HloInstruction within a HloModule
-  uint32_t index_in_parent_;  // Index that identifies inst in HloComputation
+  LocalId local_id_;  // Unique to this HloInstruction within a HloComputation.
+                      // Index that identifies where the inst is stored in the
+                      // parent computation.
 
   // Opcode for this instruction.
   HloOpcode opcode_;
@@ -2650,6 +2782,9 @@ class HloInstruction {
 
   // True if this instruction is the root of a computation.
   bool is_root_ : 1;
+
+  // True if the shape of this instruction has been canonicalized.
+  bool shape_is_canonicalized_ : 1;
 
   // Instruction operands.
   InstructionVector operands_;
@@ -2673,11 +2808,13 @@ class HloInstruction {
   std::shared_ptr<const HloSharding> sharding_;
 
   // Result shape of this instruction.
-  Shape shape_;
+  std::shared_ptr<Shape> shape_;
 
   // The backend-specific configuration for how a backend should compile this
-  // HLO. See the documentation on backend_config().
-  BackendConfigWrapper backend_config_;
+  // HLO. See the documentation on backend_config(). Declared as shared_ptr to
+  // implement copy-on-write.
+  absl_nonnull std::shared_ptr<BackendConfigWrapper> backend_config_ =
+      std::make_shared<BackendConfigWrapper>();
 
   // String identifier for instruction.
   std::string name_;
@@ -2728,6 +2865,7 @@ std::string RaggedDotDimensionNumbersToString(
     const RaggedDotDimensionNumbers& dnums);
 std::string ConvolutionDimensionNumbersToString(
     const ConvolutionDimensionNumbers& dnums);
+std::string SparsityConfigToString(const SparsityConfig& sparsity_config);
 
 absl::StatusOr<RandomAlgorithm> StringToRandomAlgorithm(
     const std::string& name);
@@ -2758,8 +2896,21 @@ struct HloPtrComparator {
                   const HloInstruction* const& rhs) const;
 };
 
+// Same as HloPtrComparator but uses internal ids only, intended for use within
+// a computation only.
+struct HloPtrComparatorInternal {
+  bool operator()(const HloInstruction* const& lhs,
+                  const HloInstruction* const& rhs) const;
+};
+
 template <typename ValueT>
 using HloInstructionMap = std::map<HloInstruction*, ValueT, HloPtrComparator>;
+
+// Same as HloInstructionMap but uses internal ids, intended for use within a
+// computation only.
+template <typename ValueT>
+using HloInstructionMapInternal =
+    std::map<HloInstruction*, ValueT, HloPtrComparatorInternal>;
 
 template <typename ValueT>
 using ConstHloInstructionMap =
@@ -2807,6 +2958,7 @@ bool HloPredicateIsNotOp(const HloInstruction* instruction) {
     case HloOpcode::kScatter:
     case HloOpcode::kSelectAndScatter:
     case HloOpcode::kSort:
+    case HloOpcode::kScan:
     case HloOpcode::kCustomCall:
       return true;
     default:

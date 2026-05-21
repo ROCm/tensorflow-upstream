@@ -29,11 +29,12 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor {
 
@@ -65,7 +66,7 @@ absl::StatusOr<Stream *> StreamCommon::GetOrCreateSubStream() {
   // BlockHostUntilDone and it's host callbacks might attempt to acquire mu_.
   std::vector<std::unique_ptr<Stream>> bad_streams;
 
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
 
   // Look for the first reusable sub_stream that is ok, dropping !ok sub_streams
   // we encounter along the way.
@@ -97,7 +98,7 @@ absl::StatusOr<Stream *> StreamCommon::GetOrCreateSubStream() {
   }
 
   // No streams are reusable; create a new stream.
-  TF_ASSIGN_OR_RETURN(auto stream, parent_->CreateStream());
+  ASSIGN_OR_RETURN(auto stream, parent_->CreateStream());
   Stream *sub_stream = stream.get();
   sub_stream->SetName(absl::StrFormat("Sub-stream of %s", GetName()));
   sub_streams_.emplace_back(std::move(stream), false);
@@ -111,7 +112,7 @@ void StreamCommon::ReturnSubStream(Stream *sub_stream) {
   // BlockHostUntilDone and it's host callbacks might attempt to acquire mu_.
   std::unique_ptr<Stream> bad_stream;
 
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
 
   // Look for the sub-stream.
   for (int64_t index = 0, end = sub_streams_.size(); index < end; ++index) {
@@ -147,7 +148,7 @@ void StreamCommon::CheckError(bool operation_retcode) {
   if (operation_retcode) {
     return;
   }
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   status_ = absl::InternalError("Unknown error");
 }
 
@@ -156,7 +157,7 @@ void StreamCommon::CheckStatus(absl::Status status) {
     return;
   }
   LOG(ERROR) << status;
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   status_ = status;
 }
 

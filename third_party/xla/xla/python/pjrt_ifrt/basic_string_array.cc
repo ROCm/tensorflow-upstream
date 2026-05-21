@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -29,15 +30,18 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
-#include "xla/python/ifrt/future.h"
+#include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context.h"
+#include "xla/python/ifrt/value.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -61,17 +65,14 @@ namespace ifrt {
 char BasicStringArray::ID = 0;
 
 absl::StatusOr<tsl::RCReference<BasicStringArray>> BasicStringArray::Create(
-    Client* client, Shape shape, ShardingRef sharding, Future<Buffers> buffers,
-    OnDoneWithBuffer on_done_with_buffer) {
+    Client* client, Shape shape, ShardingRef sharding,
+    tsl::Future<Buffers> buffers, OnDoneWithBuffer on_done_with_buffer) {
   if (!buffers.IsValid()) {
     return absl::InvalidArgumentError("Got buffers_ future is invalid");
   }
 
-  auto buffers_promise = Future<Buffers>::CreatePromise();
-  auto buffers_future = Future<Buffers>(buffers_promise);
-
-  auto ready_promise = Future<>::CreatePromise();
-  auto ready_future = Future<>(ready_promise);
+  auto [buffers_promise, buffers_future] = tsl::MakePromise<Buffers>();
+  auto [ready_promise, ready_future] = tsl::MakePromise<>();
 
   // Buffers when the become ready must be consistent with the sharding. For
   // instance, Buffers.size() (the number of per-shard spans of absl::Cords)
@@ -114,8 +115,8 @@ absl::StatusOr<tsl::RCReference<BasicStringArray>> BasicStringArray::Create(
 
 BasicStringArray::BasicStringArray(Client* client, Shape shape,
                                    ShardingRef sharding,
-                                   Future<Buffers> buffers,
-                                   Future<> ready_future,
+                                   tsl::Future<Buffers> buffers,
+                                   tsl::Future<> ready_future,
                                    OnDoneWithBuffer on_done_with_buffer)
     : client_(client),
       shape_(std::move(shape)),
@@ -127,18 +128,18 @@ BasicStringArray::BasicStringArray(Client* client, Shape shape,
 
 BasicStringArray::~BasicStringArray() { DeleteInternal(); }
 
-Future<> BasicStringArray::Delete() {
+tsl::Future<> BasicStringArray::Delete() {
   DeleteInternal();
-  return Future<>(absl::OkStatus());
+  return tsl::Future<>(absl::OkStatus());
 }
 
 bool BasicStringArray::IsDeleted() const {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   return is_deleted_;
 }
 
 void BasicStringArray::DeleteInternal() {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
     return;
   }
@@ -148,11 +149,15 @@ void BasicStringArray::DeleteInternal() {
   is_deleted_ = true;
 }
 
-Future<> BasicStringArray::GetReadyFuture() const {
+absl::StatusOr<std::optional<int64_t>> BasicStringArray::ByteSize() const {
+  return xla::ifrt::Layout::ByteSize(dtype(), shape_, sharding_, LayoutRef());
+}
+
+tsl::Future<> BasicStringArray::GetReadyFuture() const {
   DCHECK(this);
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
-    return Future<>(
+    return tsl::Future<>(
         absl::FailedPreconditionError("Array has already been deleted"));
   }
   return ready_future_;
@@ -171,12 +176,12 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
         *sharding_->devices());
   }
 
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
     return absl::FailedPreconditionError("Array has already been deleted");
   }
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       auto shapes_and_shadings,
       sharding_->Disassemble(shape_, single_device_shard_semantics));
   const int num_shards = shapes_and_shadings.size();
@@ -193,9 +198,9 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
   // are used to make the arrays. The promises and the per-shard stores
   // are passed onto the OnReady callback that populates them when the buffers
   // of the source array become ready.
-  std::vector<Promise<Buffers>> buffer_promises;
+  std::vector<tsl::Promise<Buffers>> buffer_promises;
   buffer_promises.reserve(num_shards);
-  std::vector<Future<Buffers>> buffer_futures;
+  std::vector<tsl::Future<Buffers>> buffer_futures;
   buffer_futures.reserve(num_shards);
 
   struct PerShardStringStore {  // Data (strings) for a single shard.
@@ -214,8 +219,8 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
   on_done_with_buffer_callbacks.reserve(num_shards);
 
   for (int i = 0; i < num_shards; ++i) {
-    buffer_promises.push_back(Future<Buffers>::CreatePromise());
-    buffer_futures.push_back(Future<Buffers>(buffer_promises.back()));
+    std::tie(buffer_promises.emplace_back(), buffer_futures.emplace_back()) =
+        tsl::MakePromise<Buffers>();
 
     auto current_shard_strings = std::make_shared<PerShardStringStore>();
     per_shard_strings.push_back(current_shard_strings);
@@ -250,36 +255,35 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
   std::vector<ArrayRef> arrays;
   arrays.reserve(num_shards);
   for (int i = 0; i < num_shards; ++i) {
-    TF_ASSIGN_OR_RETURN(auto array,
-                        BasicStringArray::Create(
-                            client_, std::move(shapes_and_shadings[i].first),
-                            std::move(shapes_and_shadings[i].second),
-                            std::move(buffer_futures[i]),
-                            std::move(on_done_with_buffer_callbacks[i])));
+    ASSIGN_OR_RETURN(auto array,
+                     BasicStringArray::Create(
+                         client_, std::move(shapes_and_shadings[i].first),
+                         std::move(shapes_and_shadings[i].second),
+                         std::move(buffer_futures[i]),
+                         std::move(on_done_with_buffer_callbacks[i])));
     arrays.push_back(array);
   }
   return arrays;
 }
 
-Future<> BasicStringArray::CopyToHostBuffer(
+tsl::Future<> BasicStringArray::CopyToHostBuffer(
     void* data, std::optional<absl::Span<const int64_t>> byte_strides,
     ArrayCopySemantics semantics) {
   DCHECK(this);
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
-    return Future<>(
+    return tsl::Future<>(
         absl::FailedPreconditionError("Array has already been deleted"));
   }
 
   if (sharding_->devices()->size() != 1) {
-    return Future<>(absl::InvalidArgumentError(absl::StrFormat(
+    return tsl::Future<>(absl::InvalidArgumentError(absl::StrFormat(
         "CopyToHostBuffer only supports single device string arrays. This "
         "array has been sharded over %d devices.",
         sharding_->devices()->size())));
   }
 
-  auto copy_completion_promise = Future<>::CreatePromise();
-  auto copy_completion_future = Future<>(copy_completion_promise);
+  auto [copy_completion_promise, copy_completion_future] = tsl::MakePromise<>();
 
   buffers_.OnReady(
       [copy_completion_promise = std::move(copy_completion_promise),
@@ -303,13 +307,13 @@ absl::StatusOr<ArrayRef> BasicStringArray::Copy(
     std::optional<xla::ifrt::MemoryKind> memory_kind,
     ArrayCopySemantics semantics) {
   DCHECK(this);
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
     return absl::FailedPreconditionError("Array has already been deleted");
   }
 
-  TF_ASSIGN_OR_RETURN(auto new_sharding, sharding().WithDeviceAssignment(
-                                             std::move(devices), memory_kind));
+  ASSIGN_OR_RETURN(auto new_sharding, sharding().WithDeviceAssignment(
+                                          std::move(devices), memory_kind));
   if (new_sharding->devices()->size() != sharding_->devices()->size()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Number of devices in new sharding: ", new_sharding->devices()->size(),
@@ -331,8 +335,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::Copy(
 
   auto string_store = std::make_shared<StringStore>();
   auto on_done_with_buffer = [string_store]() {};
-  auto buffers_promise = Future<Buffers>::CreatePromise();
-  auto buffers_future = Future<Buffers>(buffers_promise);
+  auto [buffers_promise, buffers_future] = tsl::MakePromise<Buffers>();
 
   auto copier = [string_store = std::move(string_store),
                  buffers_promise = std::move(buffers_promise)](
@@ -358,7 +361,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::Copy(
 // Makes a single sharded BasicStringArray from the first shard.
 absl::StatusOr<ArrayRef> BasicStringArray::FullyReplicatedShard(
     ArrayCopySemantics semantics) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
     return absl::FailedPreconditionError("Array has already been deleted");
   }
@@ -381,8 +384,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::FullyReplicatedShard(
 
   auto string_store = std::make_shared<StringStore>();
   auto on_done_with_buffer = [string_store]() {};
-  auto buffers_promise = Future<Buffers>::CreatePromise();
-  auto buffers_future = Future<Buffers>(buffers_promise);
+  auto [buffers_promise, buffers_future] = tsl::MakePromise<Buffers>();
 
   auto copier = [string_store = std::move(string_store),
                  buffers_promise = std::move(buffers_promise)](
@@ -416,11 +418,13 @@ BasicStringArray::pjrt_layout() const {
   return absl::UnimplementedError("String arrays do not support PjRtLayout");
 }
 
+LayoutRef BasicStringArray::layout() const { return nullptr; }
+
 std::string BasicStringArray::DebugString() const {
   DCHECK(this);
   return absl::StrFormat(
-      "BasicStringArray(shape=%s; sharding=%s; layout=major-to-minor-dense)",
-      shape_.DebugString(), sharding_->DebugString());
+      "BasicStringArray(shape=%v; sharding=%v; layout=major-to-minor-dense)",
+      shape_, sharding_);
 }
 
 }  // namespace ifrt

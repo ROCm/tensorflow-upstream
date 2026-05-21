@@ -433,13 +433,13 @@ class Conv2DUsingGemmOp : public BinaryOp<T> {
   explicit Conv2DUsingGemmOp(OpKernelConstruction* context)
       : BinaryOp<T>(context) {
     OP_REQUIRES_OK(context, context->GetAttr("strides", &strides_));
-    string data_format;
+    std::string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
                 errors::InvalidArgument("Invalid data format"));
     OP_REQUIRES(context, data_format_ == FORMAT_NHWC,
-                errors::InvalidArgument(
-                    "Data format not supported by this kernel", data_format));
+                absl::InvalidArgumentError(absl::StrCat(
+                    "Data format not supported by this kernel", data_format)));
     OP_REQUIRES(context, strides_.size() == 4,
                 errors::InvalidArgument("Sliding window strides field must "
                                         "specify 4 dimensions"));
@@ -462,12 +462,14 @@ class Conv2DUsingGemmOp : public BinaryOp<T> {
     const Tensor& filter = context->input(1);
 
     // For 2D convolution, there should be 4 dimensions.
-    OP_REQUIRES(context, input.dims() == 4,
-                errors::InvalidArgument("input must be 4-dimensional",
-                                        input.shape().DebugString()));
-    OP_REQUIRES(context, filter.dims() == 4,
-                errors::InvalidArgument("filter must be 4-dimensional: ",
-                                        filter.shape().DebugString()));
+    OP_REQUIRES(
+        context, input.dims() == 4,
+        absl::InvalidArgumentError(absl::StrCat("input must be 4-dimensional",
+                                                input.shape().DebugString())));
+    OP_REQUIRES(
+        context, filter.dims() == 4,
+        absl::InvalidArgumentError(absl::StrCat(
+            "filter must be 4-dimensional: ", filter.shape().DebugString())));
 
     for (int i = 0; i < 3; i++) {
       OP_REQUIRES(
@@ -480,9 +482,9 @@ class Conv2DUsingGemmOp : public BinaryOp<T> {
     // filter's in_depth.
     const int64_t in_depth = GetTensorDim(input, data_format_, 'C');
     OP_REQUIRES(context, in_depth == filter.dim_size(2),
-                errors::InvalidArgument(
+                absl::InvalidArgumentError(absl::StrCat(
                     "input and filter must have the same depth: ", in_depth,
-                    " vs ", filter.dim_size(2)));
+                    " vs ", filter.dim_size(2))));
 
     // The last dimension for filter is out_depth.
     const int out_depth = static_cast<int>(filter.dim_size(3));
@@ -557,7 +559,7 @@ class Conv2DUsingGemmOp : public BinaryOp<T> {
   }
 
  private:
-  std::vector<int32> strides_;
+  std::vector<int32_t> strides_;
   Padding padding_;
   TensorFormat data_format_;
 

@@ -28,7 +28,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
-#include "xla/backends/gpu/codegen/emitters/emitter_base.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -60,7 +60,7 @@ struct ScatterDescription {
 };
 ScatterDescription GetScatterDescription(const HloFusionAnalysis& analysis);
 
-class ScatterFusion : public EmitterBase {
+class ScatterFusion : public MlirKernelEmitter {
  public:
   explicit ScatterFusion(const HloFusionAnalysis& analysis,
                          const ScatterDescription& description,
@@ -83,9 +83,8 @@ class ScatterFusion : public EmitterBase {
     return std::nullopt;
   }
 
-  std::optional<IndexingMap> ComputeThreadIdToInputIndexing(
-      int64_t root_index, int64_t hero_operand_index,
-      mlir::MLIRContext* ctx) const override;
+  std::optional<std::vector<IndexingMap>> ComputeThreadIdToInputIndexing(
+      int64_t root_index, mlir::MLIRContext* ctx) const override;
 
  protected:
   virtual absl::Status EmitEntryFunctionImpl(
@@ -132,7 +131,8 @@ class ScatterWithDistributedUpdates : public ScatterFusion {
                                      mlir::ValueRange thread_and_block_ids,
                                      mlir::Value output_tensor) const override;
 
-  void ComputeIndexing(mlir::MLIRContext* ctx, IndexingMap* updates_map,
+  void ComputeIndexing(mlir::MLIRContext* mlir_context,
+                       IndexingMap* updates_map,
                        IndexingMap* indices_map) const override;
 };
 
@@ -192,7 +192,8 @@ class ScatterWithDistributedIndices : public ScatterFusion {
                                          int64_t indices_vector_size);
 
  protected:
-  void ComputeIndexing(mlir::MLIRContext* ctx, IndexingMap* updates_map,
+  void ComputeIndexing(mlir::MLIRContext* mlir_context,
+                       IndexingMap* updates_map,
                        IndexingMap* indices_map) const override;
 
   absl::Status EmitEntryFunctionImpl(mlir::ImplicitLocOpBuilder& b,

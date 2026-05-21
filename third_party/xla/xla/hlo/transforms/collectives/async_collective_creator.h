@@ -54,21 +54,22 @@ class AsyncCollectiveCreator : public HloModulePass {
     };
     int64_t all_reduce_min_threshold_in_bytes = 0;
     int64_t all_gather_min_threshold_in_bytes = 0;
+    int64_t reduce_scatter_min_threshold_in_bytes = 0;
   };
   explicit AsyncCollectiveCreator(CollectiveCreatorConfig creator_config)
       : config_(std::move(creator_config)) {}
   absl::string_view name() const override { return "async-collective-creator"; }
-
-  using HloPassInterface::Run;
-  absl::StatusOr<bool> Run(
-      HloModule *module,
-      const absl::flat_hash_set<absl::string_view> &execution_threads) override;
 
   std::vector<HloInstruction *> MatchCollectives(HloComputation *computation);
   absl::StatusOr<bool> ReplaceCollectives(
       HloComputation *computation,
       std::vector<HloInstruction *> &supported_collectives);
   const CollectiveCreatorConfig *config() const { return &config_; }
+
+ protected:
+  absl::StatusOr<bool> RunImpl(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
   CollectiveCreatorConfig config_;

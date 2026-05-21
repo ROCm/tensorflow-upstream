@@ -21,13 +21,16 @@ limitations under the License.
 #include <memory>
 #include <optional>
 
+#include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/tsl/platform/status_macros.h"
+#include "xla/future.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_raw_buffer_extension.h"
-#include "xla/pjrt/pjrt_c_api_client.h"
-#include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/c/pjrt_c_api_status_utils.h"
+#include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
@@ -40,7 +43,7 @@ limitations under the License.
         error, pjrt::MakeErrorDeleter(c_api));                           \
     absl::Status _status = pjrt::PjrtErrorToStatus(_error.get(), c_api); \
     if (!_status.ok()) {                                                 \
-      return xla::PjRtFuture<>(_status);                                 \
+      return xla::Future<>(_status);                                     \
     }                                                                    \
   } while (false)
 
@@ -93,7 +96,7 @@ size_t PjRtCApiRawBuffer_GetOnDeviceSizeInBytes(
   return args.on_device_size_in_bytes;
 }
 
-xla::PjRtFuture<> PjRtCApiRawBuffer_CopyRawHostToDevice(
+xla::Future<> PjRtCApiRawBuffer_CopyRawHostToDevice(
     const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
     PJRT_RawBuffer* buffer, const void* src, int64_t offset,
     int64_t transfer_size) {
@@ -110,7 +113,7 @@ xla::PjRtFuture<> PjRtCApiRawBuffer_CopyRawHostToDevice(
   return pjrt::ConvertCEventToCppFuture(args.event, c_api);
 }
 
-xla::PjRtFuture<> PjRtCApiRawBuffer_CopyRawDeviceToHost(
+xla::Future<> PjRtCApiRawBuffer_CopyRawDeviceToHost(
     const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
     PJRT_RawBuffer* buffer, void* dst, int64_t offset, int64_t transfer_size) {
   PJRT_RawBuffer_CopyRawDeviceToHost_Args args;
@@ -162,15 +165,14 @@ size_t PjRtCApiRawBuffer::GetOnDeviceSizeInBytes() const {
                                                         c_buffer_);
 }
 
-PjRtFuture<> PjRtCApiRawBuffer::CopyRawHostToDevice(const void* src,
-                                                    int64_t offset,
-                                                    int64_t transfer_size) {
+Future<> PjRtCApiRawBuffer::CopyRawHostToDevice(const void* src, int64_t offset,
+                                                int64_t transfer_size) {
   return pjrt::PjRtCApiRawBuffer_CopyRawHostToDevice(
       c_api_, c_extension_, c_buffer_, src, offset, transfer_size);
 }
 
-PjRtFuture<> PjRtCApiRawBuffer::CopyRawDeviceToHost(void* dst, int64_t offset,
-                                                    int64_t transfer_size) {
+Future<> PjRtCApiRawBuffer::CopyRawDeviceToHost(void* dst, int64_t offset,
+                                                int64_t transfer_size) {
   return pjrt::PjRtCApiRawBuffer_CopyRawDeviceToHost(
       c_api_, c_extension_, c_buffer_, dst, offset, transfer_size);
 }
@@ -186,13 +188,12 @@ PjRtCApiBuffer_CreateRawAliasOfBuffer_Factory(PjRtBuffer* buffer) {
       return absl::UnimplementedError(
           "RawBuffer extension not implemented in this PJRT plugin.");
     }
-    TF_ASSIGN_OR_RETURN(PJRT_RawBuffer * raw_buffer,
-                        pjrt::PjRtCApiBuffer_CreateRawAliasOfBuffer(
-                            c_api, extension, c_api_buffer->c_buffer()));
+    ASSIGN_OR_RETURN(PJRT_RawBuffer * raw_buffer,
+                     pjrt::PjRtCApiBuffer_CreateRawAliasOfBuffer(
+                         c_api, extension, c_api_buffer->c_buffer()));
     return tsl::MakeRef<PjRtCApiRawBuffer>(
-        raw_buffer,
-        tensorflow::down_cast<PjRtCApiClient*>(c_api_buffer->client()), c_api,
-        extension);
+        raw_buffer, absl::down_cast<PjRtCApiClient*>(c_api_buffer->client()),
+        c_api, extension);
   }
   return std::nullopt;
 }

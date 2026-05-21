@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -31,13 +32,19 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/hlo/ir/stack_frames.h"
+#include "xla/hlo/transforms/propagate_call_metadata.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo_domain_isolator.h"
 #include "xla/service/spmd/shardy/constants.h"
@@ -50,42 +57,6 @@ limitations under the License.
 namespace xla {
 namespace {
 
-// Recursively prepends the given prefix to the op name of the given HLO
-// instruction as well as all the instructions in its called computations.
-void RecursivelyUpdateOpName(HloInstruction* hlo, absl::string_view prefix) {
-  if (prefix.empty()) {
-    return;
-  }
-
-  // We only want to descend into "control flow" computations, since annotating
-  // embedded computations is wasted effort.
-  //
-  // TODO(b/429017389): We don't want to descend into calls, since this will
-  // produce incorrect metadata for computations with multiple callsites.
-  // However we're still seeing some missing prefix metadata that we'll need to
-  // figure out that recursing into calls does appear to help with.
-  if (GetInstructionCallContext(hlo->opcode()) == CallContext::kControlFlow &&
-      hlo->opcode() != HloOpcode::kCall) {
-    for (HloComputation* computation : hlo->called_computations()) {
-      for (HloInstruction* instruction : computation->instructions()) {
-        RecursivelyUpdateOpName(instruction, prefix);
-      }
-    }
-  }
-
-  // We found that some users are sticking many megabytes of strings into
-  // op_name. Don't form op names that would be too big.
-  OpMetadata metadata = hlo->metadata();
-  if (prefix.size() + metadata.op_name().size() < CallInliner::kMaxOpNameSize) {
-    if (metadata.op_name().empty()) {
-      metadata.set_op_name(prefix);
-    } else {
-      metadata.set_op_name(absl::StrCat(prefix, "/", metadata.op_name()));
-    }
-    hlo->set_metadata(metadata);
-  }
-}
-
 // Traverses the callee computation, inlining cloned nodes into the caller
 // computation and connecting them to producers/consumers appropriately.
 // When the traversal has completed, the provided call instruction is entirely
@@ -95,8 +66,14 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
   // call is the call operation -- it will be replaced with the body of the
   // called computation.
   explicit SubcomputationInsertionVisitor(HloInstruction* call,
-                                          absl::string_view call_op_name)
-      : call_(call), outer_(call->parent()), call_op_name_(call_op_name) {
+                                          absl::string_view call_op_name,
+                                          StackFrameId call_stack_frame_id,
+                                          bool propagate_metadata)
+      : call_(call),
+        outer_(call->parent()),
+        call_op_name_(call_op_name),
+        call_stack_frame_id_(call_stack_frame_id),
+        propagate_metadata_(propagate_metadata) {
     CHECK_EQ(HloOpcode::kCall, call_->opcode());
   }
 
@@ -110,29 +87,15 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     }
     VLOG(1) << "Cloning HLO and adding to caller: " << hlo->ToString();
     auto new_hlo = hlo->CloneWithNewOperands(hlo->shape(), new_operands);
-    RecursivelyUpdateOpName(new_hlo.get(), call_op_name_);
     HloInstruction* new_hlo_pointer =
         outer_->AddInstruction(std::move(new_hlo));
+    if (propagate_metadata_) {
+      PropagateCallMetadata::PropagateMetadataToInstruction(
+          new_hlo_pointer, call_op_name_, call_stack_frame_id_);
+    }
     TF_RETURN_IF_ERROR(NoteMapping(hlo, new_hlo_pointer));
 
-    new_hlo_pointer->CopyOriginalValue(hlo, /*clone=*/true);
-    if (std::shared_ptr<OriginalValue> original_value =
-            new_hlo_pointer->original_value()) {
-      for (auto& pair : original_value->mutable_original_arrays()) {
-        std::optional<OriginalArray>& original_array = pair.second;
-        if (original_array.has_value()) {
-          std::string call_instruction_name;
-          if (std::shared_ptr<OriginalValue> call_original_value =
-                  call_->original_value()) {
-            call_instruction_name = call_original_value->original_arrays()
-                                        .begin()
-                                        ->second->instruction_name;
-          }
-          original_array->instruction_name = absl::StrCat(
-              call_instruction_name, "/", original_array->instruction_name);
-        }
-      }
-    }
+    PropagateOriginalValue(new_hlo_pointer, hlo);
 
     // Account for control edges.
     for (HloInstruction* control_predecessor : hlo->control_predecessors()) {
@@ -177,7 +140,7 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
                 /*old_instruction=*/call_, /*new_instruction=*/new_root,
                 /*preserve_sharding=*/false,
                 /*relay_control_dependency=*/true,
-                /*remove_unused_operands=*/true)
+                /*remove_unused_operands=*/false)
             .status();
     // Restores the original value of the new root, which gets overwritten
     // when it's used to replace the call instruction.
@@ -218,10 +181,53 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     return absl::OkStatus();
   }
 
+  // Propagates original value information from the call and the original HLO
+  // to the newly cloned HLO.
+  void PropagateOriginalValue(HloInstruction* new_hlo_pointer,
+                              HloInstruction* hlo) {
+    std::shared_ptr<OriginalValue> call_original_value =
+        call_->original_value();
+    if (!call_original_value) {
+      new_hlo_pointer->set_original_value(nullptr);
+      return;
+    }
+    std::optional<std::string> call_instructions =
+        call_original_value->GetOriginalCallLikeInstructions();
+    if (!call_instructions.has_value()) {
+      // If the call instruction is lost, we must drop the original values
+      // on the inlined instructions because the call hierarchy is lost.
+      new_hlo_pointer->set_original_value(nullptr);
+      return;
+    }
+    new_hlo_pointer->CopyOriginalValue(hlo, /*clone=*/true,
+                                       /*issue_warning=*/true);
+    if (call_instructions->empty()) {
+      // Empty call instructions means the call is synthetic and hence the
+      // inlined instruction do not need to be prefixed with the call
+      // instructions. Hence we can just return here to have the copied original
+      // value to be used.
+      return;
+    }
+    std::shared_ptr<OriginalValue> original_value =
+        new_hlo_pointer->original_value();
+    if (!original_value) {
+      return;
+    }
+    for (auto& pair : original_value->mutable_original_arrays()) {
+      std::optional<OriginalArray>& original_array = pair.second;
+      if (original_array.has_value()) {
+        original_array->instruction_name = absl::StrCat(
+            *call_instructions, "/", original_array->instruction_name);
+      }
+    }
+  }
+
   HloInstruction* call_;
   HloComputation* outer_;
   CallInliner::InlinedInstructionMap subcomputation_hlo_to_new_hlo_;
   absl::string_view call_op_name_;
+  StackFrameId call_stack_frame_id_;
+  bool propagate_metadata_;
 };
 
 bool InlineComposites(
@@ -234,7 +240,7 @@ bool InlineComposites(
 
 // Introduces a specific attribute so that the frontend has the direct
 // control over inlining specific calls.
-bool InlineInstruction(HloInstruction* instruction) {
+bool FrontendAttributesAllowInlining(const HloInstruction* instruction) {
   auto it = instruction->frontend_attributes().map().find("inlineable");
   if (it != instruction->frontend_attributes().map().end()) {
     return it->second == "true";
@@ -245,7 +251,7 @@ bool InlineInstruction(HloInstruction* instruction) {
 }  // namespace
 
 /* static */ absl::StatusOr<CallInliner::InlinedInstructionMap>
-CallInliner::Inline(HloInstruction* call) {
+CallInliner::Inline(HloInstruction* call, bool propagate_metadata) {
   TF_RET_CHECK(call->opcode() == HloOpcode::kCall)
       << "Instruction was not a call op: " << call->opcode();
   if (call->is_composite()) {
@@ -266,18 +272,26 @@ CallInliner::Inline(HloInstruction* call) {
   // inlined instructions.
   if (call->has_frontend_attributes()) {
     const FrontendAttributes& call_attributes = call->frontend_attributes();
-    std::string has_fuse =
-        call_attributes.map().contains("MUST_FUSE")      ? "MUST_FUSE"
-        : call_attributes.map().contains("MAXIMAL_FUSE") ? "MAXIMAL_FUSE"
-                                                         : "";
-    if (!has_fuse.empty()) {
+    for (auto maybe_attribute :
+         {call_attributes.map().contains("MUST_FUSE")
+              ? std::make_optional("MUST_FUSE")
+          : call_attributes.map().contains("MAXIMAL_FUSE")
+              ? std::make_optional("MAXIMAL_FUSE")
+              : std::nullopt,
+          call_attributes.map().contains("mosaic_fusion_group")
+              ? std::make_optional("mosaic_fusion_group")
+              : std::nullopt}) {
+      if (!maybe_attribute.has_value()) {
+        continue;
+      }
+      const auto attribute = *maybe_attribute;
       for (auto instruction : callee->instructions()) {
         // Do so for only fusible instructions.
         if (instruction->IsFusible()) {
           FrontendAttributes frontend_attributes =
               instruction->frontend_attributes();
           frontend_attributes.mutable_map()->insert(
-              {has_fuse, call_attributes.map().at(has_fuse)});
+              {attribute, call_attributes.map().at(attribute)});
           instruction->set_frontend_attributes(frontend_attributes);
         }
       }
@@ -285,7 +299,9 @@ CallInliner::Inline(HloInstruction* call) {
   }
 
   // We visit the callee, cloning its body into its caller.
-  SubcomputationInsertionVisitor visitor(call, call->metadata().op_name());
+  SubcomputationInsertionVisitor visitor(
+      call, call->metadata().op_name(),
+      StackFrameId{call->metadata().stack_frame_id()}, propagate_metadata);
   TF_RETURN_IF_ERROR(callee->Accept(&visitor));
   return visitor.ConsumeInstructionMap();
 }
@@ -297,15 +313,10 @@ bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
   if (!prerequisite) {
     return false;
   }
-  if (!InlineInstruction(instruction)) {
-    // Always prioritize user's explicit requests after fulfilling the
-    // prerequisites.
-    return false;
-  }
   if (instruction->GetModule()->config().use_shardy_partitioner() &&
       (absl::StrContains(instruction->to_apply()->name(), "shmap_body") ||
        absl::StrContains(instruction->to_apply()->name(),
-                         sdy::kManualComputationBodyFuncName.str()))) {
+                         sdy::kManualComputationFuncName.str()))) {
     // TODO(b/436603025). Remove this special handling by marking the
     // instruction as uninlineable with the frontend attribute.
     //
@@ -315,25 +326,46 @@ bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
     // - shmap_body: We do not want to inline the bodies of JAX shard maps to
     //   import them into an `sdy.ManualComputationOp`. This is for the MHLO
     //   round-trip pipeline
-    // - kManualComputationBodyFuncName: Same as shmap_body except for the SDY
+    // - kManualComputationFuncName: Same as shmap_body except for the SDY
     //   round-trip pipeline.
     return false;
   }
   return InlineComposites(instruction, composites_to_preserve_);
 }
 
-bool CallInliner::ShouldInline(const CallGraph& call_graph,
-                               HloInstruction* instruction) const {
-  if (!IsInlineableCallOp(instruction)) {
+/* static */ bool CallInliner::InlineInstructionAllowed(
+    const HloInstruction* instruction, InlineOverridePolicy policy) {
+  if (policy == InlineOverridePolicy::kProhibitInline) {
     return false;
   }
 
-  if (should_inline_.has_value()) {
-    if (!(*should_inline_)(call_graph, instruction)) {
+  if (policy != InlineOverridePolicy::kAllowIgnoreFrontendAttributes) {
+    if (!FrontendAttributesAllowInlining(instruction)) {
       return false;
     }
   }
 
+  return true;
+}
+
+bool CallInliner::ShouldInline(const CallGraph& call_graph,
+                               HloInstruction* instruction) const {
+  // Check this is an inlineable call op (but not frontend attributes)
+  if (!IsInlineableCallOp(instruction)) {
+    return false;
+  }
+
+  // Check the override policy, if any.
+  InlineOverridePolicy policy = InlineOverridePolicy::kAllowInline;
+  if (override_policy_.has_value()) {
+    policy = (*override_policy_)(call_graph, instruction);
+  }
+
+  if (!InlineInstructionAllowed(instruction, policy)) {
+    return false;
+  }
+
+  // If we're only inlining calls with a single call site, check that.
   if (single_call_site_) {
     return call_graph.GetNode(instruction->to_apply())
                .caller_callsites()
@@ -345,7 +377,8 @@ bool CallInliner::ShouldInline(const CallGraph& call_graph,
 
 absl::StatusOr<bool> CallInliner::InlineAndLegalize(
     const CallGraph& call_graph, HloComputation* computation,
-    absl::Span<HloInstruction* const> instruction_sequence) const {
+    absl::Span<HloInstruction* const> instruction_sequence,
+    std::optional<InlinedInstructionMap*> inline_map) {
   HloModule* module = computation->parent();
   bool did_node_mutate = false;
   std::vector<HloInstruction*> inlined_instructions;
@@ -358,23 +391,28 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
       // The caller instruction will get removed after inlining. Record the
       // callee computation beforehand, so we can find its schedule.
       HloComputation* callee = instruction->to_apply();
-      TF_ASSIGN_OR_RETURN(CallInliner::InlinedInstructionMap inline_map,
-                          Inline(instruction));
+      TF_ASSIGN_OR_RETURN(InlinedInstructionMap inline_map_cur_call,
+                          Inline(instruction, propagate_metadata_));
       if (module->has_schedule()) {
         for (HloInstruction* inlined_instruction :
              module->schedule().sequence(callee).instructions()) {
           // Parameters were already added to sequence as operands to the
           // call.
           if (inlined_instruction->opcode() != HloOpcode::kParameter) {
-            inlined_instructions.push_back(inline_map[inlined_instruction]);
+            inlined_instructions.push_back(
+                inline_map_cur_call[inlined_instruction]);
           }
         }
       }
       if (update_domain_) {
         HloDomainIsolator isolator([]() { return ShardingDomainCreator{}; });
-        for (const auto& [call_inst, inlined_inst] : inline_map) {
+        for (const auto& [call_inst, inlined_inst] : inline_map_cur_call) {
           TF_RETURN_IF_ERROR(isolator.UpdateDomains(inlined_inst).status());
         }
+      }
+      if (inline_map.has_value()) {
+        inline_map.value()->insert(inline_map_cur_call.begin(),
+                                   inline_map_cur_call.end());
       }
       did_node_mutate = true;
     } else if (module->has_schedule()) {
@@ -385,21 +423,14 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
     module->schedule().GetOrCreateSequence(computation) =
         HloInstructionSequence(inlined_instructions);
   }
-  if (did_node_mutate && uniquify_channel_ids_) {
-    int unique_channel_id = 1;
-    for (HloInstruction* instruction : computation->instructions()) {
-      if (dynamic_cast<HloChannelInstruction*>(instruction)) {
-        instruction->set_channel_id(unique_channel_id++);
-      }
-    }
-  }
   return did_node_mutate;
 }
 
-absl::StatusOr<bool> CallInliner::Run(
-    HloModule* module,
+absl::StatusOr<bool> CallInliner::RunWithInlineMap(
+    HloModule* module, std::optional<InlinedInstructionMap*> inline_map,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
+
   // Because call graph nodes are visited in post-order (callees before callers)
   // we'll always inline kCalls into their callers in the appropriate order.
   TF_ASSIGN_OR_RETURN(
@@ -415,12 +446,12 @@ absl::StatusOr<bool> CallInliner::Run(
               HloInstructionSequence& sequence =
                   module->schedule().GetOrCreateSequence(node.computation());
               return InlineAndLegalize(*call_graph, node.computation(),
-                                       sequence.instructions());
+                                       sequence.instructions(), inline_map);
             }
 
             return InlineAndLegalize(
                 *call_graph, node.computation(),
-                node.computation()->MakeInstructionPostOrder());
+                node.computation()->MakeInstructionPostOrder(), inline_map);
           }));
   if (did_mutate) {
     // Run DCE to remove called computations which are now becoming unused.
@@ -434,6 +465,50 @@ absl::StatusOr<bool> CallInliner::Run(
     }
   }
   return did_mutate;
+}
+
+absl::StatusOr<bool> CallInliner::RunImpl(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  return RunWithInlineMap(module, std::nullopt, execution_threads);
+}
+
+bool IsInlineableComputation(HloComputation* computation) {
+  auto is_inlineable_call_op = [](HloInstruction* instruction) {
+    bool prerequisite = instruction->opcode() == HloOpcode::kCall &&
+                        !instruction->has_backend_config() &&
+                        !instruction->parent()->IsAsyncComputation();
+    if (!prerequisite || (!FrontendAttributesAllowInlining(instruction))) {
+      return false;
+    }
+    return true;
+  };
+  return absl::c_any_of(computation->instructions(), is_inlineable_call_op);
+}
+
+const HloInstruction* InlinedModule::get_inlined_inst(
+    const HloInstruction* inst) {
+  auto it = clone_context->cloned_instructions().find(inst);
+  if (it != clone_context->cloned_instructions().end()) {
+    auto it2 = clone_inlined_map.find(it->second);
+    if (it2 != clone_inlined_map.end()) {
+      return it2->second;
+    }
+    return it->second;
+  }
+  return nullptr;
+}
+
+absl::StatusOr<InlinedModule> GetInlinedModule(const HloModule* module) {
+  auto [cloned_module, clone_context] =
+      module->CloneWithContext("inline", module->config());
+  CallInliner::InlinedInstructionMap clone_inlined_map;
+  CallInliner inliner;
+  TF_RETURN_IF_ERROR(
+      inliner.RunWithInlineMap(cloned_module.get(), &clone_inlined_map, {})
+          .status());
+  return InlinedModule{std::move(cloned_module), std::move(clone_context),
+                       std::move(clone_inlined_map)};
 }
 
 }  // namespace xla

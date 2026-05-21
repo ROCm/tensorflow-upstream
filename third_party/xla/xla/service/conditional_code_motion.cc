@@ -30,10 +30,14 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_split.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -47,7 +51,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -98,7 +101,7 @@ HloInstruction* CloneNestedTuples(HloInstruction* tuple) {
                                             /* accept_different_shape =*/true);
     } else {
       for (auto tuple_user : tuple_users) {
-        TF_CHECK_OK(tuple->ReplaceUseWithDifferentShape(tuple_user, new_tuple));
+        CHECK_OK(tuple->ReplaceUseWithDifferentShape(tuple_user, new_tuple));
       }
     }
     return new_tuple;
@@ -631,7 +634,7 @@ absl::StatusOr<bool> ConvertSpecialMove(HloInstruction* conditional,
     // The shape can vary since the operands to convert are now
     // being returned through the branches' root.
     cur_branch->set_root_instruction(new_branch_root, true /*new shape*/);
-    TF_CHECK_OK(cur_branch->RemoveInstruction(old_root));
+    CHECK_OK(cur_branch->RemoveInstruction(old_root));
 
     // Only one of the branches needs to change the conditional->parent().
     if (branch != 0) {
@@ -647,10 +650,18 @@ absl::StatusOr<bool> ConvertSpecialMove(HloInstruction* conditional,
     // Ensure that all the users of conditional refer to the new one.
     TF_RETURN_IF_ERROR(
         conditional->ReplaceAllUsesWithDifferentShape(newconditional));
-    TF_CHECK_OK(conditional_parent->RemoveInstruction(conditional));
+    CHECK_OK(conditional_parent->RemoveInstruction(conditional));
     conditional = newconditional;
+    // Sort the hoist set deterministically to avoid pointer-based
+    // non-determinism.
+    std::vector<HloInstruction*> to_hoist_list(to_hoist_set.begin(),
+                                               to_hoist_set.end());
+    absl::c_sort(to_hoist_list,
+                 [](const HloInstruction* a, const HloInstruction* b) {
+                   return a->unique_id() < b->unique_id();
+                 });
     // Add the hoisted instructions in the parent.
-    for (HloInstruction* hoist : to_hoist_set) {
+    for (HloInstruction* hoist : to_hoist_list) {
       VLOG(2) << "Hoisting instruction:" << hoist->ToString();
       int64_t hoist_index = map_inst_to_tuple_index[hoist];
       // Find out the gte that captured the hoisted instr result.
@@ -667,7 +678,7 @@ absl::StatusOr<bool> ConvertSpecialMove(HloInstruction* conditional,
           hoist->CloneWithNewOperands(hoist->shape(), new_operands));
       VLOG(2) << "Hoisted instruction in parent:" << hoisted->ToString();
       TF_RETURN_IF_ERROR(gte_hoist->ReplaceAllUsesWith(hoisted));
-      TF_CHECK_OK(conditional_parent->RemoveInstruction(gte_hoist));
+      CHECK_OK(conditional_parent->RemoveInstruction(gte_hoist));
     }
     // No need to explicitly delete a hoisted instruction since if its dead
     // then the subsequent DCE will remove it.
@@ -1039,9 +1050,7 @@ class MoveOperandIntoBranch {
         VLOG(1) << "matching_tuple_indices: "
                 << matching_tuple_indices[matching_index][0] << "\n";
         if (matching_tuple_indices[matching_index].end() ==
-            std::find(matching_tuple_indices[matching_index].begin(),
-                      matching_tuple_indices[matching_index].end(),
-                      tuple_index)) {
+            absl::c_find(matching_tuple_indices[matching_index], tuple_index)) {
           continue;
         }
         for (HloInstruction* param_user : param_users) {
@@ -1061,7 +1070,7 @@ class MoveOperandIntoBranch {
           } else {
             VLOG(1) << "new_param_shape=" << new_param_shape->ToString();
             *param_user->mutable_shape() = *new_param_shape;
-            TF_CHECK_OK(param_user->ReplaceAllUsesWith(branch_param));
+            CHECK_OK(param_user->ReplaceAllUsesWith(branch_param));
           }
         }
       }
@@ -1111,8 +1120,7 @@ class MoveOperandIntoBranch {
       }
       while (repl_count < new_operands.size()) {
         HloInstruction* new_input = new_operands[repl_count++];
-        auto new_input_in_user = std::find(user->operands().begin(),
-                                           user->operands().end(), new_input);
+        auto new_input_in_user = absl::c_find(user->operands(), new_input);
         int64_t opd_index = (new_input_in_user == user->operands().end())
                                 ? user->operand_count()
                                 : new_input_in_user - user->operands().begin();
@@ -1436,13 +1444,37 @@ class GroupConnectedBoundaries {
     }
   }
   // Returns true if `instruction` is worth hoisting.
-  bool WorthHoisting(HloInstruction* instruction, Boundary::Position pos,
-                     int64_t index) {
+  bool WorthHoisting(const Boundary& b, int64_t index) {
+    HloInstruction* instruction = b[0];
+    Boundary::Position pos = b.GetPosition();
     // This is needed for the "moving-in" transformation, to prevent the root
     // of the parent computation (which contains the conditional) to be moved
     // inside the conditional.
     VLOG(1) << "Check Worth hoisting\n";
     HloOpcode opcode = instruction->opcode();
+    if (pos == Boundary::Position::kInsideBranch &&
+        opcode == HloOpcode::kBroadcast) {
+      Boundary next_boundary = GetNextBoundary(b, 0);
+      HloOpcode op0 = next_boundary[0]->opcode();
+      bool all_same_opcode = absl::c_all_of(
+          next_boundary,
+          [&](HloInstruction* inst) { return inst->opcode() == op0; });
+      if (!all_same_opcode) {
+        VLOG(1) << "Not moving broadcast out b/c its operands have different "
+                   "opcodes.";
+        return false;
+      }
+      if (!InstructionWithinBranchIdentical(next_boundary,
+                                            is_layout_sensitive_)) {
+        VLOG(1) << "Not moving broadcast out b/c its operand is not identical.";
+        return false;
+      }
+    }
+    if (pos == Boundary::Position::kOutsideBranchUser &&
+        opcode == HloOpcode::kBroadcast) {
+      VLOG(1) << "Do not move broadcast into branches as a user.";
+      return false;
+    }
     if (opcode == HloOpcode::kTuple &&
         instruction == conditional_parent_->root_instruction()) {
       VLOG(1) << "Do not move conditional parent.";
@@ -1809,8 +1841,7 @@ class GroupConnectedBoundaries {
       VLOG(1) << "boundary index=" << boundary_index << "\n";
       if ((b.IsOutsideBranchUser() || b.IsOutsideBranchOperand() ||
            InstructionWithinBranchIdentical(b, is_layout_sensitive_)) &&
-          IsSafeToMoveBoundary(b) &&
-          WorthHoisting(b[0], b.GetPosition(), boundary_index)) {
+          IsSafeToMoveBoundary(b) && WorthHoisting(b, boundary_index)) {
         connected_boundaries_.push_back(b);
         boundary_index++;
         auto output_size = CalculateMemorySize(b[0]);
@@ -1874,8 +1905,17 @@ class GroupConnectedBoundaries {
         boundary_in.push_back(root_inst);
       }
       new_boundaries_.push_back(boundary_in);
+      // Sort the users deterministically before pushing them onto boundaries to
+      // maintain stable order.
+      std::vector<HloInstruction*> sorted_users(inst->users().begin(),
+                                                inst->users().end());
+      absl::c_sort(sorted_users,
+                   [](const HloInstruction* a, const HloInstruction* b) {
+                     return a->unique_id() < b->unique_id();
+                   });
+
       // Add conditional users as new boundaries to visit.
-      for (auto u : inst->users()) {
+      for (auto u : sorted_users) {
         Boundary boundary_in(Boundary::Position::kOutsideBranchUser);
         boundary_in.push_back(u);
         new_boundaries_.push_back(boundary_in);
@@ -1939,16 +1979,15 @@ ConditionalCodeMotion::Decision ConditionalCodeMotion::ConsiderCodeMotion(
                           ? Decision::Direction::kMoveOutOfBranch
                           : Decision::Direction::kMoveIntoBranch,
                       benefit);
-    } else {
-      connect.clear_recently_visited();
     }
+    connect.clear_recently_visited();
   } else {
     connect.AddNewBoundaries(new_boundaries);
   }
   return Decision(Decision::Direction::kNoChange, 0);
 }
 
-absl::StatusOr<bool> ConditionalCodeMotion::Run(
+absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(2) << "Begin a new pass of conditional code motion optimization.\n";

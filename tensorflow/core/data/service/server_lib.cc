@@ -56,7 +56,7 @@ GrpcDataServerBase::GrpcDataServerBase(
 
 absl::Status GrpcDataServerBase::Start() {
   if (stopped_) {
-    return errors::FailedPrecondition(
+    return absl::FailedPreconditionError(
         "Server cannot be started after it has been stopped.");
   }
   if (started_) {
@@ -71,7 +71,7 @@ absl::Status GrpcDataServerBase::Start() {
   std::shared_ptr<::grpc::ServerCredentials> credentials;
   TF_RETURN_IF_ERROR(
       CredentialsFactory::CreateServerCredentials(protocol_, &credentials));
-  builder.AddListeningPort(strings::StrCat("0.0.0.0:", requested_port_),
+  builder.AddListeningPort(absl::StrCat("0.0.0.0:", requested_port_),
                            credentials, &bound_port_);
   builder.SetMaxReceiveMessageSize(-1);
 
@@ -79,7 +79,7 @@ absl::Status GrpcDataServerBase::Start() {
   AddProfilerServiceToBuilder(builder);
   server_ = builder.BuildAndStart();
   if (!server_) {
-    return errors::Internal("Could not start gRPC server");
+    return absl::InternalError("Could not start gRPC server");
   }
 
   TF_RETURN_IF_ERROR(StartServiceInternal());

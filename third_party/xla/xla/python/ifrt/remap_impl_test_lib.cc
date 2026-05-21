@@ -15,7 +15,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -25,6 +24,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/Support/Casting.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
@@ -40,7 +40,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 
@@ -52,7 +51,6 @@ using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
 using ::testing::SizeIs;
-using ::tsl::testing::StatusIs;
 
 // Returns a shape for an array whose first dimension is fully sharded across
 // `num_shards` devices. For example, [2, 3] with num_shards=5 becomes [10, 3].
@@ -70,10 +68,9 @@ absl::StatusOr<ArraySpec> CreateArraySpec(Client* client,
                                           absl::Span<const int> device_indices,
                                           Shape shard_shape = Shape({2, 3}),
                                           DType dtype = DType(DType::kS32)) {
-  TF_ASSIGN_OR_RETURN(DeviceListRef device_list,
-                      test_util::GetAddressableDevices(client, device_indices));
-  TF_ASSIGN_OR_RETURN(Shape shape,
-                      GetShape(device_indices.size(), shard_shape));
+  ASSIGN_OR_RETURN(DeviceListRef device_list,
+                   test_util::GetAddressableDevices(client, device_indices));
+  ASSIGN_OR_RETURN(Shape shape, GetShape(device_indices.size(), shard_shape));
   return ArraySpec{/*dtype=*/dtype,
                    /*shape=*/shape,
                    /*sharding=*/
@@ -109,7 +106,7 @@ absl::StatusOr<ArrayRef> CreateArray(Client* client,
   TF_RET_CHECK(base_values.size() == device_indices.size());
 
   DType dtype(CppTypeToDType<ValueType>::kDType);
-  TF_ASSIGN_OR_RETURN(Shape shape, GetShape(base_values.size(), shard_shape));
+  ASSIGN_OR_RETURN(Shape shape, GetShape(base_values.size(), shard_shape));
 
   std::vector<ArrayRef> shards;
   shards.reserve(base_values.size());
@@ -118,23 +115,22 @@ absl::StatusOr<ArrayRef> CreateArray(Client* client,
 
   for (int i = 0; i < base_values.size(); ++i) {
     std::vector<ValueType> data(shard_shape.num_elements());
-    std::iota(data.begin(), data.end(), base_values[i]);
+    absl::c_iota(data, base_values[i]);
 
     Device* device = client->addressable_devices().at(device_indices[i]);
     devices.push_back(device);
     ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
 
-    TF_ASSIGN_OR_RETURN(
-        shards.emplace_back(),
-        client->MakeArrayFromHostBuffer(
-            data.data(), dtype, shard_shape,
-            /*byte_strides=*/std::nullopt, std::move(sharding),
-            Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-            /*on_done_with_host_buffer=*/{}));
+    ASSIGN_OR_RETURN(shards.emplace_back(),
+                     client->MakeArrayFromHostBuffer(
+                         data.data(), dtype, shard_shape,
+                         /*byte_strides=*/std::nullopt, std::move(sharding),
+                         /*layout=*/nullptr,
+                         Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+                         /*on_done_with_host_buffer=*/{}));
   }
 
-  TF_ASSIGN_OR_RETURN(DeviceListRef device_list,
-                      client->MakeDeviceList(devices));
+  ASSIGN_OR_RETURN(DeviceListRef device_list, client->MakeDeviceList(devices));
   ShardingRef assembled_sharding =
       ConcreteEvenSharding::Create(std::move(device_list), MemoryKind(),
                                    /*shape=*/shape,
@@ -181,7 +177,7 @@ void AssertArrayContent(Client* client, Array* array,
                 ElementsAre(expected_device));
 
     std::vector<ValueType> expected_data(expected_shard_shape.num_elements());
-    std::iota(expected_data.begin(), expected_data.end(), base_values[i]);
+    absl::c_iota(expected_data, base_values[i]);
 
     std::vector<ValueType> actual_data(shards[i]->shape().num_elements());
     TF_ASSERT_OK(shards[i]
@@ -207,6 +203,7 @@ TEST(RemapImplTest, ExtractSingleShard) {
       RemapPlan::Mapping{/*in_array=*/0, /*out_array=*/0,
                          /*from=*/{RemapPlan::Interval{1, 2, 1}},
                          /*to=*/{RemapPlan::Interval{0, 1, 1}}});
+  TF_ASSERT_OK(plan.ComputeInputDevicesForOutputMap(client.get()));
   TF_ASSERT_OK(plan.Validate());
 
   std::vector<ArrayRef> arrays;
@@ -259,6 +256,7 @@ TEST(RemapImplTest, InterleaveArraysDonate) {
       RemapPlan::Mapping{/*in_array=*/1, /*out_array=*/0,
                          /*from=*/{RemapPlan::Interval{0, 2, 1}},
                          /*to=*/{RemapPlan::Interval{1, 4, 2}}});
+  TF_ASSERT_OK(plan.ComputeInputDevicesForOutputMap(client.get()));
   TF_ASSERT_OK(plan.Validate());
 
   std::vector<ArrayRef> arrays;
@@ -307,6 +305,7 @@ TEST(RemapImplTest, InterleaveArraysReuse) {
       RemapPlan::Mapping{/*in_array=*/1, /*out_array=*/0,
                          /*from=*/{RemapPlan::Interval{0, 2, 1}},
                          /*to=*/{RemapPlan::Interval{1, 4, 2}}});
+  TF_ASSERT_OK(plan.ComputeInputDevicesForOutputMap(client.get()));
   TF_ASSERT_OK(plan.Validate());
 
   std::vector<ArrayRef> arrays;
@@ -349,6 +348,7 @@ TEST(RemapImplTest, DeinterleaveArrays) {
       RemapPlan::Mapping{/*in_array=*/0, /*out_array=*/1,
                          /*from=*/{RemapPlan::Interval{1, 4, 2}},
                          /*to=*/{RemapPlan::Interval{0, 2, 1}}});
+  TF_ASSERT_OK(plan.ComputeInputDevicesForOutputMap(client.get()));
   TF_ASSERT_OK(plan.Validate());
 
   std::vector<ArrayRef> arrays;
@@ -423,6 +423,7 @@ TEST(RemapImplTest, BatchMappingIdentity) {
                          /*out_array=*/1,
                          /*from=*/{RemapPlan::Interval{0, 2, 1}},
                          /*to=*/{RemapPlan::Interval{0, 2, 1}}});
+  TF_ASSERT_OK(plan.ComputeInputDevicesForOutputMap(client.get()));
   TF_ASSERT_OK(plan.Validate());
 
   std::vector<ArrayRef> inputs;
@@ -508,6 +509,7 @@ TEST(RemapImplTest, BatchMappingDeinterleave) {
                          /*out_array=*/3,
                          /*from=*/{RemapPlan::Interval{1, 2, 1}},
                          /*to=*/{RemapPlan::Interval{0, 1, 1}}});
+  TF_ASSERT_OK(plan.ComputeInputDevicesForOutputMap(client.get()));
   TF_ASSERT_OK(plan.Validate());
 
   std::vector<ArrayRef> inputs;
@@ -554,6 +556,7 @@ TEST(RemapImplTest, DetectBadInput) {
       RemapPlan::Mapping{/*in_array=*/0, /*out_array=*/0,
                          /*from=*/{RemapPlan::Interval{0, 1, 1}},
                          /*to=*/{RemapPlan::Interval{0, 1, 1}}});
+  TF_ASSERT_OK(plan.ComputeInputDevicesForOutputMap(client.get()));
   TF_ASSERT_OK(plan.Validate());
 
   {

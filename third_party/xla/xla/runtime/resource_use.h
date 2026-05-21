@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 
 namespace xla {
@@ -48,6 +49,16 @@ class Resource {
 
   Kind kind() const { return kind_; }
 
+  // Returns a short, stable string name for a resource kind.
+  static absl::string_view ToString(Kind kind) {
+    switch (kind) {
+      case Kind::kToken:
+        return "token";
+      case Kind::kCollectiveCommunicator:
+        return "collective_communicator";
+    }
+  }
+
  private:
   explicit Resource(Kind kind);
   Kind kind_;
@@ -56,6 +67,14 @@ class Resource {
 // For consistency with BufferUse, we model resource uses as writes or reads
 // to and from resource. Resources have referential equality: we rely on
 // comparing pointers to check if resource is the same or not.
+//
+// Examples of using resources in XLA:
+//
+//   - HLO control dependencies that are not representable as buffers also
+//     modeled as resource writes and reads.
+//   - in XLA:CPU all collective operations must be ordered at run time. We use
+//     a global "collective communication" resource to model this constraint.
+//
 class ResourceUse {
  public:
   enum class ResourceAccess { kRead, kWrite };

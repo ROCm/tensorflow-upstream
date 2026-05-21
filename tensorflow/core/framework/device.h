@@ -56,7 +56,7 @@ class Device : public DeviceBase {
   // Callback type that takes a Status and returns void.
   typedef std::function<void(const absl::Status&)> DoneCallback;
 
-  Device(Env* env, const DeviceAttributes& device_attributes);
+  Device(Env* env, DeviceAttributes device_attributes);
   ~Device() override;
 
   // A compare function that orders devices by their parsed name.
@@ -129,7 +129,7 @@ class Device : public DeviceBase {
   // Stream::BlockHostUntilDone or Device::Sync. When applicable, the device
   // status is also updated with the retrieved stream status.
   virtual absl::Status RefreshStatus() {
-    return errors::Unimplemented(
+    return absl::UnimplementedError(
         "RefreshStatus is not supported on this device.");
   }
 

@@ -23,10 +23,14 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/profiler/utils/xplane_builder.h"
+#include "xla/tsl/profiler/utils/xplane_schema.h"
+#include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 #if !defined(IS_MOBILE_PLATFORM)
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/profiler/convert/post_process_single_host_xplane.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
 #include "tsl/platform/host_info.h"
@@ -41,12 +45,22 @@ namespace {
 
 using tensorflow::ProfileOptions;
 using tensorflow::profiler::XSpace;
+using ::tsl::profiler::XPlaneBuilder;
 
 ProfileOptions GetOptions(const ProfileOptions& opts) {
   if (opts.version()) return opts;
   ProfileOptions options = ProfilerSession::DefaultOptions();
   options.set_include_dataset_ops(opts.include_dataset_ops());
   return options;
+}
+
+void SetProfileOptionsIntoSpace(const ProfileOptions& options, XSpace* space) {
+  XPlaneBuilder xplane(profiler::FindOrAddMutablePlaneWithName(
+      space, tsl::profiler::kTaskEnvPlaneName));
+  xplane.AddStatValue(
+      *xplane.GetOrCreateStatMetadata(tsl::profiler::GetTaskEnvStatTypeStr(
+          tsl::profiler::kEnvProfileOptions)),
+      options);
 }
 
 };  // namespace
@@ -57,13 +71,13 @@ ProfileOptions GetOptions(const ProfileOptions& opts) {
 }
 
 absl::Status ProfilerSession::Status() {
-  absl::MutexLock l(&mutex_);
+  absl::MutexLock l(mutex_);
   return status_;
 }
 
 #if !defined(IS_MOBILE_PLATFORM)
 absl::Status ProfilerSession::CollectDataInternal(XSpace* space) {
-  absl::MutexLock l(&mutex_);
+  absl::MutexLock l(mutex_);
   TF_RETURN_IF_ERROR(status_);
   LOG(INFO) << "Profiler session collecting data.";
   if (profilers_ != nullptr) {
@@ -82,8 +96,10 @@ absl::Status ProfilerSession::CollectData(XSpace* space) {
 #if !defined(IS_MOBILE_PLATFORM)
   space->add_hostnames(port::Hostname());
   TF_RETURN_IF_ERROR(CollectDataInternal(space));
+  profiler::SetXSpacePidIfNotSet(*space, tsl::Env::Default()->GetProcessId());
   profiler::PostProcessSingleHostXSpace(space, start_time_ns_, stop_time_ns_);
 #endif
+  SetProfileOptionsIntoSpace(options_, space);
   return absl::OkStatus();
 }
 

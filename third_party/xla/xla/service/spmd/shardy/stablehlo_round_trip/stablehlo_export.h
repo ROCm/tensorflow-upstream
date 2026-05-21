@@ -27,17 +27,27 @@ namespace sdy {
 struct StablehloExportPipelineOptions
     : public mlir::PassPipelineOptions<StablehloExportPipelineOptions> {
   Option<bool> keepHloShardingConstraints{
-    *this, "keep-hlo-sharding-constraints",
-    llvm::cl::desc(
-        "Whether to convert SDY sharding constraints to @Sharding custom "
-        "calls - the HLO sharding constraint op. Else export "
-        "them to MHLO copy ops. By default, export to MHLO copy ops."),
-    llvm::cl::init(false)};
-  Option<bool> keepShardMapBodyAsFunc{
-      *this, "keep-shard-map-body-as-func",
+      *this, "keep-hlo-sharding-constraints",
       llvm::cl::desc(
-          "Whether to keep the body of the shard map as a function. Else the "
-          "body will be inlined. By default, inline the body."),
+          "Whether to convert SDY sharding constraints to @Sharding custom "
+          "calls - the HLO sharding constraint op. Else export "
+          "them to MHLO copy ops. By default, export to MHLO copy ops."),
+      llvm::cl::init(false)};
+  Option<bool> addMissingShardingToControlFlow{
+      *this, "add-missing-sharding-to-control-flow",
+      llvm::cl::desc(
+          "Whether to add a sharding to a control flow op without one."),
+      llvm::cl::init(true)};
+  Option<bool> enableHloShardingV3{
+      *this, "enable-hlo-sharding-v3",
+      llvm::cl::desc("Whether to enable HloShardingV3 which is the mesh and "
+                     "axis based sharding representation."),
+      llvm::cl::init(false)};
+  Option<bool> exportAllReduceScatter{
+      *this, "export-all-reduce-scatter",
+      llvm::cl::desc("Whether to export all sdy.reduce_scatter as native "
+                     "stablehlo.reduce_scatter. If false, only ops with "
+                     "unreduced axes are exported this way."),
       llvm::cl::init(false)};
 };
 

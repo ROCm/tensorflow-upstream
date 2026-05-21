@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -28,6 +29,7 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/debugging/leak_check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
@@ -42,6 +44,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/ptx_compiler.h"
 #include "xla/stream_executor/cuda/ptx_compiler_helpers.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
+#include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -167,6 +170,15 @@ absl::StatusOr<cuda::Assembly> CompileGpuAsmUsingLibNvPtxCompiler(
   if (!info_log.empty()) {
     if (absl::StrContains(info_log, "warning")) {
       LOG(INFO) << info_log;
+      if (VLOG_IS_ON(2)) {
+        // Truncate the log to 4096 characters if not in VLOG(3) mode.
+        size_t ptxLogLength =
+            std::min(ptx_contents.length(),
+                     VLOG_IS_ON(3) ? ptx_contents.length() : 4096);
+        VLOG(2) << "The following ptx produced a warning during compilation: \n"
+                << absl::string_view(ptx_contents).substr(0, ptxLogLength)
+                << (ptx_contents.size() > ptxLogLength ? "..." : "");
+      }
       if (cancel_if_reg_spill &&
           absl::StrContains(info_log, "Registers are spilled")) {
         return absl::CancelledError(
@@ -176,6 +188,7 @@ absl::StatusOr<cuda::Assembly> CompileGpuAsmUsingLibNvPtxCompiler(
       VLOG(2) << info_log;
     }
   }
+  ModuleStats module_stats = ExtractModuleStatsFromLog(info_log);
 
   size_t cubinSize{};
   RETURN_IF_NVPTXCOMPILER_ERROR(
@@ -191,7 +204,8 @@ absl::StatusOr<cuda::Assembly> CompileGpuAsmUsingLibNvPtxCompiler(
         absl::StrCat(std::move(*error_log), "\n", std::move(info_log));
   }
 
-  return cuda::Assembly{cubin, std::move(maybe_compilation_log)};
+  return cuda::Assembly{cubin, std::move(maybe_compilation_log),
+                        std::move(module_stats)};
 }
 
 absl::StatusOr<SemanticVersion> GetLibNvPtxCompilerVersion() {
@@ -210,10 +224,14 @@ absl::StatusOr<int> GetLatestPtxIsaVersionForNvptxCompiler() {
     nvPTXCompilerDestroy(&compiler_handle);
   };
 
-  // TODO(b/437088681): Re-enable heap checking when calling
-  // nvPTXCompilerCompile. The compiler does not seem to free resources properly
-  // on error.
-  absl::LeakCheckDisabler disabler;
+  std::optional<absl::LeakCheckDisabler> disabler;
+  TF_ASSIGN_OR_RETURN(SemanticVersion version, GetLibNvPtxCompilerVersion());
+  if (version < SemanticVersion(13, 0, 0)) {
+    // libNvptxCompiler prior to CUDA 13 has a memory leak when calling
+    // nvPTXCompilerCompile when the input PTX is invalid.
+    disabler.emplace();
+  }
+
   std::vector<const char*> opts{};
   nvPTXCompileResult compile_result =
       nvPTXCompilerCompile(compiler_handle, opts.size(), opts.data());

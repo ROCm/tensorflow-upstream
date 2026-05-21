@@ -18,7 +18,9 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -27,38 +29,64 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
+#include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
+#include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/stream_executor/command_buffer.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 
 class CommandBufferThunk : public Thunk {
  public:
-  CommandBufferThunk(CommandBufferCmdExecutor commands, ThunkInfo thunk_info,
-                     std::unique_ptr<SequentialThunk> thunks = nullptr,
-                     bool enable_command_buffers_during_profiling = false);
+  CommandBufferThunk(
+      CommandExecutor commands, ThunkInfo thunk_info,
+      std::unique_ptr<SequentialThunk> thunks = nullptr,
+      bool enable_command_buffers_during_profiling = false,
+      DebugOptions::CommandBufferUpdateMode command_buffer_update_mode =
+          DebugOptions::ALWAYS_UPDATE);
 
   const std::unique_ptr<SequentialThunk>& thunks() const { return thunks_; }
 
-  absl::Status Prepare(const PrepareParams& params,
-                       ResourceRequestsInterface& resource_requests) override;
+  // Returns buffer allocation indices referenced by commands in this thunk.
+  absl::Span<const BufferAllocation::Index> allocs_indices() const {
+    return commands_.allocs_indices();
+  }
+
+  // Walks all commands in this thunk, invoking the callback for each.
+  absl::Status WalkCommands(
+      absl::FunctionRef<absl::Status(const Command*)> callback) const {
+    return commands_.Walk(callback);
+  }
+
+  absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   // Return the allocation address that was lazilly allocated inside command
   // buffer. This API is required when the buffers are allocated inside command
   // buffer but will be consumed by non-command buffer operations.
-  absl::StatusOr<se::DeviceMemoryBase> GetCommandBufferAllocationAddress(
+  absl::StatusOr<se::DeviceAddressBase> GetCommandBufferAllocationAddress(
       const ExecuteParams& params, int64_t index);
 
-  void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const override;
+  absl::Status WalkNested(Walker callback) override;
 
   std::string ToString(int indent) const override;
+
+  absl::StatusOr<ThunkProto> ToProto() const override;
+
+  // Returns whether command buffers are enabled during profiling.
+  // When this is false, and there's an active profiler session, the thunks will
+  // be evaluated as a regular thunk sequence.
+  bool IsEnabledDuringProfiling() const {
+    return enable_command_buffers_during_profiling_;
+  }
 
  private:
   // Command buffer instantiated on a `se::StreamExecutor` instance, and
@@ -72,8 +100,7 @@ class CommandBufferThunk : public Thunk {
     // changed since the last update. Returned buffer allocations are sorted by
     // the buffer allocation index.
     std::vector<BufferAllocation::Index> UpdateBufferAllocations(
-        const CommandBufferCmdExecutor& commands,
-        const Thunk::ExecuteParams& params)
+        const CommandExecutor& commands, const Thunk::ExecuteParams& params)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
     // se::CommandBuffer is not thread safe, and we guard it with a mutex to
@@ -83,7 +110,7 @@ class CommandBufferThunk : public Thunk {
 
     // A manager for an external state attached by commands in a command
     // sequence to a command buffer.
-    CommandBufferCmd::StateManager state ABSL_GUARDED_BY(mutex);
+    CommandStateManager state ABSL_GUARDED_BY(mutex);
 
     // Mapping from buffer allocation index to the device memory passed at
     // that index to the last call of `commands_.Record(...)` for
@@ -96,23 +123,38 @@ class CommandBufferThunk : public Thunk {
     // execution on a stream. All other pieces of information (like thread
     // and block sizes) captured by commands at construction time and do not
     // change.
-    std::vector<se::DeviceMemoryBase> recorded_allocs ABSL_GUARDED_BY(mutex);
+    std::vector<se::DeviceAddressBase> recorded_allocs ABSL_GUARDED_BY(mutex);
 
     // Number of command buffer executions since last update.
     int64_t num_executions ABSL_GUARDED_BY(mutex) = 0;
+
+    // For GPU backend, NCCL may call cuda-graph un-supported host side API
+    // during graph capturing (e.g. cuCtxEnablePeerAccess), this will break XLA
+    // cuda graph run. To work around the issue, this PR introduces a warm up
+    // iteration for command buffer thunk, during warm up iteration, command
+    // buffer thunk are executed through normal thunks. The warm up iteration
+    // will do the proper NCCL setup, so later iterations running through
+    // command buffer does not need to call NCCL setup APIs.
+    bool warmup_done ABSL_GUARDED_BY(mutex) = false;
   };
 
   // Command buffer thunk owns commands buffers instantiated on all executors.
+  // When VA remapping is enabled, the key includes the first allocation's VA
+  // address to distinguish between command buffers for different VA ranges.
   struct State {
     absl::Mutex mutex;
-    absl::flat_hash_map<se::StreamExecutor*,
+    absl::flat_hash_map<std::pair<se::StreamExecutor*, void*>,
                         std::shared_ptr<ExecutorCommandBuffer>>
         command_buffers ABSL_GUARDED_BY(mutex);
   };
 
-  // Returns a command buffer instantiated for `executor` or creates new one.
+  // Returns a command buffer for (executor, buffer_allocations) or creates a
+  // new one. When VA remapping is enabled the key includes the first
+  // allocation's device address to distinguish per-VA-range command buffers;
+  // otherwise the key uses nullptr.
   absl::StatusOr<std::shared_ptr<ExecutorCommandBuffer>>
-  GetOrCreateCommandBuffer(se::StreamExecutor* executor);
+  GetOrCreateCommandBuffer(se::StreamExecutor* executor,
+                           const BufferAllocations& buffer_allocations);
 
   // Each individual command buffer allocates state on device (CUDA graph) and
   // it adds up pretty quickly. To prevent OOM errors we proactively evict
@@ -131,7 +173,7 @@ class CommandBufferThunk : public Thunk {
   static void EvictCommandBuffers();
 
   // Commands executor that initializes command buffers on each stream executor.
-  CommandBufferCmdExecutor commands_;
+  CommandExecutor commands_;
 
   // Thunk sequence that executes the same commands as in `commands_` but using
   // thunk mechanism. We use it as a fallback mechanism to work around CUPTI
@@ -141,6 +183,13 @@ class CommandBufferThunk : public Thunk {
   // When true, allows command buffers to be used while profiling active.
   // TODO(b/355487968): Remove this option when validation complete.
   bool enable_command_buffers_during_profiling_;
+
+  // The update mode controlling VA remapping strategy for this command buffer.
+  DebugOptions::CommandBufferUpdateMode command_buffer_update_mode_;
+
+  // Cached minimum allocation index of the first traced command. Computed once
+  // in the constructor for CAPTURE_CMD_NEVER_UPDATE mode.
+  std::optional<BufferAllocation::Index> first_traced_cmd_alloc_idx_;
 
   // Command buffer thunk state allocated in heap to allow global (per-process)
   // management of instantiated command buffers.

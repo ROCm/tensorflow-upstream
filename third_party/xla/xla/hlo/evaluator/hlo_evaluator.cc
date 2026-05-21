@@ -15,6 +15,7 @@ limitations under the License.
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <complex>
@@ -35,7 +36,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/internal/endian.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -69,8 +69,6 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
-#include "xla/service/compilation_environments.h"
-#include "xla/service/cpu/runtime_single_threaded_matmul.h"
 #include "xla/service/gather_scatter_utils.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/logical_buffer.h"
@@ -82,12 +80,18 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/cpu_info.h"
+
+#define EIGEN_USE_THREADS
+#include "unsupported/Eigen/CXX11/Tensor"
+
+#if defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)
+#include "xla/tsl/framework/contraction/eigen_contraction_kernel.h"
+#endif
 
 namespace xla {
 
@@ -105,7 +109,8 @@ absl::StatusOr<Literal> Compare(const Shape& shape, Comparison comparison,
     // If layout is the same, we can use linear indexing into the literals.
     const Layout& lhs_layout = lhs_literal.shape().layout();
     const Layout& rhs_layout = rhs_literal.shape().layout();
-    bool same_layout = LayoutUtil::Equal(lhs_layout, rhs_layout);
+    bool same_layout = LayoutUtil::Equal(lhs_layout, rhs_layout) &&
+                       LayoutUtil::Equal(lhs_layout, shape.layout());
 
     if (same_layout) {
       TF_RETURN_IF_ERROR(result.PopulateLinearParallel<bool>(
@@ -236,10 +241,15 @@ absl::Status MakeEvalErrorDueToParamOrInfeed(
       eval_instruction.parent()->name(), ")."));
   std::string error_payload;
   error_payload.resize(sizeof(internal::EvalErrorDetail));
-  absl::little_endian::Store32(
-      const_cast<char*>(error_payload.data()),
-      static_cast<uint32_t>(
-          internal::EvalErrorDetail::kDynamicValueDependence));
+
+  uint32_t error_detail =
+      static_cast<uint32_t>(internal::EvalErrorDetail::kDynamicValueDependence);
+  // Ensure that the error detail is also in little endian.
+  if constexpr (absl::endian::native != absl::endian::little) {
+    DCHECK(absl::endian::native == absl::endian::big);
+    error_detail = absl::byteswap(error_detail);
+  }
+  (*error_payload.data()) = error_detail;
   error.SetPayload(internal::kEvalErrorDetailUrl, absl::Cord(error_payload));
   return error;
 }
@@ -1128,6 +1138,31 @@ absl::StatusOr<Literal> HloEvaluator::EvaluateDotOp(
   return Evaluate(cloned_instruction.get());
 }
 
+absl::StatusOr<Literal> HloEvaluator::EvaluateScaledDotOp(
+    const DotDimensionNumbers& dim_numbers,
+    const PrecisionConfig& precision_config, const Literal& lhs,
+    const Literal& rhs, const Literal& lhs_scale, const Literal& rhs_scale) {
+  std::unique_ptr<HloInstruction> lhs_instr =
+      HloInstruction::CreateConstant(lhs.Clone());
+  std::unique_ptr<HloInstruction> rhs_instr =
+      HloInstruction::CreateConstant(rhs.Clone());
+  std::unique_ptr<HloInstruction> lhs_scale_instr =
+      HloInstruction::CreateConstant(lhs_scale.Clone());
+  std::unique_ptr<HloInstruction> rhs_scale_instr =
+      HloInstruction::CreateConstant(rhs_scale.Clone());
+
+  TF_ASSIGN_OR_RETURN(
+      Shape dot_shape,
+      ShapeInference::InferDotOpShape(lhs.shape(), rhs.shape(), dim_numbers,
+                                      /*preferred_element_type=*/std::nullopt));
+
+  std::unique_ptr<HloInstruction> cloned_instruction =
+      HloInstruction::CreateScaledDot(
+          dot_shape, lhs_instr.get(), rhs_instr.get(), lhs_scale_instr.get(),
+          rhs_scale_instr.get(), dim_numbers, precision_config);
+  return Evaluate(cloned_instruction.get());
+}
+
 absl::Status HloEvaluator::EvaluateParameterFromCallerArgument(
     const HloInstruction* parameter, const ShapeIndex& shape_index,
     PrecomputedAnalyses analyses) {
@@ -1137,20 +1172,20 @@ absl::Status HloEvaluator::EvaluateParameterFromCallerArgument(
   // If the parent computation has multiple callers, we cannot determine from
   // which caller the arguments are passed.
   if (computation_callers.size() != 1) {
-    return tsl::errors::FailedPrecondition(
-        "The computation ", parent_computation->name(), " is called by ",
-        computation_callers.size(),
-        " callers and thus its argument value "
-        "cannot be determined statically.");
+    return absl::FailedPreconditionError(
+        absl::StrCat("The computation ", parent_computation->name(),
+                     " is called by ", computation_callers.size(),
+                     " callers and thus its argument value "
+                     "cannot be determined statically."));
   }
   const HloInstruction* computation_caller = computation_callers[0];
   const HloInstruction* caller_operand = computation_caller->operand(0);
   if (computation_caller->opcode() != HloOpcode::kWhile &&
       computation_caller->opcode() != HloOpcode::kCall) {
-    return tsl::errors::FailedPrecondition(
+    return absl::FailedPreconditionError(absl::StrCat(
         "The computation ", parent_computation->name(), " is called by ",
         "instruction ", computation_caller->name(),
-        ", which is not yet supported.");
+        ", which is not yet supported."));
   }
   if (computation_caller->opcode() == HloOpcode::kWhile) {
     if (!analyses.tuple_points_to && !tuple_points_to_analysis_cache_) {
@@ -1385,7 +1420,7 @@ absl::Status HloEvaluator::HandleSetDimensionSize(
       GetEvaluatedLiteralFor(set_dimension_size->operand(0));
   Literal result(set_dimension_size->shape());
   memcpy(result.untyped_data(), operand_literal.untyped_data(),
-         operand_literal.size_bytes());
+         operand_literal.total_size_bytes());
   const Literal& size_literal =
       GetEvaluatedLiteralFor(set_dimension_size->operand(1));
   result.SetDynamicSize(set_dimension_size->dimension(),
@@ -1397,7 +1432,7 @@ absl::Status HloEvaluator::HandleSetDimensionSize(
 absl::Status HloEvaluator::HandleParameter(const HloInstruction* parameter) {
   if (!IsAlreadyEvaluated(parameter, visitor_shape_index_)) {
     if (!enable_partial_evaluation_) {
-      return tsl::errors::FailedPrecondition(
+      return absl::FailedPreconditionError(
           "Failed to evaluate instruction since its operands are unknown "
           "or undetermined and partial evaluation is not enabled.");
     }
@@ -1431,7 +1466,7 @@ absl::Status HloEvaluator::HandleParameter(const HloInstruction* parameter) {
 
 absl::Status HloEvaluator::HandleInfeed(const HloInstruction* infeed) {
   if (!enable_partial_evaluation_) {
-    return tsl::errors::FailedPrecondition(
+    return absl::FailedPreconditionError(
         "Failed to evaluate instruction since its operands are unknown "
         "or undetermined and partial evaluation is not enabled.");
   }
@@ -2295,7 +2330,7 @@ class FftTransform {
     }
 
     // Check input-related values.
-    TF_CHECK_OK(ShapeUtil::ValidateShape(input_shape));
+    CHECK_OK(ShapeUtil::ValidateShape(input_shape));
     if (!input_shape.IsArray()) {
       return Unimplemented("Only array input shapes are supported.");
     }
@@ -2314,7 +2349,7 @@ class FftTransform {
     }
 
     // Check output-related values.
-    TF_CHECK_OK(ShapeUtil::ValidateShape(output_shape));
+    CHECK_OK(ShapeUtil::ValidateShape(output_shape));
     if (!output_shape.IsArray()) {
       return Unimplemented("Only array output shapes are supported.");
     }
@@ -2398,8 +2433,9 @@ ShapeUtil::IndexIterationSpace IterationSpaceForOutputOffsetIndices(
     bool is_output_window_dim =
         absl::c_binary_search(dim_numbers.offset_dims(), i);
     if (is_output_window_dim) {
-      while (absl::c_binary_search(dim_numbers.collapsed_slice_dims(),
-                                   slice_sizes_idx)) {
+      while (IsCollapsedOrBatchingDim(dim_numbers.collapsed_slice_dims(),
+                                      dim_numbers.operand_batching_dims(),
+                                      slice_sizes_idx)) {
         slice_sizes_idx++;
       }
       index_count[i] = slice_sizes[slice_sizes_idx++];
@@ -3259,6 +3295,14 @@ absl::Status HloEvaluator::HandleAddDependency(
   return absl::OkStatus();
 }
 
+absl::Status HloEvaluator::HandleOptimizationBarrier(
+    const HloInstruction* optimization_barrier) {
+  SetEvaluatedLiteralFor(
+      optimization_barrier,
+      GetEvaluatedLiteralFor(optimization_barrier->operand(0)).Clone());
+  return absl::OkStatus();
+}
+
 absl::Status HloEvaluator::HandleGetTupleElement(
     const HloInstruction* get_tuple_element) {
   const auto result_shape = get_tuple_element->shape();
@@ -3574,8 +3618,8 @@ absl::Status HloEvaluator::HandleDynamicUpdateSlice(const HloInstruction* dus) {
   std::vector<int64_t> result_index(rank, 0);
 
   auto func = [&](absl::Span<const int64_t> update_index) {
-    std::transform(update_index.begin(), update_index.end(), start.begin(),
-                   result_index.begin(), std::plus<int64_t>());
+    absl::c_transform(update_index, start, result_index.begin(),
+                      std::plus<int64_t>());
     result.CopyElementFrom(update_literal, update_index, result_index);
     return true;
   };
@@ -3631,7 +3675,7 @@ absl::StatusOr<Literal> TryParseAndEvaluateWhileInductionVar(
   std::optional<ParsedWhileLoop> parsed_while_loop =
       PatternMatchParseWhileLoop(while_hlo, /*precomputed_analyses=*/{});
   if (!parsed_while_loop.has_value() || parsed_while_loop->is_dynamic()) {
-    return FailedPrecondition(
+    return absl::FailedPreconditionError(
         "Cannot evaluate a while loop's induction variable since the loop "
         "does not match a known loop pattern or the loop is not static.");
   }
@@ -3765,13 +3809,16 @@ void IterateThroughWindow(
     const Shape& window_shape, const Window& window, const Shape& base_shape,
     const absl::Span<const int64_t> window_count_index,
     const std::function<void(absl::Span<const int64_t>)>& f) {
-  const int64_t rank = base_shape.dimensions().size();
+  const size_t rank = base_shape.dimensions().size();
   DimensionVector window_index(rank);
-  std::fill(window_index.begin(), window_index.end(), 0);
+  absl::Span<int64_t> window_index_span = absl::MakeSpan(window_index);
+  std::fill(window_index_span.begin(), window_index_span.end(), 0);
+
   do {
     DimensionVector base_index(rank);
+    absl::Span<int64_t> base_index_span = absl::MakeSpan(base_index);
     bool out_of_bound = false;
-    for (int64_t i = 0; i < rank; ++i) {
+    for (size_t i = 0; i < rank; ++i) {
       // Padding is applied to the dilated base. Say that padding is 3 and
       // dilation is 2 for some dimension. After applying base dilation and
       // padding, the dimension looks like:
@@ -3785,23 +3832,30 @@ void IterateThroughWindow(
       // When this is a natural number, we index an original element.
       // Otherwise, we index a 0 (pad or hole), and we don't need to apply
       // the callback f.
-      base_index[i] = window_count_index[i] * window.dimensions(i).stride() +
-                      window_index[i] * window.dimensions(i).window_dilation() -
-                      window.dimensions(i).padding_low();
-      if (base_index[i] % window.dimensions(i).base_dilation() != 0) {
-        out_of_bound = true;
-        break;
+      const xla::WindowDimension& window_dimension = window.dimensions(i);
+      int64_t base_index_i =
+          window_count_index[i] * window_dimension.stride() +
+          window_index_span[i] * window_dimension.window_dilation() -
+          window_dimension.padding_low();
+      const int64_t base_dilation = window_dimension.base_dilation();
+      if (base_dilation != 1) {
+        if (base_index_i % base_dilation != 0) {
+          out_of_bound = true;
+          base_index_span[i] = base_index_i;
+          break;
+        }
+        base_index_i /= base_dilation;
       }
-      base_index[i] /= window.dimensions(i).base_dilation();
-      if (base_index[i] < 0 || base_index[i] >= base_shape.dimensions(i)) {
+      base_index_span[i] = base_index_i;
+      if (base_index_i < 0 || base_index_i >= base_shape.dimensions(i)) {
         out_of_bound = true;
         break;
       }
     }
     if (!out_of_bound) {
-      f(base_index);
+      f(base_index_span);
     }
-  } while (IndexUtil::BumpIndices(window_shape, absl::MakeSpan(window_index)));
+  } while (IndexUtil::BumpIndices(window_shape, window_index_span));
 }
 
 template <typename Fp, typename Uint, typename ResultT>
@@ -4593,7 +4647,7 @@ absl::Status HloEvaluator::HandleReduce(const HloInstruction* hlo) {
   if (is_tuple) {
     Literal tuple_result(inferred_return_shape);
     for (int64_t i = 0; i < num_args; ++i) {
-      TF_CHECK_OK(tuple_result.MoveFrom(std::move(results[i]), {i}));
+      CHECK_OK(tuple_result.MoveFrom(std::move(results[i]), {i}));
     }
     SetEvaluatedLiteralFor(reduce, std::move(tuple_result));
   } else {
@@ -4669,25 +4723,26 @@ absl::Status HloEvaluator::HandleReduceWindow(const HloInstruction* hlo) {
     for (const auto* init : init_literal_vec) {
       computed_result.push_back(init->Clone());
     }
+    absl::InlinedVector<Literal, 2> curr_val_literal_vec;
+    curr_val_literal_vec.reserve(input_literal_vec.size());
+    for (const auto* input_literal : input_literal_vec) {
+      curr_val_literal_vec.push_back(Literal(
+          ShapeUtil::MakeShape(input_literal->shape().element_type(), {})));
+    }
+    absl::InlinedVector<const Literal*, 2> args;
     IterateThroughWindow(
         window_shape, window, input_literal_vec[0]->shape(), output_index,
         [&](absl::Span<const int64_t> operand_index) -> void {
-          absl::InlinedVector<const Literal*, 2> args;
+          args.clear();
           for (auto& curr_result_val : computed_result) {
             VLOG(2) << "Pushing:" << curr_result_val.ToString() << "\n";
             args.push_back(&curr_result_val);
           }
-          absl::InlinedVector<Literal, 2> curr_val_literal_vec;
-          curr_val_literal_vec.reserve(input_literal_vec.size());
-          for (const auto* input_literal : input_literal_vec) {
-            // Evaluate computation with specified literal operands.
-            curr_val_literal_vec.push_back(Literal(ShapeUtil::MakeShape(
-                input_literal->shape().element_type(), {})));
-            curr_val_literal_vec.back().CopyElementFrom(*input_literal,
-                                                        operand_index, {});
-            VLOG(2) << "Pushing:" << curr_val_literal_vec.back().ToString()
-                    << "\n";
-            args.push_back(&curr_val_literal_vec.back());
+          for (size_t i = 0; i < input_literal_vec.size(); ++i) {
+            curr_val_literal_vec[i].CopyElementFrom(*input_literal_vec[i],
+                                                    operand_index, {});
+            VLOG(2) << "Pushing:" << curr_val_literal_vec[i].ToString() << "\n";
+            args.push_back(&curr_val_literal_vec[i]);
           }
           computed_result[0] =
               embedded_evaluator.Evaluate(*function, args).value();
@@ -4809,7 +4864,7 @@ absl::Status HloEvaluator::Preprocess(const HloInstruction* hlo) {
     for (const HloInstruction* operand : hlo->operands()) {
       if (!IsAlreadyEvaluated(operand) ||
           !GetEvaluatedLiteralFor(operand).IsKnown()) {
-        return tsl::errors::FailedPrecondition(
+        return absl::FailedPreconditionError(
             "Failed to evaluate instruction since its operands are unknown "
             "or undetermined and partial evaluation is not enabled.");
       }
@@ -4854,76 +4909,68 @@ absl::Status HloEvaluator::Postprocess(const HloInstruction* hlo) {
   return absl::OkStatus();
 }
 
-namespace {
 template <typename T>
-std::unique_ptr<Array2D<T>> MatmulArray2DImpl(
-    const Array2D<T>& lhs, const Array2D<T>& rhs,
-    const std::function<void(const void* run_options_ptr, T* out, T* lhs,
-                             T* rhs, int64_t m, int64_t n, int64_t k,
-                             int32_t transpose_lhs, int32_t transpose_rhs)>&
-        impl_fn) {
+static std::unique_ptr<Array2D<T>> MatmulArray2DImpl(const Array2D<T>& lhs,
+                                                     const Array2D<T>& rhs) {
   CHECK_EQ(lhs.width(), rhs.height());
   int m = lhs.height();
-  int n = rhs.width();
   int k = lhs.width();
+  int n = rhs.width();
   auto result = std::make_unique<Array2D<T>>(m, n);
-  // Because Eigen is a header-oriented library, make sure that the Eigen code
-  // is the same as the code used by the CPU backend (otherwise the linker will
-  // randomly pick *some* definition).
-  impl_fn(
-      /*run_options_ptr=*/nullptr, result->data(), rhs.data(), lhs.data(), n, m,
-      k,
-      /*transpose_lhs=*/0,
-      /*transpose_rhs=*/0);
+
+  using ConstTensor = Eigen::Tensor<const T, 2, Eigen::RowMajor>;
+  using Tensor = Eigen::Tensor<T, 2, Eigen::RowMajor>;
+
+  Eigen::TensorMap<ConstTensor> A(lhs.data(), m, k);
+  Eigen::TensorMap<ConstTensor> B(rhs.data(), k, n);
+  Eigen::TensorMap<Tensor> C(result->data(), m, n);
+
+  using DimPair = typename ConstTensor::DimensionPair;
+  std::array<DimPair, 1> dims({DimPair(1, 0)});
+
+  C = A.contract(B, dims);
+
   return result;
 }
-}  // namespace
 
 std::unique_ptr<Array2D<Eigen::half>> HloEvaluator::MatmulArray2D(
     const Array2D<Eigen::half>& lhs, const Array2D<Eigen::half>& rhs) {
-  return MatmulArray2DImpl<Eigen::half>(
-      lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulF16);
+  return MatmulArray2DImpl<Eigen::half>(lhs, rhs);
 }
 
 std::unique_ptr<Array2D<float>> HloEvaluator::MatmulArray2D(
     const Array2D<float>& lhs, const Array2D<float>& rhs) {
-  return MatmulArray2DImpl<float>(
-      lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulF32);
+  return MatmulArray2DImpl<float>(lhs, rhs);
 }
 
 std::unique_ptr<Array2D<double>> HloEvaluator::MatmulArray2D(
     const Array2D<double>& lhs, const Array2D<double>& rhs) {
-  return MatmulArray2DImpl<double>(
-      lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulF64);
+  return MatmulArray2DImpl<double>(lhs, rhs);
 }
 
 std::unique_ptr<Array2D<std::complex<float>>> HloEvaluator::MatmulArray2D(
     const Array2D<std::complex<float>>& lhs,
     const Array2D<std::complex<float>>& rhs) {
-  return MatmulArray2DImpl<std::complex<float>>(
-      lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulC64);
+  return MatmulArray2DImpl<std::complex<float>>(lhs, rhs);
 }
 
 std::unique_ptr<Array2D<std::complex<double>>> HloEvaluator::MatmulArray2D(
     const Array2D<std::complex<double>>& lhs,
     const Array2D<std::complex<double>>& rhs) {
-  return MatmulArray2DImpl<std::complex<double>>(
-      lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulC128);
+  return MatmulArray2DImpl<std::complex<double>>(lhs, rhs);
 }
 
 std::unique_ptr<Array2D<int32_t>> HloEvaluator::MatmulArray2D(
     const Array2D<int32_t>& lhs, const Array2D<int32_t>& rhs) {
-  return MatmulArray2DImpl<int32_t>(
-      lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulS32);
+  return MatmulArray2DImpl<int32_t>(lhs, rhs);
 }
 
 std::unique_ptr<Array2D<uint8_t>> HloEvaluator::MatmulArray2D(
     const Array2D<uint8_t>& lhs, const Array2D<uint8_t>& rhs) {
-  return MatmulArray2DImpl<uint8_t>(
-      lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulU8);
+  return MatmulArray2DImpl<uint8_t>(lhs, rhs);
 }
 
-/* static */ std::unique_ptr<Array2D<float>> Array2DF8E5M2ToF32(
+std::unique_ptr<Array2D<float>> Array2DF8E5M2ToF32(
     const Array2D<tsl::float8_e5m2>& input) {
   auto result = std::make_unique<Array2D<float>>(input.height(), input.width());
   for (int64_t rowno = 0; rowno < input.height(); ++rowno) {
@@ -4934,7 +4981,7 @@ std::unique_ptr<Array2D<uint8_t>> HloEvaluator::MatmulArray2D(
   return result;
 }
 
-/* static */ std::unique_ptr<Array2D<float>> Array2DF8E4M3FNToF32(
+std::unique_ptr<Array2D<float>> Array2DF8E4M3FNToF32(
     const Array2D<tsl::float8_e4m3fn>& input) {
   auto result = std::make_unique<Array2D<float>>(input.height(), input.width());
   for (int64_t rowno = 0; rowno < input.height(); ++rowno) {
@@ -4945,7 +4992,7 @@ std::unique_ptr<Array2D<uint8_t>> HloEvaluator::MatmulArray2D(
   return result;
 }
 
-/* static */ std::unique_ptr<Array2D<tsl::float8_e5m2>> Array2DF32ToF8E5M2(
+std::unique_ptr<Array2D<tsl::float8_e5m2>> Array2DF32ToF8E5M2(
     const Array2D<float>& input) {
   auto result = std::make_unique<Array2D<tsl::float8_e5m2>>(input.height(),
                                                             input.width());
@@ -4958,7 +5005,7 @@ std::unique_ptr<Array2D<uint8_t>> HloEvaluator::MatmulArray2D(
   return result;
 }
 
-/* static */ std::unique_ptr<Array2D<tsl::float8_e4m3fn>> Array2DF32ToF8E4M3FN(
+std::unique_ptr<Array2D<tsl::float8_e4m3fn>> Array2DF32ToF8E4M3FN(
     const Array2D<float>& input) {
   auto result = std::make_unique<Array2D<tsl::float8_e4m3fn>>(input.height(),
                                                               input.width());
@@ -4981,10 +5028,8 @@ std::unique_ptr<Array2D<tsl::float8_e5m2>> HloEvaluator::MatmulArray2D(
     auto rhs_float = Array2DF8E5M2ToF32(rhs);
     auto result = MatmulArray2D(*lhs_float, *rhs_float);
     return Array2DF32ToF8E5M2(*result);
-  } else {
-    return MatmulArray2DImpl<tsl::float8_e5m2>(
-        lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulF8E5M2);
   }
+  return MatmulArray2DImpl<tsl::float8_e5m2>(lhs, rhs);
 }
 
 std::unique_ptr<Array2D<tsl::float8_e4m3fn>> HloEvaluator::MatmulArray2D(
@@ -4995,10 +5040,152 @@ std::unique_ptr<Array2D<tsl::float8_e4m3fn>> HloEvaluator::MatmulArray2D(
     auto rhs_float = Array2DF8E4M3FNToF32(rhs);
     auto result = MatmulArray2D(*lhs_float, *rhs_float);
     return Array2DF32ToF8E4M3FN(*result);
-  } else {
-    return MatmulArray2DImpl<tsl::float8_e4m3fn>(
-        lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulF8E4M3FN);
   }
+  return MatmulArray2DImpl<tsl::float8_e4m3fn>(lhs, rhs);
+}
+
+absl::Status HloEvaluator::HandleScan(const HloInstruction* hlo) {
+  auto* scan = Cast<HloScanInstruction>(hlo);
+  const int64_t scan_dim = scan->scan_dimension();
+  const bool is_reverse = scan->is_reverse();
+  const int64_t num_carries = scan->num_carries();
+  const int64_t total_operands = scan->operand_count();
+  TF_RET_CHECK(total_operands >= num_carries);
+  const int64_t num_inputs = total_operands - num_carries;
+
+  HloComputation* to_apply = scan->to_apply();
+  const Shape& root_shape = to_apply->root_instruction()->shape();
+  const int64_t num_results =
+      root_shape.IsTuple() ? root_shape.tuple_shapes().size() : 1;
+  TF_RET_CHECK(num_results >= num_carries)
+      << "Scan to_apply must return at least num_carries values.";
+  const int64_t num_outputs = num_results - num_carries;
+
+  // Grab inputs (by const pointer) and clone the initial carries so we can
+  // mutate them across steps.
+  std::vector<const Literal*> inputs(num_inputs);
+  for (int64_t i = 0; i < num_inputs; ++i) {
+    inputs[i] = &GetEvaluatedLiteralFor(scan->operand(i));
+  }
+  std::vector<Literal> carries;
+  carries.reserve(num_carries);
+  for (int64_t i = 0; i < num_carries; ++i) {
+    carries.push_back(
+        GetEvaluatedLiteralFor(scan->operand(num_inputs + i)).Clone());
+  }
+
+  // Determine scan loop length from the first input's scan-dim extent.
+  int64_t loop_length = 0;
+  if (num_inputs > 0) {
+    loop_length = inputs[0]->shape().dimensions(scan_dim);
+    for (int64_t i = 1; i < num_inputs; ++i) {
+      TF_RET_CHECK(inputs[i]->shape().dimensions(scan_dim) == loop_length)
+          << "Scan inputs disagree on the scan-dimension size.";
+    }
+  }
+
+  // Allocate output buffers for the n stacked per-step outputs. Each y_j has
+  // the same shape as the corresponding scan output (which already has
+  // scan_dim reinstated by shape inference).
+  const Shape& scan_shape = scan->shape();
+  std::vector<Literal> stacked_outputs;
+  stacked_outputs.reserve(num_outputs);
+  for (int64_t j = 0; j < num_outputs; ++j) {
+    const Shape& out_shape =
+        scan_shape.IsTuple() ? scan_shape.tuple_shapes(j) : scan_shape;
+    stacked_outputs.emplace_back(out_shape);
+  }
+
+  // One embedded evaluator reused across iterations.
+  HloEvaluator embedded_evaluator;
+  embedded_evaluator.set_dynamic_dimension_inference(
+      dynamic_dimension_inference_);
+
+  for (int64_t step = 0; step < loop_length; ++step) {
+    const int64_t t = is_reverse ? (loop_length - 1 - step) : step;
+
+    // Slice each input at index t along scan_dim and drop the size-1 dim so
+    // the element shape matches the to_apply parameter shape.
+    std::vector<Literal> input_slices;
+    input_slices.reserve(num_inputs);
+    for (int64_t i = 0; i < num_inputs; ++i) {
+      const Shape& in_shape = inputs[i]->shape();
+      std::vector<int64_t> start(in_shape.dimensions().size(), 0);
+      std::vector<int64_t> limit(in_shape.dimensions().begin(),
+                                 in_shape.dimensions().end());
+      start[scan_dim] = t;
+      limit[scan_dim] = t + 1;
+      Literal slab = inputs[i]->Slice(start, limit);
+
+      Shape elem_shape = in_shape;
+      elem_shape.DeleteDimension(scan_dim);
+      TF_ASSIGN_OR_RETURN(Literal elem, slab.Reshape(elem_shape.dimensions()));
+      input_slices.push_back(std::move(elem));
+    }
+
+    // Assemble args as [input slices ..., current carries ...].
+    std::vector<const Literal*> args;
+    args.reserve(num_inputs + num_carries);
+    for (const Literal& s : input_slices) args.push_back(&s);
+    for (const Literal& c : carries) args.push_back(&c);
+
+    // Run the body.
+    embedded_evaluator.ResetVisitStates();
+    TF_ASSIGN_OR_RETURN(Literal body_result,
+                        embedded_evaluator.Evaluate(*to_apply, args));
+
+    // Split the result into (o_0, ..., o_{n-1}, c'_0, ..., c'_{k-1}).
+    std::vector<Literal> body_pieces;
+    if (root_shape.IsTuple()) {
+      body_pieces = body_result.DecomposeTuple();
+    } else {
+      body_pieces.push_back(std::move(body_result));
+    }
+    TF_RET_CHECK(static_cast<int64_t>(body_pieces.size()) == num_results);
+
+    // Write each y_j into stacked_outputs[j] at scan position t. We reshape
+    // the rank-(R-1) piece to inject a size-1 scan_dim, then CopySliceFrom
+    // into the size-1 slab at index t.
+    for (int64_t j = 0; j < num_outputs; ++j) {
+      Literal& dst = stacked_outputs[j];
+      const Shape& dst_shape = dst.shape();
+
+      std::vector<int64_t> slab_dims(dst_shape.dimensions().begin(),
+                                     dst_shape.dimensions().end());
+      slab_dims[scan_dim] = 1;
+      TF_ASSIGN_OR_RETURN(Literal piece_with_scan_dim,
+                          body_pieces[j].Reshape(slab_dims));
+
+      std::vector<int64_t> src_base(slab_dims.size(), 0);
+      std::vector<int64_t> dst_base(slab_dims.size(), 0);
+      dst_base[scan_dim] = t;
+      TF_RETURN_IF_ERROR(dst.CopySliceFrom(piece_with_scan_dim, src_base,
+                                           dst_base, slab_dims));
+    }
+
+    // Update carries from the tail of the body result.
+    for (int64_t i = 0; i < num_carries; ++i) {
+      carries[i] = std::move(body_pieces[num_outputs + i]);
+    }
+  }
+
+  // Build the final scan result: (stacked y outputs ..., final carries ...).
+  if (scan_shape.IsTuple()) {
+    std::vector<Literal> result_pieces;
+    result_pieces.reserve(num_outputs + num_carries);
+    for (auto& s : stacked_outputs) result_pieces.push_back(std::move(s));
+    for (auto& c : carries) result_pieces.push_back(std::move(c));
+
+    std::vector<const Literal*> ptrs;
+    ptrs.reserve(result_pieces.size());
+    for (const Literal& p : result_pieces) ptrs.push_back(&p);
+    SetEvaluatedLiteralFor(hlo, LiteralUtil::MakeTuple(ptrs));
+  } else {
+    TF_RET_CHECK(num_outputs + num_carries == 1);
+    SetEvaluatedLiteralFor(hlo, num_outputs == 1 ? std::move(stacked_outputs[0])
+                                                 : std::move(carries[0]));
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace xla

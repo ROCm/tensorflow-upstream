@@ -78,8 +78,11 @@ TEST(NanoIfrtClientTest, BigResult) {
   mlir::MLIRContext context;
   auto module = xla::ParseMlirModuleString(kBigResult, context);
 
-  auto executable = compiler->CompileAndLoad(
-      std::make_unique<ifrt::HloProgram>(**module), nullptr);
+  auto executable =
+      compiler
+          ->CompileAndLoad(std::make_unique<ifrt::HloProgram>(**module),
+                           nullptr)
+          .Await();
   CHECK_OK(executable);
 
   ifrt::DType dtype(ifrt::DType::kF32);
@@ -88,7 +91,7 @@ TEST(NanoIfrtClientTest, BigResult) {
 
   auto a_array = client->MakeArrayFromHostBuffer(
       &a, dtype, shape, std::nullopt, client->default_sharding(),
-      ifrt::Client::HostBufferSemantics::kImmutableZeroCopy,
+      /*layout=*/nullptr, ifrt::Client::HostBufferSemantics::kImmutableZeroCopy,
       /*on_done_with_host_buffer=*/nullptr);
   CHECK_OK(a_array);
 
@@ -125,8 +128,10 @@ static absl::StatusOr<ifrt::LoadedExecutableRef> CompileAndLoad(
       xla::CompileOptions(), std::move(devices));
   compile_options->compile_options.compile_portable_executable = true;
 
-  return compiler->CompileAndLoad(std::make_unique<ifrt::HloProgram>(**module),
-                                  std::move(compile_options));
+  return compiler
+      ->CompileAndLoad(std::make_unique<ifrt::HloProgram>(**module),
+                       std::move(compile_options))
+      .Await();
 }
 
 static ifrt::DType DTypeFromPrimitiveType(PrimitiveType type) {
@@ -144,9 +149,9 @@ static absl::StatusOr<ifrt::ArrayRef> MakeArrayFromLiteral(
   return client->MakeArrayFromHostBuffer(
       literal.untyped_data(),
       DTypeFromPrimitiveType(literal.shape().element_type()),
-      ifrt::Shape(literal.shape().dimensions()),
-      /*byte_strides=*/std::nullopt, std::move(sharding),
-      ifrt::Client::HostBufferSemantics::kImmutableZeroCopy,
+      ifrt::Shape(literal.shape().dimensions()), /*byte_strides=*/std::nullopt,
+      std::move(sharding),
+      /*layout=*/nullptr, ifrt::Client::HostBufferSemantics::kImmutableZeroCopy,
       /*on_done_with_host_buffer=*/nullptr);
 }
 
@@ -319,8 +324,39 @@ int main(int argc, char** argv) {
       "ArrayImplTest.MakeArrayFromHostBufferAndCopyToHostBufferWithString:"
       "ArrayImplTest."
       "MakeArraysFromHostBufferShardsAndCopyToHostBufferWithString:"
+      // Custom layouts are not supported in NanoIfrtClient.
+      "ArrayImplTest.MakeArraysFromHostBufferShardsWithLayout:"
+      // Custom layouts are not supported in NanoIfrtClient even if the layout
+      // is a concrete layout of a default layout.
+      "ArrayImplTest.MakeArrayFromHostBufferWithCustomLayout:"
       // `MakeErrorArrays` is not supported in NanoIfrtClient.
-      "ArrayImplTest.MakeErrorArrays";
+      "ArrayImplTest.MakeErrorArrays:"
+      "ArrayImplTest.CopyPoisonedArray:"
+      "ArrayImplTest.PoisonedZeroSizedArrays:"
+      // Sub-byte types are not supported in NanoIfrtClient.
+      "ArrayImplTest.HostBufferInt4:"
+      "ArrayImplTest.CopyArraysSubByteDType:"
+      // NanoRT does not handle zero-sized buffers correctly.
+      "ArrayImplTest.MakeAndCopyZeroSizedArrays:"
+      // NanoRT does not handle CopyArrays with re-ordered devices correctly.
+      "ArrayImplTest.CopyArraysWithPartialReuse:"
+      "ArrayImplTest.CopyToDifferentDevice:"
+      // NanoRT does not support tokens.
+      "ArrayImplTest.HostBufferTokens:"
+      "ArrayImplTest.PoisonedTokenArrays:"
+      "ArrayImplTest.MakeAndCopyTokenArrays:"
+      // Executable returns a wrong number of devices.
+      "*LoadedExecutableImplTest.Properties*:"
+      // Incorrect deleted state of donated inputs.
+      "*LoadedExecutableImplTest.Donation*:"
+      // GetHloModules, ProgramText, and Analysis methods are not implemented.
+      "*LoadedExecutableImplTest.GetHloModules*:"
+      "*LoadedExecutableImplTest.ProgramText*:"
+      "*LoadedExecutableImplTest.Analysis*:"
+      // NanoRT does not support portable execution.
+      "*LoadedExecutableImplTest.CompileAndExecutePortable*:"
+      // Serialization is not implemented.
+      "*SerializeAndLoad*";
   xla::ifrt::test_util::SetTestFilterIfNotUserSpecified(kFilter);
 
   for (int i = 1; i < argc; i++) {

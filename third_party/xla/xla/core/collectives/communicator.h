@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef XLA_CORE_COLLECTIVES_COMMUNICATOR_H_
 #define XLA_CORE_COLLECTIVES_COMMUNICATOR_H_
 
+#include <array>
 #include <cstddef>
-#include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -27,10 +27,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/core/collectives/rank_id.h"
-#include "xla/service/collective_ops_utils.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/tsl/concurrency/async_value_ref.h"
-#include "xla/tsl/concurrency/chain.h"
+#include "xla/core/collectives/reduction_kind.h"
+#include "xla/core/collectives/symmetric_memory.h"
+#include "xla/future.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -46,8 +46,6 @@ namespace xla {
 // completed.
 class Communicator {
  public:
-  using Event = tsl::Chain;
-
   virtual ~Communicator() = default;
 
   // An executor is an abstraction for the underlying resource where collective
@@ -58,37 +56,14 @@ class Communicator {
     virtual ~Executor() = default;
   };
 
-  // An RAII handle for buffers registered with the communicator. Child classes
-  // are responsible for unregistering the buffer when the handle is destroyed.
-  class RegisteredBufferHandle {
+  class SignalDesc {
    public:
-    virtual ~RegisteredBufferHandle() = default;
-    virtual absl::Status Unregister() = 0;
+    virtual ~SignalDesc() = default;
   };
 
-  // Register `buffer` for efficient collective operations (i.e. on NCCL backend
-  // it registers the buffer for zero-copy collective operations).
-  virtual absl::StatusOr<std::unique_ptr<RegisteredBufferHandle>>
-  RegisterBuffer(stream_executor::DeviceMemoryBase buffer) {
-    return Unimplemented("User-managed buffer registration is not supported");
-  }
-
-  // Register `buffer` for efficient collective operations (i.e. on NCCL backend
-  // it registers the buffer for zero-copy collective operations).
-  // If `use_symmetric_buffer` is true, the buffer is registered as a symmetric
-  // buffer.
-  virtual absl::StatusOr<std::unique_ptr<RegisteredBufferHandle>>
-  RegisterBuffer(stream_executor::DeviceMemoryBase buffer,
-                 bool use_symmetric_buffer) {
-    return Unimplemented("User-managed buffer registration is not supported");
-  }
-
-  // Register `buffer` for efficient collective operations (i.e. on NVSHMEM
-  // backend it registers the buffer for unregistered nvshmem buffers).
-  virtual absl::Status RegisterBuffer(void* addr, size_t length) {
-    return absl::UnimplementedError(
-        "User-managed buffer registration is not supported");
-  }
+  // Register `buffer_range` once for efficient collective operations (i.e. on
+  // NCCL backend it registers the buffer for zero-copy collective operations).
+  //
 
   // Abort any uncompleted operations and destroys the underlying communicator
   // object. It is undefined behavior to use the communicator after calling
@@ -110,77 +85,102 @@ class Communicator {
 
   // Reduce buffers of length `count` in `send_buff` using `reduction_kind`
   // reduction and leaves identical copies of the result on each `recv_buff`.
-  virtual tsl::AsyncValueRef<Event> AllReduce(
-      stream_executor::DeviceMemoryBase send_buffer,
-      stream_executor::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
-      size_t count, ReductionKind reduction_kind, const Executor& executor) = 0;
+  virtual Future<> AllReduce(stream_executor::DeviceAddressBase send_buffer,
+                             stream_executor::DeviceAddressBase recv_buffer,
+                             PrimitiveType dtype, size_t count,
+                             ReductionKind reduction_kind,
+                             const Executor& executor) = 0;
 
   // Copy data in `send_buff` from the root device to the `recv_buff` on
   // all other devices.
-  virtual tsl::AsyncValueRef<Event> Broadcast(se::DeviceMemoryBase send_buffer,
-                                              se::DeviceMemoryBase recv_buffer,
-                                              PrimitiveType dtype, size_t count,
-                                              RankId root,
-                                              const Executor& executor) = 0;
+  virtual Future<> Broadcast(se::DeviceAddressBase send_buffer,
+                             se::DeviceAddressBase recv_buffer,
+                             PrimitiveType dtype, size_t count, RankId root,
+                             const Executor& executor) = 0;
 
   // Reduce data in `send_buff` from all devices using the `reduction_kind`
   // operation and leave the reduced result scattered over the devices so that
   // the `recv_buff` on rank `i` will contain the i-th block of the result.
-  virtual tsl::AsyncValueRef<Event> ReduceScatter(
-      se::DeviceMemoryBase send_buffer, se::DeviceMemoryBase recv_buffer,
-      PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
-      const Executor& executor) = 0;
+  virtual Future<> ReduceScatter(se::DeviceAddressBase send_buffer,
+                                 se::DeviceAddressBase recv_buffer,
+                                 PrimitiveType dtype, size_t count,
+                                 ReductionKind reduction_kind,
+                                 const Executor& executor) = 0;
 
   // Gather `count` values from all devices into `recv_buffer`, receiving data
   // from rank `i` at offset `i * sendcount`.
-  virtual tsl::AsyncValueRef<Event> AllGather(se::DeviceMemoryBase send_buffer,
-                                              se::DeviceMemoryBase recv_buffer,
-                                              PrimitiveType dtype, size_t count,
-                                              const Executor& executor) = 0;
+  virtual Future<> AllGather(se::DeviceAddressBase send_buffer,
+                             se::DeviceAddressBase recv_buffer,
+                             PrimitiveType dtype, size_t count,
+                             const Executor& executor) = 0;
 
   // Sends data from `send_buffer` to `target_ranks` and receives data from
   // `source_rank` into `recv_buffer`. If `source_rank` is not specified, the
   // output is filled with zeros.
-  virtual tsl::AsyncValueRef<Event> CollectivePermute(
-      se::DeviceMemoryBase send_buffer, se::DeviceMemoryBase recv_buffer,
-      PrimitiveType dtype, size_t count, std::optional<RankId> source_rank,
-      absl::Span<const RankId> target_ranks, const Executor& executor) = 0;
+  virtual Future<> CollectivePermute(se::DeviceAddressBase send_buffer,
+                                     se::DeviceAddressBase recv_buffer,
+                                     PrimitiveType dtype, size_t count,
+                                     std::optional<RankId> source_rank,
+                                     absl::Span<const RankId> target_ranks,
+                                     const Executor& executor) = 0;
 
   // Sends `count` values from `send_buffers` to other ranks and receives data
   // from other ranks into `recv_buffers`.
-  virtual tsl::AsyncValueRef<Event> AllToAll(
-      absl::InlinedVector<se::DeviceMemoryBase, 4> send_buffers,
-      absl::InlinedVector<se::DeviceMemoryBase, 4> recv_buffers,
+  virtual Future<> AllToAll(
+      absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers,
+      absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,
       PrimitiveType dtype, size_t count, const Executor& executor) = 0;
 
   // Send data from `send_buff` to rank `peer`.
-  virtual tsl::AsyncValueRef<Event> Send(se::DeviceMemoryBase send_buffer,
-                                         PrimitiveType dtype, size_t count,
-                                         RankId peer,
-                                         const Executor& executor) = 0;
+  virtual Future<> Send(se::DeviceAddressBase send_buffer, PrimitiveType dtype,
+                        size_t count, RankId peer,
+                        const Executor& executor) = 0;
 
   // Receive data from rank `peer` into `recv_buff`.
-  virtual tsl::AsyncValueRef<Event> Recv(se::DeviceMemoryBase recv_buffer,
-                                         PrimitiveType dtype, size_t count,
-                                         RankId peer,
-                                         const Executor& executor) = 0;
+  virtual Future<> Recv(se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
+                        size_t count, RankId peer,
+                        const Executor& executor) = 0;
 
   // Send data from `send_buff` to rank `recv_buff` (one-way send).
-  virtual tsl::AsyncValueRef<Event> Send(se::DeviceMemoryBase recv_buffer,
-                                         se::DeviceMemoryBase send_buffer,
-                                         PrimitiveType dtype, size_t count,
-                                         RankId peer,
-                                         const Executor& executor) {
+  virtual Future<> Send(se::DeviceAddressBase recv_buffer,
+                        se::DeviceAddressBase send_buffer, PrimitiveType dtype,
+                        size_t count, RankId peer, const Executor& executor) {
     return Unimplemented("One-way send is not implemented");
   }
 
   // Receive data from rank `peer` into `recv_buff` (one-way recv).
-  virtual tsl::AsyncValueRef<Event> Recv(se::DeviceMemoryBase recv_buffer,
-                                         se::DeviceMemoryBase send_buffer,
-                                         PrimitiveType dtype, size_t count,
-                                         RankId peer,
-                                         const Executor& executor) {
+  virtual Future<> Recv(se::DeviceAddressBase recv_buffer,
+                        se::DeviceAddressBase send_buffer, PrimitiveType dtype,
+                        size_t count, RankId peer, const Executor& executor) {
     return Unimplemented("One-way recv is not implemented");
+  }
+
+  // One-sided write: copies data from send_buffer to the peer's symmetric
+  // memory at recv_buffer + offset (count bytes). Used for RMA patterns such as
+  // ragged all-to-all. Does not send signal metadata; use Signal for that.
+  virtual Future<> Put(se::DeviceAddressBase send_buffer,
+                       SymmetricMemory* recv_buffer, size_t offset,
+                       size_t count, RankId peer, const Executor& executor) {
+    return Unimplemented("Put is not implemented");
+  }
+
+  // Sends a signal to peer without transferring data. Can be used as a barrier
+  // or to notify peer that prior Puts (and Signals) to the same descriptor have
+  // completed. signal_desc carries backend-specific signal identity (e.g.
+  // sigIdx, ctx).
+  virtual Future<> Signal(RankId peer, const SignalDesc& signal_desc,
+                          const Executor& executor) {
+    return Unimplemented("Signal is not implemented");
+  }
+
+  // Counted wait: completes when this rank has received op_cnt signals from
+  // peer that match signal_desc (e.g. same sigIdx/ctx). Used to synchronize
+  // after Put/Signal; the backend uses signal_desc to match which signals to
+  // wait for.
+  virtual Future<> WaitSignal(RankId peer, int op_cnt,
+                              const SignalDesc& signal_desc,
+                              const Executor& executor) {
+    return Unimplemented("WaitSignal is not implemented");
   }
 
   // Returns the number of ranks in the communicator.
@@ -205,12 +205,6 @@ class Communicator {
   virtual absl::Status Fence() {
     return Unimplemented("Fence is not implemented");
   }
-
- protected:
-  // Returns an `Event` that is always available.
-  static tsl::AsyncValueRef<Event> OkEvent() {
-    return tsl::MakeAvailableAsyncValueRef<Event>();
-  }
 };
 
 inline std::ostream& operator<<(std::ostream& os, const Communicator& comm) {
@@ -218,5 +212,8 @@ inline std::ostream& operator<<(std::ostream& os, const Communicator& comm) {
 }
 
 }  // namespace xla
+
+namespace stream_executor {
+}  // namespace stream_executor
 
 #endif  // XLA_CORE_COLLECTIVES_COMMUNICATOR_H_

@@ -17,18 +17,27 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tensorflow/core/data/name_utils.h"
 #include "tensorflow/core/data/split_utils.h"
 #include "tensorflow/core/framework/dataset.h"
+#include "tensorflow/core/framework/model.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/op_requires.h"
+#include "tensorflow/core/framework/partial_tensor_shape.h"
 #include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/platform/macros.h"
 #include "tsl/platform/mutex.h"
 #include "tsl/platform/thread_annotations.h"
 
@@ -105,7 +114,7 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
   }
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
-      const string& prefix) const override {
+      const std::string& prefix) const override {
     return std::make_unique<Iterator>(Iterator::Params{
         this, name_utils::IteratorPrefix(kDatasetType, prefix)});
   }
@@ -124,7 +133,7 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
     return output_shapes_;
   }
 
-  string DebugString() const override {
+  std::string DebugString() const override {
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
@@ -155,7 +164,7 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
     return to_concatenate_->CheckExternalState();
   }
 
-  absl::Status Get(OpKernelContext* ctx, int64 index,
+  absl::Status Get(OpKernelContext* ctx, int64_t index,
                    std::vector<Tensor>* out_tensors) const override {
     TF_RETURN_IF_ERROR(CheckRandomAccessCompatible(index));
     if (index < input_cardinality_) {
@@ -200,7 +209,7 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
       TF_ASSIGN_OR_RETURN(input_contexts_,
                           CreateInputIteratorContexts(ctx, dataset()));
       TF_RETURN_IF_ERROR(dataset()->input_->MakeIterator(
-          &input_contexts_[0], this, strings::StrCat(prefix(), "[0]"),
+          &input_contexts_[0], this, absl::StrCat(prefix(), "[0]"),
           &input_impls_[0]));
 
       ctx->MergeCheckpoint(input_contexts_[0].checkpoint());
@@ -211,17 +220,21 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
                                  std::vector<Tensor>* out_tensors,
                                  bool* end_of_sequence) override {
       mutex_lock l(mu_);
-      if (!input_impls_[0] && !input_impls_[1]) {
+      if (input_impls_.size() != 2) {
+        return absl::FailedPreconditionError(
+            "`Initialize` should be called before `GetNextInternal`.");
+      }
+      if (input_impls_[0] == nullptr && input_impls_[1] == nullptr) {
         *end_of_sequence = true;
         return absl::OkStatus();
       }
       // Global shuffling
-      if (ctx->index_mapper()) {
+      if (ctx->index_mapper() != nullptr) {
         if (input_impls_[1] == nullptr) {
           // Creates the second iterator immediately in the case of
           // global random shuffling.
           TF_RETURN_IF_ERROR(dataset()->to_concatenate_->MakeIterator(
-              &input_contexts_[1], this, strings::StrCat(prefix(), "[1]"),
+              &input_contexts_[1], this, absl::StrCat(prefix(), "[1]"),
               &input_impls_[1]));
           ctx->MergeCheckpoint(input_contexts_[1].checkpoint());
         }
@@ -308,11 +321,13 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
         if (!*end_of_sequence) {
           return absl::OkStatus();
         }
+        VLOG(2) << "TF concatenation dataset finished reading input " << i_
+                << ".";
         if (i_ == 0) {
           // Creates the second iterator only when the first iterator
           // is exhausted to save memory usage.
           TF_RETURN_IF_ERROR(dataset()->to_concatenate_->MakeIterator(
-              &input_contexts_[1], this, strings::StrCat(prefix(), "[1]"),
+              &input_contexts_[1], this, absl::StrCat(prefix(), "[1]"),
               &input_impls_[1]));
           ctx->MergeCheckpoint(input_contexts_[1].checkpoint());
         }
@@ -333,6 +348,11 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
     absl::Status SaveInternal(SerializationContext* ctx,
                               IteratorStateWriter* writer) override {
       mutex_lock l(mu_);
+      if (input_impls_.size() != 2) {
+        return absl::FailedPreconditionError(
+            "`Initialize` should be called before saving/restoring from "
+            "tf.data checkpoints.");
+      }
       TF_RETURN_IF_ERROR(writer->WriteScalar(prefix(), kIndex, i_));
       TF_RETURN_IF_ERROR(
           writer->WriteScalar(prefix(), kElementCount, element_count_));
@@ -354,7 +374,11 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
     absl::Status RestoreInternal(IteratorContext* ctx,
                                  IteratorStateReader* reader) override {
       mutex_lock l(mu_);
-
+      if (input_impls_.size() != 2) {
+        return absl::FailedPreconditionError(
+            "`Initialize` should be called before saving/restoring from "
+            "tf.data checkpoints.");
+      }
       int64_t input_uninitialized[2];
       TF_RETURN_IF_ERROR(reader->ReadScalar(
           prefix(), absl::StrFormat("%s[%d]", kInputImplUninitialized, 0),
@@ -369,12 +393,7 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
         input_impls_[1].reset();
       }
 
-      if (ctx->restored_element_count()) {
-        if (input_impls_.size() != 2) {
-          return absl::FailedPreconditionError(
-              "`Initialize` should be called before restoring from the "
-              "checkpoint.");
-        }
+      if (ctx->restored_element_count().has_value()) {
         {
           int64_t tmp_element_count;
           TF_RETURN_IF_ERROR(
@@ -401,7 +420,7 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
 
         if (!static_cast<bool>(input_uninitialized[1])) {
           TF_RETURN_IF_ERROR(dataset()->to_concatenate_->MakeIterator(
-              &input_contexts_[1], this, strings::StrCat(prefix(), "[1]"),
+              &input_contexts_[1], this, absl::StrCat(prefix(), "[1]"),
               &input_impls_[1]));
 
           input_contexts_[1].set_restored_element_count(
@@ -417,14 +436,14 @@ class ConcatenateDatasetOp::Dataset : public DatasetBase {
       TF_RETURN_IF_ERROR(reader->ReadScalar(prefix(), kIndex, &i_));
 
       if (!TF_PREDICT_TRUE(i_ >= 0 && i_ <= 2))
-        return errors::InvalidArgument("i_ must be in range [0, 2].");
+        return absl::InvalidArgumentError("i_ must be in range [0, 2].");
 
       if (!static_cast<bool>(input_uninitialized[0])) {
         TF_RETURN_IF_ERROR(RestoreInput(ctx, reader, input_impls_[0]));
       }
       if (!static_cast<bool>(input_uninitialized[1])) {
         TF_RETURN_IF_ERROR(dataset()->to_concatenate_->MakeIterator(
-            &input_contexts_[1], this, strings::StrCat(prefix(), "[1]"),
+            &input_contexts_[1], this, absl::StrCat(prefix(), "[1]"),
             &input_impls_[1]));
         ctx->MergeCheckpoint(input_contexts_[1].checkpoint());
 
@@ -477,7 +496,7 @@ void ConcatenateDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
                                        DatasetBase* to_concatenate,
                                        DatasetBase** output) {
   OP_REQUIRES(ctx, input->output_dtypes() == to_concatenate->output_dtypes(),
-              errors::InvalidArgument(
+              errors::InvalidArgumentError(
                   "input dataset and dataset to concatenate"
                   " have different output_types %s and %s",
                   (DataTypeVectorString(input->output_dtypes()),

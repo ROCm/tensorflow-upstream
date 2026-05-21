@@ -225,8 +225,8 @@ class AutotuneMap {
   template <class Group, class Params, class Cfg, class Hash>
   friend class AutotuneSingleton;
 
-  std::string GetActionSummary(StringPiece action, const Parameters& params,
-                               const Config& config) {
+  std::string GetActionSummary(absl::string_view action,
+                               const Parameters& params, const Config& config) {
     return strings::Printf("autotune_map %s %s: %s -> (%s)", name_.c_str(),
                            string(action).c_str(), params.ToString().c_str(),
                            config.ToString().c_str());
@@ -414,14 +414,14 @@ class AutotuneEntry {
 };
 
 namespace internal {
-StatusOr<std::tuple<int, int>> BestCudnnConvAlgorithmIndices(
+absl::StatusOr<std::tuple<int, int>> BestCudnnConvAlgorithmIndices(
     absl::Span<const AutotuneResult> results);
 }  // namespace internal
 
 // Returns the best algorithms for the config, one is the fastest, the other is
 // other is fastest with 0 scratch space. Unsuccessful autotuning results are
 // allowed and ignored.
-StatusOr<se::dnn::AlgorithmConfig> BestCudnnConvAlgorithm(
+absl::StatusOr<stream_executor::dnn::AlgorithmConfig> BestCudnnConvAlgorithm(
     absl::Span<const AutotuneResult> results);
 
 // Explicitly-instantiated with ConvOp and FusedConvOp.

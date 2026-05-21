@@ -977,7 +977,7 @@ class TestUnavailableErrorOp : public tensorflow::OpKernel {
   explicit TestUnavailableErrorOp(tensorflow::OpKernelConstruction* ctx)
       : tensorflow::OpKernel(ctx) {}
   void Compute(tensorflow::OpKernelContext* ctx) override {
-    ctx->SetStatus(tensorflow::errors::Unavailable("Test error."));
+    ctx->SetStatus(absl::UnavailableError("Test error."));
   }
 };
 REGISTER_KERNEL_BUILDER(
@@ -2202,8 +2202,8 @@ tensorflow::ServerDef CreateSingleHostServerDef(
 
   // Add a client.
   job_def->mutable_tasks()->insert(
-      {0, tensorflow::strings::StrCat(
-              "localhost:", tensorflow::testing::PickUnusedPortOrDie())});
+      {0,
+       absl::StrCat("localhost:", tensorflow::testing::PickUnusedPortOrDie())});
 
   tensorflow::JobDef* job_def2 = cluster_def->add_job();
   job_def2->set_name("worker");
@@ -2227,8 +2227,8 @@ tensorflow::ServerDef GetClusterServerDef(const string& worker_job_name,
   tensorflow::JobDef* job_def2 = cluster_def->add_job();
   job_def2->set_name("client");
   job_def2->mutable_tasks()->insert(
-      {0, tensorflow::strings::StrCat(
-              "localhost:", tensorflow::testing::PickUnusedPortOrDie())});
+      {0,
+       absl::StrCat("localhost:", tensorflow::testing::PickUnusedPortOrDie())});
   return server_def;
 }
 

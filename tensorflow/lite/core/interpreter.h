@@ -607,6 +607,12 @@ class Interpreter {
   ///
   /// WARNING: This API is deprecated: prefer using
   /// `InterpreterBuilder::SetNumThreads`, as documented above.
+  /// \warning Calling this method can (and will, when using TF Lite in Play
+  /// Services) invalidate any pointers to `TfLiteTensor` objects previously
+  /// obtained with this Interpreter, as well as the underlying tensor data.
+  /// This includes e.g. `input_tensor`, `output_tensor` and `tensor` methods,
+  /// as well as e.g. `typed_input_tensor`, `typed_output_tensor`, and
+  /// `typed_tensor` methods.
   TfLiteStatus SetNumThreads(int num_threads);
 
   /// Allow float16 precision for FP32 calculation when possible.
@@ -659,6 +665,12 @@ class Interpreter {
   /// operator that cannot be resolved. This can happen when the op is not
   /// registered or built with the TF Lite framework.
   /// 5. kTfLiteError: Unexpected/runtime failure. \n
+  /// \warning Calling this method can (and will, when using TF Lite in Play
+  /// Services) invalidate any pointers to `TfLiteTensor` objects previously
+  /// obtained with this Interpreter, as well as the underlying tensor data.
+  /// This includes e.g. `input_tensor`, `output_tensor` and `tensor` methods,
+  /// as well as e.g. `typed_input_tensor`, `typed_output_tensor`, and
+  /// `typed_tensor` methods. \n
   /// \warning This is an experimental API and subject to change. \n
   TfLiteStatus ModifyGraphWithDelegate(TfLiteDelegate* delegate);
   TfLiteStatus ModifyGraphWithDelegate(TfLiteOpaqueDelegateStruct* delegate);
@@ -1057,6 +1069,14 @@ class Interpreter {
   static constexpr char kPlaceholderSignatureDefKey[] =
       "<placeholder signature>";
 
+  // Placeholder input names to use when the model has with no signatures & no
+  // tensor names.
+  std::vector<std::string> placeholder_input_names_;
+
+  // Placeholder output names to use when the model has with no signatures & no
+  // tensor names.
+  std::vector<std::string> placeholder_output_names_;
+
   // Placeholder SignatureDef for legacy models with no signatures.
   std::unique_ptr<internal::SignatureDef> placeholder_signature_def_;
 
@@ -1084,9 +1104,7 @@ class Interpreter {
   // Stores control edges that are encoded in the metadata of the model. Updated
   // in SetMetadata; model_control_dependencies_.empty() means that there were
   // no control dependencies encoded in the metadata, or that we were unable to
-  // parse them. We assume that, if we were able to parse them, they are
-  // consistent with the model and no further consistency check (e.g., bounds
-  // checks when dereferencing by subgraph and operator index) will take place.
+  // parse or validate them.
   ModelControlDependencies model_control_dependencies_;
 
   // Flag indicating whether to continue or cancel in flight invocation.

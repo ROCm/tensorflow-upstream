@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/user_context.h"
+#include "xla/python/ifrt/value.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/tsl/concurrency/ref_count.h"
 
@@ -55,9 +56,11 @@ class PjRtTuple final : public llvm::RTTIExtends<PjRtTuple, Tuple> {
     return {};
   }
 
-  Future<> GetReadyFuture() const override;
+  absl::StatusOr<std::optional<int64_t>> ByteSize() const override;
 
-  Future<> Delete() override;
+  tsl::Future<> GetReadyFuture() const override;
+
+  tsl::Future<> Delete() override;
 
   bool IsDeleted() const override;
 

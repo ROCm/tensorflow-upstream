@@ -27,8 +27,10 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
+#include "xla/future.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/literal.h"
@@ -37,7 +39,6 @@ limitations under the License.
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -57,10 +58,9 @@ using ::testing::HasSubstr;
 
 absl::StatusOr<std::unique_ptr<PjRtStreamExecutorClient>> GetClient() {
   LocalClient* local_client = xla::ClientLibrary::LocalClientOrDie();
-  TF_ASSIGN_OR_RETURN(se::Platform * platform,
-                      PlatformUtil::GetPlatform("Host"));
-  TF_ASSIGN_OR_RETURN(se::StreamExecutor * executor,
-                      platform->ExecutorForDevice(0));
+  ASSIGN_OR_RETURN(se::Platform * platform, PlatformUtil::GetPlatform("Host"));
+  ASSIGN_OR_RETURN(se::StreamExecutor * executor,
+                   platform->ExecutorForDevice(0));
   auto device_state = std::make_unique<LocalDeviceState>(
       executor, local_client, LocalDeviceState::kSynchronous,
       /*max_inflight_computations=*/32,
@@ -94,26 +94,24 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> ToyExecutable(
   auto d = Add(c, c);
   Tuple(&builder, {c, d});
   set_up_aliases(builder);
-  TF_ASSIGN_OR_RETURN(auto computation,
-                      builder.Build(/*remove_dynamic_dimensions=*/true));
-  TF_ASSIGN_OR_RETURN(auto executable,
-                      client.CompileAndLoad(computation, compile_options));
+  ASSIGN_OR_RETURN(auto computation,
+                   builder.Build(/*remove_dynamic_dimensions=*/true));
+  ASSIGN_OR_RETURN(auto executable,
+                   client.CompileAndLoad(computation, compile_options));
   return executable;
 }
 
 absl::Status ExecuteWithSameInputBuffer(
     absl::AnyInvocable<void(XlaBuilder&)> set_up_aliases) {
   auto shape = xla::ShapeUtil::MakeScalarShape(xla::F32);
-  TF_ASSIGN_OR_RETURN(auto client, GetClient());
+  ASSIGN_OR_RETURN(auto client, GetClient());
   TF_RET_CHECK(!client->addressable_devices().empty());
   auto* device0 = client->addressable_devices().front();
-  TF_ASSIGN_OR_RETURN(auto buffer,
-                      client->CreateUninitializedBuffer(
-                          shape, *device0->default_memory_space()));
-  TF_ASSIGN_OR_RETURN(auto executable,
-                      ToyExecutable(*client, shape, std::move(set_up_aliases)));
+  ASSIGN_OR_RETURN(auto buffer, client->CreateUninitializedBuffer(
+                                    shape, *device0->default_memory_space()));
+  ASSIGN_OR_RETURN(auto executable,
+                   ToyExecutable(*client, shape, std::move(set_up_aliases)));
   xla::ExecuteOptions options;
-  options.untuple_result = true;
   return executable->Execute({{buffer.get(), buffer.get()}}, options).status();
 }
 
@@ -149,10 +147,10 @@ TEST(PjRtStreamExecutorClientTest, DonateWithControlDependency) {
   auto literal = LiteralUtil::CreateR2({{1, 2, 3}, {4, 5, 6}});
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PjRtBuffer> buffer,
-      client->BufferFromHostLiteral(literal, client->memory_spaces()[0]));
+      client->BufferFromHostLiteral(literal, client->memory_spaces()[0],
+                                    /*device_layout=*/nullptr));
 
-  PjRtFuture<>::Promise promise = PjRtFuture<>::CreatePromise();
-  PjRtFuture<> future(promise);
+  auto [promise, future] = MakePromise<>();
   auto blocked_buffer =
       std::move(*(buffer->DonateWithControlDependency(future)));
   EXPECT_TRUE(buffer->IsDeleted());
@@ -163,7 +161,7 @@ TEST(PjRtStreamExecutorClientTest, DonateWithControlDependency) {
       ShapeUtil::DeviceShapeToHostShape(blocked_buffer->on_device_shape()));
   bool got_literal = false;
   blocked_buffer->ToLiteral(result_literal.get()).OnReady([&](absl::Status s) {
-    absl::MutexLock l(&mu);
+    absl::MutexLock l(mu);
     TF_ASSERT_OK(s);
     got_literal = true;
   });
@@ -175,7 +173,7 @@ TEST(PjRtStreamExecutorClientTest, DonateWithControlDependency) {
   EXPECT_TRUE(future.IsReady());
 
   {
-    absl::MutexLock l(&mu);
+    absl::MutexLock l(mu);
     mu.Await(absl::Condition(&got_literal));
   }
 

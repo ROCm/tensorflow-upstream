@@ -21,7 +21,18 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/ragged_all_to_all_kernel.h"
 
+#if NCCL_VERSION_CODE >= 22800
+// Device initiated collective operations were added in NCCL 2.28.0.
+#include "third_party/nccl/nccl_device.h"
+#endif  // NCCL_VERSION_CODE >= 22800
+
 namespace stream_executor::gpu {
+
+// A helper structure to load and store data of fixed number of bytes.
+template <int64_t kSize>
+struct alignas(kSize) Vec {
+  uint8_t data[kSize];
+};
 
 // RaggedAllToAll instruction performs a collective AllToAll operation on ragged
 // tensors. For the semantics of each operand see the documentation of
@@ -47,36 +58,91 @@ namespace stream_executor::gpu {
 //  update_slice = input[input_offset: input_offset + send_size]
 //  output_ptrs[j][output_offset : output_offset + send_size] = update_slice
 //
+// `num_updates_per_block` blocks cooperate to process `num_updates_per_block`
+// updates. This is done to reduce imbalance in data transfer per block.
+//
 // Launch parameters:
-//  - Block grid: (N*num_updates_per_rank, num_blocks_per_update, 1)
+//  - Block grid: (num_ranks, num_block_clusters, num_updates_per_block)
 //  - Thread grid: (num_threads_per_update, 1, 1)
 template <typename T>
-__global__ void __launch_bounds__(128) RaggedAllToAllKernelImpl(
-    const T* __restrict__ input_ptr,
-    std::array<void* __restrict__, kMaxNumRaggedAllToAllOutputPtrs> output_ptrs,
+__device__ void TransferDataToLsaPeer(
+    const T* __restrict__ input_ptr, T* __restrict__ output_ptr,
     const int64_t* __restrict__ input_offsets_ptr,
     const int64_t* __restrict__ send_sizes_ptr,
     const int64_t* __restrict__ output_offsets_ptr,
     int64_t num_updates_per_replica, int64_t num_row_elements) {
-  int64_t update_idx = blockIdx.x;
-  int64_t output_idx = update_idx / num_updates_per_replica;
+  int64_t num_updates_to_process = gridDim.z;
 
-  T* output_ptr = static_cast<T* __restrict__>(output_ptrs[output_idx]);
+  for (int64_t i = 0; i < num_updates_to_process; ++i) {
+    const int64_t update_idx =
+        blockIdx.x * num_updates_per_replica + blockIdx.y * gridDim.z + i;
 
-  int64_t input_offset = input_offsets_ptr[update_idx];
-  int64_t send_size = send_sizes_ptr[update_idx];
-  int64_t output_offset = output_offsets_ptr[update_idx];
+    const int64_t input_offset = input_offsets_ptr[update_idx];
+    const int64_t send_size = send_sizes_ptr[update_idx];
+    const int64_t output_offset = output_offsets_ptr[update_idx];
 
-  int64_t input_offset_start = input_offset * num_row_elements;
-  int64_t output_offset_start = output_offset * num_row_elements;
+    const int64_t input_offset_start = input_offset * num_row_elements;
+    const int64_t output_offset_start = output_offset * num_row_elements;
 
-  int64_t update_size = send_size * num_row_elements;
+    const int64_t update_size = send_size * num_row_elements;
 
-  for (int64_t i = threadIdx.x + blockIdx.y * blockDim.x; i < update_size;
-       i += blockDim.x * gridDim.y) {
-    output_ptr[output_offset_start + i] = input_ptr[input_offset_start + i];
+    int64_t offset_update_batch_idx = blockIdx.z + i;
+    if (offset_update_batch_idx >= num_updates_to_process) {
+      offset_update_batch_idx -= num_updates_to_process;
+    }
+
+    for (int64_t j = threadIdx.x + offset_update_batch_idx * blockDim.x;
+         j < update_size; j += num_updates_to_process * blockDim.x) {
+      output_ptr[output_offset_start + j] = input_ptr[input_offset_start + j];
+    }
   }
 }
+
+template <typename PtrStorage, int64_t kVectorSize>
+__global__ void __launch_bounds__(128)
+    RaggedAllToAllKernelImpl(const void* __restrict__ input_ptr,
+                             PtrStorage output_ptrs,
+                             const int64_t* __restrict__ input_offsets_ptr,
+                             const int64_t* __restrict__ send_sizes_ptr,
+                             const int64_t* __restrict__ output_offsets_ptr,
+                             int64_t num_updates_per_replica,
+                             int64_t num_row_elements) {
+  using T = Vec<kVectorSize>;
+  const T* typed_input_ptr = static_cast<const T* __restrict__>(input_ptr);
+  T* output_ptr = static_cast<T* __restrict__>(output_ptrs[blockIdx.x]);
+
+  TransferDataToLsaPeer(typed_input_ptr, output_ptr, input_offsets_ptr,
+                        send_sizes_ptr, output_offsets_ptr,
+                        num_updates_per_replica, num_row_elements);
+}
+
+template <int64_t kVectorSize>
+__global__ void __launch_bounds__(128)
+    RaggedAllToAllWithSymmetricMemoryKernelImpl(
+        const void* __restrict__ input_ptr, void* output_ptrs_symmetric_memory,
+        size_t output_sym_offset, const int64_t* __restrict__ input_offsets_ptr,
+        const int64_t* __restrict__ send_sizes_ptr,
+        const int64_t* __restrict__ output_offsets_ptr,
+        int64_t num_updates_per_replica, int64_t num_row_elements) {
+  using T = Vec<kVectorSize>;
+  const T* typed_input_ptr = static_cast<const T* __restrict__>(input_ptr);
+
+  T* output_ptr = nullptr;
+
+#if NCCL_VERSION_CODE >= 22800
+  output_ptr = static_cast<T* __restrict__>(
+      ncclGetLsaPointer((ncclWindow_t)output_ptrs_symmetric_memory,
+                        output_sym_offset, blockIdx.x));
+#else
+  assert(false &&
+         "Can not use the LSA feature with NCCL version less than 2.28.0.");
+#endif  // NCCL_VERSION_CODE >= 22800
+
+  TransferDataToLsaPeer(typed_input_ptr, output_ptr, input_offsets_ptr,
+                        send_sizes_ptr, output_offsets_ptr,
+                        num_updates_per_replica, num_row_elements);
+}
+
 }  // namespace stream_executor::gpu
 
 #endif  // XLA_STREAM_EXECUTOR_GPU_RAGGED_ALL_TO_ALL_KERNEL_LIB_CU_H_

@@ -173,7 +173,7 @@ absl::StatusOr<KernelInstantiation*> GetInstantiation(
       *new absl::flat_hash_map<std::string /*base64-encoded fingerprint*/,
                                std::unique_ptr<KernelInstantiation>>();
 
-  absl::MutexLock lock(&mu);
+  absl::MutexLock lock(mu);
   std::unique_ptr<KernelInstantiation>& instantiation =
       instantiations[fingerprint_str];
   if (instantiation == nullptr) {
@@ -222,7 +222,7 @@ absl::StatusOr<KernelInstantiation*> GetInstantiation(
 static absl::StatusOr<Tensor> TensorFromProto(const TensorProto& proto) {
   Tensor out;
   if (!out.FromProto(proto)) {
-    return tsl::errors::Internal("Failed deserializing a TensorProto");
+    return absl::InternalError("Failed deserializing a TensorProto");
   }
   return out;
 }
@@ -257,7 +257,7 @@ absl::Status LightOutsideCompilationOp::CompileToCustomCallCallingTfKernel(
     if (absl::c_any_of(xla_shape.dynamic_dimensions(),
                        [](const bool is_dynamic) { return is_dynamic; })) {
       // TODO(cheshire): Support input dynamic dimensions.
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Input dynamic dimensions are not supported for light outside "
           "compilation");
     }
@@ -306,7 +306,8 @@ absl::Status LightOutsideCompilationOp::CompileToCustomCallCallingTfKernel(
     TensorShapeProto output_tensor_shape_proto =
         ic.ShapeHandleToProto(ic.output(i));
     if (output_tensor_shape_proto.unknown_rank()) {
-      return tsl::errors::Internal("Output ", i, " has unknown rank");
+      return absl::InternalError(
+          absl::StrCat("Output ", i, " has unknown rank"));
     }
 
     int rank = output_tensor_shape_proto.dim_size();
@@ -320,8 +321,8 @@ absl::Status LightOutsideCompilationOp::CompileToCustomCallCallingTfKernel(
 
       if (dim->size() < 0) {
         if (it == dimension_bounds.end()) {
-          return tsl::errors::Internal(
-              "Bound for unknown dimension not found for dimension ", d);
+          return absl::InternalError(absl::StrCat(
+              "Bound for unknown dimension not found for dimension ", d));
         }
         dim->set_size(it->second);
         dynamic_dimensions[d] = true;
@@ -464,7 +465,7 @@ class TfCallbackDevice : public DeviceBase {
     set_tensorflow_accelerator_device_info(&accelerator_device_info_);
   }
 
-  const string& name() const override { return name_; }
+  const std::string& name() const override { return name_; }
 
   PerOpGpuDevice* MakeGpuDevice() override {
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -485,7 +486,7 @@ class TfCallbackDevice : public DeviceBase {
         tsl::PlatformDeviceId(stream_->parent()->device_ordinal()), allocator,
         // TODO(cheshire): Pass meaningful scratch buffer.
         /*scratch=*/nullptr);
-    return OkStatus();
+    return absl::OkStatus();
 #else
     LOG(FATAL) << "CUDA-enabled build is required";  // Crash OK
 #endif
@@ -548,7 +549,8 @@ absl::Status PopulateMetadataBufferIfNeeded(OpKernelContext& ctx,
               callback_data.outputs(i).buffer_description().shape()));
       void* location = static_cast<char*>(allocated->data()) +
                        xla::ShapeUtil::ByteSizeOf(xla_shape);
-      se::DeviceMemoryBase m{location, num_dimensions * sizeof(int32_t)};
+      stream_executor::DeviceAddressBase m{location,
+                                           num_dimensions * sizeof(int32_t)};
       TF_RETURN_IF_ERROR(stream->Memcpy(&m, shape_info.data(),
                                         num_dimensions * sizeof(int32_t)));
     }
@@ -595,7 +597,7 @@ absl::Status CallTfKernel(void* stream_handle, void** buffers,
   std::unique_ptr<TfCallbackDevice> device;
   std::unique_ptr<OpKernel> kernel;
   {
-    absl::MutexLock lock(&instantiation->mu);
+    absl::MutexLock lock(instantiation->mu);
 
     if (instantiation->devices_and_kernels.empty()) {
       auto device = std::make_unique<TfCallbackDevice>();
@@ -626,7 +628,7 @@ absl::Status CallTfKernel(void* stream_handle, void** buffers,
   // Put callback_device and kernel back in `devices_and_kernels` when we're
   // done with them.
   auto cleanup = absl::MakeCleanup([&] {
-    absl::MutexLock lock(&instantiation->mu);
+    absl::MutexLock lock(instantiation->mu);
     instantiation->devices_and_kernels.push_back(
         std::make_pair(std::move(device), std::move(kernel)));
   });

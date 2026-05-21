@@ -17,16 +17,15 @@ limitations under the License.
 
 #include <functional>
 #include <string>
-#include <type_traits>
 #include <utility>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
-#include "absl/log/log_sink.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/tsl/platform/errors.h"
@@ -93,15 +92,10 @@ TEST(StatusMacros, RetCheckFailingWithExtraMessage) {
 }
 
 TEST(StatusMacros, RetCheckLogWarning) {
-  // absl::ScopedMockLog only works if we're actually using ABSL logging, and
-  // TSL supports a homegrown logging implementation, so we should only check
-  // the log is emitted when ABSL logging is used.
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
   const std::string kExpectedRegex = "RET_CHECK.*1 == 2 extra message";
-  if constexpr (std::is_same_v<absl::LogSink, tsl::TFLogSink>) {
-    EXPECT_CALL(mock_log, Log(absl::LogSeverity::kWarning, ::testing::_,
-                              ::testing::ContainsRegex(kExpectedRegex)));
-  }
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kWarning, ::testing::_,
+                            ::testing::ContainsRegex(kExpectedRegex)));
   mock_log.StartCapturingLogs();
   absl::Status status =
       RetCheckFailWithLogSeverity(absl::LogSeverity::kWarning);
@@ -112,10 +106,8 @@ TEST(StatusMacros, RetCheckLogWarning) {
 TEST(StatusMacros, RetCheckLogInfo) {
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
   const std::string kExpectedRegex = "RET_CHECK.*1 == 2 extra message";
-  if constexpr (std::is_same_v<absl::LogSink, tsl::TFLogSink>) {
-    EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
-                              ::testing::ContainsRegex(kExpectedRegex)));
-  }
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
+                            ::testing::ContainsRegex(kExpectedRegex)));
   mock_log.StartCapturingLogs();
   absl::Status status = RetCheckFailWithLogSeverity(absl::LogSeverity::kInfo);
   EXPECT_EQ(status.code(), tsl::error::INTERNAL);
@@ -146,7 +138,7 @@ using StatusReturningFunction = std::function<absl::Status()>;
 
 absl::StatusOr<int> CallStatusReturningFunction(
     const StatusReturningFunction& func) {
-  TF_RETURN_IF_ERROR(func());
+  RETURN_IF_ERROR(func());
   return 42;
 }
 
@@ -164,7 +156,7 @@ TEST(StatusMacros, ReturnIfErrorOnError) {
 
 TEST(StatusMacros, AssignOrReturnSuccessfully) {
   absl::Status status = []() {
-    TF_ASSIGN_OR_RETURN(int value, CreateIntSuccessfully());
+    ASSIGN_OR_RETURN(int value, CreateIntSuccessfully());
     EXPECT_EQ(value, 42);
     return absl::OkStatus();
   }();
@@ -173,7 +165,7 @@ TEST(StatusMacros, AssignOrReturnSuccessfully) {
 
 TEST(StatusMacros, AssignOrReturnUnsuccessfully) {
   absl::Status status = []() {
-    TF_ASSIGN_OR_RETURN(int value, CreateIntUnsuccessfully());
+    ASSIGN_OR_RETURN(int value, CreateIntUnsuccessfully());
     (void)value;
     return absl::OkStatus();
   }();
@@ -184,10 +176,8 @@ TEST(StatusMacros, AssignOrReturnUnsuccessfully) {
 TEST(StatusMacros, XlaRetCheckFailLogWarning) {
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
   const std::string kExpectedLog = "xla ret check fail message";
-  if constexpr (std::is_same_v<absl::LogSink, tsl::TFLogSink>) {
-    EXPECT_CALL(mock_log, Log(absl::LogSeverity::kWarning, ::testing::_,
-                              ::testing::HasSubstr(kExpectedLog)));
-  }
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kWarning, ::testing::_,
+                            ::testing::HasSubstr(kExpectedLog)));
   mock_log.StartCapturingLogs();
   absl::Status status = XlaRetCheckFailLogWarning();
   EXPECT_EQ(status.code(), tsl::error::INTERNAL);

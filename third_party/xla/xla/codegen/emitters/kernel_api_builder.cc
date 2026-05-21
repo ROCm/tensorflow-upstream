@@ -33,7 +33,6 @@ limitations under the License.
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -49,6 +48,8 @@ limitations under the License.
 #include "xla/codegen/emitters/type_util.h"
 #include "xla/codegen/kernel_spec.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
@@ -56,6 +57,7 @@ limitations under the License.
 #include "xla/runtime/work_group.h"
 #include "xla/runtime/work_item.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/shaped_slice.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -220,8 +222,8 @@ void SetIndexDataLayout(mlir::ModuleOp module,
 
 IndexingMap GetDefaultWorkItemIndexingMap(const WorkDimensions& work_dimensions,
                                           const Shape& shape,
-                                          mlir::MLIRContext* ctx) {
-  std::vector<mlir::AffineExpr> output_dims(shape.dimensions().size());
+                                          mlir::MLIRContext* mlir_context) {
+  llvm::SmallVector<SymbolicExpr> output_dims(shape.dimensions().size());
 
   const NumWorkItems& num_work_items = work_dimensions.num_work_items;
   const NumWorkGroups& num_work_groups = work_dimensions.num_work_groups;
@@ -235,13 +237,14 @@ IndexingMap GetDefaultWorkItemIndexingMap(const WorkDimensions& work_dimensions,
       num_work_items.y * num_work_groups.y,
       num_work_items.z * num_work_groups.z};
 
-  mlir::AffineExpr c0 = mlir::getAffineConstantExpr(0, ctx);
+  SymbolicExpr c0 = CreateSymbolicConstant(0, mlir_context);
   uint64_t stride = 1;
-  mlir::AffineExpr linear_index = c0;
+  SymbolicExpr linear_index = c0;
   // Reverse to get minor to major order.
   for (auto [idx, dim] : llvm::enumerate(llvm::reverse(work_tile_dimensions))) {
     uint64_t symbol_index = work_tile_dimensions.size() - idx;
-    auto tile_coord = mlir::getAffineSymbolExpr(symbol_index, ctx);
+    auto tile_coord =
+        CreateSymbolExpr(symbol_index, /*num_dims=*/6, mlir_context);
     auto tile_component = tile_coord * stride;
 
     linear_index = linear_index + tile_component;
@@ -258,8 +261,8 @@ IndexingMap GetDefaultWorkItemIndexingMap(const WorkDimensions& work_dimensions,
   // loop emitter doesn't support. This is safe, since the latter CHECK fails
   // if its assumptions are not fulfilled.
   for (int i = 0; i < 3; ++i) {
-    auto coord = mlir::getAffineDimExpr(kIndexingMapWorkItemDims[i], ctx) +
-                 mlir::getAffineDimExpr(kIndexingMapWorkGroupDims[i], ctx) *
+    auto coord = CreateDimExpr(kIndexingMapWorkItemDims[i], mlir_context) +
+                 CreateDimExpr(kIndexingMapWorkGroupDims[i], mlir_context) *
                      work_item_array[i];
     auto linear_component = coord * stride;
     linear_index = linear_index + linear_component;
@@ -270,7 +273,7 @@ IndexingMap GetDefaultWorkItemIndexingMap(const WorkDimensions& work_dimensions,
   // chunk.
   uint64_t items_per_chunk = stride;
 
-  mlir::AffineExpr chunk_id = mlir::getAffineSymbolExpr(0, ctx);
+  SymbolicExpr chunk_id = CreateSymbolExpr(0, /*num_dims=*/6, mlir_context);
   linear_index = chunk_id * items_per_chunk + linear_index;
 
   // See IndexUtil::LinearIndexToMultidimensionalIndex.
@@ -295,9 +298,10 @@ IndexingMap GetDefaultWorkItemIndexingMap(const WorkDimensions& work_dimensions,
   size_t range_vars_size = range_vars.size();
 
   IndexingMap indexing_map(
-      mlir::AffineMap::get(/*dimCount=*/6,
-                           /*symbolCount=*/range_vars_size, output_dims, ctx),
-      std::move(dim_vars), std::move(range_vars), /*rt_vars=*/{});
+      SymbolicMap::Get(mlir_context, /*num_dimensions=*/6,
+                       /*num_symbols=*/range_vars_size, output_dims),
+      std::move(dim_vars), std::move(range_vars),
+      /*rt_vars=*/{});
   indexing_map.AddConstraint(linear_index, Interval{0, num_elements - 1});
   indexing_map.Simplify();
   indexing_map.RemoveUnusedSymbols();
@@ -363,7 +367,8 @@ absl::StatusOr<CallTargetProvider> EmitPartitionedComputations(
     for (const auto& subgraph : comp.subgraphs()) {
       if (subgraph_to_mlir_fn.contains(&subgraph)) {
         TF_RETURN_IF_ERROR(SubgraphToMlirFunction(
-            comp, subgraph, subgraph_to_mlir_fn[&subgraph], call_targets));
+            comp, subgraph, subgraph_to_mlir_fn[&subgraph], call_targets,
+            computations.mlir_context()));
       }
     }
   }
@@ -375,7 +380,8 @@ absl::StatusOr<CallTargetProvider> EmitPartitionedComputations(
     }
     TF_RETURN_IF_ERROR(SubgraphToMlirFunction(
         computations.FindPartitionedComputation(fused_computation), epilogue,
-        subgraph_to_mlir_fn[&epilogue], call_targets));
+        subgraph_to_mlir_fn[&epilogue], call_targets,
+        computations.mlir_context()));
   }
 
   return call_targets;
@@ -397,7 +403,7 @@ absl::StatusOr<KernelSpec> GetKernelSpec(
     TF_ASSIGN_OR_RETURN(
         BufferAllocation::Slice slice,
         buffer_assignment->GetUniqueSlice(&hlo_instruction, indexed.index));
-    result_buffers.push_back(std::move(slice));
+    result_buffers.push_back({slice, indexed.shape});
   }
 
   KernelSpec::Buffers argument_buffers;
@@ -410,15 +416,14 @@ absl::StatusOr<KernelSpec> GetKernelSpec(
           buffer_assignment->GetUniqueSlice(operand, indexed.index));
 
       bool invariant = absl::c_none_of(
-          result_buffers,
-          [&slice](const BufferAllocation::Slice& result_slice) {
-            return result_slice.OverlapsWith(slice);
+          result_buffers, [&slice](const ShapedSlice& result_slice) {
+            return result_slice.slice.OverlapsWith(slice);
           });
       if (invariant) {
         invariant_arguments.insert(operand_index);
       }
 
-      argument_buffers.push_back(std::move(slice));
+      argument_buffers.push_back({slice, indexed.shape});
       ++operand_index;
     }
   }

@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/python/ifrt/client.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/sharding_serdes.pb.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {
@@ -76,7 +78,11 @@ class SingleDeviceShardingSerDes
       const std::string& serialized,
       std::unique_ptr<DeserializeOptions> options) override {
     const auto* deserialize_sharding_options =
-        llvm::cast<DeserializeShardingOptions>(options.get());
+        llvm::dyn_cast_or_null<DeserializeShardingOptions>(options.get());
+    if (deserialize_sharding_options == nullptr) {
+      return absl::InvalidArgumentError(
+          "DeserializeShardingOptions must be provided");
+    }
 
     SingleDeviceShardingProto proto;
     if (!proto.ParseFromString(serialized)) {
@@ -89,9 +95,9 @@ class SingleDeviceShardingSerDes
           absl::StrCat("Unsupported ", version_number,
                        " for SingleDeviceSharding deserialization"));
     }
-    TF_ASSIGN_OR_RETURN(Device * device,
-                        deserialize_sharding_options->client->LookupDevice(
-                            DeviceId(proto.device_id())));
+    ASSIGN_OR_RETURN(Device * device,
+                     deserialize_sharding_options->client->LookupDevice(
+                         DeviceId(proto.device_id())));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
@@ -122,7 +128,7 @@ class OpaqueShardingSerDes
     const OpaqueSharding& sharding = llvm::cast<OpaqueSharding>(serializable);
     OpaqueShardingProto proto;
     proto.set_version_number(SerDesVersionNumber(0).value());
-    *proto.mutable_devices() = sharding.devices()->ToProto(version);
+    sharding.devices()->ToProto(*proto.mutable_devices(), version);
     if (sharding.memory_kind().memory_kind().has_value()) {
       proto.set_memory_kind(std::string(*sharding.memory_kind().memory_kind()));
     }
@@ -133,7 +139,11 @@ class OpaqueShardingSerDes
       const std::string& serialized,
       std::unique_ptr<DeserializeOptions> options) override {
     const auto* deserialize_sharding_options =
-        llvm::cast<DeserializeShardingOptions>(options.get());
+        llvm::dyn_cast_or_null<DeserializeShardingOptions>(options.get());
+    if (deserialize_sharding_options == nullptr) {
+      return absl::InvalidArgumentError(
+          "DeserializeShardingOptions must be provided");
+    }
 
     OpaqueShardingProto proto;
     if (!proto.ParseFromString(serialized)) {
@@ -146,9 +156,9 @@ class OpaqueShardingSerDes
           absl::StrCat("Unsupported ", version_number,
                        " for OpaqueSharding deserialization"));
     }
-    TF_ASSIGN_OR_RETURN(auto devices, DeviceList::FromProto(
-                                          deserialize_sharding_options->client,
-                                          proto.devices()));
+    ASSIGN_OR_RETURN(auto devices,
+                     DeviceList::FromProto(deserialize_sharding_options->client,
+                                           proto.devices()));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
@@ -180,21 +190,20 @@ class ConcreteShardingSerDes
         llvm::cast<ConcreteSharding>(serializable);
     ConcreteShardingProto proto;
     proto.set_version_number(SerDesVersionNumber(0).value());
-    *proto.mutable_devices() = sharding.devices()->ToProto(version);
+    sharding.devices()->ToProto(*proto.mutable_devices(), version);
     if (sharding.memory_kind().memory_kind().has_value()) {
       proto.set_memory_kind(std::string(*sharding.memory_kind().memory_kind()));
     }
     if (sharding.has_static_shape()) {
-      *proto.mutable_shape() = sharding.shape().ToProto(version);
+      sharding.shape().ToProto(*proto.mutable_shape(), version);
       for (const Shape& shape : sharding.shard_shapes()) {
         *proto.add_shard_shapes() = shape.ToProto(version);
       }
     } else {
-      *proto.mutable_dynamic_shape() =
-          sharding.dynamic_shape().ToProto(version);
+      sharding.dynamic_shape().ToProto(*proto.mutable_dynamic_shape(), version);
       for (const DynamicShape& dynamic_shape :
            sharding.shard_dynamic_shapes()) {
-        *proto.add_shard_dynamic_shapes() = dynamic_shape.ToProto(version);
+        dynamic_shape.ToProto(*proto.add_shard_dynamic_shapes(), version);
       }
     }
     return proto.SerializeAsString();
@@ -204,7 +213,11 @@ class ConcreteShardingSerDes
       const std::string& serialized,
       std::unique_ptr<DeserializeOptions> options) override {
     const auto* deserialize_sharding_options =
-        llvm::cast<DeserializeShardingOptions>(options.get());
+        llvm::dyn_cast_or_null<DeserializeShardingOptions>(options.get());
+    if (deserialize_sharding_options == nullptr) {
+      return absl::InvalidArgumentError(
+          "DeserializeShardingOptions must be provided");
+    }
 
     ConcreteShardingProto proto;
     if (!proto.ParseFromString(serialized)) {
@@ -217,20 +230,19 @@ class ConcreteShardingSerDes
           absl::StrCat("Unsupported ", version_number,
                        " for ConcreteSharding deserialization"));
     }
-    TF_ASSIGN_OR_RETURN(auto devices, DeviceList::FromProto(
-                                          deserialize_sharding_options->client,
-                                          proto.devices()));
+    ASSIGN_OR_RETURN(auto devices,
+                     DeviceList::FromProto(deserialize_sharding_options->client,
+                                           proto.devices()));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
     }
     if (proto.has_shape()) {
-      TF_ASSIGN_OR_RETURN(auto shape, Shape::FromProto(proto.shape()));
+      ASSIGN_OR_RETURN(auto shape, Shape::FromProto(proto.shape()));
       std::vector<Shape> shard_shapes;
       shard_shapes.reserve(proto.shard_shapes_size());
       for (const auto& shard_shape_proto : proto.shard_shapes()) {
-        TF_ASSIGN_OR_RETURN(auto shard_shape,
-                            Shape::FromProto(shard_shape_proto));
+        ASSIGN_OR_RETURN(auto shard_shape, Shape::FromProto(shard_shape_proto));
         shard_shapes.push_back(std::move(shard_shape));
       }
       return ConcreteSharding::Create(std::move(devices), memory_kind,
@@ -241,13 +253,13 @@ class ConcreteShardingSerDes
       return absl::InvalidArgumentError(
           "ConcreteSharding must have Shape or DynamicShape.");
     }
-    TF_ASSIGN_OR_RETURN(auto dynamic_shape,
-                        DynamicShape::FromProto(proto.dynamic_shape()));
+    ASSIGN_OR_RETURN(auto dynamic_shape,
+                     DynamicShape::FromProto(proto.dynamic_shape()));
     std::vector<DynamicShape> shard_dynamic_shapes;
     shard_dynamic_shapes.reserve(proto.shard_dynamic_shapes_size());
     for (const auto& shard_dynamic_shape_proto : proto.shard_dynamic_shapes()) {
-      TF_ASSIGN_OR_RETURN(auto dynamic_shape,
-                          DynamicShape::FromProto(shard_dynamic_shape_proto));
+      ASSIGN_OR_RETURN(auto dynamic_shape,
+                       DynamicShape::FromProto(shard_dynamic_shape_proto));
       shard_dynamic_shapes.push_back(std::move(dynamic_shape));
     }
     return ConcreteSharding::Create(std::move(devices), memory_kind,
@@ -279,12 +291,12 @@ class ConcreteEvenShardingSerDes
         llvm::cast<ConcreteEvenSharding>(serializable);
     ConcreteEvenShardingProto proto;
     proto.set_version_number(SerDesVersionNumber(0).value());
-    *proto.mutable_devices() = sharding.devices()->ToProto(version);
+    sharding.devices()->ToProto(*proto.mutable_devices(), version);
     if (sharding.memory_kind().memory_kind().has_value()) {
       proto.set_memory_kind(std::string(*sharding.memory_kind().memory_kind()));
     }
-    *proto.mutable_shape() = sharding.shape().ToProto(version);
-    *proto.mutable_shard_shape() = sharding.shard_shape().ToProto(version);
+    sharding.shape().ToProto(*proto.mutable_shape(), version);
+    sharding.shard_shape().ToProto(*proto.mutable_shard_shape(), version);
     proto.set_is_fully_replicated(sharding.IsFullyReplicated());
     return proto.SerializeAsString();
   }
@@ -293,7 +305,11 @@ class ConcreteEvenShardingSerDes
       const std::string& serialized,
       std::unique_ptr<DeserializeOptions> options) override {
     const auto* deserialize_sharding_options =
-        llvm::cast<DeserializeShardingOptions>(options.get());
+        llvm::dyn_cast_or_null<DeserializeShardingOptions>(options.get());
+    if (deserialize_sharding_options == nullptr) {
+      return absl::InvalidArgumentError(
+          "DeserializeShardingOptions must be provided");
+    }
 
     ConcreteEvenShardingProto proto;
     if (!proto.ParseFromString(serialized)) {
@@ -306,16 +322,15 @@ class ConcreteEvenShardingSerDes
           absl::StrCat("Unsupported ", version_number,
                        " for ConcreteEvenSharding deserialization"));
     }
-    TF_ASSIGN_OR_RETURN(auto devices, DeviceList::FromProto(
-                                          deserialize_sharding_options->client,
-                                          proto.devices()));
+    ASSIGN_OR_RETURN(auto devices,
+                     DeviceList::FromProto(deserialize_sharding_options->client,
+                                           proto.devices()));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
     }
-    TF_ASSIGN_OR_RETURN(auto shape, Shape::FromProto(proto.shape()));
-    TF_ASSIGN_OR_RETURN(auto shard_shape,
-                        Shape::FromProto(proto.shard_shape()));
+    ASSIGN_OR_RETURN(auto shape, Shape::FromProto(proto.shape()));
+    ASSIGN_OR_RETURN(auto shard_shape, Shape::FromProto(proto.shard_shape()));
     return ConcreteEvenSharding::Create(
         std::move(devices), memory_kind, std::move(shape),
         std::move(shard_shape), proto.is_fully_replicated());
@@ -344,12 +359,12 @@ class ShardingParamShardingSerDes
         llvm::cast<ShardingParamSharding>(serializable);
     ShardingParamShardingProto proto;
     proto.set_version_number(SerDesVersionNumber(0).value());
-    *proto.mutable_devices() = sharding.devices()->ToProto(version);
+    sharding.devices()->ToProto(*proto.mutable_devices(), version);
     if (sharding.memory_kind().memory_kind().has_value()) {
       proto.set_memory_kind(std::string(*sharding.memory_kind().memory_kind()));
     }
-    TF_ASSIGN_OR_RETURN(*proto.mutable_sharding_param(),
-                        sharding.sharding_param().ToProto(version));
+    RETURN_IF_ERROR(sharding.sharding_param().ToProto(
+        *proto.mutable_sharding_param(), version));
     return proto.SerializeAsString();
   }
 
@@ -357,7 +372,11 @@ class ShardingParamShardingSerDes
       const std::string& serialized,
       std::unique_ptr<DeserializeOptions> options) override {
     const auto* deserialize_sharding_options =
-        llvm::cast<DeserializeShardingOptions>(options.get());
+        llvm::dyn_cast_or_null<DeserializeShardingOptions>(options.get());
+    if (deserialize_sharding_options == nullptr) {
+      return absl::InvalidArgumentError(
+          "DeserializeShardingOptions must be provided");
+    }
     ShardingParamShardingProto proto;
     if (!proto.ParseFromString(serialized)) {
       return absl::InvalidArgumentError(
@@ -369,15 +388,15 @@ class ShardingParamShardingSerDes
           absl::StrCat("Unsupported ", version_number,
                        " for ShardingParamSharding deserialization"));
     }
-    TF_ASSIGN_OR_RETURN(auto devices, DeviceList::FromProto(
-                                          deserialize_sharding_options->client,
-                                          proto.devices()));
+    ASSIGN_OR_RETURN(auto devices,
+                     DeviceList::FromProto(deserialize_sharding_options->client,
+                                           proto.devices()));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
     }
-    TF_ASSIGN_OR_RETURN(ShardingParam sharding_param,
-                        ShardingParam::FromProto(proto.sharding_param()));
+    ASSIGN_OR_RETURN(ShardingParam sharding_param,
+                     ShardingParam::FromProto(proto.sharding_param()));
     return ShardingParamSharding::Create(std::move(sharding_param),
                                          std::move(devices), memory_kind);
   }

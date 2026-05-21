@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_client_test.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -23,19 +24,26 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
+#include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/blocking_counter.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/cpu_function_runtime.h"
+#include "xla/backends/cpu/alignment.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/test.h"
+#include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/literal_test_util.h"
+#include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 
@@ -46,13 +54,13 @@ class TestClientFactory {
  public:
   void Register(
       std::function<absl::StatusOr<std::unique_ptr<PjRtClient>>()> factory) {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     CHECK(!factory_);
     factory_ = std::move(factory);
   }
 
   std::function<absl::StatusOr<std::unique_ptr<PjRtClient>>()> Get() const {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     return factory_;
   }
 
@@ -130,7 +138,7 @@ TEST_P(PjRtClientTest, Execute) {
                           executable->Execute({{buffer.get()}}, options));
   ASSERT_EQ(results.size(), 1);
   ASSERT_EQ(results[0].size(), 1);
-  TF_ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteralSync());
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteral().Await());
 
   std::vector<int32_t> expected(4, 1);
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
@@ -159,7 +167,7 @@ TEST_P(PjRtClientTest, ExecuteWithImmutableUntilTransferCompletes) {
                           executable->Execute({{buffer.get()}}, options));
   ASSERT_EQ(results.size(), 1);
   ASSERT_EQ(results[0].size(), 1);
-  TF_ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteralSync());
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteral().Await());
 
   std::vector<int32_t> expected(4, 1);
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
@@ -201,7 +209,7 @@ TEST_P(PjRtClientTest, ExecuteWithTupleZeroCopy) {
 
   ASSERT_EQ(results.size(), 1);
   ASSERT_EQ(results[0].size(), 1);
-  TF_ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteralSync());
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteral().Await());
 
   std::vector<int32_t> expected(4, 1);
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
@@ -230,7 +238,7 @@ TEST_P(PjRtClientTest, ExecuteWithDonation) {
                           executable->Execute({{buffer.get()}}, options));
   ASSERT_EQ(results.size(), 1);
   ASSERT_EQ(results[0].size(), 1);
-  TF_ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteralSync());
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteral().Await());
 
   std::vector<int32_t> expected(4, 1);
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
@@ -310,7 +318,7 @@ TEST_P(PjRtClientTest, ExecuteWithConcurrentUsage) {
 
   std::vector<int32_t> expected(4, 1);
   for (const auto& result : results) {
-    TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteralSync());
+    TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteral().Await());
     EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
                                        *literal));
   }
@@ -355,7 +363,7 @@ TEST_P(PjRtClientTest, ExecuteWithConcurrentUsageAndDonation) {
         auto& results = *results_or;
         CHECK_EQ(results.size(), 1);
         CHECK_EQ(results[0].size(), 1);
-        auto literal_or = results[0][0]->ToLiteralSync();
+        auto literal_or = results[0][0]->ToLiteral().Await();
         if (literal_or.ok()) {
           CHECK(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
                                        *literal_or.value()));
@@ -378,9 +386,49 @@ TEST_P(PjRtClientTest, ExecuteWithConcurrentUsageAndDonation) {
 
   blocking_counter.Wait();
 
-  TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteralSync());
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteral().Await());
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
                                      *literal));
+}
+
+TEST_P(PjRtClientTest, ExecuteWithWrongNumArgs) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
+  auto executable =
+      MakeIncrementProgram(client.get(), /*alias=*/false, /*device=*/0);
+
+  std::vector<int32_t> data(4, 0);
+  Shape shape = ShapeUtil::MakeShape(S32, {4});
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          client->memory_spaces()[0], /*device_layout=*/nullptr));
+
+  ExecuteOptions options;
+  options.execution_mode = GetParam();
+
+  // Expected 1 argument, but passing 2.
+  {
+    auto results_or =
+        executable->Execute({{buffer.get(), buffer.get()}}, options);
+    EXPECT_FALSE(results_or.ok());
+    EXPECT_THAT(
+        results_or.status().message(),
+        ::testing::HasSubstr(
+            "Execution supplied 2 arguments but compiled program expected 1"));
+  }
+
+  // Expected 1 argument, but passing 0.
+  {
+    auto results_or = executable->Execute({{}}, options);
+    EXPECT_FALSE(results_or.ok());
+    EXPECT_THAT(
+        results_or.status().message(),
+        ::testing::HasSubstr(
+            "Execution supplied 0 arguments but compiled program expected 1"));
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -407,7 +455,43 @@ TEST(PjRtClientTest, CopyToDevice) {
   TF_ASSERT_OK_AND_ASSIGN(auto result, buffer->CopyToMemorySpace(
                                            *device_1->default_memory_space()));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteralSync());
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteral().Await());
+
+  std::vector<int32_t> expected(4, 0);
+  EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
+                                     *literal));
+}
+
+TEST(PjRtClientTest, CopyToDeviceWithDest) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
+  ASSERT_GT(client->addressable_devices().size(), 1);
+
+  std::vector<int32_t> data(4, 0);
+  Shape shape = ShapeUtil::MakeShape(S32, {4});
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto scratchpad0,
+      client->CreateUninitializedBuffer(shape, client->memory_spaces()[0]));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          scratchpad0.get(), /*device_layout=*/nullptr));
+
+  auto* device_1 = client->addressable_devices()[1];
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto scratchpad1,
+      client->CreateUninitializedBuffer(buffer->on_device_shape(),
+                                        *device_1->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto result,
+                          buffer->CopyToMemorySpace(scratchpad1.get()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteral().Await());
 
   std::vector<int32_t> expected(4, 0);
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
@@ -446,7 +530,7 @@ TEST(PjRtClientTest, CopyToDeviceAsync) {
 
   for (const auto& result : results) {
     ASSERT_TRUE(result);
-    TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteralSync());
+    TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteral().Await());
 
     std::vector<int32_t> expected(4, 0);
     EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
@@ -493,7 +577,7 @@ TEST(PjRtClientTest, CopyToDeviceAsyncExternalCpuOnly) {
 
   for (const auto& result : results) {
     ASSERT_TRUE(result);
-    TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteralSync());
+    TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteral().Await());
 
     std::vector<int32_t> expected(4, 0);
     EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
@@ -529,6 +613,69 @@ TEST(PjRtClientTest, CreateViewOfUnalignedBufferReturnsErrorCpuOnly) {
   ASSERT_FALSE(result.ok());
   EXPECT_THAT(result.status().message(),
               ::testing::HasSubstr("unaligned data"));
+}
+
+TEST(PjRtClientTest, FulfillAliasBuffer) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
+
+  std::vector<int32_t> data{1, 2, 3, 4, 5, 6};
+  Shape shape = ShapeUtil::MakeShape(S32, {2, 3});
+  TF_ASSERT_OK_AND_ASSIGN(
+      *shape.mutable_layout(),
+      client->GetDefaultLayout(shape.element_type(), shape.dimensions()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto alias_buffer,
+      client->CreateAliasBuffer(shape, client->memory_spaces()[0]));
+  auto future = alias_buffer.first->ToLiteral();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto param,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          client->memory_spaces()[0], /*device_layout=*/nullptr));
+
+  ASSERT_NE(alias_buffer.second, nullptr);
+  TF_ASSERT_OK(std::move(alias_buffer.second)(param.get()));
+  TF_ASSERT_OK_AND_ASSIGN(auto shared_literal, future.Await());
+
+  std::vector<int32_t> expected = {1, 2, 3, 4, 5, 6};
+  EXPECT_EQ(shared_literal->data<int32_t>(), expected);
+}
+
+TEST(PjRtClientTest, Bitcast) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
+
+  std::vector<int32_t> data{3};
+  Shape shape = ShapeUtil::MakeShape(S32, {});
+  TF_ASSERT_OK_AND_ASSIGN(
+      *shape.mutable_layout(),
+      client->GetDefaultLayout(shape.element_type(), shape.dimensions()));
+
+  Shape new_shape = ShapeUtil::MakeShape(S32, {1});
+  TF_ASSERT_OK_AND_ASSIGN(*new_shape.mutable_layout(),
+                          client->GetDefaultLayout(new_shape.element_type(),
+                                                   new_shape.dimensions()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          client->memory_spaces()[0], /*device_layout=*/nullptr));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto bitcast_buffer,
+      buffer->Bitcast(new_shape.element_type(), new_shape.dimensions(),
+                      &new_shape.layout()));
+  EXPECT_TRUE(buffer->IsDeleted());
+  ASSERT_EQ(bitcast_buffer->on_device_shape(), new_shape);
+
+  auto future = bitcast_buffer->ToLiteral();
+  TF_ASSERT_OK_AND_ASSIGN(auto shared_literal, future.Await());
+  std::vector<int32_t> expected = {3};
+  EXPECT_EQ(shared_literal->data<int32_t>(), expected);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> MakeFloatBuffer(
@@ -571,7 +718,6 @@ ENTRY DuplicateDonationError() -> (f32[2, 2], f32[2, 2]) {
                           MakeFloatBuffer(client.get(), data, {2, 2}));
 
   xla::ExecuteOptions options;
-  options.untuple_result = true;
   {
     auto result = pjrt_executable->Execute(/*argument_handles=*/{{
                                                buffer0.get(),
@@ -612,5 +758,55 @@ ENTRY DuplicateDonationError() -> (f32[2, 2], f32[2, 2]) {
 
 TEST(PjRtClientTest, GetDefaultLayout) {}
 
+TEST(PjRtClientTest, ClearPeakMemory) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
+  PjRtDevice* device = client->addressable_devices()[0];
+
+  if (absl::IsUnimplemented(device->ClearMemoryStats())) {
+    GTEST_SKIP() << "ClearMemoryStats not supported on this platform.";
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(auto initial_stats, device->GetAllocatorStats());
+
+  // alloc
+  int64_t num_elements = 1024 / sizeof(float);
+  std::vector<float> data(num_elements, 1.0f);
+  Shape shape = ShapeUtil::MakeShape(F32, {num_elements});
+
+  TF_ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * memory_space,
+                          device->default_memory_space());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr, memory_space,
+          /*device_layout=*/nullptr));
+
+  TF_ASSERT_OK(buffer->GetReadyFuture().Await());
+
+  TF_ASSERT_OK_AND_ASSIGN(auto alloc_stats, device->GetAllocatorStats());
+  EXPECT_EQ(alloc_stats.bytes_in_use, initial_stats.bytes_in_use + 1024);
+  EXPECT_EQ(alloc_stats.peak_bytes_in_use,
+            initial_stats.peak_bytes_in_use + 1024);
+  EXPECT_EQ(alloc_stats.bytes_in_use, alloc_stats.peak_bytes_in_use);
+
+  // dealloc
+  buffer.reset();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto dealloc_stats, device->GetAllocatorStats());
+  EXPECT_EQ(initial_stats.bytes_in_use, dealloc_stats.bytes_in_use);
+  EXPECT_EQ(dealloc_stats.peak_bytes_in_use, alloc_stats.peak_bytes_in_use);
+
+  absl::Status clear_status = device->ClearMemoryStats();
+  if (!absl::IsUnimplemented(clear_status)) {
+    TF_EXPECT_OK(clear_status);
+    TF_ASSERT_OK_AND_ASSIGN(auto clear_stats, device->GetAllocatorStats());
+    EXPECT_EQ(clear_stats.bytes_in_use, dealloc_stats.bytes_in_use);
+    EXPECT_EQ(clear_stats.peak_bytes_in_use, dealloc_stats.bytes_in_use);
+  }
+}
 }  // namespace
 }  // namespace xla

@@ -47,12 +47,14 @@ class ListDiffOp : public XlaOpKernel {
 
   void Compile(XlaOpKernelContext* context) override {
     OP_REQUIRES(context, TensorShapeUtils::IsVector(context->InputShape(0)),
-                errors::InvalidArgument("ListDiff expects x as a vector, not ",
-                                        context->InputShape(0).DebugString()));
+                absl::InvalidArgumentError(
+                    absl::StrCat("ListDiff expects x as a vector, not ",
+                                 context->InputShape(0).DebugString())));
 
     OP_REQUIRES(context, TensorShapeUtils::IsVector(context->InputShape(1)),
-                errors::InvalidArgument("ListDiff expects y as a vector, not ",
-                                        context->InputShape(1).DebugString()));
+                absl::InvalidArgumentError(
+                    absl::StrCat("ListDiff expects y as a vector, not ",
+                                 context->InputShape(1).DebugString())));
 
     DataType val_type = context->expected_output_dtype(0);
     DataType idx_type = context->expected_output_dtype(1);
@@ -60,7 +62,7 @@ class ListDiffOp : public XlaOpKernel {
     absl::Status status;
     switch (val_type) {
       case DT_INT32:
-        status = ListDiffWithIndexType<int32>(context, idx_type);
+        status = ListDiffWithIndexType<int32_t>(context, idx_type);
         break;
       case DT_INT64:
         status = ListDiffWithIndexType<int64_t>(context, idx_type);
@@ -68,9 +70,9 @@ class ListDiffOp : public XlaOpKernel {
       default:
         // This should never happen since we restrict this kernel to only match
         // inputs with supported Tensor datatype.
-        status = errors::InvalidArgument("ListDiff expects x and y as either ",
-                                         "int32 or int64, not ",
-                                         DataTypeString(val_type));
+        status = absl::InvalidArgumentError(
+            absl::StrCat("ListDiff expects x and y as either ",
+                         "int32 or int64, not ", DataTypeString(val_type)));
     }
     OP_REQUIRES_OK(context, status);
   }
@@ -111,13 +113,13 @@ class ListDiffOp : public XlaOpKernel {
                                      DataType idx_type) {
     switch (idx_type) {
       case DT_INT32:
-        return ListDiff<Tval, int32>(context);
+        return ListDiff<Tval, int32_t>(context);
       case DT_INT64:
         return ListDiff<Tval, int64_t>(context);
       default:
-        return errors::InvalidArgument(
+        return absl::InvalidArgumentError(absl::StrCat(
             "ListDiff expects idx_out as either int32 or int64, not ",
-            DataTypeString(idx_type));
+            DataTypeString(idx_type)));
     }
   }
 };

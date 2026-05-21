@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/time/time.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/collective_utils.h"
 #include "xla/stream_executor/device_description.h"
@@ -99,8 +100,8 @@ SolGPUCostModel::Config GetPlatformConfig(
     const se::DeviceDescription& device_info) {
   std::string key = device_info.name();
   if (!device_to_cfg.contains(key)) {
-    LOG(WARNING) << "No SoL config found for device: " << device_info.name()
-                 << ". Using default config.";
+    VLOG(1) << "No SoL config found for device: " << device_info.name()
+            << ". Using default config.";
     return device_to_cfg[kUnknownKey];
   }
   VLOG(2) << "[SoL] Using config for device: " << device_info.name();
@@ -138,6 +139,9 @@ SolGPUCostModel::Config GetPlatformConfig(
     } else if (option_name == kSolChunkSizeBytes &&
                absl::SimpleAtoi(option_value, &value) && value > 0) {
       config.chunk_size_bytes = value;
+    } else if (option_name == kSolPartitionSize &&
+               absl::SimpleAtoi(option_value, &value) && value > 0) {
+      config.partition_size = value;
     }
   }
   return config;
@@ -176,8 +180,8 @@ absl::Duration SolGPUCostModel::TransferDuration(
 absl::StatusOr<absl::Duration> SolGPUCostModel::RingLatency(
     const int64_t buff_size_bytes, const int num_nodes,
     const CollectiveType& coll_type, const int num_communicators) const {
-  TF_ASSIGN_OR_RETURN(int num_gpus,
-                      NumGpusPerComm(num_nodes, coll_type, num_communicators));
+  ASSIGN_OR_RETURN(int num_gpus,
+                   NumGpusPerComm(num_nodes, coll_type, num_communicators));
 
   int64_t per_gpu_msg_size_bytes;
   if (coll_type == CollectiveType::kSendRecv) {
@@ -219,6 +223,27 @@ absl::StatusOr<absl::Duration> SolGPUCostModel::RingLatency(
 
   // Time to initiate the collective.
   return ret + xla_flag_config_.nccl_op_launch_time;
+}
+
+absl::StatusOr<absl::Duration> SolGPUCostModel::AllToAllLatency(
+    const int64_t buff_size_bytes, const int num_nodes,
+    const int num_communicators) const {
+  ASSIGN_OR_RETURN(
+      int num_gpus,
+      NumGpusPerComm(num_nodes, SolGPUCostModel::CollectiveType::kAllToAll,
+                     num_communicators));
+
+  const int num_gpus_per_node = num_gpus / num_nodes;
+  // Each GPU sends to (num_gpus_per_node * (num_nodes-1)) peers off-node.
+  const int inter_node_peers_per_gpu = num_gpus_per_node * (num_nodes - 1);
+  // Sending buff_size_bytes / (num_gpus - 1) bytes to each peer off-node.
+  const int64_t per_peer_bytes = buff_size_bytes / (num_gpus - 1);
+  absl::Duration per_peer_duration = TransferDuration(per_peer_bytes) +
+                                     ChunkPrepLatency(per_peer_bytes) +
+                                     xla_flag_config_.rtt;
+  absl::Duration total = inter_node_peers_per_gpu * per_peer_duration;
+
+  return total + xla_flag_config_.nccl_op_launch_time;
 }
 
 // Helper functions

@@ -27,9 +27,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.pb.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -37,9 +41,7 @@ limitations under the License.
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#if GOOGLE_CUDA
 #include "tsl/platform/tensor_float_32_utils.h"
-#endif
 
 namespace stream_executor {
 
@@ -158,6 +160,18 @@ void MatrixLayout::Transpose() {
   order = (order == Order::kRowMajor) ? Order::kColumnMajor : Order::kRowMajor;
 }
 
+std::string MatrixLayout::ToString() const {
+  return absl::StrFormat(
+      "MatrixLayout{dtype=%s, rows=%d, cols=%d, order=%s, batch=%d, "
+      "ld_stride=%d, batch_stride=%d, transpose=%s}",
+      xla::primitive_util::LowercasePrimitiveTypeName(dtype), num_rows,
+      num_cols, (order == Order::kRowMajor ? "RowMajor" : "ColumnMajor"),
+      batch_size, leading_dim_stride, batch_stride,
+      (transpose == blas::Transpose::kNoTranspose ? "NoTranspose"
+       : transpose == blas::Transpose::kTranspose ? "Transpose"
+                                                  : "ConjugateTranspose"));
+}
+
 absl::StatusOr<MatrixLayout> MatrixLayout::FromProto(
     const xla::GemmConfigProto::MatrixLayout& proto) {
   Order order;
@@ -173,8 +187,8 @@ absl::StatusOr<MatrixLayout> MatrixLayout::FromProto(
       return absl::InvalidArgumentError("Invalid matrix layout order");
   }
 
-  TF_ASSIGN_OR_RETURN(blas::Transpose transpose,
-                      blas::FromProto(proto.transpose()));
+  ASSIGN_OR_RETURN(blas::Transpose transpose,
+                   blas::FromProto(proto.transpose()));
   return MatrixLayout(proto.dtype(), proto.num_rows(), proto.num_cols(), order,
                       proto.batch_size(), proto.leading_dim_stride(),
                       proto.batch_stride(), transpose);
@@ -203,9 +217,19 @@ xla::GemmConfigProto::MatrixLayout MatrixLayout::ToProto() const {
   return proto;
 }
 
+xla::Shape MatrixLayout::ToShape() const {
+  switch (order) {
+    case Order::kRowMajor:
+      return xla::ShapeUtil::MakeShape(dtype, {num_cols, num_rows, batch_size});
+    case Order::kColumnMajor:
+      return xla::ShapeUtil::MakeShape(dtype, {num_rows, num_cols, batch_size});
+  }
+}
+
 absl::StatusOr<ComputationType> GetBlasComputationType(
     xla::PrecisionConfig::Algorithm algorithm, xla::PrimitiveType lhs_dtype,
-    xla::PrimitiveType output_dtype, int64_t compute_precision) {
+    xla::PrimitiveType output_dtype, int64_t compute_precision,
+    const GpuComputeCapability& cc) {
   if (algorithm == xla::PrecisionConfig::ALG_UNSET) {
     switch (output_dtype) {
       case PrimitiveType::F8E5M2:      // fall-through
@@ -222,14 +246,12 @@ absl::StatusOr<ComputationType> GetBlasComputationType(
         return ComputationType::kF32;
       case PrimitiveType::F32:  // fall-through
       case PrimitiveType::C64:
-#if GOOGLE_CUDA
-        if (tsl::tensor_float_32_execution_enabled() &&
+        if (cc.IsCuda() && tsl::tensor_float_32_execution_enabled() &&
             compute_precision <= 1 && lhs_dtype == output_dtype) {
           // CublasLt requires compute type to be F32 for F8 matmul.
           // TF32 should only be chosen for FP32 or C64 gemm
           return ComputationType::kTF32AsF32;
         }
-#endif
         return ComputationType::kF32;
       case PrimitiveType::F64:  // fall-through
       case PrimitiveType::C128:
@@ -264,9 +286,8 @@ bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
   return swap_operands;
 }
 
-/*static*/ auto BlasLt::GetMatmulPlan(const Stream* stream,
-                                      const GemmConfig& cfg, Epilogue epilogue)
-    -> absl::StatusOr<MatmulPlanPtr> {
+/*static*/ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
+    const Stream* stream, const GemmConfig& cfg, Epilogue epilogue) {
   auto blas = Get(stream);
   if (blas == nullptr) {
     return xla::Internal("BlasLt is unavailable");
@@ -288,38 +309,72 @@ DataType GetScaleType(DataType c_type, ComputationType computation_type) {
 
 absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateMatmulPlan(
     const std::string& key, PlanCreateFunc create) {
-  absl::MutexLock lock(&plan_cache_mu_);  // double mutex ???
+  absl::MutexLock lock(plan_cache_mu_);  // double mutex ???
   auto res = plan_cache_.emplace(key, MatmulPlanPtr{});
   // New entry inserted: always create a new matmul plan if key is empty,
   // this is used by command_buffer_thunk test.
   if (res.second || key.empty()) {
     VLOG(2) << "Creating a plan for: " << key;
-    TF_ASSIGN_OR_RETURN(res.first->second, create());
+    ASSIGN_OR_RETURN(res.first->second, create());
     VLOG(2) << "Plan created: cache size: " << plan_cache_.size();
   }
   return res.first->second.get();
 }
 
 void BlasLt::ClearMatmulPlanCache() {
-  absl::MutexLock lock(&plan_cache_mu_);
+  absl::MutexLock lock(plan_cache_mu_);
   plan_cache_.clear();
 }
 
 size_t BlasLt::GetMatmulPlanCacheSize() const {
-  absl::MutexLock lock(&plan_cache_mu_);
+  absl::MutexLock lock(plan_cache_mu_);
   return plan_cache_.size();
+}
+
+/*static*/ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
+    const Stream* stream, GroupedGemmConfig& cfg, Epilogue epilogue) {
+  BlasLt* blas = BlasLt::Get(stream);
+  if (blas == nullptr) {
+    return xla::Internal("BlasLt is unavailable");
+  }
+  return blas->GetGroupedMatmulPlan(cfg, epilogue);
+}
+
+absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateGroupedMatmulPlan(
+    const std::string& key, PlanCreateFunc create) {
+  absl::MutexLock lock(plan_cache_mu_);
+  auto res = grouped_plan_cache_.emplace(key, MatmulPlanPtr{});
+  // New entry inserted: always create a new matmul plan if key is empty,
+  // this is used by command_buffer_thunk test.
+  if (res.second || key.empty()) {
+    VLOG(2) << "Creating a grouped plan for: " << key;
+    ASSIGN_OR_RETURN(res.first->second, create());
+    VLOG(2) << "Grouped Plan created: cache size: "
+            << grouped_plan_cache_.size();
+  }
+  return res.first->second.get();
+}
+
+void BlasLt::ClearGroupedMatmulPlanCache() {
+  absl::MutexLock lock(plan_cache_mu_);
+  grouped_plan_cache_.clear();
+}
+
+size_t BlasLt::GetGroupedMatmulPlanCacheSize() const {
+  absl::MutexLock lock(plan_cache_mu_);
+  return grouped_plan_cache_.size();
 }
 
 absl::StatusOr<GemmConfig> GemmConfig::FromProto(
     const xla::GemmConfigProto& proto) {
-  TF_ASSIGN_OR_RETURN(MatrixLayout lhs_layout,
-                      MatrixLayout::FromProto(proto.lhs_layout()));
-  TF_ASSIGN_OR_RETURN(MatrixLayout rhs_layout,
-                      MatrixLayout::FromProto(proto.rhs_layout()));
-  TF_ASSIGN_OR_RETURN(MatrixLayout c_layout,
-                      MatrixLayout::FromProto(proto.c_layout()));
-  TF_ASSIGN_OR_RETURN(MatrixLayout output_layout,
-                      MatrixLayout::FromProto(proto.output_layout()));
+  ASSIGN_OR_RETURN(MatrixLayout lhs_layout,
+                   MatrixLayout::FromProto(proto.lhs_layout()));
+  ASSIGN_OR_RETURN(MatrixLayout rhs_layout,
+                   MatrixLayout::FromProto(proto.rhs_layout()));
+  ASSIGN_OR_RETURN(MatrixLayout c_layout,
+                   MatrixLayout::FromProto(proto.c_layout()));
+  ASSIGN_OR_RETURN(MatrixLayout output_layout,
+                   MatrixLayout::FromProto(proto.output_layout()));
   std::optional<blas::ComputationType> compute_type =
       blas::FromProto(proto.compute_type());
   return GemmConfig{
@@ -334,6 +389,7 @@ absl::StatusOr<GemmConfig> GemmConfig::FromProto(
       proto.has_algorithm() ? std::optional(proto.algorithm()) : std::nullopt,
       proto.grad_x(),
       proto.grad_y(),
+      static_cast<ScaleMode>(proto.scale_mode()),
       compute_type};
 }
 
@@ -353,10 +409,187 @@ xla::GemmConfigProto GemmConfig::ToProto() const {
   }
   proto.set_grad_x(grad_x);
   proto.set_grad_y(grad_y);
+  proto.set_scale_mode(static_cast<int32_t>(scale_mode));
   if (compute_type.has_value()) {
     proto.set_compute_type(blas::ToProto(*compute_type));
   }
   return proto;
+}
+
+absl::StatusOr<GroupedGemmConfig> GroupedGemmConfig::FromProto(
+    const xla::GroupedGemmConfigProto& proto) {
+  std::optional<blas::ComputationType> compute_type =
+      blas::FromProto(proto.compute_type());
+  ASSIGN_OR_RETURN(blas::DataType typeA, AsBlasDataType(proto.type_a()));
+  ASSIGN_OR_RETURN(blas::DataType typeB, AsBlasDataType(proto.type_b()));
+  ASSIGN_OR_RETURN(blas::DataType typeC, AsBlasDataType(proto.type_c()));
+  ASSIGN_OR_RETURN(blas::DataType typeD, AsBlasDataType(proto.type_d()));
+  ASSIGN_OR_RETURN(RaggedDotMode ragged_mode,
+                   RaggedDotModeFromProto(proto.ragged_mode()));
+  ASSIGN_OR_RETURN(blas::Transpose trans_a, blas::FromProto(proto.trans_a()));
+  ASSIGN_OR_RETURN(blas::Transpose trans_b, blas::FromProto(proto.trans_b()));
+  return GroupedGemmConfig{proto.m(),
+                           proto.n(),
+                           proto.k(),
+                           proto.batch_count(),
+                           proto.group_count(),
+                           proto.lhs_leading_dim_stride(),
+                           proto.rhs_leading_dim_stride(),
+                           proto.c_leading_dim_stride(),
+                           proto.output_leading_dim_stride(),
+                           trans_a,
+                           trans_b,
+                           proto.must_swap_operands(),
+                           {proto.alpha_real(), proto.alpha_imag()},
+                           proto.beta(),
+                           typeA,
+                           typeB,
+                           typeC,
+                           typeD,
+                           proto.stride_ragged_dim(),
+                           proto.stride_group_dim(),
+                           proto.c_stride_ragged_dim(),
+                           proto.output_stride_ragged_dim(),
+                           proto.precision_algorithm(),
+                           proto.compute_precision(),
+                           ragged_mode,
+                           compute_type};
+}
+
+xla::GroupedGemmConfigProto GroupedGemmConfig::ToProto() const {
+  xla::GroupedGemmConfigProto proto;
+  proto.set_m(m);
+  proto.set_n(n);
+  proto.set_k(k);
+  proto.set_batch_count(batch_count);
+  proto.set_group_count(group_count);
+  proto.set_lhs_leading_dim_stride(lhs_leading_dim_stride);
+  proto.set_rhs_leading_dim_stride(rhs_leading_dim_stride);
+  proto.set_c_leading_dim_stride(c_leading_dim_stride);
+  proto.set_output_leading_dim_stride(output_leading_dim_stride);
+  proto.set_trans_a(blas::ToProto(trans_a));
+  proto.set_trans_b(blas::ToProto(trans_b));
+  proto.set_must_swap_operands(must_swap_operands);
+  proto.set_alpha_real(alpha.real());
+  proto.set_alpha_imag(alpha.imag());
+  proto.set_beta(beta);
+
+  auto statusOrTypeA = AsXlaPrimitiveType(type_a);
+  xla::PrimitiveType typeA =
+      statusOrTypeA.ok() ? *statusOrTypeA : PrimitiveType::F32;
+  auto statusOrTypeB = AsXlaPrimitiveType(type_b);
+  xla::PrimitiveType typeB =
+      statusOrTypeB.ok() ? *statusOrTypeB : PrimitiveType::F32;
+  auto statusOrTypeC = AsXlaPrimitiveType(type_c);
+  xla::PrimitiveType typeC =
+      statusOrTypeC.ok() ? *statusOrTypeC : PrimitiveType::F32;
+  auto statusOrTypeD = AsXlaPrimitiveType(type_d);
+  xla::PrimitiveType typeD =
+      statusOrTypeD.ok() ? *statusOrTypeD : PrimitiveType::F32;
+
+  proto.set_type_a(typeA);
+  proto.set_type_b(typeB);
+  proto.set_type_c(typeC);
+  proto.set_type_d(typeD);
+
+  proto.set_stride_ragged_dim(stride_ragged_dim);
+  proto.set_stride_group_dim(stride_group_dim);
+  proto.set_c_stride_ragged_dim(c_stride_ragged_dim);
+  proto.set_output_stride_ragged_dim(output_stride_ragged_dim);
+  proto.set_precision_algorithm(precision_algorithm);
+  proto.set_compute_precision(compute_precision);
+  proto.set_ragged_mode(RaggedDotModeToProto(ragged_mode));
+
+  if (compute_type.has_value()) {
+    proto.set_compute_type(blas::ToProto(*compute_type));
+  }
+  return proto;
+}
+
+absl::StatusOr<BlasLt::Epilogue> BlasLt::EpilogueFromProto(
+    const xla::BlasLtEpilogueProto& proto) {
+  switch (proto) {
+    case xla::BlasLtEpilogueProto::EPILOGUE_DEFAULT:
+      return Epilogue::kDefault;
+    case xla::BlasLtEpilogueProto::EPILOGUE_RELU:
+      return Epilogue::kReLU;
+    case xla::BlasLtEpilogueProto::EPILOGUE_BIAS:
+      return Epilogue::kBias;
+    case xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_RELU:
+      return Epilogue::kBiasThenReLU;
+    case xla::BlasLtEpilogueProto::EPILOGUE_GELU:
+      return Epilogue::kGELU;
+    case xla::BlasLtEpilogueProto::EPILOGUE_SILU:
+      return Epilogue::kSILU;
+    case xla::BlasLtEpilogueProto::EPILOGUE_SILU_WITH_AUX:
+      return Epilogue::kSILUWithAux;
+    case xla::BlasLtEpilogueProto::EPILOGUE_GELU_WITH_AUX:
+      return Epilogue::kGELUWithAux;
+    case xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_GELU:
+      return Epilogue::kBiasThenGELU;
+    case xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_SILU:
+      return Epilogue::kBiasThenSILU;
+    case xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_GELU_WITH_AUX:
+      return Epilogue::kBiasThenGELUWithAux;
+    case xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_SILU_WITH_AUX:
+      return Epilogue::kBiasThenSILUWithAux;
+    default:
+      return absl::InvalidArgumentError("Unsupported epilogue type");
+  }
+}
+
+xla::BlasLtEpilogueProto BlasLt::EpilogueToProto(Epilogue epilogue) {
+  switch (epilogue) {
+    case Epilogue::kDefault:
+      return xla::BlasLtEpilogueProto::EPILOGUE_DEFAULT;
+    case Epilogue::kReLU:
+      return xla::BlasLtEpilogueProto::EPILOGUE_RELU;
+    case Epilogue::kBias:
+      return xla::BlasLtEpilogueProto::EPILOGUE_BIAS;
+    case Epilogue::kBiasThenReLU:
+      return xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_RELU;
+    case Epilogue::kGELU:
+      return xla::BlasLtEpilogueProto::EPILOGUE_GELU;
+    case Epilogue::kSILU:
+      return xla::BlasLtEpilogueProto::EPILOGUE_SILU;
+    case Epilogue::kSILUWithAux:
+      return xla::BlasLtEpilogueProto::EPILOGUE_SILU_WITH_AUX;
+    case Epilogue::kGELUWithAux:
+      return xla::BlasLtEpilogueProto::EPILOGUE_GELU_WITH_AUX;
+    case Epilogue::kBiasThenGELU:
+      return xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_GELU;
+    case Epilogue::kBiasThenSILU:
+      return xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_SILU;
+    case Epilogue::kBiasThenGELUWithAux:
+      return xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_GELU_WITH_AUX;
+    case Epilogue::kBiasThenSILUWithAux:
+      return xla::BlasLtEpilogueProto::EPILOGUE_BIAS_THEN_SILU_WITH_AUX;
+  }
+}
+
+absl::StatusOr<RaggedDotMode> RaggedDotModeFromProto(
+    const xla::RaggedDotModeProto& proto) {
+  switch (proto) {
+    case xla::RaggedDotModeProto::RAGGED_NON_CONTRACTING:
+      return RaggedDotMode::kRaggedNonContracting;
+    case xla::RaggedDotModeProto::RAGGED_CONTRACTING:
+      return RaggedDotMode::kRaggedContracting;
+    case xla::RaggedDotModeProto::RAGGED_BATCH:
+      return RaggedDotMode::kRaggedBatch;
+    default:
+      return absl::InvalidArgumentError("Unsupported RaggedDot mode");
+  }
+}
+
+xla::RaggedDotModeProto RaggedDotModeToProto(RaggedDotMode ragged_mode) {
+  switch (ragged_mode) {
+    case RaggedDotMode::kRaggedNonContracting:
+      return xla::RaggedDotModeProto::RAGGED_NON_CONTRACTING;
+    case RaggedDotMode::kRaggedContracting:
+      return xla::RaggedDotModeProto::RAGGED_CONTRACTING;
+    case RaggedDotMode::kRaggedBatch:
+      return xla::RaggedDotModeProto::RAGGED_BATCH;
+  }
 }
 
 }  // namespace gpu

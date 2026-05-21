@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -43,6 +44,7 @@ limitations under the License.
 #include "tensorflow/compiler/jit/flags.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/mlir_roundtrip_flags.h"
 #include "tensorflow/compiler/mlir/tf2xla/api/v2/graph_to_tf_executor.h"
+#include "tensorflow/compiler/mlir/tf2xla/internal/graph_to_tf_executor_util.h"
 #include "tensorflow/compiler/mlir/tfrt/saved_model/saved_model.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/mlrt/import_model.h"
 #include "tensorflow/compiler/mlir/tfrt/translate/import_model.h"
@@ -287,20 +289,24 @@ absl::Status RunBefInitializers(
 absl::Status IsInputSpecsCorrect(absl::string_view name,
                                  const internal::Signature& signature,
                                  absl::Span<const tensorflow::Tensor> inputs) {
-  TF_RET_CHECK(signature.input_specs.size() == inputs.size())
-      << "signature " << name
-      << " input size is wrong, expected: " << signature.input_specs.size()
-      << ", actual: " << inputs.size();
+  if (signature.input_specs.size() != inputs.size()) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "signature ", name, " input size is wrong, expected: ",
+        signature.input_specs.size(), ", actual: ", inputs.size()));
+  }
   for (size_t i = 0; i < inputs.size(); ++i) {
     const auto& expected_input_spec = signature.input_specs[i];
-    TF_RET_CHECK(expected_input_spec.dtype == inputs[i].dtype())
-        << "signature " << name
-        << " input dtype is wrong, expected: " << expected_input_spec.dtype
-        << ", actual: " << inputs[i].dtype();
-    TF_RET_CHECK(expected_input_spec.shape.IsCompatibleWith(inputs[i].shape()))
-        << "signature " << name
-        << " input shape is wrong, expected : " << expected_input_spec.shape
-        << ", actual: " << inputs[i].shape();
+    if (expected_input_spec.dtype != inputs[i].dtype()) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "signature ", name, " input dtype is wrong, expected: ",
+          expected_input_spec.dtype, ", actual: ", inputs[i].dtype()));
+    }
+    if (!expected_input_spec.shape.IsCompatibleWith(inputs[i].shape())) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("signature ", name, " input shape is wrong, expected : ",
+                       expected_input_spec.shape.DebugString(),
+                       ", actual: ", inputs[i].shape().DebugString()));
+    }
   }
   return absl::OkStatus();
 }
@@ -325,7 +331,7 @@ absl::Status CheckInputSpecs(
         "model: ", model_metadata.name(),
         ", version: ", model_metadata.version(), ", error: ", status.message());
     if (!run_options.validate_input_specs_dry_run) {
-      return tensorflow::errors::InvalidArgument(error_string);
+      return absl::InvalidArgumentError(error_string);
     }
     LOG_EVERY_N_SEC(WARNING, 5)
         << "TFRT input specs validation failed, " << error_string;
@@ -348,10 +354,11 @@ absl::Status PreprocessSignature(
   TF_RETURN_IF_ERROR(CheckInputSpecs(model_metadata, run_options,
                                      signature_name, signature, input_tensors));
 
-  TF_RET_CHECK(input_tensors.size() == signature_def.inputs().size())
-      << "Incorrect input size for signature: " << signature_name
-      << ": expected " << signature_def.inputs().size() << ", but got "
-      << input_tensors.size();
+  if (input_tensors.size() != signature_def.inputs().size()) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Incorrect input size for signature: ", signature_name, ": expected ",
+        signature_def.inputs().size(), ", but got ", input_tensors.size()));
+  }
   DCHECK_EQ(input_names.size(), signature_def.inputs().size());
 
   // Then we find out the corresponding tensor names (ie.
@@ -365,9 +372,11 @@ absl::Status PreprocessSignature(
     // TODO(b/184675681): Support other encoding cases.
     //
     // TODO(b/184679394): Add unit test for this check.
-    TF_RET_CHECK(tensor_info.encoding_case() == tensorflow::TensorInfo::kName)
-        << "Only dense tensor is supported, but got encoding case "
-        << tensor_info.encoding_case();
+    if (tensor_info.encoding_case() != tensorflow::TensorInfo::kName) {
+      return absl::UnimplementedError(
+          absl::StrCat("Only dense tensor is supported, but got encoding case ",
+                       tensor_info.encoding_case()));
+    }
 
     const auto& tensor_name = tensor_info.name();
 
@@ -387,9 +396,11 @@ absl::Status PreprocessSignature(
     VLOG(1) << "Importing Signature Output: output_key = " << output_key
             << ", tensor_info = " << tensor_info.DebugString();
 
-    TF_RET_CHECK(tensor_info.encoding_case() == tensorflow::TensorInfo::kName)
-        << "Only dense tensor is supported, but got encoding case "
-        << tensor_info.encoding_case();
+    if (tensor_info.encoding_case() != tensorflow::TensorInfo::kName) {
+      return absl::UnimplementedError(
+          absl::StrCat("Only dense tensor is supported, but got encoding case ",
+                       tensor_info.encoding_case()));
+    }
 
     output_tensor_names.push_back(tensor_info.name());
   }
@@ -516,7 +527,7 @@ void UpdateCompileOptions(SavedModel::Options& options) {
 // TODO(b/416666698): When possible, call the reference implementation.
 void EmitSavedModelUnifiedModelId(absl::string_view saved_model_dir,
                                   const SavedModel::Options& options) {
-  string saved_model_uuid = "(empty)";
+  std::string saved_model_uuid = "(empty)";
   absl::StatusOr<FingerprintDef> fingerprint_or =
       saved_model::fingerprinting::ReadSavedModelFingerprint(saved_model_dir);
   if (fingerprint_or.ok()) {
@@ -539,6 +550,10 @@ void EmitSavedModelUnifiedModelId(absl::string_view saved_model_dir,
 absl::StatusOr<std::unique_ptr<SavedModel>> SavedModelImpl::LoadSavedModel(
     Options options, absl::string_view saved_model_dir,
     const std::unordered_set<std::string>& tags) {
+  if (absl::StrContains(saved_model_dir, "..")) {
+    return absl::InvalidArgumentError(
+        "saved_model_dir cannot contain '..' for security reasons.");
+  }
   TF_ASSIGN_OR_RETURN(auto meta_graph_def,
                       ReadSavedModel(saved_model_dir, tags));
   return LoadSavedModel(std::move(options), std::move(meta_graph_def),
@@ -548,6 +563,10 @@ absl::StatusOr<std::unique_ptr<SavedModel>> SavedModelImpl::LoadSavedModel(
 absl::StatusOr<std::unique_ptr<SavedModel>> SavedModelImpl::LoadSavedModel(
     Options options, tensorflow::MetaGraphDef meta_graph_def,
     absl::string_view saved_model_dir) {
+  if (absl::StrContains(saved_model_dir, "..")) {
+    return absl::InvalidArgumentError(
+        "saved_model_dir cannot contain '..' for security reasons.");
+  }
   LOG(INFO) << "TFRT loading v1 savedmodel: " << saved_model_dir;
 
   EmitSavedModelUnifiedModelId(saved_model_dir, options);
@@ -927,12 +946,16 @@ absl::Status SavedModelImpl::Run(const RunOptions& run_options,
                                  absl::string_view name,
                                  absl::Span<const tensorflow::Tensor> inputs,
                                  std::vector<tensorflow::Tensor>* outputs) {
-  TF_RET_CHECK(outputs) << "outputs must be provided";
+  if (!outputs) {
+    return absl::InvalidArgumentError("outputs must be provided");
+  }
   outputs->clear();
 
   auto sig_iter = signatures_.find(name);
-  TF_RET_CHECK(sig_iter != signatures_.end())
-      << "failed to find signature " << name << " in the graph";
+  if (sig_iter == signatures_.end()) {
+    return absl::NotFoundError(
+        absl::StrCat("failed to find signature ", name, " in the graph"));
+  }
   const auto& signature = sig_iter->second;
   const auto& signature_def = meta_graph_def_.signature_def().at(name);
   const tensorflow::SessionMetadata& model_metadata =
@@ -1035,9 +1058,13 @@ absl::Status SavedModelImpl::RunMultipleSignatures(
     const RunOptions& run_options, absl::Span<const std::string> names,
     absl::Span<const std::vector<tensorflow::Tensor>> multi_inputs,
     std::vector<std::vector<tensorflow::Tensor>>* multi_outputs) {
-  TF_RET_CHECK(names.size() == multi_inputs.size())
-      << "the sizes of names and inputs should be the same";
-  TF_RET_CHECK(multi_outputs) << "outputs must be provided";
+  if (names.size() != multi_inputs.size()) {
+    return absl::InvalidArgumentError(
+        "the sizes of names and inputs should be the same");
+  }
+  if (!multi_outputs) {
+    return absl::InvalidArgumentError("outputs must be provided");
+  }
   multi_outputs->clear();
 
   // Due to possible overlapping of feed nodes among user-specified inputs, We
@@ -1059,8 +1086,10 @@ absl::Status SavedModelImpl::RunMultipleSignatures(
     auto sig_iter = signature_defs.find(signature_name);
 
     // Early out if any signature can't be found.
-    TF_RET_CHECK(sig_iter != signature_defs.end())
-        << "failed to find signature in the graph";
+    if (sig_iter == signature_defs.end()) {
+      return absl::NotFoundError(absl::StrCat("failed to find signature ",
+                                              signature_name, " in the graph"));
+    }
     const auto& signature_def = sig_iter->second;
 
     // `signatures_` keeps the user-specified input names that is in the same
@@ -1116,10 +1145,18 @@ SavedModelImpl::ImportSubgraph(
       graph_executor_->graph_execution_state().CreateOptimizedGraph(
           graph_import_config));
 
+  std::optional<absl::string_view> optional_module_name = std::nullopt;
+  if (!name.empty()) {
+    optional_module_name = name;
+  }
+
   // Convert the optimized graph to an MLIR module.
   return tensorflow::tf2xla::v2::ConvertGraphToTfExecutor(
       *optimization_result.graph, /*debug_info=*/{},
-      optimization_result.graph->flib_def(), graph_import_config, context);
+      optimization_result.graph->flib_def(), graph_import_config, context,
+      /*tf_name_to_mlir_name=*/nullptr, /*config_proto=*/{},
+      /*bridge_version=*/tensorflow::TF2XLABridgeVersion::kNotBridgeUseCase,
+      /*module_name=*/optional_module_name);
 }
 
 absl::Status SavedModelImpl::RunByTensorNames(
@@ -1173,9 +1210,11 @@ absl::StatusOr<JoinedSignature> JoinSignatures(
       // TODO(b/184675681): Support other encoding cases.
       //
       // TODO(b/184679394): Add unit test for this check.
-      TF_RET_CHECK(tensor_info.encoding_case() == tensorflow::TensorInfo::kName)
-          << "Only dense tensor is supported, but got encoding case "
-          << tensor_info.encoding_case();
+      if (tensor_info.encoding_case() != tensorflow::TensorInfo::kName) {
+        return absl::UnimplementedError(absl::StrCat(
+            "Only dense tensor is supported, but got encoding case ",
+            tensor_info.encoding_case()));
+      }
 
       VLOG(1) << "Importing Signature Input: input_key = " << iter.first
               << ", tensor_info = " << tensor_info.DebugString();
@@ -1205,9 +1244,11 @@ absl::StatusOr<JoinedSignature> JoinSignatures(
       VLOG(1) << "Importing Signature Output: output_key = " << output_key
               << ", tensor_info = " << tensor_info.DebugString();
 
-      TF_RET_CHECK(tensor_info.encoding_case() == tensorflow::TensorInfo::kName)
-          << "Only dense tensor is supported, but got encoding case "
-          << tensor_info.encoding_case();
+      if (tensor_info.encoding_case() != tensorflow::TensorInfo::kName) {
+        return absl::UnimplementedError(absl::StrCat(
+            "Only dense tensor is supported, but got encoding case ",
+            tensor_info.encoding_case()));
+      }
 
       joined_signature.output_nodes.push_back(tensor_info.name());
     }
@@ -1300,7 +1341,7 @@ SavedModelImpl::GetOrCreateLoadingResult(const RunOptions& run_options,
   if (iter != loading_result_cache_.end()) return {*iter->second};
 
   if (run_options.disable_compilation) {
-    return tensorflow::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         absl::StrCat("GraphExecutor: compilation is disabled in execution but "
                      "the compiled graph is not found for ",
                      joined_name));

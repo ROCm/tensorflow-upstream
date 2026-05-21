@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -153,6 +154,8 @@ enum class ModuleArgumentMode {
   // constraints on the range). This drastically reduces
   // the host memory usage and the startup time.
   kUninitialized,
+  // Use random values from a normal distribution as arguments.
+  kUseRandomNormalInputs,
 };
 
 bool AbslParseFlag(absl::string_view text, ModuleArgumentMode* argument_mode,
@@ -234,6 +237,9 @@ struct RawCompileOptions {
   std::optional<int> num_slices = std::nullopt;
   // A directory to dump xla debug data to.
   std::string xla_dump_to = "";
+  // When user runs HLO runner with hlo_config provided and
+  // XLA_FLAGS=--xla_dump_to=dir we want to respect the xla_dump_to field.
+  bool preserve_xla_dump_to = false;
   XlaTextDumpMode xla_text_dump_mode = XlaTextDumpMode::kNotDumpAsText;
   XlaProtoDumpMode xla_proto_dump_mode = XlaProtoDumpMode::kNotDumpAsProto;
   // A directory to dump xspace data to (GPU profiler only).
@@ -249,6 +255,13 @@ struct RunningOptions {
   ModuleOutputMode module_output_mode = ModuleOutputMode::kReturnOutputs;
   // Repeatedly execute the HLO for this many times.
   size_t num_repeats = 1;
+  // The last `num_repeats_with_profiler` repeats out of `num_repeats` will be
+  // profiled. Default is 1, i.e., the last repeat will be profiled.
+  size_t num_repeats_with_profiler = 1;
+  // If true, we recreate the profiler session between repeats when profiling
+  // more than one repeat.
+  bool recreate_profiler_session_between_repeats = false;
+  size_t base_run_id = 0;
   // If true, we recreate the buffers between repeats to reset of effect of
   // buffer donation.
   bool recreate_buffers_between_repeats = false;
@@ -256,9 +269,6 @@ struct RunningOptions {
   LogOutputMode log_input_output_mode = LogOutputMode::kNotLogOutput;
   const MultiSliceConfig* multi_slice_config = nullptr;
   ProfilerInterface* profiler = nullptr;
-  // Whether to untuple the result of running HLO module into a vector of
-  // arrays. If unprovided, use the default in ExecuteOptions.
-  std::optional<bool> untuple_result = std::nullopt;
   // If not null, profiles will be stored for this run, one per repeat.
   // Note that the first repeat is a warmup run, and uses less precise
   // profiling method.
@@ -307,7 +317,8 @@ absl::Status LoadAndRunAndDump(
     const xla::FunctionalHloRunner::RunningOptions& running_options,
     absl::string_view hlo_file, InputFormat input_format,
     std::string dump_output_to = "", int task_id = 0, int num_nodes = 1,
-    std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr);
+    std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr,
+    std::minstd_rand0* engine = nullptr);
 
 // Loads an HLO module from hlo_file according to input_format and run it.
 // The HLO module is run with the provided arguments if the arguments map is
@@ -322,11 +333,23 @@ absl::StatusOr<PerDeviceLiteralVecType> LoadAndRun(
     InputFormat input_format, const PerDeviceLiteralVecType& arguments = {},
     std::minstd_rand0* engine = nullptr);
 
+// Loads an HLO module from hlo_file according to input_format and compiles it.
+// The compiled executable is dumped to the specified path if the path is not
+// empty.
+absl::Status LoadAndCompileAndDump(
+    PjRtClient& client, const DebugOptions& debug_options,
+    const xla::FunctionalHloRunner::PreprocessingOptions& preproc_options,
+    const xla::FunctionalHloRunner::RawCompileOptions& raw_compile_options,
+    absl::string_view hlo_file, InputFormat input_format,
+    std::string dump_executable_to = "", int task_id = 0, int num_nodes = 1,
+    std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr,
+    bool use_gpu_count_workaround = true);
+
 // Loads and compiles an HLO for debugging purposes.
 //
 // This function allows compiling multi-device HLOs on machines with fewer
 // devices.
-absl::Status LoadAndCompile(
+absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadAndCompile(
     PjRtClient& client, const DebugOptions& debug_options,
     const PreprocessingOptions& preproc_options,
     const RawCompileOptions& raw_compile_options, absl::string_view hlo_file,
@@ -342,6 +365,14 @@ absl::StatusOr<PerDeviceLiteralVecType> CompileAndRun(
     const PreprocessingOptions& preproc_options,
     const CompileOptions& compile_options,
     const RunningOptions& running_options, HloModule* hlo_module,
+    const PerDeviceLiteralVecType& arguments = {},
+    std::minstd_rand0* engine = nullptr);
+
+absl::StatusOr<PerDeviceLiteralVecType> CompileAndRun(
+    PjRtClient& client, const DebugOptions& debug_options,
+    const PreprocessingOptions& preproc_options,
+    const CompileOptions& compile_options,
+    const RunningOptions& running_options, MaybeOwningMlirModule module,
     const PerDeviceLiteralVecType& arguments = {},
     std::minstd_rand0* engine = nullptr);
 

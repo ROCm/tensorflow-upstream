@@ -31,6 +31,7 @@
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "grpc/grpc.h"
 #include "grpcpp/channel.h"
 #include "grpcpp/client_context.h"
@@ -38,11 +39,11 @@
 #include "grpcpp/security/credentials.h"
 #include "grpcpp/support/channel_arguments.h"
 #include "xla/pjrt/distributed/util.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt_proxy/common/grpc_credentials_possibly_insecure_wrapper.h"
 #include "xla/python/ifrt_proxy/common/grpc_ifrt_service.grpc.pb.h"
 #include "xla/python/ifrt_proxy/common/grpc_ifrt_service.pb.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
+#include "xla/tsl/concurrency/future.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
@@ -59,7 +60,7 @@ namespace proxy {
 class GrpcClientSession::ResponseCallbackTable {
  public:
   absl::Status Add(OpId op_id, ResponseCallback callback) {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     const bool inserted = table_.insert({op_id, std::move(callback)}).second;
     if (!inserted) {
       return absl::AlreadyExistsError(
@@ -69,7 +70,7 @@ class GrpcClientSession::ResponseCallbackTable {
   }
 
   std::optional<ResponseCallback> Pop(OpId op_id) {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     auto it = table_.find(op_id);
     if (it == table_.end()) {
       return std::nullopt;
@@ -81,7 +82,7 @@ class GrpcClientSession::ResponseCallbackTable {
 
   absl::flat_hash_map<OpId, ResponseCallback> PopAll() {
     absl::flat_hash_map<OpId, ResponseCallback> result;
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     result = std::move(table_);
     table_ = absl::flat_hash_map<OpId, ResponseCallback>();
     return result;
@@ -122,29 +123,31 @@ GrpcClientSession::GrpcClientSession(
       absl::bind_front(&GrpcClientSession::ReadLoop, this));
 }
 
-Future<std::shared_ptr<IfrtResponse>> GrpcClientSession::Enqueue(
+tsl::Future<std::shared_ptr<IfrtResponse>> GrpcClientSession::Enqueue(
     std::unique_ptr<IfrtRequest> request) {
-  auto promise = Future<std::shared_ptr<IfrtResponse>>::CreatePromise();
+  auto [promise_tmp, future] =
+      tsl::MakePromise<std::shared_ptr<IfrtResponse>>();
+  auto promise = std::move(promise_tmp).ToShared();
   absl::Status status = Enqueue(
       std::move(request),
       [promise, queue = user_futures_work_queue_.get()](
           absl::StatusOr<std::shared_ptr<IfrtResponse>> response) mutable {
-        queue->Schedule([promise = std::move(promise),
-                         response = std::move(response)]() mutable -> void {
-          promise.Set(std::move(response));
-        });
+        queue->Schedule(
+            [promise, response = std::move(response)]() mutable -> void {
+              promise->Set(std::move(response));
+            });
       });
   if (!status.ok()) {
     user_futures_work_queue_->Schedule([promise, status]() mutable -> void {
-      promise.Set(std::move(status));
+      promise->Set(std::move(status));
     });
   }
-  return Future<std::shared_ptr<IfrtResponse>>(std::move(promise));
+  return std::move(future);
 }
 
 absl::Status GrpcClientSession::Enqueue(std::unique_ptr<IfrtRequest> req,
                                         ResponseCallback callback) {
-  absl::MutexLock l(&writer_mu_);
+  absl::MutexLock l(writer_mu_);
   const OpId op_id = writer_next_op_id_++;
 
   if (writes_stopped_) {
@@ -152,7 +155,7 @@ absl::Status GrpcClientSession::Enqueue(std::unique_ptr<IfrtRequest> req,
         "GrpcClientSession: writes no longer allowed.");
   }
 
-  TF_RETURN_IF_ERROR(response_callbacks_->Add(op_id, std::move(callback)));
+  RETURN_IF_ERROR(response_callbacks_->Add(op_id, std::move(callback)));
 
   CHECK_EQ(req->mutable_request_metadata()->op_id(), 0);
   req->mutable_request_metadata()->set_op_id(op_id);
@@ -204,7 +207,7 @@ void GrpcClientSession::Finish(const absl::Status& client_status) {
 
     auto finish_stream_and_get_server_status = [&]() -> absl::Status {
       LOG(INFO) << "GrpClientSession: Attempting to call stream->Finish()";
-      absl::MutexLock l(&writer_mu_);
+      absl::MutexLock l(writer_mu_);
       // Note: stream_->Finish() counts as a write, and needs to be serialized
       // with stream->Write().
       LOG(INFO) << "GrpClientSession: Attempting to call stream->Finish(), "

@@ -29,8 +29,10 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/types.h"
@@ -53,8 +55,15 @@ absl::StatusOr<xla::PrecisionConfig::Algorithm> ConvertDotAlgorithm(
 absl::StatusOr<xla::PrecisionConfig::Algorithm> ConvertDotAlgorithm(
     mlir::stablehlo::DotAlgorithmAttr attr);
 
+absl::StatusOr<std::unique_ptr<xla::CollectiveDeviceListBase>>
+ConvertReplicaGroups(mlir::Attribute replica_groups, mlir::Operation* op);
+
+// TODO(b/477928179): remove this once all callers are migrated to the new API.
 absl::StatusOr<std::vector<ReplicaGroup>> ConvertReplicaGroups(
     mlir::DenseIntElementsAttr input);
+
+absl::StatusOr<std::vector<ReplicaGroup>> ConvertReplicaGroupsToV1(
+    mlir::Attribute replica_groups, mlir::Operation* op);
 
 // Convert a (N, 2) dense attribute to a list of tuples. This is the way padding
 // and source-target pairs are defined in HLO.
@@ -95,6 +104,10 @@ std::optional<xla::OpSharding> ExtractShardyArgShardingFromFrontendAttrs(
 std::optional<xla::OpSharding> ExtractShardyResultShardingFromFrontendAttrs(
     mlir::func::FuncOp function, int64_t res_num,
     std::optional<mlir::DictionaryAttr> sdy_meshes);
+
+// Returns a failure or a valid XLA shape corresponding to the given op's
+// results.
+mlir::FailureOr<xla::Shape> ExtractXlaShape(mlir::Operation* op);
 
 // Returns an OriginalValueProto that represents a value in the unoptimized HLO
 // graph.

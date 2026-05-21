@@ -15,94 +15,74 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/nvshmem_collective_permute_thunk.h"
 
-#include <unistd.h>
-
 #include <cstdint>
 #include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
-#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
+#include "xla/backends/gpu/runtime/collective_thunk.pb.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_collective_thunk.pb.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/collective_ops_utils.h"
-#include "xla/service/computation_placer.h"
-#include "xla/service/global_device_id.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
-namespace {
 
-absl::StatusOr<const int64_t> GetCurrentId(
-    Thunk::CollectiveExecuteParams* collective_params,
-    const P2PConfig& config) {
-  GlobalDeviceId global_device_id = collective_params->global_device_id;
-  TF_ASSIGN_OR_RETURN(
-      const DeviceAssignment::LogicalID current_logical_id,
-      collective_params->device_assn->LogicalIdForDevice(global_device_id));
-  const int64_t current_id =
-      config.config.group_mode == CollectiveOpGroupMode::kCrossReplica
-          ? current_logical_id.replica_id
-          : current_logical_id.computation_id;
-  return current_id;
-}
-
-}  // namespace
-
-NvshmemCollectivePermuteStartThunk::NvshmemCollectivePermuteStartThunk(
+NvshmemCollectivePermuteThunk::NvshmemCollectivePermuteThunk(
     ThunkInfo thunk_info, const HloCollectivePermuteInstruction* instr,
     int64_t replica_count, int64_t partition_count,
     const std::vector<CollectiveThunk::Buffer>& buffers,
-    bool p2p_memcpy_enabled, AsyncStreamKind stream_kind)
-    : NvshmemCollectiveThunk(Thunk::kNvshmemCollectivePermuteStart, thunk_info,
-                             IsGPUSyncCollective(*instr)),
+    bool p2p_memcpy_enabled)
+    : NvshmemCollectiveThunk(Thunk::kNvshmemCollectivePermute, thunk_info),
       config_(GetNvshmemP2PConfig(instr, replica_count, partition_count)),
       buffers_(buffers),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {}
 
-/*static*/ P2PConfig NvshmemCollectivePermuteStartThunk::GetNvshmemP2PConfig(
+/*static*/ P2PConfig NvshmemCollectivePermuteThunk::GetNvshmemP2PConfig(
     const HloCollectivePermuteInstruction* instr, int64_t replica_count,
     int64_t partition_count) {
   P2PConfig collective_permute_config;
   auto& config = collective_permute_config.config;
 
-  config.operand_count = instr->operand_count();
   for (const HloInstruction* operand : instr->operands()) {
     config.operand_element_type.push_back(operand->shape().element_type());
   }
-  config.SetCollectiveOpKindAndID(instr);
   config.group_mode = GetGroupMode(instr);
 
   // With a collective permute, all execution instances together form one
   // replica group.
   const int64_t num_participants =
-      config.group_mode == CollectiveOpGroupMode::kCrossReplica
+      config.group_mode ==
+              CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA
           ? replica_count
           : partition_count;
   config.replica_groups.emplace_back();
@@ -128,14 +108,13 @@ NvshmemCollectivePermuteStartThunk::NvshmemCollectivePermuteStartThunk(
   return collective_permute_config;
 }
 
-/*static*/ CollectiveOpGroupMode
-NvshmemCollectivePermuteStartThunk::GetGroupMode(
+/*static*/ CollectiveOpGroupMode NvshmemCollectivePermuteThunk::GetGroupMode(
     const HloCollectivePermuteInstruction* instr) {
   return GetCollectiveOpGroupMode(instr->channel_id().has_value(), std::nullopt)
       .value();
 }
 
-absl::Status NvshmemCollectivePermuteStartThunk::Initialize(
+absl::Status NvshmemCollectivePermuteThunk::Initialize(
     const InitializeParams& params) {
   TF_RETURN_IF_ERROR(NvshmemCollectiveThunk::Initialize(params));
 
@@ -146,15 +125,64 @@ absl::Status NvshmemCollectivePermuteStartThunk::Initialize(
   return absl::OkStatus();
 }
 
-absl::Status NvshmemCollectivePermuteStartThunk::RunNvshmemCollective(
+NvshmemCollectivePermuteThunk::NvshmemCollectivePermuteThunk(
+    ThunkInfo thunk_info, P2PConfig config,
+    std::vector<CollectiveThunk::Buffer> buffers, bool p2p_memcpy_enabled)
+    : NvshmemCollectiveThunk(Thunk::kNvshmemCollectivePermute,
+                             std::move(thunk_info)),
+      config_(std::move(config)),
+      buffers_(std::move(buffers)),
+      p2p_memcpy_enabled_(p2p_memcpy_enabled) {}
+
+absl::StatusOr<ThunkProto> NvshmemCollectivePermuteThunk::ToProto() const {
+  ThunkProto proto;
+  *proto.mutable_thunk_info() = thunk_info().ToProto();
+
+  NvshmemCollectivePermuteThunkProto* thunk_proto =
+      proto.mutable_nvshmem_collective_permute_thunk();
+
+  *thunk_proto->mutable_p2p_config() = P2PConfigToProto(config_);
+
+  for (const CollectiveThunk::Buffer& buffer : buffers_) {
+    TF_ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
+  }
+
+  thunk_proto->set_p2p_memcpy_enabled(p2p_memcpy_enabled_);
+
+  return proto;
+}
+
+absl::StatusOr<std::unique_ptr<NvshmemCollectivePermuteThunk>>
+NvshmemCollectivePermuteThunk::FromProto(
+    ThunkInfo thunk_info, const NvshmemCollectivePermuteThunkProto& thunk_proto,
+    absl::Span<const BufferAllocation> buffer_allocations) {
+  std::vector<CollectiveThunk::Buffer> buffers;
+  buffers.reserve(thunk_proto.buffers_size());
+  for (const CollectiveBufferProto& buffer_proto : thunk_proto.buffers()) {
+    TF_ASSIGN_OR_RETURN(
+        buffers.emplace_back(),
+        CollectiveThunk::Buffer::FromProto(buffer_proto, buffer_allocations));
+  }
+
+  TF_ASSIGN_OR_RETURN(P2PConfig config,
+                      P2PConfigFromProto(thunk_proto.p2p_config()));
+
+  return absl::WrapUnique<NvshmemCollectivePermuteThunk>(
+      new NvshmemCollectivePermuteThunk(std::move(thunk_info),
+                                        std::move(config), std::move(buffers),
+                                        thunk_proto.p2p_memcpy_enabled()));
+}
+
+absl::Status NvshmemCollectivePermuteThunk::RunNvshmemCollective(
     const ExecuteParams& params, se::Stream& stream) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(params,
+      ConvertToDeviceBuffers(params.buffer_allocations,
                              std::vector<CollectiveThunk::Buffer>(buffers_),
                              config_.config.operand_element_type));
-  TF_ASSIGN_OR_RETURN(const int64_t current_id,
-                      GetCurrentId(params.collective_params, config_));
+  TF_ASSIGN_OR_RETURN(
+      const int64_t current_id,
+      GetCollectiveCurrentId(params.collective_params, config_));
   std::string device_string =
       CollectiveThunk::GetDeviceString(*params.collective_params);
 
@@ -182,7 +210,7 @@ absl::Status RunCollectivePermute(P2PConfig::SourceTargetMapEntry source_target,
   std::optional<int64_t> source_id = source_target.source;
   std::optional<int64_t> target_id = source_target.target;
 
-  std::vector<se::DeviceMemoryBase> src_addrs, dest_addrs;
+  std::vector<se::DeviceAddressBase> src_addrs, dest_addrs;
   absl::c_transform(
       buffers, std::back_inserter(src_addrs),
       [](const DeviceBufferPair& buffer) { return buffer.source_buffer; });
@@ -203,24 +231,20 @@ absl::Status RunCollectivePermute(P2PConfig::SourceTargetMapEntry source_target,
       VLOG(1) << "CollectivePermute: rank " << device_ordinal
               << " sending data to target " << *target_id;
 
-      auto send_event = nvshmem_comm->Send(
+      auto send_future = nvshmem_comm->Send(
           dest_addr, src_addr, buffer.element_type, buffer.element_count,
           RankId(*target_id), GpuCollectives::On(stream));
-      tsl::BlockUntilReady(send_event);
-      if (send_event.IsError()) {
-        return send_event.GetError();
-      }
+      TF_RETURN_IF_ERROR(send_future.Await());
     }
+  }
+  if (source_id) {
+    // NVSHMEM put/get API is one-way communication - the sender initiates the
+    // transfer and the receiver doesn't need to explicitly receive. We use a
+    // barrier here to ensure all puts have completed before proceeding.
+    VLOG(1) << "CollectivePermute: rank " << device_ordinal
+            << " receiving data from source " << *source_id;
 
-    if (source_id) {
-      // NVSHMEM put/get API is one-way communication - the sender initiates the
-      // transfer and the receiver doesn't need to explicitly receive. We use a
-      // barrier here to ensure all puts have completed before proceeding.
-      VLOG(1) << "CollectivePermute: rank " << device_ordinal
-              << " receiving data from source " << *source_id;
-
-      TF_RETURN_IF_ERROR(nvshmem_comm->Barrier(GpuCollectives::On(stream)));
-    }
+    TF_RETURN_IF_ERROR(nvshmem_comm->Barrier(GpuCollectives::On(stream)));
   }
 
   if (!source_id) {
@@ -236,19 +260,19 @@ absl::Status RunCollectivePermute(P2PConfig::SourceTargetMapEntry source_target,
   return absl::OkStatus();
 }
 
-/*static*/ absl::Status NvshmemCollectivePermuteStartThunk::CheckImplementable(
+/*static*/ absl::Status NvshmemCollectivePermuteThunk::CheckImplementable(
     const HloCollectivePermuteInstruction* inst, int64_t replica_count,
     int64_t partition_count) {
   // Check if the operation is degenerate (no communication needed)
-  if (CollectivePermuteStartThunk::IsDegenerate(inst, replica_count,
-                                                partition_count)) {
+  if (CollectivePermuteThunk::IsDegenerate(inst, replica_count,
+                                           partition_count)) {
     return absl::OkStatus();
   }
 
   // Check if the operation is implementable with NVSHMEM
   for (const auto& operand : inst->operands()) {
-    TF_RETURN_IF_ERROR(IsValidNvshmemOperand(
-        operand->shape(), Thunk::kNvshmemCollectivePermuteStart));
+    TF_RETURN_IF_ERROR(IsValidNvshmemOperand(operand->shape(),
+                                             Thunk::kNvshmemCollectivePermute));
   }
 
   // Check if all source-target pairs are valid
@@ -266,25 +290,6 @@ absl::Status RunCollectivePermute(P2PConfig::SourceTargetMapEntry source_target,
   }
 
   return absl::OkStatus();
-}
-
-NvshmemCollectivePermuteDoneThunk::NvshmemCollectivePermuteDoneThunk(
-    ThunkInfo thunk_info,
-    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
-    AsyncStreamKind stream_kind)
-    : NvshmemCollectiveDoneThunk(Thunk::kNvshmemCollectivePermuteDone,
-                                 std::move(thunk_info), async_events,
-                                 stream_kind) {}
-
-absl::Status NvshmemCollectivePermuteDoneThunk::ExecuteOnStream(
-    const ExecuteParams& params) {
-  TF_RETURN_IF_ERROR(NvshmemCollectiveDoneThunk::ExecuteOnStream(params));
-
-  // Perform a fence operation to ensure all memory operations are completed
-  TF_ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectivesFromRegistry());
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<Communicator> nvshmem_comm,
-                      collectives->CreateCommunicator());
-  return nvshmem_comm->Fence();
 }
 
 }  // namespace gpu

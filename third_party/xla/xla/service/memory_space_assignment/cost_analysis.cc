@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/while_loop_analysis.h"
@@ -48,11 +49,11 @@ namespace memory_space_assignment {
 /*static*/ absl::StatusOr<std::unique_ptr<CostAnalysis>> CostAnalysis::Create(
     OpCostManager& op_cost_manager, const CostAnalysisOptions& options,
     const AliasInfo* alias_info, const HloModule& module) {
-  TF_ASSIGN_OR_RETURN(auto alias_analysis,
-                      HloAliasAnalysis::Run(&module, alias_info));
-  TF_ASSIGN_OR_RETURN(auto hlo_live_range,
-                      HloLiveRange::Run(module.schedule(), *alias_analysis,
-                                        module.entry_computation()));
+  ASSIGN_OR_RETURN(auto alias_analysis,
+                   HloAliasAnalysis::Run(&module, alias_info));
+  ASSIGN_OR_RETURN(auto hlo_live_range,
+                   HloLiveRange::Run(module.schedule(), *alias_analysis,
+                                     module.entry_computation()));
   auto call_graph = CallGraph::Build(&module);
   // Using `new` to access a non-public constructor.
   return absl::WrapUnique(
@@ -472,8 +473,7 @@ float CostAnalysis::GetInstructionElapsedInAlternateMemory(
       GetInstructionElapsedDueToMemory(instruction, is_in_alternate_mem));
 }
 
-float CostAnalysis::GetAsyncCopyElapsed(const Shape& shape) const {
-  int64_t size_in_bytes = GetShapeSizeBytes(shape);
+float CostAnalysis::GetAsyncCopyElapsed(int64_t size_in_bytes) const {
   return static_cast<float>(size_in_bytes) /
          DefaultMemBandwidthBytesPerSecond(/*use_scaling_factor=*/true);
 }

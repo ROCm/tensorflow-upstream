@@ -188,7 +188,7 @@ class DeterminantOpGpu : public AsyncOpKernel {
     // Prepare pointer arrays for cuBlas' batch interface.
     // TODO(rmlarsen): Find a way to encode pointer arrays in pinned host memory
     // without the ugly casting.
-    auto input_copy_ptrs = solver->GetScratchSpace<uint8>(
+    auto input_copy_ptrs = solver->GetScratchSpace<uint8_t>(
         sizeof(Scalar*) * batch_size, "input_copy_ptrs",
         /* on_host */ true);
     auto output_reshaped = out->template flat_inner_dims<Scalar, 1>();
@@ -235,9 +235,9 @@ class DeterminantOpGpu : public AsyncOpKernel {
 
     // Register callback to check info after kernels finish.
     auto info_checker = [context, done](
-                            const Status& status,
+                            const absl::Status& status,
                             const std::vector<HostLapackInfo>& host_infos) {
-      if (!status.ok() && errors::IsInvalidArgument(status) &&
+      if (!status.ok() && absl::IsInvalidArgument(status) &&
           !host_infos.empty()) {
         for (int i = 0; i < host_infos[0].size(); ++i) {
           // It is OK for a matrix to be singular (signaled by info > 0),
@@ -332,7 +332,7 @@ class LogDeterminantOpGpu : public AsyncOpKernel {
     // Prepare pointer arrays for cuBlas' batch interface.
     // TODO(rmlarsen): Find a way to encode pointer arrays in pinned host memory
     // without the ugly casting.
-    auto input_copy_ptrs = solver->GetScratchSpace<uint8>(
+    auto input_copy_ptrs = solver->GetScratchSpace<uint8_t>(
         sizeof(Scalar*) * batch_size, "input_copy_ptrs",
         /* on_host */ true);
 
@@ -381,9 +381,9 @@ class LogDeterminantOpGpu : public AsyncOpKernel {
 
     // Register callback to check info after kernels finish.
     auto info_checker = [context, done](
-                            const Status& status,
+                            const absl::Status& status,
                             const std::vector<HostLapackInfo>& host_infos) {
-      if (!status.ok() && errors::IsInvalidArgument(status) &&
+      if (!status.ok() && absl::IsInvalidArgument(status) &&
           !host_infos.empty()) {
         for (int i = 0; i < host_infos[0].size(); ++i) {
           // It is OK for a matrix to be singular (signaled by info > 0),
