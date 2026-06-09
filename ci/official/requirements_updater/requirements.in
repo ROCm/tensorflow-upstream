@@ -46,4 +46,4 @@ nvidia-nvjitlink-cu12 == 12.5.82
 tensorflow-io-gcs-filesystem==0.37.1
 libclang >= 13.0.0
 google_pasta ~= 0.2
-flatbuffers ~= 24.3.25
+flatbuffers ~= 25.9.23

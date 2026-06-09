@@ -1524,21 +1524,6 @@ def tf_gen_op_wrapper_py(
             )
         pygen_args.append("--api_def_dirs=" + ",".join(api_def_args))
 
-    op_reg_offset_out = "gen_" + name + "_reg_offsets.pb"
-    generate_op_reg_offsets(
-        name = name + "_reg_offsets",
-        out = op_reg_offset_out,
-        # Feed an empty dep list if not indexing to skip unnecessary aspect propagation.
-        deps = select({
-            clean_dep("//tensorflow:api_indexable"): deps,
-            "//conditions:default": [],
-        }),
-        tf_binary_additional_srcs = tf_binary_additional_srcs(),
-        testonly = testonly,
-    )
-    extra_srcs.append(op_reg_offset_out)
-    pygen_args.append("--op_reg_offset_filename=$(location " + op_reg_offset_out + ")")
-
     native.genrule(
         name = name + "_pygenrule",
         outs = [out],
