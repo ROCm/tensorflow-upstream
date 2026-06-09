@@ -122,26 +122,19 @@ Status GpuLaunchKernel(void (*function)(Ts...), dim3 grid_dim, dim3 block_dim,
                 "Kernels with reference arguments have undefined behaviour.");
   if (grid_dim.x * grid_dim.y * grid_dim.z > 0 &&
       block_dim.x * block_dim.y * block_dim.z > 0) {
-#if GOOGLE_CUDA
     auto func_ptr = absl::bit_cast<const void*>(function);
     // Cast arguments and forward them as an array of pointers.
     auto args_tuple = std::tuple<Ts...>(arguments...);
     auto arg_ptrs = detail::GetArrayOfElementPointers(&args_tuple);
+#if GOOGLE_CUDA
     auto result =
         cudaLaunchKernel(func_ptr, grid_dim, block_dim, arg_ptrs.data(),
                          shared_memory_size_bytes, stream);
     if (result != cudaSuccess) {
       return errors::Internal(cudaGetErrorString(result));
-    }
 #elif TENSORFLOW_USE_ROCM
-    constexpr size_t count = sizeof...(Args);
-    auto tup_ = std::tuple<Args...>{arguments...};
-    auto tup = validateArgsCountType(function, tup_);
-    void* _Args[count];
-    pArgs<0>(tup, _Args);
-    auto k = reinterpret_cast<void*>(function);
     auto result =
-        hipLaunchKernel(k, grid_dim, block_dim, _Args, shared_memory_size_bytes, stream);
+        hipLaunchKernel(func_ptr, grid_dim, block_dim, arg_ptrs.data(), shared_memory_size_bytes, stream);
     if (result != hipSuccess) {
       return errors::Internal(hipGetErrorString(result));
     }
