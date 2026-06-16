@@ -98,9 +98,16 @@ namespace mt = ::mlir::tensor;
 namespace mv = ::mlir::vector;
 
 constexpr int kTileSize = 32;
+
+#ifdef TENSORFLOW_USE_ROCM
+constexpr int kNumRows = 8;
+constexpr int64_t kNumThreadsPerBlock = kNumRows * kTileSize;  // 256
+constexpr int kMaxVectorizedBytes = 16;
+#else
 constexpr int kNumRows = 4;
 constexpr int kNumThreadsPerBlock = 128;
 constexpr int kMaxVectorizedBytes = 4;
+#endif
 
 // Reads the 2D vector tile <vector_size x vector_size> from the shared memory
 // at the given indices.
