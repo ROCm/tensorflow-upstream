@@ -25,7 +25,7 @@ apt-get update
 apt-get install -y gnupg ca-certificates
 
 # Deadsnakes: https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa
-apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F23C5A6CF475977595C89F51BA6932366A755776
+apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys F23C5A6CF475977595C89F51BA6932366A755776
 
 # LLVM/Clang: https://apt.llvm.org/
 apt-key adv --fetch-keys https://apt.llvm.org/llvm-snapshot.gpg.key
