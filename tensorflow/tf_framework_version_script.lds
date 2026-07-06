@@ -1,4 +1,6 @@
 tensorflow {
   global:
-    *;
+   *;
+  local:
+   *mlir*;
 };
