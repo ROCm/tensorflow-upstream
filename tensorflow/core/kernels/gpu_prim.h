@@ -79,6 +79,33 @@ struct NumericTraits<tensorflow::bfloat16>
 #include "rocm/rocm_config.h"
 namespace gpuprim = ::hipcub;
 
+// Newer versions of hipCUB, which follow CCCL 3.x have dropped:
+// * CountingInputIterator
+// * TransformInputIterator
+// * LaneId
+// From the hipcub namesapce. The intermediate solution here is to utilize the 
+// thrust variants of these iterators, until they are available via libhipcxx.
+#if HIPCUB_CCCL_VERSION >= 300000
+#include "rocm/include/thrust/iterator/counting_iterator.h"
+#include "rocm/include/thrust/iterator/transform_iterator.h"
+
+// Inject the removed APIs back into hipcub.
+namespace hipcub {
+    template <typename ValueType, typename OffsetT = ptrdiff_t>
+    using CountingInputIterator =
+        thrust::counting_iterator<ValueType, thrust::use_default,
+                                  thrust::use_default, OffsetT>;
+    template <typename ValueType, typename ConversionOp, typename InputIteratorT,
+              typename OffsetT = ptrdiff_t>
+    using TransformInputIterator =
+        thrust::transform_iterator<ConversionOp, InputIteratorT, ValueType>;
+
+    _CCCL_DEVICE _CCCL_FORCEINLINE unsigned int LaneId() {
+        return ::rocprim::lane_id();
+    }
+}
+#endif // HIPCUB_CCCL_VERSION
+
 // Required for sorting Eigen::half and bfloat16.
 namespace rocprim {
 #if (TF_ROCM_VERSION >= 50200 && TF_ROCM_VERSION < 70000)
