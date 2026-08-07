@@ -386,6 +386,8 @@ build:rocm --copt=-Wno-gnu-offsetof-extensions
 build:rocm --copt="-Wno-unused-result"
 build:rocm --copt=-Wno-gnu-offsetof-extensions
 
+common:rocm --dynamic_mode=off
+
 build:rocm_clang_official --config=rocm
 build:rocm_clang_official --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 build:rocm_clang_official --action_env=TF_ROCM_CLANG="1"
