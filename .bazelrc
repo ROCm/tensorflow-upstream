@@ -391,6 +391,8 @@ common:rocm --copt=-Wno-gnu-offsetof-extensions
 common:rocm --copt="-Wno-unused-result"
 common:rocm --copt=-Wno-gnu-offsetof-extensions
 
+common:rocm --dynamic_mode=off
+
 
 common:rocm_clang_official --config=rocm
 common:rocm_clang_official --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
