@@ -68,6 +68,7 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
         --config=rocm \
         --config=nonpip_multi_gpu \
         --config=sigbuild_local_cache \
+        --dynamic_mode=off \
         --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION
 
 

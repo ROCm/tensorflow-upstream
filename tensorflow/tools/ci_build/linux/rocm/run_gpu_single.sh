@@ -76,9 +76,9 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
     --test_env=MIOPEN_DEBUG_CONV_WINOGRAD=0 \
     --repo_env="TF_ROCM_AMDGPU_TARGETS=$TARGET_ARCHS" \
-    --repo_env="ROCM_PATH=/opt/rocm" \
-    --build_tests_only \
     --test_output=errors \
     --verbose_failures \
     --test_sharding_strategy=disabled \
+    --repo_env="ROCM_PATH=$ROCM_PATH" \
+    --dynamic_mode=off \
     --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute
