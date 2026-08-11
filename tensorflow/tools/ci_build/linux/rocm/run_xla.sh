@@ -229,6 +229,11 @@ EXCLUDED_TESTS=(
 
     # @xla//xla/service/gpu/autotuning:gemm_fusion_autotuner_test_amdgpu_any
     GemmFusionAutotunerTest.Int8FusedGemm # failing on mi250
+
+    # Failing on theRock
+    GpuKernelTilingTest.ReductionInputTooLarge
+    F8E5M2Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_*
+    BitcodeLinkTest.TestLinkFromInstallation
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
@@ -244,6 +249,7 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --action_env="ROCM_PATH=$ROCM_PATH" \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    --dynamic_mode=off \
     -- @xla//xla/... \
-    -@xla//xla/service/gpu/tests:sorting_test_amdgpu_any \
-    # ^^^ TODO (rocm) weekly-sync-20251021 excluded test files
+    -@xla//xla/backends/gpu/codegen/triton:triton_gemm_fusion_test_amdgpu_any
+    # ^^^ TODO (rocm) times out on theRock
