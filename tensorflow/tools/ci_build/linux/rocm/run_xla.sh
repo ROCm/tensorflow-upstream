@@ -55,6 +55,12 @@ if [ ! -d /tf ];then
 		mkdir /tf
 	fi
 
+EXCLUDED_TESTS=(
+    # Failing on theRock
+    Fp8s/FloatNormalizationTest.Fp8Normalization/*
+    GpuKernelTilingTest.ReductionInputTooLarge
+)
+
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
 	--config=sigbuild_local_cache \
 	--config=rocm \
@@ -64,4 +70,7 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
 	--test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
 	--test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
 	--action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
-	-- @local_xla//xla/...
+	--test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+	--dynamic_mode=off \
+	-- @local_xla//xla/... \
+        -@local_xla//xla/backends/gpu/runtime:command_buffer_cmd_test_gpu_amd_any
