@@ -81,6 +81,5 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --test_output=errors \
     --verbose_failures \
     --test_sharding_strategy=disabled \
-    --test_env="ROCPROFILER_QUEUE_INTERPOSITION=0" \
     --dynamic_mode=off \
     --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute
