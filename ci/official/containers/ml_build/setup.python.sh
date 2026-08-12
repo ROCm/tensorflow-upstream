@@ -52,12 +52,13 @@ if [[ ! -f "/usr/local/include/$VERSION" ]]; then
   ln -sf /usr/include/$VERSION /usr/local/include/$VERSION
 fi
 
-# Install pip
-wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 --tries=5 https://bootstrap.pypa.io/get-pip.py
-/usr/bin/$VERSION get-pip.py
-/usr/bin/$VERSION -m pip install --no-cache-dir --upgrade pip
-/usr/bin/$VERSION -m pip install -U setuptools
-
+if [[ ${BASE_IMAGE} != "ubuntu:24.04"* ]]; then
+  # Install pip
+  wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 --tries=5 https://bootstrap.pypa.io/get-pip.py
+  /usr/bin/$VERSION get-pip.py
+  /usr/bin/$VERSION -m pip install --no-cache-dir --upgrade pip
+  /usr/bin/$VERSION -m pip install -U setuptools
+fi
 
 # For Python 3.13t, do not install twine as it does not have pre-built wheels
 # for this Python version and building it from source fails. We only need twine
@@ -69,4 +70,11 @@ if [[ ${VERSION} == "python3.13-nogil" || ${VERSION} == "python3.14" || ${VERSIO
 fi
 
 # Disable the cache dir to save image space, and install packages
-/usr/bin/$VERSION -m pip install --no-cache-dir -r $REQUIREMENTS -U
+if [[ !(${VERSION} == "python3.13-nogil" || ${VERSION} == "python3.14-nogil") ]]; then
+  if [[ ${BASE_IMAGE} != "ubuntu:24.04"* ]]; then
+    /usr/bin/$VERSION -m pip install --no-cache-dir -r $REQUIREMENTS -U
+  else
+    /usr/bin/$VERSION -m pip install --no-cache-dir  --break-system-packages -r $REQUIREMENTS -U
+  fi
+fi
+
