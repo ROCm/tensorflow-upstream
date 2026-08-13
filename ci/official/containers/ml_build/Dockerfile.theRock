@@ -5,11 +5,15 @@ FROM $BASE_IMAGE AS devel
 # on why we cannot reference BASE_IMAGE again unless we declare it again.
 ################################################################################
 
-# TheRock nightly index URL (GPU-family-specific).
-#ARG THEROCK_INDEX_URL="https://repo.amd.com/rocm/whl-multi-arch/"
+ARG BASE_IMAGE=ubuntu:22.04@sha256:445586e41c1de7dfda82d2637f5ff688deea9eb5f5812f8c145afacc35b9f0db
+# TheRock nightly index URL (GPU-family-specific, or whl-multi-arch for device-all).
 ARG THEROCK_INDEX_URL="https://repo.amd.com/rocm/whl/gfx950-dcgpu/"
 # TheRock version number (e.g. "7.13.0a20260401" or "" for latest).
 ARG THEROCK_VERSION="7.14.0"
+# ROCm pip extras. Empty for single-arch (kernels baked into the arch-specific
+# libraries wheel). Set to ",device-all" for the whl-multi-arch index so the
+# per-GPU rocm-sdk-device-* kernel packs get pulled.
+ARG DEVICE_EXTRAS=""
 
 
 # Install devtoolset build dependencies
@@ -22,6 +26,17 @@ RUN /setup.sources.sh && /setup.packages.sh /builder.packages.txt
 # Setup Python
 COPY setup.python.sh /setup.python.sh
 COPY builder.requirements.txt /builder.requirements.txt
+# WORKAROUND: release tags (e.g. v2.19.1, v2.20.0) still symlink Python headers
+# into devtoolset-9 (/dt9), but ml_build Dockerfile.theRock no longer installs
+# devtoolset. Branch tips already dropped this block; sed is a no-op there.
+RUN sed -i '/Re-link pyconfig.h from x86_64-linux-gnu/,/^popd$/d' /setup.python.sh
+# WORKAROUND: r2.19-rocm-enhanced's setup.python.sh is missing python3.14 in
+# the no-distutils elif, so python3.14 falls through to the else branch and
+# tries to apt-get install python3.14-distutils (which doesn't exist —
+# distutils was removed from the stdlib in 3.12+). r2.20+ already has this
+# fix. This sed is a no-op on branches that already include python3.14 in the
+# condition. Remove once r2.19-rocm-enhanced is patched upstream.
+RUN sed -i 's/elif \[\[ ${VERSION} == "python3.13" || ${VERSION} == "python3.12" \]\]/elif [[ ${VERSION} == "python3.14" || ${VERSION} == "python3.13" || ${VERSION} == "python3.12" ]]/' /setup.python.sh
 RUN /setup.python.sh python3.10 /builder.requirements.txt
 RUN /setup.python.sh python3.11 /builder.requirements.txt
 RUN /setup.python.sh python3.13 /builder.requirements.txt
@@ -47,10 +62,11 @@ RUN ln -sf /usr/lib/python3.12 /usr/lib/tf_python
 
 # Install TheRock (ROCm via pip), initialize the SDK, and create a
 # conventional /opt/rocm symlink so ENV directives use a known path.
+# DEVICE_EXTRAS=",device-all" pulls the per-GPU kernel packs for multi-arch.
 RUN --mount=type=cache,mode=0755,target=/root/.cache/pip \
     python3 -m pip install --break-system-packages \
         --pre --index-url "${THEROCK_INDEX_URL}" \
-        "rocm[libraries,devel]${THEROCK_VERSION:+==}${THEROCK_VERSION}" && \
+        "rocm[libraries,devel${DEVICE_EXTRAS}]${THEROCK_VERSION:+==}${THEROCK_VERSION}" && \
     rocm-sdk init && \
     ln -sfn "$(rocm-sdk path --root)" /opt/rocm
 
@@ -84,7 +100,32 @@ RUN wget https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.1
 
 ENV ROCM_PATH=/opt/rocm
 ENV PATH="/opt/rocm/bin:${PATH}"
+# pip-based ROCm splits libs across _rocm_sdk_devel / _rocm_sdk_core (+ rocm_sysdeps).
+# /opt/rocm/lib alone is insufficient and the exact site-packages location is not
+# known at ENV time (system install via --break-system-packages). Resolve the real
+# dirs at build time, register them with ldconfig, and ALSO expose them via
+# LD_LIBRARY_PATH for tools that bypass the ld cache. The /opt/rocm symlink is kept
+# for compatibility with anything that hardcodes ROCM_PATH.
+RUN set -eux; \
+    ROCM_ROOT="$(rocm-sdk path --root)"; \
+    ROCM_PARENT="$(dirname "${ROCM_ROOT}")"; \
+    { \
+      echo "/opt/rocm/lib"; \
+      echo "${ROCM_ROOT}/lib"; \
+      echo "${ROCM_ROOT}/lib/rocm_sysdeps/lib"; \
+      echo "${ROCM_PARENT}/_rocm_sdk_core/lib"; \
+      echo "${ROCM_PARENT}/_rocm_sdk_core/lib/rocm_sysdeps/lib"; \
+    } | sort -u > /etc/ld.so.conf.d/rocm-pip.conf; \
+    echo "=== ROCm lib dirs registered with ldconfig ==="; cat /etc/ld.so.conf.d/rocm-pip.conf; \
+    ldconfig; \
+    # Persist the same colon-joined list for LD_LIBRARY_PATH (tools that ignore ld cache).
+    tr '\n' ':' < /etc/ld.so.conf.d/rocm-pip.conf | sed 's/:$//' > /etc/rocm-ld-paths; \
+    echo "ROCm LD path: $(cat /etc/rocm-ld-paths)"
 ENV LD_LIBRARY_PATH="/opt/rocm/lib"
+# Bake the resolved dirs onto LD_LIBRARY_PATH at runtime via an entrypoint-agnostic
+# profile so interactive + bazel shells inherit them.
+RUN printf 'export LD_LIBRARY_PATH="$(cat /etc/rocm-ld-paths):${LD_LIBRARY_PATH}"\n' \
+        > /etc/profile.d/rocm-pip-ld.sh && chmod +x /etc/profile.d/rocm-pip-ld.sh
 
 # Setup ENV variables for tensorflow pip build
 ENV TF_NEED_ROCM=1
@@ -93,4 +134,4 @@ ENV ROCM_TOOLKIT_PATH=${ROCM_PATH}
 
 # Don't use the bazel cache when a new docker image is created.
 RUN echo build --action_env=DOCKER_CACHEBUSTER=$(date +%s%N)$RANDOM >> /etc/bazel.bazelrc
-RUN echo build --host_action_env=DOCKER_HOST_CACHEBUSTER=$(date +%s%N)$RANDOM >> /etc/bazel.bazelrc
+RUN echo build --host_action_env=DOCKER_HOST_CACHEBUSTER=$(date +%s%N)$RANDOM >> /etc/bazel.bazelrci

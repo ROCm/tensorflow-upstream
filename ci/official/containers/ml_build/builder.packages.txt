@@ -22,7 +22,6 @@ llvm-18
 clang-18
 clang-tidy-18
 lld-18
-clang-format-12
 curl
 git
 parallel
