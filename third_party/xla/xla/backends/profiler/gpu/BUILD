@@ -62,8 +62,8 @@ tsl_gpu_library(
     copts = tf_profiler_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        "@local_tsl//tsl/platform:macros",
-        "@local_tsl//tsl/platform:types",
+        "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:types",
     ] + if_cuda(["//xla/tsl/cuda:cupti"]),
 )
 
@@ -76,7 +76,7 @@ tsl_gpu_library(
         ":cupti_interface",
     ],
     deps = [
-        "@local_tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -92,9 +92,9 @@ tsl_gpu_library(
     visibility = ["//visibility:public"],
     deps = [
         "@com_google_absl//absl/debugging:leak_check",
-        "@local_tsl//tsl/platform:logging",
-        "@local_tsl//tsl/platform:mutex",
-        "@local_tsl//tsl/platform:thread_annotations",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:thread_annotations",
     ],
 )
 
@@ -106,12 +106,12 @@ xla_test(
     copts = tf_profiler_copts() + tsl_copts(),
     tags = [
         "no_mac",
-        "cuda-only", #TODO(rocm): weekly-sync 24-12-10
+        "cuda-only"
     ],
     deps = [
         ":cupti_interface",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ] + if_cuda_is_configured([
         ":cuda_test",
         ":cupti_error_manager",
@@ -137,7 +137,7 @@ cuda_library(
     deps = [
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cuda_runtime",
-        "@local_tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -182,14 +182,13 @@ tsl_gpu_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
-        "@local_tsl//tsl/platform:env",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:logging",
-        "@local_tsl//tsl/platform:macros",
-        "@local_tsl//tsl/platform:platform_port",
-        "@local_tsl//tsl/platform:types",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -208,13 +207,13 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/status",
-        "@local_tsl//tsl/platform:env",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:logging",
-        "@local_tsl//tsl/platform:macros",
-        "@local_tsl//tsl/platform:platform_port",
-        "@local_tsl//tsl/platform:types",
-        "@local_tsl//tsl/profiler/lib:scoped_annotation",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:types",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
@@ -246,7 +245,6 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:optional",
         "@local_tsl//tsl/platform:abi",
         "@local_tsl//tsl/platform:env_time",
         "@local_tsl//tsl/platform:errors",
@@ -265,6 +263,12 @@ tsl_gpu_library(
     srcs = if_rocm(["rocm_tracer.cc"]),
     hdrs = if_rocm(["rocm_tracer.h"]),
     copts = tf_profiler_copts() + tsl_copts(),
+    linkopts = select({
+        "//conditions:default": [
+            "-L/opt/rocm/lib",      # search path for all ROCm shared objects
+            "-lrocprofiler-sdk",    # the library that owns the missing symbols
+        ],
+    }),
     tags = [
         "gpu",
         "rocm-only",
@@ -284,7 +288,6 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/types:optional",
         "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:logging",
@@ -295,6 +298,58 @@ tsl_gpu_library(
     ],
 )
 
+xla_test(
+    name = "rocm_tracer_test",
+    size = "small",
+    srcs = ["rocm_tracer_test.cc"],
+    copts = tf_profiler_copts() + tsl_copts(),
+    tags = [
+        "gpu",
+        "rocm",
+        "rocm-only",
+    ] + if_google([
+        # Optional: only run internally if ROCm config is enabled
+        "manual",
+    ]),
+    deps = if_rocm([
+        ":rocm_tracer",
+        ":rocm_collector",
+    ]) + [
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_googletest//:gtest_main",
+        "@local_tsl//tsl/platform:status_matchers",
+        "@local_tsl//tsl/platform:test",
+        "@local_tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
+xla_test(
+  name = "rocm_collector_test",
+  size = "small",
+  srcs = ["rocm_collector_test.cc"],
+  copts = tf_profiler_copts() + tsl_copts(),
+  tags = [
+      "gpu",
+      "rocm",
+      "rocm-only",
+  ] + if_google([
+      "manual",
+  ]),
+  deps = if_rocm([
+      ":rocm_tracer",
+      ":rocm_collector",
+  ]) + [
+      "//xla/tsl/profiler/utils:xplane_builder",
+      "@com_google_absl//absl/container:flat_hash_map",
+      "@com_google_googletest//:gtest_main",
+      "@local_tsl//tsl/platform:status_matchers",
+      "@local_tsl//tsl/platform:test",
+      "@local_tsl//tsl/profiler/protobuf:xplane_proto_cc",
+  ],
+  args = ["--gtest_shuffle"],
+)
+
 tsl_gpu_library(
     name = "nvtx_utils",
     srcs = if_cuda(["nvtx_utils.cc"]),
@@ -302,8 +357,8 @@ tsl_gpu_library(
     copts = tf_profiler_copts() + tsl_copts(),
     deps = [
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform",
-        "@local_tsl//tsl/platform:macros",
+        "@tsl//tsl/platform",
+        "@tsl//tsl/platform:macros",
     ],
 )
 
@@ -331,12 +386,12 @@ tsl_gpu_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:abi",
-        "@local_tsl//tsl/platform:mutex",
-        "@local_tsl//tsl/platform:platform_port",
-        "@local_tsl//tsl/platform:thread_annotations",
-        "@local_tsl//tsl/platform:types",
-        "@local_tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@tsl//tsl/platform:abi",
+        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:thread_annotations",
+        "@tsl//tsl/platform:types",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ] + if_cuda([
         "//xla/tsl/cuda:cupti",
         "//xla/tsl/cuda",
@@ -360,10 +415,10 @@ tsl_gpu_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:mutex",
-        "@local_tsl//tsl/platform:platform_port",
-        "@local_tsl//tsl/platform:thread_annotations",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:thread_annotations",
     ] + if_cuda(["//xla/tsl/cuda:cupti"]),
 )
 
@@ -377,8 +432,8 @@ tsl_gpu_library(
         ":cupti_wrapper",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
-        "@local_tsl//tsl/platform:logging",
-        "@local_tsl//tsl/platform:stringpiece",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:stringpiece",
         "//xla/tsl/util:env_var",
     ],
     visibility = ["//visibility:public"],
@@ -396,11 +451,9 @@ xla_test(
     ],
     deps = [
         ":cupti_buffer_events",
-        ":cupti_collector",
-        ":cupti_tracer",
         ":cupti_utils",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -421,9 +474,9 @@ xla_test(
         "//xla/tsl/profiler/utils:xplane_builder",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:status_matchers",
-        "@local_tsl//tsl/platform:test",
-        "@local_tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
 
@@ -439,6 +492,7 @@ cuda_library(
     local_defines = if_oss(["NVTX_VERSION_3_1=1"]),
     tags = ["cuda-only"],
     visibility = ["//visibility:public"],
+    deps = ["@local_config_cuda//cuda:cuda_headers"],
 )
 
 xla_test(
