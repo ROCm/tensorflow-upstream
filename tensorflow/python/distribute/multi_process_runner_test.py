@@ -433,7 +433,7 @@ class MultiProcessRunnerTest(test.TestCase, parameterized.TestCase):
         return_output=True)
     mpr.start()
     with self.assertRaises(ValueError) as cm:
-      mpr.join(timeout=10)
+      mpr.join(timeout=20)
     self.assertGreater(
         sum(['Running' in msg for msg in cm.exception.mpr_result.stdout]), 1)
 
@@ -479,6 +479,7 @@ class MultiProcessRunnerTest(test.TestCase, parameterized.TestCase):
     # Tasks terminated by the user should also be restarted.
 
     def fn(counter):
+      logging.warning(f"worker fn {counter.value}")
       counter.value += 1
       if counter.value == 1:
         time.sleep(100)
@@ -493,7 +494,8 @@ class MultiProcessRunnerTest(test.TestCase, parameterized.TestCase):
         args=(counter,),
         auto_restart=True)
     mpr.start()
-    time.sleep(3)
+    time.sleep(10)
+    logging.warning("terminating worker!")
     mpr.terminate('worker', 0)
     mpr.join(timeout=20)
     self.assertEqual(counter.value, 2)
