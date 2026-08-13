@@ -148,7 +148,6 @@ struct rocprim::traits::define<tsl::bfloat16> {
 };
 }; // namespace traits
 #endif
-#if (TF_ROCM_VERSION < 70000)
 namespace detail {
 template <>
 struct radix_key_codec_base<Eigen::half>
@@ -157,7 +156,6 @@ template <>
 struct radix_key_codec_base<tensorflow::bfloat16>
     : radix_key_codec_floating<tensorflow::bfloat16, uint16_t> {};
 };  // namespace detail
-#endif
 };  // namespace rocprim
 
 #endif  // TENSORFLOW_USE_ROCM
