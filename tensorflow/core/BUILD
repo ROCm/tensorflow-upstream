@@ -724,6 +724,7 @@ cc_library(
     deps = [
         ":tensorflow_opensource",
         "//tensorflow/core/platform/default/build_config:tensorflow_platform_specific",
+       "//tensorflow/core/common_runtime:tensorflow_backend_tf",
     ],
 )
 
