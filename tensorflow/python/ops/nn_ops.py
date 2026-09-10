@@ -211,6 +211,8 @@ from tensorflow.python.util.tf_export import tf_export
 # Aliases for some automatically-generated names.
 local_response_normalization = gen_nn_ops.lrn
 
+from tensorflow.python.ops import control_flow_util as util
+
 # pylint: disable=protected-access
 # pylint: disable=g-classes-have-attributes
 
@@ -3746,7 +3748,13 @@ def gelu(features, approximate=False, name=None):
           "`features.dtype` must be a floating point tensor."
           f"Received:features.dtype={features.dtype}")
     if approximate:
-      return gen_nn_ops.gelu(features, name=name)
+      if util.GraphOrParentsInXlaContext(ops.get_default_graph()):
+        coeff = math_ops.cast(0.044715, features.dtype)
+        return 0.5 * features * (
+          1.0 + math_ops.tanh(0.7978845608028654 *
+                              (features + coeff * math_ops.pow(features, 3))))
+      else:
+        return gen_nn_ops.gelu(features, name=name)
     else:
       return (
           0.5
