@@ -20,6 +20,8 @@ limitations under the License.
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tensorflow/core/framework/tensor_types.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/tensor.h"
 
 namespace tensorflow {
 
@@ -43,6 +45,7 @@ struct ArgMax {
   DECLARE_COMPUTE_SPEC(7);
 
 #undef DECLARE_COMPUTE_SPEC
+  enum { is_argmax = true };
 };
 
 template <typename Device, typename T, typename Tout>
@@ -63,9 +66,14 @@ struct ArgMin {
   DECLARE_COMPUTE_SPEC(7);
 
 #undef DECLARE_COMPUTE_SPEC
+  enum { is_argmax = false };
 };
 
 }  // namespace functor
+
+template <typename T, typename Tout, bool is_argmax>
+void DoGpuArgOp(OpKernelContext* context, const Tensor& input, int axis,
+		                Tensor* output);
 
 }  // namespace tensorflow
 
