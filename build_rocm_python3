@@ -9,6 +9,8 @@
 # press enter all the way
 #
 
+# Trigger ci build
+
 while getopts "hrn" opt; do
   case ${opt} in
     h)
