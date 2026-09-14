@@ -50,7 +50,7 @@ RUN /setup.python.sh python3.14-nogil /builder.requirements.txt
 RUN /setup.python.sh python3.12 /builder.requirements.txt
 
 # Install ROCm packages
-ARG GPU_DEVICE_TARGETS="gfx908,gfx90a,gfx942,gfx950,gfx1030,gfx1100,gfx1101,gfx1102,gfx1200,gfx1201"
+ARG GPU_DEVICE_TARGETS="gfx908,gfx90a,gfx942,gfx950,gfx1030,gfx1100,gfx1101,gfx1102,gfx1103,gfx1200,gfx1201"
 ENV GPU_DEVICE_TARGETS=${GPU_DEVICE_TARGETS}
 ENV TF_ROCM_AMDGPU_TARGETS=${GPU_DEVICE_TARGETS}
 

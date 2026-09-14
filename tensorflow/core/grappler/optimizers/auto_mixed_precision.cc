@@ -117,7 +117,7 @@ bool HasFastFP16Support(const DeviceProperties& props) {
   absl::flat_hash_set<std::string> FP16SupportedDevices = {
       {"gfx906"}, {"gfx908"}, {"gfx90a"}, {"gfx910"}, 
       {"gfx942"}, {"gfx1010"}, {"gfx1012"}, {"gfx1030"},
-      {"gfx1100"}, {"gfx1101"}, {"gfx1102"},
+      {"gfx1100"}, {"gfx1101"}, {"gfx1102"}, {"gfx1103"},
       {"gfx1200"}, {"gfx1201"}
   };
   std::string gcnArchName = props.environment().at("architecture");
@@ -379,8 +379,8 @@ class NodeTypeAttrMap {
       if (!type_attr.attr_name.empty() &&
           !node.attr().count(type_attr.attr_name)) {
         return absl::InvalidArgumentError(
-            absl::StrCat("Type attribute ", type_attr.attr_name,
-                         " is not present in node ", node.name()));
+          absl::StrCat("Type attribute ", type_attr.attr_name,
+                 " is not present in node ", node.name()));
       }
       type2io_entry[type_attr].first.insert(i);
       io2type_entry.first.push_back(type_attr);
@@ -395,8 +395,8 @@ class NodeTypeAttrMap {
       if (!type_attr.attr_name.empty() &&
           !node.attr().count(type_attr.attr_name)) {
         return absl::InvalidArgumentError(
-            absl::StrCat("Type attribute ", type_attr.attr_name,
-                         " is not present in node ", node.name()));
+          absl::StrCat("Type attribute ", type_attr.attr_name,
+                 " is not present in node ", node.name()));
       }
       type2io_entry[type_attr].second.insert(i);
       io2type_entry.second.push_back(type_attr);
@@ -411,8 +411,8 @@ class NodeTypeAttrMap {
       const OpDef::AttrDef* attr_def = FindAttr(attr_name, op_def);
       if (!attr_def) {
         return absl::InvalidArgumentError(
-            absl::StrCat("AttrDef not found for attribute ", attr_name,
-                         " of node ", node.name()));
+          absl::StrCat("AttrDef not found for attribute ", attr_name,
+                 " of node ", node.name()));
       }
       if (attr_def->type() == "type") {
         type2io_entry[TypeAttrId(attr_name)];
@@ -1168,7 +1168,7 @@ class AutoMixedPrecisionImpl {
 
 NodeDef AutoMixedPrecisionImpl::BuildCastNode(
     const MutableGraphView::OutputPort& src, bool to_f16,
-    const std::string& device) const {
+              const std::string& device) const {
   DataType src_type = to_f16 ? DT_FLOAT : target_dtype_;
   DataType dst_type = to_f16 ? target_dtype_ : DT_FLOAT;
   const char* cast_string = !to_f16                    ? kCastToFp32
@@ -1216,7 +1216,7 @@ absl::Status AutoMixedPrecisionImpl::PrintDebugLogs(bool preop,
   if (prepend_path.empty()) return absl::OkStatus();
 
   std::string suffix =
-      strings::StrCat("_", preop ? "preop" : kSuffix, "_", id_, "_", timestamp);
+      absl::StrCat("_", preop ? "preop" : kSuffix, "_", id_, "_", timestamp);
 
   std::string fname =
       io::JoinPath(prepend_path, absl::StrCat("graphdef", suffix, ".pb"));
@@ -1940,16 +1940,16 @@ absl::Status AutoMixedPrecisionImpl::ForceColorMatchOnRecurrentEdges(
       for (const auto& output : fanout) {
         const NodeDef& merge_node = *output.node;
         if (merge_node.op() != "Merge") {
-          return absl::FailedPreconditionError(
+            return absl::FailedPreconditionError(
               absl::StrCat("Expected Merge node after NextIteration, got ",
-                           merge_node.op()));
+                     merge_node.op()));
         }
         const absl::optional<int> maybe_merge_idx =
             graph_type_view_.GetNodeIndex(merge_node.name(), TypeAttrId("T"));
         if (!maybe_merge_idx.has_value()) {
-          return absl::InternalError(
+            return absl::InternalError(
               absl::StrCat("Type attribute T of Merge node ", merge_node.name(),
-                           " not found in graph view"));
+                     " not found in graph view"));
         }
         int merge_idx = maybe_merge_idx.value();
         merge_idxs.push_back(merge_idx);
@@ -1960,8 +1960,8 @@ absl::Status AutoMixedPrecisionImpl::ForceColorMatchOnRecurrentEdges(
           graph_type_view_.GetNodeIndex(node.name(), TypeAttrId("T"));
       if (!maybe_nextiter_idx.has_value()) {
         return absl::InternalError(
-            absl::StrCat("Type attribute T of NextIteration node ", node.name(),
-                         " not found in graph view"));
+          absl::StrCat("Type attribute T of NextIteration node ", node.name(),
+                 " not found in graph view"));
       }
       int nextiter_idx = maybe_nextiter_idx.value();
       if (any_merge_is_not_allow) {
@@ -2108,10 +2108,10 @@ absl::StatusOr<NodeDef*> AutoMixedPrecisionImpl::InsertCastNodeAtFanout(
     const absl::optional<int> maybe_dst_type_idx =
         graph_type_view_.GetNodeIndex(dst.node->name(), dst_type_attr);
     if (!maybe_dst_type_idx.has_value()) {
-      return absl::InternalError(
+        return absl::InternalError(
           absl::StrCat("Type attribute ", dst_type_attr.DebugString(), " of ",
-                       dst.node->op(), " node ", dst.node->name(),
-                       " not found in graph view"));
+                 dst.node->op(), " node ", dst.node->name(),
+                 " not found in graph view"));
     }
     int dst_type_idx = maybe_dst_type_idx.value();
     bool dst_is_allow = allow_set.count(dst_type_idx);
@@ -2134,7 +2134,7 @@ absl::StatusOr<NodeDef*> AutoMixedPrecisionImpl::InsertCastNodeAtFanout(
         break;
       default:
         return absl::InternalError(
-            absl::StrCat("Invalid Cast Type: ", static_cast<int>(cast_type)));
+          absl::StrCat("Invalid Cast Type: ", static_cast<int>(cast_type)));
     }
 
     if (!should_cast) continue;
@@ -2202,8 +2202,8 @@ absl::Status AutoMixedPrecisionImpl::ChangeTypeAttrsAndAddCasts(
           graph_type_view_.GetNodeIndex(node->name(), type_attr);
       if (!maybe_node_type_idx.has_value()) {
         return absl::InternalError(absl::StrCat(
-            "Type attribute ", type_attr.DebugString(), " of ", node->op(),
-            " node ", node->name(), " not found in graph view"));
+          "Type attribute ", type_attr.DebugString(), " of ", node->op(),
+          " node ", node->name(), " not found in graph view"));
       }
       int node_type_idx = maybe_node_type_idx.value();
       if (!IsFloat32(*graph_type_view_.GetNode(node_type_idx))) continue;

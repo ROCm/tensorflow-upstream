@@ -99,6 +99,9 @@ const std::pair<int, int> kMinGPUArch = {7, 0};
 class AutoMixedPrecisionTest : public GrapplerTest {
  protected:
   void SetMode(AutoMixedPrecisionMode mode) { mode_ = mode; }
+  void SetGpuArchitecture(std::string architecture) {
+    gpu_architecture_ = std::move(architecture);
+  }
   void SetUp() override {
     if (mode_ == AutoMixedPrecisionMode::CUDA) {
       int num_gpus = GetNumAvailableGPUs();
@@ -120,7 +123,7 @@ class AutoMixedPrecisionTest : public GrapplerTest {
         device_properties.mutable_environment()->insert({"cuda", "9010"});
 #else
         device_properties.mutable_environment()->insert(
-            {"architecture", "gfx906"});
+            {"architecture", gpu_architecture_});
 #endif
         virtual_cluster_.reset(
             new VirtualCluster({{"/GPU:1", device_properties}}));
@@ -230,8 +233,28 @@ class AutoMixedPrecisionTest : public GrapplerTest {
 
   std::unique_ptr<Cluster> virtual_cluster_;
   bool gpu_available_;
+  std::string gpu_architecture_ = "gfx906";
   AutoMixedPrecisionMode mode_;
 };
+
+#if TENSORFLOW_USE_ROCM
+class AutoMixedPrecisionGfx1103Test : public AutoMixedPrecisionTest {
+ protected:
+  void SetUp() override {
+    SetMode(AutoMixedPrecisionMode::CUDA);
+    SetGpuArchitecture("gfx1103");
+    AutoMixedPrecisionTest::SetUp();
+  }
+};
+
+TEST_F(AutoMixedPrecisionGfx1103Test, SupportsFp16) {
+  TestSimpleUnaryInferOp(/*input_min=*/0.0, /*input_max=*/10.0,
+                         /*atol=*/1e-3, /*rtol=*/1e-3,
+                         [](const tensorflow::Scope& scope, Output input) {
+                           return ops::Sqrt(scope.WithOpName("sqrt"), input);
+                         });
+}
+#endif  // TENSORFLOW_USE_ROCM
 
 class AutoMixedPrecisionParamTest
     : public AutoMixedPrecisionTest,
