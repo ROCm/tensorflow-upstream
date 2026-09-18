@@ -18,26 +18,24 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/status/statusor.h"
-#include "xla/backends/gpu/tests/gpu_codegen_test.h"
+#include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/service/executable.h"
-#include "xla/stream_executor/stream_executor_memory_allocator.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
-namespace xla {
-namespace gpu {
-
+namespace xla::gpu {
 namespace {
 
-class TooManyBlocksTest : public GpuCodegenTest {};
+using ::absl_testing::StatusIs;
+using ::testing::_;
+using ::testing::ContainsRegex;
+
+class TooManyBlocksTest : public GpuPjRtCodegenTest {};
 
 TEST_F(TooManyBlocksTest, FailsWithInvalidStatus) {
   // This test ensures that invalid (too large) launch grids are caught
   // somewhere in the pipeline. The practical relevance is low, since as of
   // 2024, the inputs or outputs have to be way too large to fit on any GPU
   // anyway.
+<<<<<<< HEAD
   //
   // On ROCm, the grid splitting feature (MaybeSplitGridDimensionX) splits
   // oversized grids into multiple dimensions, so compilation succeeds instead
@@ -71,8 +69,25 @@ ENTRY primitive_computation_mul.8 {
   EXPECT_THAT(
       failed_executable.status().ToString(),
       ::testing::ContainsRegex("Kernel '.*fusion.*' launch needs more blocks"));
+=======
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(R"(
+    HloModule primitive_computation_mul.8
+
+    ENTRY primitive_computation_mul.8 {
+      p.1 = s8[65536] parameter(0)
+      p.2 = s8[65536] parameter(1)
+      bcast.3 = s8[65536,65536,65536,128,16] broadcast(p.1), dimensions={0}
+      bcast.4 = s8[65536,65536,65536,128,16] broadcast(p.2), dimensions={1}
+      ROOT multiply.5 = s8[65536,65536,65536,128,16] multiply(bcast.3, bcast.4)
+    }
+  )"));
+  EXPECT_THAT(CompileToExecutable(std::move(hlo_module),
+                                  /*run_optimization_passes=*/true),
+              StatusIs(_, ContainsRegex(
+                              "Kernel '.*fusion.*' launch needs more blocks")));
+>>>>>>> sept15
 }
 
 }  // namespace
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

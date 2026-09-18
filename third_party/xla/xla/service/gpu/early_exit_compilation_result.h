@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -46,7 +47,8 @@ class EarlyExitCompilationResult : public CompiledModule {
 
   absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
       se::Platform::Id platform_id,
-      const se::DeviceDescription& device_description) &&
+      const se::DeviceDescription& device_description,
+      const DebugOptions& debug_options) &&
       override;
 
   const HloModule* optimized_module() const override { return module_.get(); }

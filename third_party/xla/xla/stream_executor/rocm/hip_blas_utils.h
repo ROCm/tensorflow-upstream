@@ -19,11 +19,14 @@ limitations under the License.
 #include <string>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "rocm/include/hipblas/hipblas.h"
 #include "rocm/include/hipblaslt/hipblaslt.h"
+#include "rocm/rocm_config.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/tsl/platform/errors.h"
 
+<<<<<<< HEAD
 #include "rocm/rocm_config.h"
 
 #if TF_HIPBLASLT
@@ -45,11 +48,13 @@ limitations under the License.
 #define HIPBLAS_COMPUTE_32I HIPBLASLT_COMPUTE_I32
 #endif
 
+=======
+>>>>>>> sept15
 namespace stream_executor {
 namespace rocm {
 
 #define SE_HIPBLAS_RETURN_IF_ERROR(expr) \
-  TF_RETURN_IF_ERROR(::stream_executor::rocm::ToStatus(expr, #expr))
+  ABSL_RETURN_IF_ERROR(::stream_executor::rocm::ToStatus(expr, #expr))
 
 absl::Status ToStatus(hipblasStatus_t status, const char* prefix);
 hipDataType AsHipblasDataType(blas::DataType type);
@@ -58,7 +63,5 @@ hipblasOperation_t AsHipblasOperation(blas::Transpose trans);
 
 }  // namespace rocm
 }  // namespace stream_executor
-
-#endif  // TF_HIPBLASLT
 
 #endif  // XLA_STREAM_EXECUTOR_ROCM_HIP_BLAS_UTILS_H_

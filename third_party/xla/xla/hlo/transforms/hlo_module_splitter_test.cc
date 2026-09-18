@@ -19,14 +19,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
-#include "xla/tsl/platform/status_macros.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/hlo_verifier.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/util.h"
 
@@ -42,15 +41,15 @@ class HloModuleSplitterTest : public HloHardwareIndependentTestBase {
 
   absl::StatusOr<SplitResult> RunSplitter(absl::string_view hlo_string) {
     std::unique_ptr<HloModule> module;
-    ASSIGN_OR_RETURN(module, ParseAndReturnVerifiedModule(hlo_string));
+    ABSL_ASSIGN_OR_RETURN(module, ParseAndReturnVerifiedModule(hlo_string));
     HloModuleSplitter splitter;
     bool changed = false;
-    ASSIGN_OR_RETURN(changed, splitter.Run(module.get()));
+    ABSL_ASSIGN_OR_RETURN(changed, splitter.Run(module.get()));
     if (!changed) {
       return Internal("Expected splitter to run and change the module");
     }
     for (auto& submodule : splitter.submodules()) {
-      RETURN_IF_ERROR(HloVerifier(/*layout_sensitive=*/false,
+      ABSL_RETURN_IF_ERROR(HloVerifier(/*layout_sensitive=*/false,
                                   /*allow_mixed_precision=*/true)
                           .Run(submodule.get())
                           .status());
@@ -70,7 +69,7 @@ callee {
 ENTRY entry {
   p0 = f32[] parameter(0)
   p1 = f32[] parameter(1)
-  ROOT call = f32[] call(p0, p1), to_apply=callee, frontend_attributes={inlineable="false"}
+  ROOT call = f32[] call(p0, p1), to_apply=callee, frontend_attributes={compilation_unit="my_callee"}
 }
 )";
 
@@ -80,7 +79,7 @@ ENTRY entry {
 
   const char* expected_hlo = R"(
 CHECK: ENTRY %entry
-CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_call",{{.*}}backend_config="callee"
+CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_call",{{.*}}backend_config="my_callee"
 )";
 
   ASSERT_OK_AND_ASSIGN(bool filecheck_ok,
@@ -114,11 +113,11 @@ inner {
 }
 outer {
   p0 = f32[] parameter(0)
-  ROOT call = f32[] call(p0), to_apply=inner, frontend_attributes={inlineable="false"}
+  ROOT call = f32[] call(p0), to_apply=inner, frontend_attributes={compilation_unit="my_inner"}
 }
 ENTRY entry {
   p0 = f32[] parameter(0)
-  ROOT call = f32[] call(p0), to_apply=outer, frontend_attributes={inlineable="false"}
+  ROOT call = f32[] call(p0), to_apply=outer, frontend_attributes={compilation_unit="my_outer"}
 }
 )";
 
@@ -131,7 +130,7 @@ ENTRY entry {
 
   const char* expected_hlo = R"(
 CHECK: ENTRY %entry
-CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_call",{{.*}}backend_config="outer"
+CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_call",{{.*}}backend_config="my_outer"
 )";
 
   ASSERT_OK_AND_ASSIGN(bool filecheck_ok,
@@ -140,7 +139,7 @@ CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_
 
   HloModule* outer_mod = nullptr;
   for (const auto& m : submodules) {
-    if (m->name() == "outer") {
+    if (m->name() == "my_outer") {
       outer_mod = m.get();
     }
   }
@@ -148,7 +147,7 @@ CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_
 
   const char* expected_outer_hlo = R"(
 CHECK: ENTRY %outer
-CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_call",{{.*}}backend_config="inner"
+CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_call",{{.*}}backend_config="my_inner"
 )";
 
   ASSERT_OK_AND_ASSIGN(bool outer_filecheck_ok,
@@ -170,7 +169,7 @@ callee {
 }
 ENTRY entry {
   p0 = f32[] parameter(0)
-  ROOT call = token[] call(p0), to_apply=callee, frontend_attributes={inlineable="false"}
+  ROOT call = token[] call(p0), to_apply=callee, frontend_attributes={compilation_unit="my_callee"}
 }
 )";
 
@@ -180,7 +179,7 @@ ENTRY entry {
 
   const char* expected_hlo = R"(
 CHECK: ENTRY %entry
-CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_call",{{.*}}custom_call_has_side_effect=true,{{.*}}backend_config="callee"
+CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_call",{{.*}}custom_call_has_side_effect=true,{{.*}}backend_config="my_callee"
 )";
 
   ASSERT_OK_AND_ASSIGN(bool filecheck_ok,
@@ -208,7 +207,7 @@ callee {
 }
 ENTRY entry {
   p0 = f32[10] parameter(0)
-  ROOT call = f32[] call(p0), to_apply=callee, frontend_attributes={inlineable="false"}
+  ROOT call = f32[] call(p0), to_apply=callee, frontend_attributes={compilation_unit="my_callee"}
 }
 )";
 
@@ -218,7 +217,7 @@ ENTRY entry {
 
   const char* expected_hlo = R"(
 CHECK: ENTRY %entry
-CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_call",{{.*}}backend_config="callee"
+CHECK:   ROOT {{.*}} custom-call({{.*}}), custom_call_target="_xla_multi_module_call",{{.*}}backend_config="my_callee"
 )";
 
   ASSERT_OK_AND_ASSIGN(bool filecheck_ok,
@@ -235,7 +234,7 @@ callee {
 }
 ENTRY entry {
   p0 = f32[] parameter(0)
-  ROOT call = f32[] call(p0), to_apply=callee, frontend_attributes={inlineable="false"}
+  ROOT call = f32[] call(p0), to_apply=callee, frontend_attributes={compilation_unit="my_callee"}
 }
 )";
 
@@ -260,7 +259,7 @@ HloModule module
 ENTRY entry {
   p0 = f32[] parameter(0)
   p1 = f32[] parameter(1)
-  ROOT add = f32[] add(p0, p1), frontend_attributes={inlineable="false"}
+  ROOT add = f32[] add(p0, p1), frontend_attributes={compilation_unit="add"}
 }
 )";
 
@@ -270,6 +269,97 @@ ENTRY entry {
   ASSERT_OK_AND_ASSIGN(bool changed, splitter.Run(module.get()));
 
   // Verify that the splitter ignored the non-kCall instruction.
+  EXPECT_FALSE(changed);
+  EXPECT_TRUE(splitter.submodules().empty());
+}
+
+TEST_F(HloModuleSplitterTest, SplitsCallWithInlineableXlaLate) {
+  const char* hlo_string_late = R"(
+HloModule module
+callee {
+  p0 = f32[] parameter(0)
+  ROOT neg = f32[] negate(p0)
+}
+ENTRY entry {
+  p0 = f32[] parameter(0)
+  ROOT call = f32[] call(p0), to_apply=callee, frontend_attributes={inlineable="xla_late"}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module_late,
+                       ParseAndReturnVerifiedModule(hlo_string_late));
+
+  HloModuleSplitter splitter_late;
+  ASSERT_OK_AND_ASSIGN(bool changed_late, splitter_late.Run(module_late.get()));
+
+  EXPECT_TRUE(changed_late);
+  EXPECT_EQ(splitter_late.submodules().size(), 1);
+}
+
+TEST_F(HloModuleSplitterTest, IgnoreCallWithInlineableFalse) {
+  const char* hlo_string = R"(
+HloModule module
+callee {
+  p0 = f32[] parameter(0)
+  ROOT neg = f32[] negate(p0)
+}
+ENTRY entry {
+  p0 = f32[] parameter(0)
+  ROOT call = f32[] call(p0), to_apply=callee, frontend_attributes={inlineable="false"}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  HloModuleSplitter splitter;
+  ASSERT_OK_AND_ASSIGN(bool changed, splitter.Run(module.get()));
+
+  // Verify inlineable="false" is ignored by HloModuleSplitter
+  EXPECT_FALSE(changed);
+  EXPECT_TRUE(splitter.submodules().empty());
+}
+
+TEST_F(HloModuleSplitterTest, IgnoreCallWithInlineableTrue) {
+  const char* hlo_string = R"(
+HloModule module
+callee {
+  p0 = f32[] parameter(0)
+  ROOT neg = f32[] negate(p0)
+}
+ENTRY entry {
+  p0 = f32[] parameter(0)
+  ROOT call = f32[] call(p0), to_apply=callee, frontend_attributes={inlineable="true"}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  HloModuleSplitter splitter;
+  ASSERT_OK_AND_ASSIGN(bool changed, splitter.Run(module.get()));
+
+  EXPECT_FALSE(changed);
+  EXPECT_TRUE(splitter.submodules().empty());
+}
+
+TEST_F(HloModuleSplitterTest, IgnoreShardyManualComputationWhenShardyEnabled) {
+  const char* hlo_string = R"(
+HloModule module
+xla.sdy.manual_computation_body {
+  p0 = f32[] parameter(0)
+  ROOT neg = f32[] negate(p0)
+}
+ENTRY entry {
+  p0 = f32[] parameter(0)
+  ROOT call = f32[] call(p0), to_apply=xla.sdy.manual_computation_body, frontend_attributes={inlineable="xla_late"}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  module->mutable_config().set_use_shardy_partitioner(true);
+
+  HloModuleSplitter splitter;
+  ASSERT_OK_AND_ASSIGN(bool changed, splitter.Run(module.get()));
+
   EXPECT_FALSE(changed);
   EXPECT_TRUE(splitter.submodules().empty());
 }
