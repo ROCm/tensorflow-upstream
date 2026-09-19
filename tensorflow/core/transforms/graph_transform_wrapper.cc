@@ -55,10 +55,23 @@ absl::Status RunTransformOnGraph(
   tensorflow::GraphDef graphdef;
   TF_RETURN_WITH_CONTEXT_IF_ERROR(ConvertToGraphDef(*module, &graphdef),
                                   "when exporting MLIR module to GraphDef");
+
+  tensorflow::Graph temp_graph(graph->flib_def());
+  tensorflow::GraphConstructorOptions opts;
+  absl::Status s = ConvertGraphDefToGraph(opts, graphdef, &temp_graph);
+  if (!s.ok()) {
+    return s;
+  }
+
   graph->Clear();
   graph->mutable_flib_def()->Clear();
-  tensorflow::GraphConstructorOptions opts;
-  return ConvertGraphDefToGraph(opts, graphdef, graph);
+  absl::Status library_status =
+      graph->mutable_flib_def()->AddLibrary(graphdef.library());
+  if (!library_status.ok()) {
+    return library_status;
+  }
+  graph->Copy(temp_graph);
+  return absl::OkStatus();
 }
 
 }  // namespace tfg

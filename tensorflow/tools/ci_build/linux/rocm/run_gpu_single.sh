@@ -101,5 +101,6 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --test_output=errors \
     --verbose_failures \
     --test_sharding_strategy=disabled \
+    --dynamic_mode=off \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute

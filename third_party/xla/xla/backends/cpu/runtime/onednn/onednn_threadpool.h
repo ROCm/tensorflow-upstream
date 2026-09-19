@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_CPU_RUNTIME_ONEDNN_ONEDNN_THREADPOOL_H_
 #define XLA_BACKENDS_CPU_RUNTIME_ONEDNN_ONEDNN_THREADPOOL_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -67,19 +68,6 @@ class OneDnnThreadPool final
   uint64_t get_flags() const final { return is_async_ ? ASYNCHRONOUS : 0; }
 
 #ifdef ENABLE_ONEDNN_ASYNC
-  // The wait() method only exists with oneDNN's experimental support for
-  // asynchronous execution determined by the ENABLE_ONEDNN_ASYNC.
-  void wait() override {
-    if (is_async_) {
-      // While performing asynchronous execution, wait() method is needed to
-      // notify the user that the output is ready. oneDNN will not call wait()
-      // inside the library to avoid deadlock.
-      tsl::BlockUntilReady(done_event_);
-    }
-  }
-#endif  // ENABLE_ONEDNN_ASYNC
-
-#ifdef ENABLE_ONEDNN_ASYNC
   // This is a placeholder implementation for the wait method, as we
   // need to satisfy the interface requirements of the
   // dnnl::threadpool_interop::threadpool_iface with the experimental
@@ -90,13 +78,18 @@ class OneDnnThreadPool final
 #endif  // ENABLE_ONEDNN_ASYNC
 
   void parallel_for(int n, const std::function<void(int, int)>& fn) final {
+    // Cap num_workers at n to avoid Worker::Parallelize's partition-clamping
+    // logic that reduces parallelism when num_workers > num_work_items.
+    const size_t num_workers =
+        std::min<size_t>(static_cast<size_t>(n), thread_pool_->NumThreads());
+
     if (is_async_) {
       // If we are using oneDNN with async support, we need to schedule the
       // parallel loop using the done_event_. This allows us to return
       // immediately and not block the caller thread.
-      auto parallelize = [this, n, fn](tsl::Chain) {
+      auto parallelize = [this, n, num_workers, fn](tsl::Chain) {
         return Worker::Parallelize(
-            thread_pool_, thread_pool_->NumThreads(), n,
+            thread_pool_, num_workers, n,
             [fn, n](size_t i) { fn(static_cast<int>(i), n); });
       };
 
@@ -108,8 +101,7 @@ class OneDnnThreadPool final
     // block here as Worker implements work stealing that guarantees forward
     // progress and deadlock freedom, even if we are running in the same thread
     // pool as the Eigen thread_pool.
-    tsl::BlockUntilReady(Worker::Parallelize(thread_pool_,
-                                             thread_pool_->NumThreads(), n,
+    tsl::BlockUntilReady(Worker::Parallelize(thread_pool_, num_workers, n,
                                              [fn, n](size_t i) { fn(i, n); }));
   }
 

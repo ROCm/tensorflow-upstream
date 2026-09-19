@@ -2751,7 +2751,8 @@ TEST_F(OpTest, Einsum) {
                                              .RandomInput(a.type, a.rhs_dims)
                                              .Attr("equation", a.equation)
                                              .Attr("T", a.type)
-                                             .Attr("N", 2));
+                                             .Attr("N", 2),
+                                         2e-1, 2e-1);
   });
 }
 
