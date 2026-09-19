@@ -17,7 +17,7 @@
 
 CPU_BENCHMARKS_VISIBILITY = [
     # copybara_removed internal path
-    "//xla:__subpackages__",
+    "public",
 ]
 
 visibility(CPU_BENCHMARKS_VISIBILITY)

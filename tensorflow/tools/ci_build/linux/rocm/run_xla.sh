@@ -55,28 +55,38 @@ if [ ! -d /tf ];then
         mkdir /tf
     fi
 
-# vvv TODO (rocm) weekly-sync-20251021 excluded tests
+# vvv TODO (rocm) weekly-sync-20260915 excluded tests
 EXCLUDED_TESTS=(
-    # @xla//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any
-    TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_bf16_bf16_f32_*
+    # @xla//xla/backends/gpu/autotuner:fission_backend_test_amdgpu_any
+    CublasFissionBackendTest.CublasFallbackForBf16Bf16F32Algorithm
 
-    # @xla//xla/tests:sample_file_test_amdgpu_any
-    SampleFileTest.Convolution
+    # @xla//xla/backends/gpu/autotuner:triton_test_amdgpu_any
+    TritonBackendTestSuite/TritonBackendTest.CostModelOptions_*
 
-    # @xla//xla/tests:scatter_test_amdgpu_any
-    ScatterTest.TensorFlowScatterV1_UpdateTwice
+    # @xla//xla/backends/gpu/transforms:gemm_rewriter_test_amdgpu_any
+    GemmRewriteTest.CheckCustomCallHipblasLtBF16
+    ParameterizedGemmRewriteTest.GemmTypeCombinationCheck
 
-    # vvv TODO (rocm) weekly-sync-20251224 excluded tests
+    # @xla//xla/service/gpu:dot_algorithm_support_test_amdgpu_any
+    F8E5M2Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_*
+    F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_*
+
+    # @xla//xla/backends/gpu/codegen/triton/dot_algorithms-test_amdgpu_any
+    BlasAlgorithmTest.Algorithm_BF16_BF16_F32*
+
+    # @xla//xla/service/gpu:float_support_test_amdgpu_any
+    FloatSupportTestWithCublas.MixedTypeDotIsNotUpcasted
+
+    # @xla//xla/tests:convolution_1d_autotune_disabled_test_amdgpu_any
+    Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestHalf.Convolve1D1Window/6
+
+    # @xla//xla/tests:convolution_autotune_disabled_test_amdgpu_any
+    ConvolutionTest.Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid
 
     # @xla//xla/backends/gpu/profiler:kernel_name_tracer_test
     KernelNameTracerTest.Create
     KernelNameTracerTest.CaptureKernelNames
     KernelNameTracerTest.CaptureKernelNamesFromCommandBufferThunk
-
-    # @xla//xla/service/gpu/tests:swap_conv_operands_test
-    SwapConvOperandsTest.LargePadding
-    SwapConvOperandsTest.SmallPadding
-
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
@@ -91,6 +101,7 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --test_env=MIOPEN_FIND_MODE=1 \
     --action_env="ROCM_PATH=$ROCM_PATH" \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
+    --dynamic_mode=off \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     -- @xla//xla/... \
     # ^^^ TODO (rocm) weekly-sync-20251021 excluded test files

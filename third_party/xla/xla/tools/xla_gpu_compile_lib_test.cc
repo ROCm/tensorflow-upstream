@@ -130,7 +130,8 @@ TEST_F(XlaCompileLibTest, ErrorForIncorrectPlatformAOTCompile) {
     return "bmg_g21.txtpb";
   }();
   const std::string target_config_path = tsl::io::JoinPath(
-      tsl::testing::XlaSrcRoot(), "backends/gpu/target_config/specs",
+      tsl::testing::XlaSrcRoot(), "../external/xla/xla",
+      "backends/gpu/target_config/specs",
       incorrect_spec_file);
   stream_executor::GpuTargetConfigProto target_config_proto;
   ASSERT_OK(tsl::ReadTextProto(tsl::Env::Default(), target_config_path,

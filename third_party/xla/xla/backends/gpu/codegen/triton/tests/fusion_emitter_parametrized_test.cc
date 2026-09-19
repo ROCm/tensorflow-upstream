@@ -860,13 +860,6 @@ class TritonNormalizationTest
     debug_options.clear_xla_disable_hlo_passes();
     return debug_options;
   }
-
-  const stream_executor::GpuComputeCapability& GpuComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .gpu_compute_capability();
-  }
 };
 
 TEST_P(TritonNormalizationTest, CanFuseAndEmitExactSoftmax) {
