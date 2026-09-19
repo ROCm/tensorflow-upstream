@@ -28,42 +28,24 @@ apt-get update
 
 install -m 0755 -d /etc/apt/keyrings
 
-<<<<<<< HEAD
 if [[ ${BASE_IMAGE} != "ubuntu:24.04"* ]]; then
   # Deadsnakes: https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa
-  apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys F23C5A6CF475977595C89F51BA6932366A755776
+  curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF23C5A6CF475977595C89F51BA6932366A755776" \
+    | gpg --dearmor -o /etc/apt/keyrings/deadsnakes.gpg
 
   # LLVM/Clang: https://apt.llvm.org/
-  apt-key adv --fetch-keys https://apt.llvm.org/llvm-snapshot.gpg.key
-=======
-# Deadsnakes: https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa
-curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF23C5A6CF475977595C89F51BA6932366A755776" \
-  | gpg --dearmor -o /etc/apt/keyrings/deadsnakes.gpg
-
-# LLVM/Clang: https://apt.llvm.org/
-curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
-  | gpg --dearmor -o /etc/apt/keyrings/llvm.gpg
->>>>>>> sept15
+  curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+    | gpg --dearmor -o /etc/apt/keyrings/llvm.gpg
 
   # Set up custom sources
 cat >/etc/apt/sources.list.d/custom.list <<SOURCES
-<<<<<<< HEAD
   # More Python versions: Deadsnakes
-  deb http://ppa.launchpad.net/deadsnakes/ppa/ubuntu jammy main
-  deb-src http://ppa.launchpad.net/deadsnakes/ppa/ubuntu jammy main
+  deb [signed-by=/etc/apt/keyrings/deadsnakes.gpg] http://ppa.launchpad.net/deadsnakes/ppa/ubuntu jammy main
+  deb-src [signed-by=/etc/apt/keyrings/deadsnakes.gpg] http://ppa.launchpad.net/deadsnakes/ppa/ubuntu jammy main
 
   # LLVM/Clang repository
-  deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main
-  deb-src http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main
-=======
-# More Python versions: Deadsnakes
-deb [signed-by=/etc/apt/keyrings/deadsnakes.gpg] http://ppa.launchpad.net/deadsnakes/ppa/ubuntu jammy main
-deb-src [signed-by=/etc/apt/keyrings/deadsnakes.gpg] http://ppa.launchpad.net/deadsnakes/ppa/ubuntu jammy main
-
-# LLVM/Clang repository
-deb [signed-by=/etc/apt/keyrings/llvm.gpg] http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main
-deb-src [signed-by=/etc/apt/keyrings/llvm.gpg] http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main
->>>>>>> sept15
+  deb [signed-by=/etc/apt/keyrings/llvm.gpg] http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main
+  deb-src [signed-by=/etc/apt/keyrings/llvm.gpg] http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main
 SOURCES
 else
   # More Python versions: Deadsnakes

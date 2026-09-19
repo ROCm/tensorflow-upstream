@@ -50,11 +50,7 @@ auto OpGradientInfoInit(const T &a) {
 
 absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedInputIndices(
     const tensorflow::string &op_name) {
-<<<<<<< HEAD
   static std::array<OpIndexInfo, 368> a = {{
-=======
-  static std::array<OpIndexInfo, 365> a = {{
->>>>>>> sept15
       {"Acosh"},
       {"AllToAll", 1, {0}},
       {"ApproximateEqual"},
@@ -433,11 +429,7 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedInputIndices(
 
 absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
     const tensorflow::string &op_name) {
-<<<<<<< HEAD
-  static std::array<OpIndexInfo, 493> a = {{
-=======
-  static std::array<OpIndexInfo, 490> a = {{
->>>>>>> sept15
+  static std::array<OpIndexInfo, 498> a = {{
       {"Abs"},
       {"AccumulateNV2"},
       {"Acos"},

@@ -44,8 +44,6 @@ load(
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
-    "rocm_hipblaslt",
-    "if_rocm_hipblaslt",
 )
 load("//tensorflow:tensorflow.default.bzl", "cc_header_only_library", "filegroup", "get_compatible_with_portable", "tf_cc_shared_library", "tf_cuda_cc_test", "tf_cuda_cc_tests", "tf_disable_ptxas_warning_flags", "tf_kernel_library")
 load(
@@ -1348,15 +1346,6 @@ tf_kernel_library(
     ],
     alwayslink = True,
     deps = if_cuda([
-<<<<<<< HEAD
-               "//tensorflow/core/util:cuda_solvers",
-           ]) + if_rocm([
-               "//tensorflow/core/util:rocm_solvers",
-	"@local_config_rocm//rocm:hip_runtime",
-	"@local_config_rocm//rocm:rocblas",
-           ]) + [":gpu_prim_hdrs"] +
-           ARRAY_DEPS,
-=======
         "//tensorflow/core/util:cuda_solvers",
     ]) + if_rocm([
         "//tensorflow/core/util:rocm_solvers",
@@ -1364,7 +1353,6 @@ tf_kernel_library(
         ":gpu_prim_hdrs",
         "@com_google_absl//absl/status",
     ] + ARRAY_DEPS,
->>>>>>> sept15
 )
 
 cc_library(
@@ -3836,14 +3824,10 @@ tf_kernel_library(
         ["-DMLIR_GENERATED_GPU_KERNELS_ENABLED"],
     ),
     prefix = "cast_op",
-<<<<<<< HEAD
-    deps = MATH_DEPS + if_rocm([
-=======
     deps = MATH_DEPS + [
         "//tensorflow/core/framework:types_proto_cc",
->>>>>>> sept15
         "//tensorflow/core/kernels/mlir_generated:cast_op",
-    ]),
+    ],
     alwayslink=True,
 )
 

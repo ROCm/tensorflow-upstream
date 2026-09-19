@@ -1666,12 +1666,7 @@ pywrap_library(
             "//conditions:default": "//tensorflow:tf_version_script.lds",
         }),
         "tensorflow/tensorflow_framework": select({
-<<<<<<< HEAD
-            "//tensorflow:windows": None,
-            "//tensorflow:macos": None,
-=======
             "//tensorflow:macos": "//tensorflow:tf_framework_exported_symbols_macos.lds",
->>>>>>> sept15
             "//conditions:default": "//tensorflow:tf_framework_version_script.lds",
         }),
     },

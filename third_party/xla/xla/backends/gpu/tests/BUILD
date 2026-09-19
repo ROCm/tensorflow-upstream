@@ -272,11 +272,7 @@ xla_test(
     name = "gpu_too_many_blocks_test",
     srcs = ["gpu_too_many_blocks_test.cc"],
     backends = ["gpu"],
-<<<<<<< HEAD
-    use_legacy_runtime = True,
-=======
     tags = ["cuda-only"],
->>>>>>> sept15
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla/hlo/ir:hlo",
@@ -293,14 +289,10 @@ xla_test(
         "gb200": ["broken"],
     },
     backends = ["gpu"],
-<<<<<<< HEAD
-    use_legacy_runtime = True,
-=======
     tags = [
         "cuda-only",
         "nozapfhahn",
     ],
->>>>>>> sept15
     deps = [
         ":hlo_pjrt_gpu_test_base",
         "//xla:error_spec",
@@ -880,11 +872,7 @@ xla_test(
     name = "dynamic_shared_memory_test",
     srcs = ["dynamic_shared_memory_test.cc"],
     backends = ["gpu"],
-<<<<<<< HEAD
-    tags = ["cuda-only",],
-=======
     tags = ["no-oneapi"],
->>>>>>> sept15
     deps = [
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",

@@ -35,15 +35,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/types.h"
 
-<<<<<<< HEAD
-#include "rocm/rocm_config.h"
-#if TF_HIPBLASLT
-
-#include "rocm/include/hipblaslt/hipblaslt-ext.hpp"
-#include "xla/stream_executor/rocm/hip_blas_utils.h"
-
-=======
->>>>>>> sept15
 namespace hipblaslt_ext {
 class GroupedGemm;
 struct UserArguments;

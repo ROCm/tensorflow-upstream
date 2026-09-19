@@ -4,11 +4,6 @@
 
   * `TF_NEED_ROCM`: Whether to enable building with ROCm.
   * `TF_SYSROOT`: The sysroot to use when compiling.
-<<<<<<< HEAD
-  * `CLANG_COMPILER_PATH`: The clang compiler path that will be used for
-  * `ROCM_PATH`: The path to the ROCm toolkit. Default is `/opt/rocm`.
-=======
->>>>>>> sept15
   * `TF_ROCM_AMDGPU_TARGETS`: The AMDGPU targets.
   * `TF_ROCM_MULTIPLE_PATHS`: Colon-separated list of ROCm installation paths to merge.
   * `LLVM_PATH`: Path to LLVM installation (used with TF_ROCM_MULTIPLE_PATHS).
@@ -326,25 +321,7 @@ def _create_dummy_repository(repository_ctx):
         repository_ctx,
         "rocm:rocm_config.h",
         {
-<<<<<<< HEAD
-            "%{rocm_toolkit_path}": _DEFAULT_ROCM_TOOLKIT_PATH,
-            "%{rocm_version_number}": "0",
-            "%{miopen_version_number}": "0",
-            "%{hipruntime_version_number}": "0",
-            "%{hipblaslt_flag}": "0",
-            "%{hip_soversion_number}": "",
-            "%{rocblas_soversion_number}": "",
-            "%{hipblaslt_soversion_number}": "",
-            "%{miopen_soversion_number}": "",
-            "%{hipfft_soversion_number}": "",
-            "%{rocsolver_soversion_number}": "",
-            "%{hipsolver_soversion_number}": "",
-            "%{hipsparse_soversion_number}": "",
-            "%{roctracer_soversion_number}": "",
-            "%{rocrand_soversion_number}": "",
-=======
             "%{rocm_toolkit_path}": "/opt/rocm",
->>>>>>> sept15
         },
         "rocm/rocm_config/rocm_config.h",
     )
@@ -358,56 +335,6 @@ def _create_dummy_repository(repository_ctx):
     )
     repository_ctx.file("crosstool/BUILD", _DUMMY_CROSSTOOL_BUILD_FILE)
 
-<<<<<<< HEAD
-def _norm_path(path):
-    """Returns a path with '/' and remove the trailing slash."""
-    path = path.replace("\\", "/")
-    if path[-1] == "/":
-        path = path[:-1]
-    return path
-
-def _flag_enabled(repository_ctx, flag_name):
-    return get_host_environ(repository_ctx, flag_name) == "1"
-
-def _tf_sysroot(repository_ctx):
-    return get_host_environ(repository_ctx, _TF_SYSROOT, "")
-
-def _compute_rocm_extra_copts(repository_ctx, amdgpu_targets):
-    amdgpu_target_flags = ["--offload-arch=" +
-                           amdgpu_target for amdgpu_target in amdgpu_targets]
-    return str(amdgpu_target_flags)
-
-def _canonical_path(p):
-    parts = [x for x in p.split("/") if x != ""]
-    return paths.join(*parts)
-
-def _get_file_name(url):
-    last_slash_index = url.rfind("/")
-    return url[last_slash_index + 1:]
-
-def _download_package(repository_ctx, pkg):
-    file_name = _get_file_name(pkg["url"])
-
-    print("Downloading {}".format(pkg["url"]))
-    repository_ctx.report_progress("Downloading and extracting {}, expected hash is {}".format(pkg["url"], pkg["sha256"]))  # buildifier: disable=print
-    repository_ctx.download_and_extract(
-        url = pkg["url"],
-        output = _DISTRIBUTION_PATH,
-        sha256 = pkg["sha256"],
-        type = "zip" if pkg["url"].endswith(".whl") else "",
-    )
-
-    if pkg.get("sub_package", None):
-        repository_ctx.report_progress("Extracting {}".format(pkg["sub_package"]))  # buildifier: disable=print
-        repository_ctx.extract(
-            archive = "{}/{}".format(_DISTRIBUTION_PATH, pkg["sub_package"]),
-            output = _DISTRIBUTION_PATH,
-        )
-
-    repository_ctx.delete(file_name)
-
-=======
->>>>>>> sept15
 def _remove_root_dir(path, root_dir):
     if path.startswith(root_dir + "/"):
         return path[len(root_dir) + 1:]
@@ -519,70 +446,12 @@ def _create_local_rocm_repository(repository_ctx):
         "%{rocm_repo_name}": repository_ctx.name,
     }
 
-<<<<<<< HEAD
-    tf_sysroot = _tf_sysroot(repository_ctx)
-
-    multiple_paths = repository_ctx.os.environ.get(_TF_ROCM_MULTIPLE_PATHS)
-    if multiple_paths:
-        paths_list = multiple_paths.split(":")
-        rocm_lib_paths = []
-        for rocm_custom_path in paths_list:
-            lib_path = rocm_custom_path + "/lib/"
-            if files_exist(repository_ctx, [lib_path], bash_bin)[0] and not lib_path in rocm_lib_paths:
-                rocm_lib_paths.append(lib_path)
-        repository_dict["%{rocm_lib_paths}"] = ":".join(rocm_lib_paths)
-
-=======
->>>>>>> sept15
     repository_ctx.template(
         "rocm/BUILD",
         tpl_paths["rocm:BUILD"],
         repository_dict,
     )
 
-<<<<<<< HEAD
-    # Set up crosstool/
-    cc = find_cc(repository_ctx)
-
-    host_compiler_includes = get_cxx_inc_directories(
-        repository_ctx,
-        cc,
-        tf_sysroot,
-    )
-
-    # host_compiler_includes = get_cxx_inc_directories(repository_ctx, cc)
-
-    rocm_defines = {}
-    rocm_defines["%{builtin_sysroot}"] = tf_sysroot
-    rocm_defines["%{compiler}"] = "clang"
-    host_compiler_prefix = "/usr/bin"
-    rocm_defines["%{host_compiler_prefix}"] = host_compiler_prefix
-    rocm_defines["%{linker_bin_path}"] = rocm_config.rocm_toolkit_path + host_compiler_prefix
-    rocm_defines["%{extra_no_canonical_prefixes_flags}"] = ""
-    rocm_defines["%{unfiltered_compile_flags}"] = ""
-    rocm_defines["%{rocm_hipcc_files}"] = "[]"
-    rocm_defines["%{extra_no_canonical_prefixes_flags}"] = "\"-no-canonical-prefixes\""
-
-    rocm_defines["%{unfiltered_compile_flags}"] = to_list_of_strings([
-        "-DTENSORFLOW_USE_ROCM=1",
-        "-D__HIP_PLATFORM_AMD__",
-        "-DEIGEN_USE_HIP",
-        "-DUSE_ROCM",
-    ])
-
-    rocm_defines["%{link_flags}"] = to_list_of_strings([
-        "-fuse-ld={}".format("lld"),
-    ])
-
-    rocm_defines["%{host_compiler_path}"] = "clang/bin/crosstool_wrapper_driver_is_not_gcc"
-    rocm_defines["%{cxx_builtin_include_directories}"] = to_list_of_strings(
-        host_compiler_includes + _rocm_include_path(repository_ctx, rocm_config, bash_bin),
-    )
-
-    verify_build_defines(rocm_defines)
-
-=======
->>>>>>> sept15
     # Only expand template variables in the BUILD file
     repository_ctx.template(
         "crosstool/BUILD",
@@ -600,21 +469,6 @@ def _create_local_rocm_repository(repository_ctx):
         "crosstool/clang/bin/crosstool_wrapper_driver_is_not_gcc",
         tpl_paths["crosstool:clang/bin/crosstool_wrapper_driver_rocm"],
         {
-<<<<<<< HEAD
-            "%{cpu_compiler}": str(cc),
-            "%{compiler_is_clang}": "True",
-            "%{rocm_root}": "external/" + repository_ctx.name + "/" + str(rocm_config.rocm_toolkit_path),
-            "%{hipcc_env}": _hipcc_env(repository_ctx),
-            "%{rocr_runtime_library}": "hsa-runtime64",
-            "%{hip_runtime_library}": "amdhip64",
-            "%{crosstool_verbose}": _crosstool_verbose(repository_ctx),
-            "%{gcc_host_compiler_path}": str(cc),
-            "%{crosstool_clang}": "1",
-            "%{rocm_amdgpu_targets}": ",".join(
-                ["\"%s\"" % c for c in rocm_config.amdgpu_targets],
-            ),
-=======
->>>>>>> sept15
             "%{tmpdir}": get_host_environ(
                 repository_ctx,
                 _TMPDIR,

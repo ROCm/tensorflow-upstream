@@ -400,21 +400,16 @@ def _tf_repositories():
         # $ git diff > <client-root>/third_party/tensorflow/third_party/googletest/googletest.patch
         #
         # The patch path is relative to third_party/tensorflow.
-<<<<<<< HEAD
         patch_file = [
             "@xla//third_party/googletest:googletest.patch",
             "@xla//third_party/googletest:0001-Add-ASSERT_OK-EXPECT_OK-ASSERT_OK_AND_ASSIGN-macros.patch",
             "@xla//third_party/googletest:0002-Rename-dependencies-for-workspace.bzl-build.patch",
             ],
-        urls = tf_mirror_urls("https://github.com/google/googletest/archive/28e9d1f26771c6517c3b4be10254887673c940189.zip"),
-=======
-        patch_file = ["@xla//third_party/googletest:googletest.patch"],
         urls = tf_mirror_urls("https://github.com/google/googletest/archive/d72f9c8aea6817cdf1ca0ac10887f328de7f3da29.zip"),
         repo_mapping = {
             "@abseil-cpp": "@com_google_absl",
             "@re2": "@com_googlesource_code_re2",
         },
->>>>>>> sept15
     )
 
     tf_http_archive(

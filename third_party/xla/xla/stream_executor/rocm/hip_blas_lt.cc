@@ -1041,8 +1041,3 @@ absl::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(
 }  // namespace rocm
 
 }  // namespace stream_executor
-<<<<<<< HEAD
-
-#endif  // TF_HIPBLASLT
-=======
->>>>>>> sept15

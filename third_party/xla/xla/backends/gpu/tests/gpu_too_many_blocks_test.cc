@@ -35,41 +35,6 @@ TEST_F(TooManyBlocksTest, FailsWithInvalidStatus) {
   // somewhere in the pipeline. The practical relevance is low, since as of
   // 2024, the inputs or outputs have to be way too large to fit on any GPU
   // anyway.
-<<<<<<< HEAD
-  //
-  // On ROCm, the grid splitting feature (MaybeSplitGridDimensionX) splits
-  // oversized grids into multiple dimensions, so compilation succeeds instead
-  // of failing. Skip this test on ROCm since the behavior is intentionally
-  // different.
-  if (is_built_with_rocm_) {
-    GTEST_SKIP() << "ROCm handles large grids via grid dimension splitting";
-  }
-  const char* hlo_text = R"(
-HloModule primitive_computation_mul.8
-
-ENTRY primitive_computation_mul.8 {
-  parameter.1 = s8[65536] parameter(0)
-  parameter.2 = s8[65536] parameter(1)
-  broadcast.3 = s8[65536,65536,65536,128,16] broadcast(parameter.1), dimensions={0}
-  broadcast.4 = s8[65536,65536,65536,128,16] broadcast(parameter.2), dimensions={1}
-  ROOT multiply.5 = s8[65536,65536,65536,128,16] multiply(broadcast.3, broadcast.4)
-}
-)";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                          GetOptimizedModule(hlo_text));
-
-  stream_executor::StreamExecutorAddressAllocator allocator(
-      backend().default_stream_executor());
-  absl::StatusOr<std::unique_ptr<Executable>> failed_executable =
-      backend().compiler()->RunBackend(std::move(optimized_module),
-                                       backend().default_stream_executor(),
-                                       &allocator);
-
-  EXPECT_FALSE(failed_executable.ok());
-  EXPECT_THAT(
-      failed_executable.status().ToString(),
-      ::testing::ContainsRegex("Kernel '.*fusion.*' launch needs more blocks"));
-=======
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                        ParseAndReturnVerifiedModule(R"(
     HloModule primitive_computation_mul.8
@@ -86,7 +51,6 @@ ENTRY primitive_computation_mul.8 {
                                   /*run_optimization_passes=*/true),
               StatusIs(_, ContainsRegex(
                               "Kernel '.*fusion.*' launch needs more blocks")));
->>>>>>> sept15
 }
 
 }  // namespace

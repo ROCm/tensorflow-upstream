@@ -89,28 +89,19 @@ if [[ ! -f "/usr/local/include/$VERSION" ]]; then
   ln -sf /usr/include/$VERSION /usr/local/include/$VERSION
 fi
 
-<<<<<<< HEAD
 if [[ ${BASE_IMAGE} != "ubuntu:24.04"* ]]; then
   # Install pip
-  wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 --tries=5 https://bootstrap.pypa.io/get-pip.py
+  if [[ ${BASE_VERSION} == "python3.9" ]]; then
+    GET_PIP_URL="https://bootstrap.pypa.io/pip/3.9/get-pip.py"
+  else
+    GET_PIP_URL="https://bootstrap.pypa.io/get-pip.py"
+  fi
+
+  wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 --tries=5 "${GET_PIP_URL}" -O get-pip.py
   /usr/bin/$VERSION get-pip.py
   /usr/bin/$VERSION -m pip install --no-cache-dir --upgrade pip
   /usr/bin/$VERSION -m pip install -U setuptools
 fi
-=======
-# Install pip
-if [[ ${BASE_VERSION} == "python3.9" ]]; then
-  GET_PIP_URL="https://bootstrap.pypa.io/pip/3.9/get-pip.py"
-else
-  GET_PIP_URL="https://bootstrap.pypa.io/get-pip.py"
-fi
-
-wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 --tries=5 "${GET_PIP_URL}" -O get-pip.py
-/usr/bin/$VERSION get-pip.py
-/usr/bin/$VERSION -m pip install --no-cache-dir --upgrade pip
-/usr/bin/$VERSION -m pip install -U setuptools
-
->>>>>>> sept15
 
 # For Python 3.13t, do not install twine as it does not have pre-built wheels
 # for this Python version and building it from source fails. We only need twine
@@ -122,7 +113,6 @@ if [[ ${VERSION} == "python3.13-nogil" || ${BASE_VERSION} == "${PRE_RELEASE_BASE
 fi
 
 # Disable the cache dir to save image space, and install packages
-<<<<<<< HEAD
 if [[ !(${VERSION} == "python3.13-nogil" || ${VERSION} == "python3.14-nogil") ]]; then
   if [[ ${BASE_IMAGE} != "ubuntu:24.04"* ]]; then
     /usr/bin/$VERSION -m pip install --no-cache-dir -r $REQUIREMENTS -U
@@ -131,13 +121,9 @@ if [[ !(${VERSION} == "python3.13-nogil" || ${VERSION} == "python3.14-nogil") ]]
   fi
 fi
 
-=======
-/usr/bin/$VERSION -m pip install --no-cache-dir -r $REQUIREMENTS -U
-
 # Verify that the installed Python interpreter can create a venv and bootstrap pip
 echo "=== Verifying $VERSION ==="
 "/usr/bin/$VERSION" -m venv "/tmp/venv-$VERSION"
 "/tmp/venv-$VERSION/bin/pip" list
 "/tmp/venv-$VERSION/bin/python" -c "import pip; print(pip.__version__)"
 rm -rf "/tmp/venv-$VERSION"
->>>>>>> sept15

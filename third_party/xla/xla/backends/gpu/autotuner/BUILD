@@ -286,13 +286,8 @@ xla_test(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:nvptx_compiler_impl",
         "//xla/stream_executor:device_description_proto_cc",
-<<<<<<< HEAD
-        "//xla/tsl/lib/core:status_test_util",
-        "//xla/tsl/platform:statusor",
-=======
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
->>>>>>> sept15
         "//xla/tsl/protobuf:dnn_proto_cc",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/status",

@@ -64,13 +64,11 @@ llvm_config.config.substitutions.append(
 # Tweak the PATH to include the tools dir.
 llvm_config.with_environment('PATH', config.llvm_tools_dir, append_path=True)
 
-<<<<<<< HEAD
 for key in ['ROCM_PATH', 'HIP_VISIBLE_DEVICES', 'CUDA_VISIBLE_DEVICES',
             'TF_PER_DEVICE_MEMORY_LIMIT_MB']:
   value = os.environ.get(key, None)
   if value != None:
     llvm_config.with_environment(key, value)
-=======
 # Dynamically resolve hermetic cuda_nvcc in runfiles if present.
 runfiles_env = os.environ.get('RUNFILES_DIR')
 if runfiles_env:
@@ -104,7 +102,6 @@ if runfiles_env:
       llvm_config.config.environment['XLA_FLAGS'] = (
           f'{existing_flags} {flag}'.strip()
       )
->>>>>>> sept15
 
 tool_dirs = config.mlir_tf_tools_dirs + [
     config.mlir_tools_dir, config.llvm_tools_dir

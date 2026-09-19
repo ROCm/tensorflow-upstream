@@ -2443,19 +2443,6 @@ TEST_F(HloVerifierTest, AsyncOpComputationNotTrivial) {
           "expected to contain only the root and parameter instructions"));
 }
 
-<<<<<<< HEAD
-TEST_F(HloVerifierTest, CallThreadVerifier) {
-  const char* const kModuleStr = R"(
-  HloModule test
-
-  called_computation {
-    ROOT p0 = f32[8,12] parameter(0)
-  }, execution_thread="parallel_thread"
-
-  ENTRY entry {
-    p0 = f32[8,12] parameter(0)
-    ROOT out = f32[8,12] call(p0), to_apply=called_computation
-=======
 TEST_F(HloVerifierTest, RejectsUnannotatedAsyncMultiOpComputationSendRecvOnly) {
   const char* const hlo_string = R"(
   wrapped_send_recv_1 {
@@ -2533,7 +2520,6 @@ TEST_F(HloVerifierTest, IotaNegativeDimension) {
 
   ENTRY  kernelEntry {
     ROOT iota = s32[128,1001]{1,0} iota(), iota_dimension=-1
->>>>>>> sept15
   }
   )";
 
@@ -6892,7 +6878,7 @@ while_body (state: (f32[10], ((f32[10]), f32[10], s32[]))) -> (f32[10], ((f32[10
 
   async-update = ((f32[10]), f32[10], s32[]) async-update(async_state), calls=async_wrapped
   done = f32[10]{0} async-done(async-update), calls=async_wrapped
-  
+
   next-start = ((f32[10]), f32[10], s32[]) async-start(done), calls=async_wrapped
   ROOT next_state = (f32[10], ((f32[10]), f32[10], s32[])) tuple(done, next-start)
 }
@@ -6931,25 +6917,25 @@ while_body {
   count = s32[] get-tuple-element(param), index=0
   one = s32[] constant(1)
   new_count = s32[] add(count, one)
-  
+
   async_state = ((f32[1024]), f32[1024], s32[]) get-tuple-element(param), index=1
-  
+
   async_update = ((f32[1024]), f32[1024], s32[]) async-update(async_state), calls=async_computation
-  
+
   ROOT body_root = (s32[], ((f32[1024]), f32[1024], s32[])) tuple(new_count, async_update)
 }
 
 ENTRY main {
   p0 = f32[1024] parameter(0)
   async-start = ((f32[1024]), f32[1024], s32[]) async-start(p0), calls=async_computation
-  
+
   start_count = s32[] constant(0)
   iter_init = (s32[], ((f32[1024]), f32[1024], s32[])) tuple(start_count, async-start)
-  
+
   while_loop = (s32[], ((f32[1024]), f32[1024], s32[])) while(iter_init), condition=while_cond, body=while_body
-  
+
   final_async_state = ((f32[1024]), f32[1024], s32[]) get-tuple-element(while_loop), index=1
-  
+
   ROOT async-done = f32[1024] async-done(final_async_state), calls=async_computation
 }
   )";
@@ -6978,25 +6964,25 @@ while_body {
   count = s32[] get-tuple-element(param), index=0
   one = s32[] constant(1)
   new_count = s32[] add(count, one)
-  
+
   async_state = ((f32[1024]), f32[1024], s32[]) get-tuple-element(param), index=1
-  
+
   async_update = ((f32[1024]), f32[1024], s32[]) async-update(async_state), calls=async_computation
-  
+
   ROOT body_root = (s32[], ((f32[1024]), f32[1024], s32[])) tuple(new_count, async_state)
 }
 
 ENTRY main {
   p0 = f32[1024] parameter(0)
   async-start = ((f32[1024]), f32[1024], s32[]) async-start(p0), calls=async_computation
-  
+
   start_count = s32[] constant(0)
   iter_init = (s32[], ((f32[1024]), f32[1024], s32[])) tuple(start_count, async-start)
-  
+
   while_loop = (s32[], ((f32[1024]), f32[1024], s32[])) while(iter_init), condition=while_cond, body=while_body
-  
+
   final_async_state = ((f32[1024]), f32[1024], s32[]) get-tuple-element(while_loop), index=1
-  
+
   ROOT async-done = f32[1024] async-done(final_async_state), calls=async_computation
 }
   )";
@@ -7030,7 +7016,7 @@ while_body (state: (f32[10], ((f32[10]), f32[10], s32[]))) -> (f32[10], ((f32[10
 
   async-update = ((f32[10]), f32[10], s32[]) async-update(async_state), calls=async_wrapped_2
   done = f32[10]{0} async-done(async-update), calls=async_wrapped_2
-  
+
   next-start = ((f32[10]), f32[10], s32[]) async-start(done), calls=async_wrapped_2
   ROOT next_state = (f32[10], ((f32[10]), f32[10], s32[])) tuple(done, next-start)
 }
@@ -7073,7 +7059,7 @@ while_body (state: (f32[10], ((f32[10]), f32[10], s32[]))) -> (f32[10], ((f32[10
 
   async-update = ((f32[10]), f32[10], s32[]) async-update(async_state), calls=async_wrapped_2
   done = f32[10]{0} async-done(async-update), calls=async_wrapped_2
-  
+
   next-start = ((f32[10]), f32[10], s32[]) async-start(done), calls=async_wrapped_2
   ROOT next_state = (f32[10], ((f32[10]), f32[10], s32[])) tuple(done, next-start)
 }
@@ -7111,7 +7097,7 @@ while_body (state: (f32[10,10], ((f32[10,10], f32[2,2], s32[], s32[]), f32[10,10
 
   async_update = ((f32[10,10], f32[2,2], s32[], s32[]), f32[10,10], s32[]) dynamic-update-slice-update(async_state)
   done = f32[10,10]{1,0} dynamic-update-slice-done(async_update)
-  
+
   slice = f32[2,2]{1,0} constant({ {1.0, 2.0}, {3.0, 4.0} })
   zero = s32[] constant(0)
   next_start = ((f32[10,10], f32[2,2], s32[], s32[]), f32[10,10], s32[]) dynamic-update-slice-start(done, slice, zero, zero)

@@ -7,14 +7,7 @@
 """
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
-<<<<<<< HEAD
 load("@rules_python//python:py_test.bzl", "py_test")
-load(
-    "@xla//xla:lit.bzl",
-    "lit_script_with_xla_gpu_cuda_data_dir",
-)
-=======
->>>>>>> sept15
 
 # Default values used by the test runner.
 _default_test_file_exts = ["mlir", ".pbtxt", ".td"]

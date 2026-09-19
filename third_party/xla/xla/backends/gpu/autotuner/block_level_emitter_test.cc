@@ -46,23 +46,7 @@ namespace xla {
 namespace gpu {
 
 using ::tsl::proto_testing::EqualsProto;
-<<<<<<< HEAD
-using ::tsl::testing::IsOk;
-
-// Counts the number of configs with is_tma_allowed set to true.
-int CountTmaAllowed(
-    const std::vector<std::unique_ptr<BackendConfig>>& configs) {
-  return std::count_if(configs.begin(), configs.end(), [](auto& config) {
-    BlockLevelFusionConfig actual_config;
-    if (!config->UnpackTo(&actual_config)) {
-      return false;
-    }
-    return actual_config.is_tma_allowed();
-  });
-}
-=======
 using ::xla::xtile::BlockLevelFusionConfig;
->>>>>>> sept15
 
 // Checks if any config has is_tma_allowed set to true.
 bool AnyTmaAllowed(const std::vector<std::unique_ptr<BackendConfig>>& configs) {

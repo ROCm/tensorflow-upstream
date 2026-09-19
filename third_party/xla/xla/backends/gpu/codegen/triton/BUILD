@@ -588,12 +588,7 @@ cc_library(
         "//xla/codegen/xtile/codegen:emitter_helpers",
         "//xla/hlo/ir:hlo",
         "//xla/service:algorithm_util",
-<<<<<<< HEAD
-        "//xla/service:instruction_fusion",
-        "//xla/service:matmul_indexing_utils",
-=======
         "//xla/service:decision",
->>>>>>> sept15
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",

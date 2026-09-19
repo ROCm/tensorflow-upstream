@@ -4374,11 +4374,6 @@ bool UseNhwcLayoutForRocm() {
     return is_enabled;
   }();
   return is_enabled;
-<<<<<<< HEAD
-#else //TF_ROCM_VERSION < 50000
-#endif
-=======
->>>>>>> sept15
 }
 
 }  // namespace gpu

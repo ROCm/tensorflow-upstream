@@ -45,11 +45,8 @@ cc_library(
     hdrs = glob([
         "*.h",
     ]),
-<<<<<<< HEAD
     copts = ["-no-canonical-prefixes"],
-=======
     includes = ["."],
->>>>>>> sept15
 )
 
 alias(

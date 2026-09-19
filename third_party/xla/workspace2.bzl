@@ -50,12 +50,8 @@ load("//third_party/highway:workspace.bzl", highway = "repo")
 load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/implib_so:workspace.bzl", implib_so = "repo")
-<<<<<<< HEAD
-load("//third_party/kokkos:workspace.bzl", kokkos = "repo")
-=======
 load("//third_party/kleidiai:workspace.bzl", kleidiai = "repo")
 load("//third_party/libdrm:workspace.bzl", libdrm = "repo")
->>>>>>> sept15
 load("//third_party/llvm:workspace.bzl", llvm = "repo")
 load("//third_party/llvm_openmp:workspace.bzl", llvm_openmp = "repo")
 load("//third_party/mkl_dnn:workspace.bzl", onednn = "repo")

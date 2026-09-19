@@ -289,15 +289,11 @@ cc_library(
         "//xla/backends/autotuner:autotuner_cache_interface",
         "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
-<<<<<<< HEAD
-        "//xla/backends/autotuner:file_based_autotuner_cache",
-=======
         "//xla/backends/autotuner:codegen_orchestrator",
         "//xla/backends/autotuner:config_assigner",
         "//xla/backends/autotuner:directory_store",
         "//xla/backends/autotuner:hlo_extractor",
         "//xla/backends/autotuner:in_memory_store",
->>>>>>> sept15
         "//xla/backends/autotuner:profiler",
         "//xla/backends/autotuner:tiered_cache",
         "//xla/backends/gpu/autotuner:factory",

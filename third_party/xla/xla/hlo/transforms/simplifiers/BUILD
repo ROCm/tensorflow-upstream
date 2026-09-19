@@ -418,11 +418,6 @@ cc_library(
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_alias_analysis",
         "//xla/hlo/analysis:hlo_dataflow_analysis",
-<<<<<<< HEAD
-        "//xla/hlo/analysis:tuple_points_to_analysis",
-        "//xla/hlo/analysis:logical_buffer_analysis",
-=======
->>>>>>> sept15
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/service:buffer_value",

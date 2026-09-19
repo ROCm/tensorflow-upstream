@@ -398,12 +398,7 @@ ENTRY e {
   std::string xla_gpu_load_autotune_results_from_;
 };
 
-<<<<<<< HEAD
-TEST_F(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
-
-=======
 TEST_P(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
->>>>>>> sept15
   constexpr absl::string_view kInvalidTextProto = "Invalid!";
 
   HloModuleConfig config = GetModuleConfigForTest();

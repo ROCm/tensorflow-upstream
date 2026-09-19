@@ -50,14 +50,6 @@ using ::testing::IsEmpty;
 using ::testing::Not;
 
 absl::StatusOr<Compiler::GpuTargetConfig> GetGpuTargetConfig() {
-<<<<<<< HEAD
-  const std::string spec_file =
-      PlatformUtil::CanonicalPlatformName("gpu").value_or("") == "rocm"
-          ? "mi200.txtpb"
-          : "h100_sxm.txtpb";
-  auto tmp_path = tsl::testing::XlaSrcRoot();
-  tmp_path = tmp_path.erase(tmp_path.length() - 4);
-=======
   const std::string spec_file = [&] {
     const std::string platform_name =
         PlatformUtil::CanonicalPlatformName("gpu").value_or("");
@@ -69,7 +61,8 @@ absl::StatusOr<Compiler::GpuTargetConfig> GetGpuTargetConfig() {
     }
     return "h100_sxm.txtpb";
   }();
->>>>>>> sept15
+  auto tmp_path = tsl::testing::XlaSrcRoot();
+  tmp_path = tmp_path.erase(tmp_path.length() - 4);
   const std::string target_config_path =
       tsl::io::JoinPath(tmp_path, "external/xla/xla/",
                         "backends/gpu/target_config/specs", spec_file);

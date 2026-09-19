@@ -44,66 +44,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-<<<<<<< HEAD
-struct MatmulPlanCache {
-
-  static MatmulPlanCache& i(const se::Stream *stream) {
-    static absl::Mutex m(absl::kConstInit);
-    // Each GPU gets different cache instance
-    static std::vector< std::unique_ptr< MatmulPlanCache > > meta(8);
-    absl::MutexLock lock(&m);
-    size_t dev_id = stream->parent()->device_ordinal();
-    if (dev_id >= meta.size()) meta.resize(dev_id + 1);
-    auto& res = meta[dev_id];
-    if (!res) res.reset(new MatmulPlanCache());
-    return *res;
-  }
-
-  template < class Func >
-  absl::StatusOr<se::gpu::BlasLt::MatmulPlan *>
-          GetOrCreate(const std::string& key, Func&& create) {
-    // each GPU has a different mutex => hence different GPU instances can
-    // create matmul plans in parallel
-    absl::MutexLock lock(mutex_.get());
-    auto res = map_.emplace(key, se::gpu::BlasLt::MatmulPlanPtr{});
-    if(res.second) { // new entry inserted
-      TF_ASSIGN_OR_RETURN(res.first->second, create());
-    }
-    return res.first->second.get();
-  }
-
-private:
-  MatmulPlanCache() : mutex_(std::make_unique< absl::Mutex >()) { }
-
-private:
-  std::unique_ptr< absl::Mutex > mutex_;
-  absl::flat_hash_map<std::string, se::gpu::BlasLt::MatmulPlanPtr> map_;
-};
-
-
-CublasLtMatmulThunk::CublasLtMatmulThunk(const CublasLtMatmulThunk& rhs)
-    : TracedCommand(CommandType::kCublasLtCmd, Kind::kCublasLtMatmul, {}),
-      gemm_config_(rhs.gemm_config_),
-      epilogue_(rhs.epilogue_),
-      algorithm_idx_(rhs.algorithm_idx_),
-      autotune_workspace_size_(rhs.autotune_workspace_size_),
-      canonical_hlo_(rhs.canonical_hlo_),
-      a_(rhs.a_),
-      b_(rhs.b_),
-      c_(rhs.c_),
-      d_(rhs.d_),
-      group_sizes_(rhs.group_sizes_),
-      bias_(rhs.bias_),
-      aux_(rhs.aux_),
-      a_scale_(rhs.a_scale_),
-      b_scale_(rhs.b_scale_),
-      c_scale_(rhs.c_scale_),
-      d_scale_(rhs.d_scale_),
-      d_amax_(rhs.d_amax_),
-      workspace_(rhs.workspace_) {}
-
-=======
->>>>>>> sept15
 CublasLtMatmulThunk::CublasLtMatmulThunk(
     Thunk::ThunkInfo thunk_info, std::string canonical_hlo,
     VariantConfig gemm_config, se::gpu::BlasLt::Epilogue epilogue,

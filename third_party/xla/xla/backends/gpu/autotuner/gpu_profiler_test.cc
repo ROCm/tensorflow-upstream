@@ -17,11 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-<<<<<<< HEAD
-#include <optional>
-=======
 #include <string>
->>>>>>> sept15
 #include <utility>
 #include <vector>
 

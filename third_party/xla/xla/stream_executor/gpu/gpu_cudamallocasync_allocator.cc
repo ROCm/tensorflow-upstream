@@ -45,18 +45,6 @@ limitations under the License.
 
 namespace stream_executor {
 
-<<<<<<< HEAD
-#if GOOGLE_CUDA
-static std::string GetCudaErrorMessage(CUresult result) {
-  const char* error;
-  cuGetErrorString(result, &error);
-  const char* name;
-  cuGetErrorName(result, &name);
-  return absl::StrCat("CUDA error: ", error ? error : "<unknown>", " (",
-                      name ? name : "Unknown", ")");
-}
-#endif  // GOOGLE_CUDA
-=======
 struct GpuCudaMallocAsyncAllocator::CudaState {
   // cudaMallocAsync is stream aware. But TF StreamExecutor use only 1
   // compute stream and already synchronize with the H2D, D2H and D2D
@@ -70,7 +58,6 @@ struct GpuCudaMallocAsyncAllocator::CudaState {
   // will return an error.
   CUmemoryPool pool{};
 };
->>>>>>> sept15
 
 void GpuCudaMallocAsyncAllocator::PrintAllocatorStatisticsNoLock() {
   std::map<size_t, int> size_map_histogram;
@@ -165,12 +152,8 @@ GpuCudaMallocAsyncAllocator::GpuCudaMallocAsyncAllocator(
     CUcontext pctx;  // We lose track of it, but this is fine.
     if (auto result = cuDevicePrimaryCtxRetain(&pctx, 0)) {
       LOG(FATAL)  // Crash OK.
-<<<<<<< HEAD
-          << "Failed to retain context: " << GetCudaErrorMessage(result);
-=======
           << "Failed to retain context: " << cuda::ToStatus(result);
     }
->>>>>>> sept15
   }
 
   std::unique_ptr<ActivateContext> scoped_activation = stream_exec_->Activate();
@@ -214,19 +197,7 @@ GpuCudaMallocAsyncAllocator::GpuCudaMallocAsyncAllocator(
 #if CUDA_VERSION >= 12030
     pool_props.maxSize = new_pool_size;
 #endif  // CUDA_VERSION >= 12030
-<<<<<<< HEAD
-    if (auto status = cuMemPoolCreate(&pool_, &pool_props))
-      LOG(FATAL) <<  // Crash OK.
-          "Failed to create CUDA pool: " << GetCudaErrorMessage(status);
-  } else {
-    pool_size = reserve_memory_size;
-    if (auto status =
-            cuDeviceGetDefaultMemPool(&pool_, platform_device_id.value()))
-      LOG(FATAL) <<  // Crash OK.
-          "Failed to get default CUDA pool: " << GetCudaErrorMessage(status);
-    VLOG(2) << "using default memory pool " << pool_;
-=======
-    if (auto status = cuMemPoolCreate(&cuda_state_->pool, &pool_props)) {
+        if (auto status = cuMemPoolCreate(&cuda_state_->pool, &pool_props)) {
       LOG(FATAL) <<  // Crash OK.
           "Failed to create CUDA pool: " << cuda::ToStatus(status);
     }
@@ -238,26 +209,18 @@ GpuCudaMallocAsyncAllocator::GpuCudaMallocAsyncAllocator(
           "Failed to get default CUDA pool: " << cuda::ToStatus(status);
     }
     VLOG(2) << "using default memory pool " << cuda_state_->pool;
->>>>>>> sept15
   }
 
   VLOG(1) << Name() << " CudaMallocAsync initialized on platform: "
           << platform_device_id.value() << " with pool size of: " << pool_size
           << " this ptr: " << this;
   uint64_t release_threshold_64 = reserve_memory_size;
-<<<<<<< HEAD
-  if (auto status = cuMemPoolSetAttribute(
-          pool_, CU_MEMPOOL_ATTR_RELEASE_THRESHOLD, &release_threshold_64))
-    LOG(FATAL) <<  // Crash OK.
-        "Failed to set CUDA pool attribute: " << GetCudaErrorMessage(status);
-=======
   if (auto status = cuMemPoolSetAttribute(cuda_state_->pool,
                                           CU_MEMPOOL_ATTR_RELEASE_THRESHOLD,
                                           &release_threshold_64)) {
     LOG(FATAL) <<  // Crash OK.
         "Failed to set CUDA pool attribute: " << cuda::ToStatus(status);
   }
->>>>>>> sept15
 
   if (compute_stats) {
     stats_ = std::make_unique<tsl::AllocatorStats>();
@@ -353,18 +316,11 @@ GpuCudaMallocAsyncAllocator::GpuCudaMallocAsyncAllocator(
 GpuCudaMallocAsyncAllocator::~GpuCudaMallocAsyncAllocator() {
 #if TF_CUDA_MALLOC_ASYNC_SUPPORTED
   if (create_new_pool_) {
-<<<<<<< HEAD
-    VLOG(2) << "Delete memory pool " << reinterpret_cast<void*>(pool_);
-    if (auto status = cuMemPoolDestroy(pool_))
-      LOG(FATAL) << "Failed to destroy memory pool:"
-                 << GetCudaErrorMessage(status);
-=======
     VLOG(2) << "Delete memory pool "
             << reinterpret_cast<void*>(cuda_state_->pool);
     if (auto status = cuMemPoolDestroy(cuda_state_->pool)) {
       LOG(FATAL) << "Failed to destroy memory pool:" << cuda::ToStatus(status);
     }
->>>>>>> sept15
   }
 #endif
 }
@@ -442,14 +398,9 @@ void* GpuCudaMallocAsyncAllocator::AllocateRaw(size_t alignment,
 #endif  // TF_CUDA_MALLOC_ASYNC_SUPPORTED
 }
 void GpuCudaMallocAsyncAllocator::DeallocateRaw(void* ptr) {
-<<<<<<< HEAD
-#if TF_CUDA_MALLOC_ASYNC_SUPPORTED
-  if (ptr == nullptr) return;
-=======
   if (ptr == nullptr) {
     return;
   }
->>>>>>> sept15
   // The lock is only needed when stats are enabled, but it must be around
   // the cuMemFreeAsync call as well to ensure consistency of the stats update.
   std::unique_lock<tsl::mutex> lock(lock_, std::defer_lock);
@@ -498,54 +449,34 @@ bool GpuCudaMallocAsyncAllocator::TracksAllocationSizes() const {
 }
 
 size_t GpuCudaMallocAsyncAllocator::RequestedSize(const void* ptr) const {
-<<<<<<< HEAD
-  if (!stats_ || !ptr) return 0;
-  tsl::mutex_lock l(lock_);
-=======
   if (!stats_ || !ptr) {
     return 0;
   }
   absl::MutexLock l(mutex_);
->>>>>>> sept15
   return size_map_.at(ptr);
 }
 
 size_t GpuCudaMallocAsyncAllocator::AllocatedSize(const void* ptr) const {
-<<<<<<< HEAD
-  if (!stats_ || !ptr) return 0;
-  tsl::mutex_lock l(lock_);
-=======
   if (!stats_ || !ptr) {
     return 0;
   }
   absl::MutexLock l(mutex_);
->>>>>>> sept15
   return size_map_.at(ptr);
 }
 
 std::optional<tsl::AllocatorStats> GpuCudaMallocAsyncAllocator::GetStats() {
-<<<<<<< HEAD
-  if (!stats_) return std::nullopt;
-  tsl::mutex_lock l(lock_);
-=======
   if (!stats_) {
     return std::nullopt;
   }
   absl::MutexLock l(mutex_);
->>>>>>> sept15
   return *stats_;
 }
 
 bool GpuCudaMallocAsyncAllocator::ClearStats() {
-<<<<<<< HEAD
-  if (!stats_) return false;
-  tsl::mutex_lock l(lock_);
-=======
   if (!stats_) {
     return false;
   }
   absl::MutexLock l(mutex_);
->>>>>>> sept15
   stats_->num_allocs = 0;
   stats_->peak_bytes_in_use = stats_->bytes_in_use;
   stats_->peak_allocated_bytes = stats_->bytes_in_use + stats_->bytes_reserved;

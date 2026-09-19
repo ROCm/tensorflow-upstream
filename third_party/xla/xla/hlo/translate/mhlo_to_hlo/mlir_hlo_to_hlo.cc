@@ -87,11 +87,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
-<<<<<<< HEAD
-#include "xla/hlo/parser/hlo_parser.h"
-#include "xla/hlo/translate/attributes.h"
-=======
->>>>>>> sept15
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/hlo/translate/mhlo_to_hlo/layout_util.h"
