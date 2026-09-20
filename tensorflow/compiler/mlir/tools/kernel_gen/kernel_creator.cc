@@ -342,19 +342,6 @@ absl::Status LowerKernelBodiesToLowLevelIr(mlir::ModuleOp module,
       " Did you specify either --config=rocm or --config=cuda ?");
 #endif
 
-#if TENSORFLOW_USE_ROCM
-  auto gpu_modules = module.getOps<::mlir::gpu::GPUModuleOp>();
-  for (::mlir::gpu::GPUModuleOp gpu_module : gpu_modules) {
-    gpu_module.walk([&](mlir::gpu::GPUFuncOp gpu_kernel) {
-      if (gpu_kernel.isKernel()) {
-        gpu_kernel->setAttr(
-            "rocdl.max_flat_work_group_size",
-            mlir::IntegerAttr::get(
-                mlir::IntegerType::get(module.getContext(), 32), 1024));
-      }
-    });
-  }
-#endif
 
   mlir::PassManager pm(module.getContext());
   // We cannot verify as the signature of the kernel is rewritten.
@@ -363,9 +350,11 @@ absl::Status LowerKernelBodiesToLowLevelIr(mlir::ModuleOp module,
   auto& kernelPm = pm.nest<::mlir::gpu::GPUModuleOp>();
   kernelPm.addPass(::mlir::createSCFToControlFlowPass());
 #if TENSORFLOW_USE_ROCM
+  const std::string& gfx_version = architecture.substr(0, architecture.find(':'));
   mlir::GpuKernelToROCDLPassOptions options;
-  options.chipset = architecture;
+  options.chipset = gfx_version;
   kernelPm.addPass(mlir::createGpuKernelToROCDLPass(options));
+  kernelPm.addPass(mlir::createReconcileUnrealizedCastsPass());
 #elif GOOGLE_CUDA
   kernelPm.addPass(mlir::createGpuKernelToNVVMPass());
   kernelPm.addPass(mlir::NVVM::createNVVMOptimizeForTargetPass());
