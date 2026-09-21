@@ -22,11 +22,12 @@ on:
       - r2.21-rocm-enhanced
       - r2.20-rocm-enhanced
   workflow_call:
-    runner_label:
-      description: 'Runner label for GPU jobs'
-      required: false
-      default: 'linux-mi250-4'
-      type: string
+    inputs:
+      runner_label:
+        description: 'Runner label for GPU jobs'
+        required: false
+        default: 'linux-mi250-4'
+        type: string
 
 permissions:
   contents: read
@@ -38,7 +39,7 @@ concurrency:
 jobs:
   build-and-test:
     name: ${{ inputs.job_name }}
-    runs-on: ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner_label || 'linux-mi250-4'}}
     env:
       PIP_NO_CACHE_DIR: 1
     defaults:
@@ -66,9 +67,11 @@ jobs:
           TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_multi.sh'
           TFCI_GITHUB_ACTIONS: true
+        run: ./ci/official/any.sh
 
       - name: Test XLA
         env:
           TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_xla.sh'
           TFCI_GITHUB_ACTIONS: true
+        run: ./ci/official/any.sh
