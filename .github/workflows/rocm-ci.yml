@@ -26,7 +26,7 @@ on:
       runner_label:
         description: 'Runner label for GPU jobs'
         required: false
-        default: 'linux-mi250-4'
+        default: 'linux-tensorflow-mi250-4'
         type: string
 
 permissions:
@@ -38,14 +38,16 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: ${{ inputs.job_name }}
-    runs-on: ${{ inputs.runner_label || 'linux-mi250-4'}}
+    name: TF ROCm build and test
+    runs-on: ${{ inputs.runner_label || 'linux-tensorflow-mi250-4' }}
     env:
       PIP_NO_CACHE_DIR: 1
     defaults:
       run:
         shell: bash
-    container: ${{ 'rocm/ufb-private:tensorflow-2.22.0-ubuntu24.04-py3.12-prereleases-device-all-rocm10.0.0rc4-f8d427e' }} # zizmor: ignore[unpinned-images]
+    container:
+      # tensorflow-2.22.0-ubuntu24.04-py3.12-prereleases-device-all-rocm10.0.0rc4-f8d427e
+      image: rocm/ufb-private@sha256:8cc5172f2ea41c80988b775252d1f7ab2a3665a422edcccb07490d69860837be
     timeout-minutes: 120
     steps:
 
@@ -55,7 +57,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Test Signle GPU
+      - name: Test Single GPU
         env:
           TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_single.sh'
