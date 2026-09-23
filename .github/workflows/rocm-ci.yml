@@ -48,7 +48,7 @@ jobs:
     container:
       # tensorflow-2.22.0-ubuntu24.04-py3.12-prereleases-device-all-rocm10.0.0rc4-f8d427e
       image: rocm/ufb-private@sha256:8cc5172f2ea41c80988b775252d1f7ab2a3665a422edcccb07490d69860837be
-    timeout-minutes: 120
+    timeout-minutes: 480
     steps:
 
       - name: Checkout
