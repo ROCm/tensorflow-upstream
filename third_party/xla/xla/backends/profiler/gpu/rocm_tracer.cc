@@ -875,7 +875,11 @@ absl::Status RocmActivityCallbackImpl::operator()(const char* begin,
       HIP_API_ID_hipCtxSetCurrent,
       HIP_API_ID_hipEventRecord,
       HIP_API_ID_hipEventQuery,
+#if TF_ROCM_VERSION > 100100
+      HIP_API_ID_hipGetDevicePropertiesR0600,
+#else
       HIP_API_ID_hipGetDeviceProperties,
+#endif
       HIP_API_ID_hipPeekAtLastError,
       HIP_API_ID_hipModuleGetFunction,
       HIP_API_ID_hipEventCreateWithFlags};
