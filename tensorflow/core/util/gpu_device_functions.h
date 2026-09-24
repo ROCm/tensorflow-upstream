@@ -676,7 +676,7 @@ __device__ inline Eigen::half GpuAtomicAdd(Eigen::half* ptr,
       ptr, [value](Eigen::half a) { return a + value; });
 }
 
-#if (__CUDA_ARCH__ < 600) //TODO Beware of merge conflict resolution here
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ < 600)
 __device__ inline double GpuAtomicAdd(double* ptr, double value) {
   return detail::GpuAtomicCasHelper(ptr,
                                     [value](double a) { return a + value; });

@@ -1,0 +1,79 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+name: TF theRock CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop-upstream
+      - r2.21-rocm-enhanced
+      - r2.20-rocm-enhanced
+  workflow_call:
+    inputs:
+      runner_label:
+        description: 'Runner label for GPU jobs'
+        required: false
+        default: 'linux-tensorflow-mi250-4'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: TF ROCm build and test
+    runs-on: ${{ inputs.runner_label || 'linux-tensorflow-mi250-4' }}
+    env:
+      PIP_NO_CACHE_DIR: 1
+    defaults:
+      run:
+        shell: bash
+    container:
+      # tensorflow-2.22.0-ubuntu24.04-py3.12-prereleases-device-all-rocm10.0.0rc4-f8d427e
+      image: rocm/ufb-private@sha256:8cc5172f2ea41c80988b775252d1f7ab2a3665a422edcccb07490d69860837be
+    timeout-minutes: 480
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Test Single GPU
+        env:
+          TFCI: 'py312,linux_x86_rocm,no_docker'
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_single.sh'
+          TFCI_GITHUB_ACTIONS: true
+        run: ./tensorflow/tools/ci_build/linux/rocm/run_gpu_single.sh
+
+      - name: Test Multi GPU
+        env:
+          TFCI: 'py312,linux_x86_rocm,no_docker'
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_multi.sh'
+          TFCI_GITHUB_ACTIONS: true
+        run: ./tensorflow/tools/ci_build/linux/rocm/run_gpu_multi.sh
+
+      - name: Test XLA
+        env:
+          TFCI: 'py312,linux_x86_rocm,no_docker'
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_xla.sh'
+          TFCI_GITHUB_ACTIONS: true
+        run: ./ci/official/any.sh
