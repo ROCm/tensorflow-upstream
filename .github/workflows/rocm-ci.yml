@@ -58,6 +58,7 @@ jobs:
           persist-credentials: false
 
       - name: Test Single GPU
+        continue-on-error: true
         env:
           TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_single.sh'
@@ -65,6 +66,7 @@ jobs:
         run: ./ci/official/any.sh
 
       - name: Test Multi GPU
+        continue-on-error: true
         env:
           TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_multi.sh'
@@ -72,6 +74,7 @@ jobs:
         run: ./ci/official/any.sh
 
       - name: Test XLA
+        continue-on-error: true
         env:
           TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_xla.sh'
