@@ -62,14 +62,14 @@ jobs:
           TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_single.sh'
           TFCI_GITHUB_ACTIONS: true
-        run: ./ci/official/any.sh
+        run: ./tensorflow/tools/ci_build/linux/rocm/run_gpu_single.sh
 
       - name: Test Multi GPU
         env:
           TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_multi.sh'
           TFCI_GITHUB_ACTIONS: true
-        run: ./ci/official/any.sh
+        run: ./tensorflow/tools/ci_build/linux/rocm/run_gpu_multi.sh
 
       - name: Test XLA
         env:
