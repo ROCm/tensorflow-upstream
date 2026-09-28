@@ -34,6 +34,9 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/platform/tensor_float_32_utils.h"
 #include "tensorflow/core/platform/test.h"
+#if TENSORFLOW_USE_ROCM
+#include "xla/stream_executor/rocm/rocm_dnn.h"
+#endif
 
 namespace tensorflow {
 namespace grappler {
