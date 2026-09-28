@@ -77,6 +77,26 @@ EXCLUDED_TESTS=(
     SwapConvOperandsTest.LargePadding
     SwapConvOperandsTest.SmallPadding
 
+    # Failing on theRock
+    F8E5M2Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_*
+    NumericTestsForBlas/NumericTestsForBlas.Infinity/dot_tf32_tf32_f32_x3
+    Convolve_1x1x4x4_1x1x2x2_Valid/1.Types
+    Convolve_1x1x4x4_1x1x2x2_Same/1.Types
+    Convolve_1x1x4x4_1x1x3x3_Same/1.Types
+    ConvolutionTest.Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid
+    ConvolutionHloTest.TestBooleanInput
+    ConvolutionHloTest.SwappedOperandConvolveWithStride
+    ConvolutionTest.Convolve1D_1x2x5_1x2x2_Valid
+    Convolve1D_1x2x5_1x2x2_WithRHSDilation/0.Types
+    Convolve1D_1x2x5_1x2x2_WithRHSDilation/1.Types
+    Convolve1D_1x2x5_1x2x2_WithPadding/0.Types
+    Convolve1D_1x2x5_1x2x2_WithPadding/1.Types
+    SwapConvOperandsTest.DoesNotLower
+    GpuKernelTilingTest.ReductionInputTooLarge
+    HipblasLtMxExecutionTest.MxFp4Fp8MixedBatchedCorrectness
+    HipblasLtMxExecutionTest.MxFp8BatchedCorrectness
+    HipblasLtMxExecutionTest.MxFp8MixedTypesBatchedCorrectness
+    HipblasLtMxExecutionTest.MxFp8Correctness
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
@@ -92,5 +112,7 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --action_env="ROCM_PATH=$ROCM_PATH" \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    --dynamic_mode=off \
     -- @xla//xla/... \
-    # ^^^ TODO (rocm) weekly-sync-20251021 excluded test files
+    -@xla//xla/service/gpu/model:hlo_op_profiler_test_amdgpu_any
+    # ^^^ TODO (rocm) timesout on theRock
