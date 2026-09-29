@@ -48,7 +48,7 @@ jobs:
     container:
       # tensorflow-2.22.0-ubuntu24.04-py3.12-prereleases-device-all-rocm10.0.0rc4-f8d427e
       image: rocm/ufb-private@sha256:8cc5172f2ea41c80988b775252d1f7ab2a3665a422edcccb07490d69860837be
-    timeout-minutes: 480
+    timeout-minutes: 960
     steps:
 
       - name: Checkout
@@ -60,7 +60,7 @@ jobs:
       - name: Test Single GPU
         continue-on-error: true
         env:
-          TFCI: 'py312,linux_x86_rocm,no_docker'
+          TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_single.sh'
           TFCI_GITHUB_ACTIONS: true
         run: ./ci/official/any.sh
@@ -68,7 +68,7 @@ jobs:
       - name: Test Multi GPU
         continue-on-error: true
         env:
-          TFCI: 'py312,linux_x86_rocm,no_docker'
+          TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_multi.sh'
           TFCI_GITHUB_ACTIONS: true
         run: ./ci/official/any.sh
@@ -76,7 +76,15 @@ jobs:
       - name: Test XLA
         continue-on-error: true
         env:
-          TFCI: 'py312,linux_x86_rocm,no_docker'
+          TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_xla.sh'
+          TFCI_GITHUB_ACTIONS: true
+        run: ./ci/official/any.sh
+
+      - name: Test CPU
+        continue-on-error: true
+        env:
+          TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_cpu.sh'
           TFCI_GITHUB_ACTIONS: true
         run: ./ci/official/any.sh

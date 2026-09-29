@@ -67,7 +67,7 @@ fi
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
         --local_test_jobs=${N_TEST_JOBS} \
-        --jobs=30 \
+        --jobs=${N_BUILD_JOBS} \
         --local_ram_resources=60000 \
         --local_cpu_resources=15 \
         --verbose_failures \
@@ -76,4 +76,4 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
         --config=sigbuild_local_cache \
         --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
         --repo_env="ROCM_PATH=$ROCM_PATH" \
-	--dynamic_mode=off
+        --dynamic_mode=off
