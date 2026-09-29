@@ -12,6 +12,8 @@ def repo(name):
         sha256 = LLVM_SHA256,
         strip_prefix = "llvm-project-{commit}".format(commit = LLVM_COMMIT),
         urls = [
+            "https://mirror.bazel.build/github.com/llvm/llvm-project/archive/{commit}.tar.gz".format(commit = LLVM_COMMIT),
+            "https://d22q5eopkfeftw.cloudfront.net/third_party/llvm-project/archive/{commit}.tar.gz".format(commit = LLVM_COMMIT),
             "https://storage.googleapis.com/mirror.tensorflow.org/github.com/llvm/llvm-project/archive/{commit}.tar.gz".format(commit = LLVM_COMMIT),
             "https://github.com/llvm/llvm-project/archive/{commit}.tar.gz".format(commit = LLVM_COMMIT),
         ],
