@@ -58,7 +58,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-          fetch-depth: 1
 
       - name: Get RBE cluster keys
         env:
