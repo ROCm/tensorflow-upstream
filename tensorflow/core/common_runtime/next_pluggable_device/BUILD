@@ -381,7 +381,6 @@ tf_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
-        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:protobuf",
         "@xla//xla/tsl/distributed_runtime:call_options",
         "@xla//xla/tsl/distributed_runtime/coordination:coordination_client",
