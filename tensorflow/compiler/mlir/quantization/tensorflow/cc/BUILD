@@ -199,7 +199,6 @@ tf_cc_test(
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/core:tensorflow",
         "//tensorflow/core:test",
-        "//tensorflow/core:test_main",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@llvm-project//mlir:FuncDialect",

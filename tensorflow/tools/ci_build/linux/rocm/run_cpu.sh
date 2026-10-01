@@ -47,9 +47,9 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/cpu.ba
           --repo_env=ROCM_PATH=/opt/rocm \
           --dynamic_mode=off \
           --test_timeout=400,600,1800,3600 \
+          --jobs=${N_BUILD_JOBS}
           --test_env=TF_NUM_INTEROP_THREADS=4 \
           --test_env=TF_NUM_INTRAOP_THREADS=4 \
-          --jobs=${N_BUILD_JOBS} \
           --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
           --test_env=HIP_VISIBLE_DEVICES=0 \
           --verbose_failures \
