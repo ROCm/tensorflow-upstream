@@ -92,6 +92,7 @@ EXCLUDED_TESTS=(
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
     --config=sigbuild_local_cache \
     --config=rocm \
+    --config=rocm_cache \
     --config=xla_cpp_filters \
     --test_output=errors \
     --local_test_jobs=${N_TEST_JOBS} \

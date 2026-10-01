@@ -90,6 +90,7 @@ EXCLUDED_TESTS=(
 # Run bazel test command. Double test timeouts to avoid flakes.
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
     --config=rocm \
+    --config=rocm_cache \
     --config=sigbuild_local_cache \
     --config=pycpp \
     -k \
