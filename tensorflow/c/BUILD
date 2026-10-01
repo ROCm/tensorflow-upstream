@@ -687,7 +687,6 @@ tf_cc_test(
     deps = [
         ":tf_status",
         ":tf_status_helper",
-        "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:status",
         "@xla//xla/tsl/platform:test",
