@@ -319,7 +319,6 @@ tf_cc_test(
     srcs = ["mlir_bridge_pass_util_test.cc"],
     deps = [
         ":mlir_bridge_pass_util",
-        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
