@@ -39,6 +39,13 @@ cc_library(
         "@local_xla//xla/pjrt/c:pjrt_c_api_helpers",
         "@local_xla//xla/tsl/distributed_runtime/coordination:coordination_service_agent",
     ],
+    # Callers of this C API (e.g. :c_plugin_coordination_service_agent) are
+    # compiled with -DTF_CAPI_WEAK, which makes their references to these
+    # symbols weak. A weak undefined reference does not pull an object out of a
+    # static archive, so without alwayslink the implementation below is silently
+    # dropped from the link, the symbols resolve to address 0, and calling one
+    # segfaults. Depend on :c_api_hdrs instead if you want only the headers.
+    alwayslink = 1,
 )
 
 # Plugin should include this target to avoid linking the C API implementation.

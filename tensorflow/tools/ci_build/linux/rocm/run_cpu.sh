@@ -43,6 +43,7 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/cpu.ba
           --action_env=TF_NEED_ROCM=0 \
           --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
           --local_test_jobs=${N_TEST_JOBS} \
+          --test_sharding_strategy=disabled \
           --dynamic_mode=off \
           --test_timeout=400,600,1800,3600 \
           --test_env=TF_NUM_INTEROP_THREADS=4 \
