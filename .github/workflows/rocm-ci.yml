@@ -46,8 +46,8 @@ jobs:
       run:
         shell: bash
     container:
-      # tensorflow-2.22.0-ubuntu24.04-py3.12-prereleases-device-all-rocm10.0.0rc4-f8d427e
-      image: rocm/ufb-private@sha256:8cc5172f2ea41c80988b775252d1f7ab2a3665a422edcccb07490d69860837be
+      # rocmshared/tensorflow-private:rocm10.0-py3.12-tf2.22-ubuntu22.04-dev
+      image: rocmshared/tensorflow-private@sha256:7ab50c72e4d3703661c64f6e3cf72c627713d5bc779aa20381a638c6a1e35b03
     timeout-minutes: 960
     steps:
 
@@ -56,6 +56,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
       - name: Get RBE cluster keys
         env:
           RBE_CI_CERT: ${{ secrets.RBE_CI_CERT }}
@@ -64,6 +65,14 @@ jobs:
           mkdir -p /data
           echo "$RBE_CI_CERT" > /data/ci-cert.crt
           echo "$RBE_CI_KEY" > /data/ci-cert.key
+
+      - name: Test CPU
+        continue-on-error: true
+        env:
+          TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_cpu.sh'
+          TFCI_GITHUB_ACTIONS: true
+        run: ./ci/official/any.sh
 
       - name: Test Single GPU
         continue-on-error: true
@@ -86,13 +95,5 @@ jobs:
         env:
           TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_xla.sh'
-          TFCI_GITHUB_ACTIONS: true
-        run: ./ci/official/any.sh
-
-      - name: Test CPU
-        continue-on-error: true
-        env:
-          TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
-          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_cpu.sh'
           TFCI_GITHUB_ACTIONS: true
         run: ./ci/official/any.sh
