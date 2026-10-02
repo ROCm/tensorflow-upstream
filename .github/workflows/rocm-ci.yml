@@ -1,0 +1,99 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+name: TF theRock CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop-upstream
+      - r2.21-rocm-enhanced
+      - r2.20-rocm-enhanced
+  workflow_call:
+    inputs:
+      runner_label:
+        description: 'Runner label for GPU jobs'
+        required: false
+        default: 'linux-tensorflow-mi250-4'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: TF ROCm build and test
+    runs-on: ${{ inputs.runner_label || 'linux-tensorflow-mi250-4' }}
+    env:
+      PIP_NO_CACHE_DIR: 1
+    defaults:
+      run:
+        shell: bash
+    container:
+      # rocmshared/tensorflow-private:rocm10.0-py3.12-tf2.22-ubuntu22.04-dev
+      image: rocmshared/tensorflow-private@sha256:7ab50c72e4d3703661c64f6e3cf72c627713d5bc779aa20381a638c6a1e35b03
+    timeout-minutes: 960
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Get RBE cluster keys
+        env:
+          RBE_CI_CERT: ${{ secrets.RBE_CI_CERT }}
+          RBE_CI_KEY: ${{ secrets.RBE_CI_KEY }}
+        run: |
+          mkdir -p /data
+          echo "$RBE_CI_CERT" > /data/ci-cert.crt
+          echo "$RBE_CI_KEY" > /data/ci-cert.key
+
+      - name: Test CPU
+        continue-on-error: true
+        env:
+          TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_cpu.sh'
+          TFCI_GITHUB_ACTIONS: true
+        run: ./ci/official/any.sh
+
+      - name: Test Single GPU
+        continue-on-error: true
+        env:
+          TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_single.sh'
+          TFCI_GITHUB_ACTIONS: true
+        run: ./ci/official/any.sh
+
+      - name: Test Multi GPU
+        continue-on-error: true
+        env:
+          TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_multi.sh'
+          TFCI_GITHUB_ACTIONS: true
+        run: ./ci/official/any.sh
+
+      - name: Test XLA
+        continue-on-error: true
+        env:
+          TFCI: 'py312,linux_x86_rocm,no_docker,public_cache,disk_cache'
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_xla.sh'
+          TFCI_GITHUB_ACTIONS: true
+        run: ./ci/official/any.sh

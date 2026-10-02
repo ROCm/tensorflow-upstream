@@ -34,6 +34,7 @@ if [ ! -d /tf ];then
 fi
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/cpu.bazelrc test \
+          --config=rocm_cache \
           --config=sigbuild_local_cache \
           --verbose_failures \
           --config=pycpp \
