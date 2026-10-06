@@ -453,14 +453,6 @@ class PjRtClient final : public RTTIExtends<PjRtClient, PjRtCompatibleClient> {
       absl::Span<ArrayRef> arrays, DeviceListRef src_devices,
       DeviceListRef dst_devices, std::optional<MemoryKind> memory_kind);
 
-  // Copies arrays from source to destination devices when at least one of the
-  // (source, destination) pairs is cross-host using an experimental DCN
-  // transfer library. Called when the PjRt backend does not support
-  // `CopyArraysForCrossHost`.
-  absl::StatusOr<std::vector<ArrayRef>> CopyArraysForCrossHostFallback(
-      absl::Span<ArrayRef> arrays, DeviceListRef src_devices,
-      DeviceListRef dst_devices, std::optional<MemoryKind> memory_kind);
-
   // Creates a unique identifier for each cross-host transfer. Every process
   // must call it, regardless of whether it participates in the cross-host
   // transfer, so that the returned value must be the same in all processes.
