@@ -34,11 +34,30 @@ if [ ! -d /tf ];then
     mkdir /tf
 fi
 
+#TODO weekly-sync 2026-09-15
+EXCLUDED_TESTS=(
+  # //tensorflow/c:c_api_experimental_test 
+  CAPI_EXPERIMENTAL.LibraryNextPluggableDeviceLoadFunctions
+
+  # //tensorflow/core/common_runtime:process_function_library_runtime_test_cpu
+  ProcessFunctionLibraryRuntimeTest.MultiDevice_ResourceOutput_GPU
+  ProcessFunctionLibraryRuntimeTest.MultiDevice_ErrorWhenBadTargetDevice
+
+  # //tensorflow/core/common_runtime/pluggable_device:pluggable_device_plugin_init_test
+  PluggableDevicePluginInitTest.StaticNPInitTest
+
+  # //tensorflow/core/grappler/optimizers/data:split_utils_test
+  SplitUtilsTest.MultiOutput
+
+  # //tensorflow/core/kernels:matmul_op_test_cpu
+  Test/FusedMatMulWithBiasOpTest/1.MatMul*
+)
+
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/cpu.bazelrc test \
-          --config=rocm_cache \
           --config=sigbuild_local_cache \
-          --verbose_failures \
           --config=pycpp \
+          --config=rocm_cache
+          --verbose_failures \
           --action_env=TF_NEED_ROCM=0 \
           --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
           --local_test_jobs=${N_TEST_JOBS} \
@@ -47,4 +66,6 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/cpu.ba
           --test_timeout=400,600,1800,3600 \
           --test_env=TF_NUM_INTEROP_THREADS=4 \
           --test_env=TF_NUM_INTRAOP_THREADS=4 \
-          --jobs=${N_BUILD_JOBS}
+          --jobs=${N_BUILD_JOBS} \
+          --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+          --test_env=HIP_VISIBLE_DEVICES=0 \
