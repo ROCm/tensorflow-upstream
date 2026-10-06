@@ -300,7 +300,9 @@ tf_kernel_library(
     name = "generate_box_proposals_op",
     features = ["-layering_check"],
     gpu_srcs = ["generate_box_proposals_op.cu.cc"],
-    deps = ["//tensorflow/core/kernels:gpu_prim_hdrs"] + if_cuda_or_rocm([
+    deps = ["//tensorflow/core/kernels:gpu_prim_hdrs",
+            "//tensorflow/core/framework:types_proto_cc",
+            "@com_google_absl//absl/log",] + if_cuda_or_rocm([
         ":non_max_suppression_op_gpu",
     ]),
 )
