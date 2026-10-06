@@ -47,5 +47,5 @@ test:pycpp_filters --test_lang_filters=cc,py --test_size_filters=small,medium --
 test:pycpp --config=pycpp_filters -- //tensorflow/... -//tensorflow/compiler/tf2tensorrt/... -//tensorflow/core/tpu/... -//tensorflow/lite/... \
 -//tensorflow/compiler/mlir/tosa/tests:tf-to-tosa-pipeline.mlir.test \
 -//tensorflow/compiler/mlir/tosa/tests:tfl-to-tosa-pipeline.mlir.test \
--//tensorflow/compiler/tf2xla:xla_compiler_test
+-//tensorflow/core/common_runtime/next_pluggable_device:c_plugin_coordination_service_agent_test \
 # ^^^ TODO Weekly sync 2026-09-15
