@@ -818,7 +818,8 @@ void ShuffleDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
   auto name = strings::StrCat(ctx->op_kernel().name(), "/", kSeedGenerator, "_",
                               resource_id_counter.fetch_add(1));
   if (op_version_ == 3) {
-    auto handle = HandleFromInput(ctx, 4);
+    ResourceHandle handle;
+    OP_REQUIRES_OK(ctx, HandleFromInput(ctx, 4, &handle));
     SeedGeneratorManager* manager = nullptr;
     absl::Status s = ctx->resource_manager()->Lookup<SeedGeneratorManager>(
         handle.container(), handle.name(), &manager);
@@ -855,7 +856,8 @@ void ShuffleDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
                                               std::move(seeds), manager,
                                               std::move(handle), owns_resource);
   } else if (op_version_ == 2) {
-    auto handle = HandleFromInput(ctx, 2);
+    ResourceHandle handle;
+    OP_REQUIRES_OK(ctx, HandleFromInput(ctx, 2, &handle));
     SeedGeneratorManager* manager = nullptr;
     absl::Status s = ctx->resource_manager()->Lookup<SeedGeneratorManager>(
         handle.container(), handle.name(), &manager);
@@ -1083,7 +1085,8 @@ void ShuffleAndRepeatDatasetOp::MakeDataset(OpKernelContext* ctx,
   auto name = strings::StrCat(ctx->op_kernel().name(), "/", kSeedGenerator, "_",
                               resource_id_counter.fetch_add(1));
   if (op_version_ == 2) {
-    auto handle = HandleFromInput(ctx, 5);
+    ResourceHandle handle;
+    OP_REQUIRES_OK(ctx, HandleFromInput(ctx, 5, &handle));
     SeedGeneratorManager* manager = nullptr;
     absl::Status s = ctx->resource_manager()->Lookup<SeedGeneratorManager>(
         handle.container(), handle.name(), &manager);

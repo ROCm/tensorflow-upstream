@@ -38,6 +38,6 @@ def : Pat<(TF_ReciprocalOp $arg), (Tosa_ReciprocalOp $arg)>;
 def : Pat<(TF_RsqrtOp $arg), (Tosa_RsqrtOp $arg)>;
 def : Pat<(TF_LogicalNotOp $arg), (Tosa_LogicalNotOp $arg)>;
 def : Pat<(TF_InvertOp $arg1), (Tosa_BitwiseNotOp $arg1)>;
-def : Pat<(TF_CastOp $in, BoolAttr : $truncate), (Tosa_CastOp $in)>;
+def : Pat<(TF_CastOp $in1, $in2), (Tosa_CastOp $in1, $in2)>;
 
 // Binary ops patterns.

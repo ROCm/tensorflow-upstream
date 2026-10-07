@@ -15,6 +15,14 @@
 # ==============================================================================
 source "${BASH_SOURCE%/*}/utilities/setup.sh"
 
+# Extract hermetic CUDA User-Mode Driver (UMD) flags
+HERMETIC_CUDA_UMD_BUILD_FLAGS=""
+HERMETIC_CUDA_UMD_TEST_FLAGS=""
+if [[ "$TFCI_BAZEL_HERMETIC_CUDA_UMD_ENABLE" == 1 ]]; then
+  HERMETIC_CUDA_UMD_BUILD_FLAGS="--config=hermetic_cuda_umd"
+  HERMETIC_CUDA_UMD_TEST_FLAGS="--@local_config_cuda//cuda:override_include_cuda_libs=true --config=hermetic_cuda_umd"
+fi
+
 # Record GPU count and CUDA version status
 if [[ "$TFCI_NVIDIA_SMI_ENABLE" == 1 ]]; then
   tfrun nvidia-smi
@@ -66,7 +74,7 @@ fi
 
 if [[ "$TFCI_ARTIFACT_STAGING_GCS_ENABLE" == 1 ]]; then
   # Note: -n disables overwriting previously created files.
-  # TODO(b/389744576): Remove when gsutil is made to work properly on MSYS2.
+  # TODO(b/389744576): Remove when gcloud storage is made to work properly on MSYS2.
   if [[ $(uname -s) != MSYS_NT* ]]; then
     gcloud storage cp -n "$TFCI_OUTPUT_DIR"/*.whl "$TFCI_ARTIFACT_STAGING_GCS_URI"
   else
@@ -75,5 +83,5 @@ if [[ "$TFCI_ARTIFACT_STAGING_GCS_ENABLE" == 1 ]]; then
 fi
 
 if [[ "$TFCI_WHL_BAZEL_TEST_ENABLE" == 1 ]]; then
-  tfrun bazel $TFCI_BAZEL_BAZELRC_ARGS test $TFCI_BAZEL_COMMON_ARGS $TFCI_BUILD_PIP_PACKAGE_BASE_ARGS $TFCI_BUILD_PIP_PACKAGE_WHEEL_NAME_ARG --repo_env=TF_PYTHON_VERSION=$TFCI_PYTHON_VERSION --config="${TFCI_BAZEL_TARGET_SELECTING_CONFIG_PREFIX}_wheel_test"
+  tfrun bazel $TFCI_BAZEL_BAZELRC_ARGS test $TFCI_BAZEL_COMMON_ARGS $TFCI_BUILD_PIP_PACKAGE_BASE_ARGS $TFCI_BUILD_PIP_PACKAGE_WHEEL_NAME_ARG $HERMETIC_CUDA_UMD_TEST_FLAGS --repo_env=TF_PYTHON_VERSION=$TFCI_PYTHON_VERSION --config="${TFCI_BAZEL_TARGET_SELECTING_CONFIG_PREFIX}_wheel_test"
 fi
