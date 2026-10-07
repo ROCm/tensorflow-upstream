@@ -21,11 +21,14 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -37,7 +40,6 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/restricted/hlo_test_base_legacy.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::llvm_ir {
@@ -54,8 +56,8 @@ class EmitReducePrecisionIrExecutionTest : public HloTestBaseLegacy {
   void RunTest(const std::string& hlo_text, absl::Span<Literal* const> args) {
     HloModuleConfig config;
     config.set_debug_options(GetDebugOptionsForTest());
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(hlo_text, config));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text, config));
     EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), args, nullopt));
   }
 
@@ -65,8 +67,8 @@ class EmitReducePrecisionIrExecutionTest : public HloTestBaseLegacy {
     debug_options.set_xla_cpu_fast_math_honor_nans(true);
     debug_options.set_xla_cpu_fast_math_honor_infs(true);
     config.set_debug_options(debug_options);
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(hlo_text, config));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text, config));
     EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{(0.)}));
   }
 };
@@ -308,6 +310,49 @@ TEST_F(LLVMSPIRVTest, AddRangeMetadataTest) {
   // Metadata type must match Call type
   EXPECT_TRUE(GetMetadataValue(metadata_tuple, 0)->getType()->isIntegerTy(64));
   EXPECT_TRUE(GetMetadataValue(metadata_tuple, 1)->getType()->isIntegerTy(64));
+}
+
+// Tests for CreateCpuFunction and the xla_cpu_ftz flag.
+class CreateCpuFunctionTest : public ::testing::Test {};
+
+TEST_F(CreateCpuFunctionTest, FtzEnabledAddsDenormalAttribute) {
+  llvm::LLVMContext context;
+  llvm::Module module("test", context);
+
+  HloModuleConfig config;
+  auto debug_options = config.debug_options();
+  debug_options.set_xla_cpu_ftz(true);
+  config.set_debug_options(debug_options);
+
+  llvm::FunctionType* fn_type =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+
+  llvm::Function* fn = CreateCpuFunction(
+      fn_type, llvm::GlobalValue::ExternalLinkage, config, "test_fn", &module);
+
+  ASSERT_NE(fn, nullptr);
+  EXPECT_TRUE(fn->hasFnAttribute("denormal-fp-math"));
+  EXPECT_EQ(fn->getFnAttribute("denormal-fp-math").getValueAsString(),
+            "preserve-sign");
+}
+
+TEST_F(CreateCpuFunctionTest, FtzDisabledOmitsDenormalAttribute) {
+  llvm::LLVMContext context;
+  llvm::Module module("test", context);
+
+  HloModuleConfig config;
+  auto debug_options = config.debug_options();
+  debug_options.set_xla_cpu_ftz(false);
+  config.set_debug_options(debug_options);
+
+  llvm::FunctionType* fn_type =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+
+  llvm::Function* fn = CreateCpuFunction(
+      fn_type, llvm::GlobalValue::ExternalLinkage, config, "test_fn", &module);
+
+  ASSERT_NE(fn, nullptr);
+  EXPECT_FALSE(fn->hasFnAttribute("denormal-fp-math"));
 }
 
 }  // namespace

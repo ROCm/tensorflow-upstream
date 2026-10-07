@@ -22,28 +22,50 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/service/hlo_runner_interface.h"
+#include "xla/tools/hlo_dump/hlo_dump_utils.h"
+#include "xla/tools/hlo_isolation/hlo_inf_nan_intent_analyzer.h"
 #include "xla/tools/hlo_isolation/hlo_isolation.pb.h"
 
 namespace xla {
 namespace hlo_isolation {
+
+using ExpectedLiteralsMap =
+    absl::flat_hash_map<std::string, std::shared_ptr<const Literal>>;
+
+using GroupKey = std::pair<HloOpcode, std::string>;
+
+struct RunModuleOptions {
+  bool run_hlo_passes = false;
+  bool use_fusion_debugger = false;
+  absl::Span<const HloOutputCallback> hlo_output_callbacks;
+  std::function<void(absl::string_view, Literal*)> eval_literal_mutator =
+      nullptr;
+  std::shared_ptr<ExpectedLiteralsMap> expected_literals = nullptr;
+};
 
 struct ModuleIsolationOptions {
   double abs_error_bound = 0.01;
   double rel_error_bound = 0.1;
   bool run_hlo_passes = false;
   int64_t max_module_size_bytes = 0;
+  bool reject_unconstrained_ops = false;
 
-  std::function<absl::StatusOr<Literal>(std::unique_ptr<HloModule> module,
-                                        HloRunnerInterface* runner,
-                                        absl::Span<const Literal> input_data)>
+  std::function<absl::StatusOr<Literal>(
+      std::unique_ptr<HloModule> module, HloRunnerInterface* runner,
+      absl::Span<const Literal> input_data, const RunModuleOptions& options)>
       run_module_fn;
 
   std::function<void(const HloModule& module, const Literal& test_output,
@@ -74,7 +96,24 @@ struct PipelineIsolationOptions {
 absl::StatusOr<Literal> RunModule(std::unique_ptr<HloModule> module,
                                   HloRunnerInterface* runner,
                                   absl::Span<const Literal> input_data,
-                                  bool run_hlo_passes = false);
+                                  const RunModuleOptions& options = {});
+
+std::vector<HloOutputCallback> CreateDumpHloOutputCallbacks(
+    HloModule* module, std::shared_ptr<ExpectedLiteralsMap> expected_literals,
+    const std::function<void(absl::string_view, Literal*)>&
+        eval_literal_mutator = nullptr);
+
+std::vector<HloOutputCallback> CreateComparisonHloOutputCallbacks(
+    HloModule* test_module_clone,
+    const absl::flat_hash_map<GroupKey, std::vector<std::string>>& ref_groups,
+    std::shared_ptr<ExpectedLiteralsMap> expected_literals,
+    const HloModule& original_module, const ModuleIsolationOptions& options,
+    std::shared_ptr<absl::Mutex> result_mutex,
+    HloIsolationTestResult* test_result);
+
+void PopulateNumericCheckMismatches(
+    NumericCheck* numeric_check,
+    const absl::StatusOr<std::vector<NumericMismatch>>& top_mismatches);
 
 absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
     const HloModule& module, HloRunnerInterface* test_runner,
@@ -90,6 +129,13 @@ absl::StatusOr<std::vector<HloIsolationTestResult>> RunIsolationPipeline(
     HloRunnerInterface* reference_runner, PipelineIsolationOptions options);
 
 absl::Status DefuseModule(HloModule* module);
+
+// Extracts numeric mismatch statistics from an HloIsolationTestResult
+// (including both parent check mismatches and FusionDebugger:<op_name> checks)
+// and converts them into MismatchDetails structs for unified HTML
+// visualization.
+std::vector<numerics::debug_info::MismatchDetails> ExtractMismatchDetails(
+    const HloModule& module, const HloIsolationTestResult& result);
 
 absl::StatusOr<std::vector<NumericMismatch>> ExtractAndEnrichTopMismatches(
     std::string error_message, const HloModule* module);
@@ -108,7 +154,6 @@ int64_t GetFusionCountInNestedFusion(const HloInstruction* fusion_instr);
 bool ModuleContainsLargeKeyValueSort(const HloModule& module);
 bool ModuleTestsFloatsForEquality(const HloModule& module);
 bool ComputationHasRng(const HloComputation* computation);
-bool LiteralContainsInfOrNan(const LiteralSlice& literal);
 
 }  // namespace hlo_isolation
 }  // namespace xla

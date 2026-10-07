@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -87,7 +88,7 @@ absl::StatusOr<bool> MultiOutputFusion::RunImpl(
   CHECK_OK(module->RemoveUnusedComputations());
   if (changed) {
     HloDCE dce;
-    TF_RETURN_IF_ERROR(dce.Run(module, execution_threads).status());
+    ABSL_RETURN_IF_ERROR(dce.Run(module, execution_threads).status());
   }
   return changed;
 }

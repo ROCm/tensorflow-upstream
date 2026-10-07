@@ -17,12 +17,15 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_RUNTIME_DYNAMIC_SLICE_FUSION_V2_THUNK_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
@@ -30,6 +33,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 
 namespace xla::gpu {
@@ -47,7 +51,7 @@ namespace xla::gpu {
 // offsets (from DynamicSliceConfig) match the actual offsets computed on
 // device. This is a debugging aid and must not be enabled by default, as it
 // requires a synchronous device-to-host copy of the offset scalars.
-class DynamicSliceFusionV2Thunk : public Thunk {
+class DynamicSliceFusionV2Thunk : public Command {
  public:
   // Args:
   //   parameters      - Hero operand metadata from DynamicSliceFusion::
@@ -67,7 +71,8 @@ class DynamicSliceFusionV2Thunk : public Thunk {
   //                     offset-adjusted pointers into the real buffers.
   //   embedded_thunks - Thunk sequence emitted for the hero instruction.
   //   verify_offsets  - When true, D2H-copies offset scalars each iteration to
-  //                     verify annotated DynamicSliceConfig matches actual.
+  //                     verify annotated DynamicSliceConfig matches actual
+  //                     offset expressions.
   DynamicSliceFusionV2Thunk(
       ThunkInfo thunk_info,
       std::vector<DynamicSliceFusion::Parameter> parameters,
@@ -80,9 +85,19 @@ class DynamicSliceFusionV2Thunk : public Thunk {
   absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+  bool requires_update_on_initialize() const override;
+  bool requires_update_on_execute() const override;
+  bool support_loop_unroll() const override;
 
   BufferUses buffer_uses() const override;
 
+  // Embedded thunks are an implementation detail and use a private synthetic
+  // allocation namespace. They are intentionally not exposed through generic
+  // Thunk::Walk or ThunkSequence::TransformNested traversal.
   const ThunkSequence& thunks() const { return executor_.thunks(); }
 
   absl::Span<const DynamicSliceFusion::Parameter> parameters() const {
@@ -92,17 +107,27 @@ class DynamicSliceFusionV2Thunk : public Thunk {
     return results_;
   }
 
+  bool verify_offsets() const { return verify_offsets_; }
+  bool HasLoopDependentOffsets() const;
+
+  absl::Status SetOrUpdateCommandBufferExecutor(
+      CommandExecutor command_executor);
+
   std::string ToString(int indent) const override;
 
   absl::StatusOr<ThunkProto> ToProto() const override;
+
+  // Verifies that every result written through a DynamicUpdateSlice aliases the
+  // fusion parameter used as the DUS target buffer.
+  static absl::Status VerifyBufferAssignment(
+      absl::Span<const DynamicSliceFusion::Result> results,
+      absl::Span<const BufferAllocation::Slice> parameter_buffers,
+      absl::Span<const BufferAllocation::Slice> result_buffers);
+
   static absl::StatusOr<std::unique_ptr<DynamicSliceFusionV2Thunk>> FromProto(
       ThunkInfo thunk_info, const DynamicSliceFusionThunkProto& proto,
       absl::Span<const BufferAllocation> buffer_allocations,
       const DeserializerWithCustomAllocations& deserializer);
-
- protected:
-  absl::Status WalkNested(Walker callback) override;
-  absl::Status TransformNested(Transformer callback) override;
 
  private:
   std::vector<se::DeviceAddressBase> BuildDynamicSliceBuffers(
@@ -122,6 +147,7 @@ class DynamicSliceFusionV2Thunk : public Thunk {
   std::vector<BufferAllocation> embedded_allocations_;
 
   ThunkExecutor executor_;
+  std::optional<CommandExecutor> command_executor_;
 
   bool verify_offsets_;
 };

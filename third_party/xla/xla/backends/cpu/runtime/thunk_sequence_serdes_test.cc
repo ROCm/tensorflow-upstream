@@ -24,14 +24,15 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/cpu/runtime/all_gather_thunk.h"
 #include "xla/backends/cpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/cpu/runtime/all_to_all_thunk.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/logical_id_thunk.h"
 #include "xla/backends/cpu/runtime/outfeed_thunk.h"
 #include "xla/backends/cpu/runtime/reduce_scatter_thunk.h"
+#include "xla/backends/cpu/runtime/rng_seed_thunk.h"
 #include "xla/backends/cpu/runtime/rng_state_thunk.h"
 #include "xla/backends/cpu/runtime/serdes_base.h"
 #include "xla/backends/cpu/runtime/sort_thunk.h"
@@ -133,19 +135,19 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
           collective_thunk_resources) {
     ThunkSequence thunk_sequence;
 
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
                      CreateAllGatherThunk(collective_thunk_resources.at(
                          CollectiveThunk::CollectiveKind::kAllGather)));
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
                      CreateAllReduceThunk(collective_thunk_resources.at(
                          CollectiveThunk::CollectiveKind::kAllReduce)));
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
                      CreateAllToAllThunk(collective_thunk_resources.at(
                          CollectiveThunk::CollectiveKind::kAllToAll)));
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
                      CreateReduceScatterThunk(collective_thunk_resources.at(
                          CollectiveThunk::CollectiveKind::kReduceScatter)));
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
                      CreateCollectivePermuteThunk(collective_thunk_resources.at(
                          CollectiveThunk::CollectiveKind::kCollectivePermute)));
 
@@ -156,30 +158,31 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     // NOTE create buffer allocations using thunk_testlib
     ThunkSequence thunk_sequence;
 
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateAllGatherThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateAllReduceThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateAllToAllThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateReduceScatterThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCallThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateAllGatherThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateAllReduceThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateAllToAllThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateReduceScatterThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCallThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
                      CreateCollectivePermuteThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCopyThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateConditionalThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCustomCallThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateDotThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateFftThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateInfeedThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateOutfeedThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreatePartitionIdThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateReplicaIdThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCopyThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateConditionalThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCustomCallThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateDotThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateFftThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateInfeedThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateOutfeedThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreatePartitionIdThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateReplicaIdThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
                      CreateRngGetAndUpdateStateThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateTopKThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateWhileThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateWhileThunk(1));
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateKernelThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateConvolutionThunk());
-    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateSortThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateTopKThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateWhileThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateWhileThunk(1));
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateKernelThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateConvolutionThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateSortThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateRngSeedThunk());
     return thunk_sequence;
   }
 
@@ -215,7 +218,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   absl::Status AddBufferAllocations(const size_t no_of_allocations_to_add) {
     for (size_t i = 0; i < no_of_allocations_to_add; ++i) {
       literals_.push_back(LiteralUtil::CreateFull<float>({2, 4}, 0.0));
-      RETURN_IF_ERROR(buffer_allocations_.push_back(CreateBufferAllocation(
+      ABSL_RETURN_IF_ERROR(buffer_allocations_.push_back(CreateBufferAllocation(
           buffer_allocations_.size(), literals_.back())));
     }
 
@@ -223,7 +226,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
   absl::Status AddPredBufferAllocation() {
     literals_.push_back(LiteralUtil::CreateFull<bool>({1}, false));
-    RETURN_IF_ERROR(buffer_allocations_.push_back(
+    ABSL_RETURN_IF_ERROR(buffer_allocations_.push_back(
         CreateBufferAllocation(buffer_allocations_.size(), literals_.back())));
 
     return absl::OkStatus();
@@ -233,7 +236,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   absl::StatusOr<std::unique_ptr<Thunk>> CreateAllGatherThunk(
       std::shared_ptr<Resource> communicator_resource =
           Resource::Create(Resource::Kind::kCollectiveCommunicator)) {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
 
     return AllGatherThunk::Create(
         Thunk::Info(),
@@ -263,7 +266,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   absl::StatusOr<std::unique_ptr<Thunk>> CreateAllReduceThunk(
       std::shared_ptr<Resource> communicator_resource =
           Resource::Create(Resource::Kind::kCollectiveCommunicator)) {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
 
     return AllReduceThunk::Create(
         Thunk::Info(), ReductionKind::SUM,
@@ -294,7 +297,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   absl::StatusOr<std::unique_ptr<Thunk>> CreateAllToAllThunk(
       std::shared_ptr<Resource> communicator_resource =
           Resource::Create(Resource::Kind::kCollectiveCommunicator)) {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
 
     return AllToAllThunk::Create(
         Thunk::Info(),
@@ -324,7 +327,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   absl::StatusOr<std::unique_ptr<Thunk>> CreateReduceScatterThunk(
       std::shared_ptr<Resource> communicator_resource =
           Resource::Create(Resource::Kind::kCollectiveCommunicator)) {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
 
     return ReduceScatterThunk::Create(
         Thunk::Info(), ReductionKind::SUM,
@@ -353,9 +356,9 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateCallThunk() {
     ThunkSequence called_sequence;
-    ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllGatherThunk());
-    ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllReduceThunk());
-    ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllToAllThunk());
+    ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllGatherThunk());
+    ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllReduceThunk());
+    ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllToAllThunk());
     return CallThunk::Create(Thunk::Info(),
                              /*called_sequence=*/std::move(called_sequence));
   }
@@ -363,7 +366,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   absl::StatusOr<std::unique_ptr<Thunk>> CreateCollectivePermuteThunk(
       std::shared_ptr<Resource> communicator_resource =
           Resource::Create(Resource::Kind::kCollectiveCommunicator)) {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
 
     return CollectivePermuteThunk::Create(
         Thunk::Info(),
@@ -392,7 +395,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateCopyThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
 
     return CopyThunk::Create(
         Thunk::Info(),
@@ -410,13 +413,13 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     std::vector<ThunkSequence> branch_sequences;
     for (int i = 0; i < 2; ++i) {
       ThunkSequence called_sequence;
-      ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllGatherThunk());
-      ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllReduceThunk());
-      ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllToAllThunk());
+      ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllGatherThunk());
+      ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllReduceThunk());
+      ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllToAllThunk());
       branch_sequences.push_back(std::move(called_sequence));
     }
 
-    RETURN_IF_ERROR(AddPredBufferAllocation());
+    ABSL_RETURN_IF_ERROR(AddPredBufferAllocation());
 
     return ConditionalThunk::Create(
         Thunk::Info(),
@@ -427,8 +430,8 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateCustomCallThunk() {
-    RETURN_IF_ERROR(AddPredBufferAllocation());
-    RETURN_IF_ERROR(AddBufferAllocations(1));
+    ABSL_RETURN_IF_ERROR(AddPredBufferAllocation());
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(1));
 
     return CustomCallThunk::Create(
         Thunk::Info(), "no_op",
@@ -442,13 +445,13 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
                 buffer_allocations_[buffer_allocations_.size() - 1])},
             /*results_shapes=*/
             {literals_[buffer_allocations_.size() - 1].shape()},
-            /*is_tuple_result=*/false,
+            /*is_tuple_result=*/true,
         },
         /*backend_config=*/"", CustomCallApiVersion::API_VERSION_TYPED_FFI);
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateDotThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(3));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(3));
     DotDimensionNumbers dot_dimensions;
     dot_dimensions.add_lhs_contracting_dimensions(1);
     dot_dimensions.add_rhs_contracting_dimensions(0);
@@ -470,7 +473,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateFftThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
 
     return FftThunk::Create(
         Thunk::Info(),
@@ -487,7 +490,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateInfeedThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
 
     return InfeedThunk::Create(
         Thunk::Info(),
@@ -506,7 +509,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateOutfeedThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
 
     return OutfeedThunk::Create(
         Thunk::Info(),
@@ -525,7 +528,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreatePartitionIdThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(1));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(1));
     return PartitionIdThunk::Create(
         Thunk::Info(),
         /*logical_id_buffer=*/
@@ -534,7 +537,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateReplicaIdThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(1));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(1));
     return ReplicaIdThunk::Create(
         Thunk::Info(),
         /*logical_id_buffer=*/
@@ -543,7 +546,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateRngGetAndUpdateStateThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(1));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(1));
     return RngGetAndUpdateStateThunk::Create(
         Thunk::Info(),
         /*state_buffer=*/
@@ -553,7 +556,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateTopKThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(3));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(3));
     return TopKThunk::Create(
         Thunk::Info(),
         /*values=*/
@@ -574,13 +577,13 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   absl::StatusOr<std::unique_ptr<Thunk>> CreateWhileThunk(
       std::optional<int64_t> trip_count = std::nullopt) {
     ThunkSequence cond_sequence;
-    ASSIGN_OR_RETURN(cond_sequence.emplace_back(), CreateAllGatherThunk());
+    ABSL_ASSIGN_OR_RETURN(cond_sequence.emplace_back(), CreateAllGatherThunk());
     ThunkSequence body_sequence;
-    ASSIGN_OR_RETURN(body_sequence.emplace_back(), CreateAllGatherThunk());
-    ASSIGN_OR_RETURN(body_sequence.emplace_back(), CreateAllReduceThunk());
-    ASSIGN_OR_RETURN(body_sequence.emplace_back(), CreateAllToAllThunk());
+    ABSL_ASSIGN_OR_RETURN(body_sequence.emplace_back(), CreateAllGatherThunk());
+    ABSL_ASSIGN_OR_RETURN(body_sequence.emplace_back(), CreateAllReduceThunk());
+    ABSL_ASSIGN_OR_RETURN(body_sequence.emplace_back(), CreateAllToAllThunk());
 
-    RETURN_IF_ERROR(AddPredBufferAllocation());
+    ABSL_RETURN_IF_ERROR(AddPredBufferAllocation());
     return WhileThunk::Create(
         Thunk::Info(),
         /*cond_buffer=*/
@@ -592,7 +595,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateKernelThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
     Shape shape = ShapeUtil::MakeShape(F32, {2, 4});
     return KernelThunk::Create(
         Thunk::Info(),
@@ -630,11 +633,11 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     literals_.push_back(
         LiteralUtil::CreateFull<float>(output_dims, 0.0));  // output
 
-    RETURN_IF_ERROR(buffer_allocations_.push_back(CreateBufferAllocation(
+    ABSL_RETURN_IF_ERROR(buffer_allocations_.push_back(CreateBufferAllocation(
         buffer_allocations_.size(), literals_[literals_.size() - 3])));
-    RETURN_IF_ERROR(buffer_allocations_.push_back(CreateBufferAllocation(
+    ABSL_RETURN_IF_ERROR(buffer_allocations_.push_back(CreateBufferAllocation(
         buffer_allocations_.size(), literals_[literals_.size() - 2])));
-    RETURN_IF_ERROR(buffer_allocations_.push_back(CreateBufferAllocation(
+    ABSL_RETURN_IF_ERROR(buffer_allocations_.push_back(CreateBufferAllocation(
         buffer_allocations_.size(), literals_[literals_.size() - 1])));
 
     ConvolutionThunk::Options options;
@@ -654,7 +657,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateSortThunk() {
-    RETURN_IF_ERROR(AddBufferAllocations(2));
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
     return SortThunk::Create(
         Thunk::Info(),
         /*inputs=*/
@@ -672,6 +675,14 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         /*is_stable=*/false,
         /*comparator_name=*/"test",
         /*direction=*/SortThunk::SortDirection::kAscending);
+  }
+
+  absl::StatusOr<std::unique_ptr<Thunk>> CreateRngSeedThunk() {
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(1));
+    return RngSeedThunk::Create(
+        Thunk::Info(),
+        CreateBufferAllocationSlice(
+            buffer_allocations_[buffer_allocations_.size() - 1]));
   }
 
   bool VerifySliceEquality(const BufferAllocation::Slice& slice_1,
@@ -865,6 +876,10 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
                       [](const Shape& shape_1, const Shape& shape_2) {
                         return ShapeUtil::Equal(shape_1, shape_2);
                       });
+
+    are_op_buffers_equal &= (thunk_1.op_buffers().is_tuple_result ==
+                             thunk_2.op_buffers().is_tuple_result);
+
     return thunk_1.target_name() == thunk_2.target_name() &&
            thunk_1.api_version() == thunk_2.api_version() &&
            thunk_1.backend_config() == thunk_2.backend_config() &&
@@ -974,6 +989,11 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     return VerifySliceEquality(thunk_1.state_buffer(),
                                thunk_2.state_buffer()) &&
            thunk_1.delta() == thunk_2.delta();
+  }
+
+  bool VerifyRngSeedThunkEquality(const RngSeedThunk& thunk_1,
+                                  const RngSeedThunk& thunk_2) {
+    return VerifySliceEquality(thunk_1.dest_buffer(), thunk_2.dest_buffer());
   }
 
   bool VerifySortThunkEquality(const SortThunk& thunk_1,
@@ -1095,15 +1115,16 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
            VerifySliceShapeEquality(thunk_1.convolution_slices().input_buffer,
                                     thunk_1.convolution_slices().input_shape,
                                     thunk_2.convolution_slices().input_buffer,
-                                    thunk_2.convolution_slices().input_shape);
-    VerifySliceShapeEquality(thunk_1.convolution_slices().kernel_buffer,
-                             thunk_1.convolution_slices().kernel_shape,
-                             thunk_2.convolution_slices().kernel_buffer,
-                             thunk_2.convolution_slices().kernel_shape);
-    VerifySliceShapeEquality(thunk_1.convolution_slices().output_buffer,
-                             thunk_1.convolution_slices().output_shape,
-                             thunk_2.convolution_slices().output_buffer,
-                             thunk_2.convolution_slices().output_shape);
+                                    thunk_2.convolution_slices().input_shape) &&
+           VerifySliceShapeEquality(
+               thunk_1.convolution_slices().kernel_buffer,
+               thunk_1.convolution_slices().kernel_shape,
+               thunk_2.convolution_slices().kernel_buffer,
+               thunk_2.convolution_slices().kernel_shape) &&
+           VerifySliceShapeEquality(thunk_1.convolution_slices().output_buffer,
+                                    thunk_1.convolution_slices().output_shape,
+                                    thunk_2.convolution_slices().output_buffer,
+                                    thunk_2.convolution_slices().output_shape);
   }
 
   bool VerifyReduceScatterThunkEquality(const ReduceScatterThunk& thunk_1,
@@ -1211,6 +1232,10 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         return VerifyRngGetAndUpdateStateThunkEquality(
             absl::down_cast<const RngGetAndUpdateStateThunk&>(thunk_1),
             absl::down_cast<const RngGetAndUpdateStateThunk&>(thunk_2));
+      case Thunk::Kind::kRngSeed:
+        return VerifyRngSeedThunkEquality(
+            absl::down_cast<const RngSeedThunk&>(thunk_1),
+            absl::down_cast<const RngSeedThunk&>(thunk_2));
       case Thunk::Kind::kSort:
         return VerifySortThunkEquality(
             absl::down_cast<const SortThunk&>(thunk_1),

@@ -154,6 +154,13 @@ class PluggableDevice::StreamGroupFactory {
     return group;
   }
 
+  // Helper method for unit tests to reset the streams. Never use in production.
+  void TestOnlyReset() {
+    mutex_lock guard(lock_);
+    streams_.clear();
+    allocated_streams_.clear();
+  }
+
   // Returns a reference to the StreamGroupFactory singleton. Note that this is
   // never destroyed, so the objects it owns are never deleted.
   static StreamGroupFactory& Global() {
@@ -198,6 +205,10 @@ PluggableDevice::PluggableDevice(
 PluggableDevice::~PluggableDevice() {
   delete pluggable_device_info_;
   device_context_->Unref();
+}
+
+void PluggableDevice::TestOnlyReset() {
+  StreamGroupFactory::Global().TestOnlyReset();
 }
 
 absl::Status PluggableDevice::Init(const SessionOptions& options,
@@ -340,10 +351,10 @@ void PluggableDevice::Compute(OpKernel* op_kernel, OpKernelContext* context) {
   }
 }
 
-// Based on the semantics of Device::Sync, this call should wait for
-// all streams not just the current one.
 absl::Status PluggableDevice::Sync() {
-  return PluggableDeviceUtil::SyncAll(this);
+  // PluggabeDevice tracks completion of h2d, d2h, and d2d streams using the
+  // done callbacks. This call syncs the compute stream only.
+  return PluggableDeviceUtil::Sync(this);
 }
 
 void PluggableDevice::ComputeAsync(AsyncOpKernel* op_kernel,

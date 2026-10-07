@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/spmd/shardy/sdy_round_trip/dedup_meshes.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <iterator>
 #include <memory>  // IWYU pragma: keep
@@ -28,6 +29,7 @@ limitations under the License.
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/LogicalResult.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -51,9 +53,12 @@ namespace {
 using ::llvm::DenseMapInfo;
 using ::llvm::SmallDenseMap;
 using ::mlir::ArrayRef;
+using ::mlir::Attribute;
 using ::mlir::DenseMap;
 using ::mlir::DenseSet;
+using ::mlir::MLIRContext;
 using ::mlir::ModuleOp;
+using ::mlir::Operation;
 using ::mlir::SmallVector;
 using ::mlir::StringAttr;
 using ::mlir::StringRef;
@@ -97,15 +102,6 @@ struct MeshDeviceIdentifier {
 };
 
 struct MeshDeviceIdentifierInfo : public DenseMapInfo<MeshDeviceIdentifier> {
-  static inline MeshDeviceIdentifier getEmptyKey() {
-    return {TotalDeviceCountMapInfo::getEmptyKey(),
-            DeviceIdsMapInfo::getEmptyKey()};
-  }
-
-  static inline MeshDeviceIdentifier getTombstoneKey() {
-    return {TotalDeviceCountMapInfo::getTombstoneKey(),
-            DeviceIdsMapInfo::getTombstoneKey()};
-  }
   static unsigned getHashValue(const MeshDeviceIdentifier& inputs) {
     return llvm::hash_combine(
         TotalDeviceCountMapInfo::getHashValue(inputs.totalDeviceCount),
@@ -304,103 +300,6 @@ MeshToAxisMap buildDuplicateMeshesToAxisMap(ModuleOp moduleOp) {
   return duplicateMeshesToAxisMap;
 }
 
-// Recursively rewrites mesh symbol references inside custom StableHLO
-// attributes (like ReplicaGroupMeshAxesAttr) to point to the main deduplicated
-// mesh.
-//
-// Since custom attributes don't implement MLIR's `SymbolUserAttrInterface`,
-// generic symbol renaming utilities skip them. This leaves dangling references
-// to deleted duplicate meshes, which crashes the HLO verifier and breaks the
-// core StablehloCompatibilityExpander pass when trying to resolve named meshes
-// to downgrade RGV3 to a List of Lists for older StableHLO versions (e.g.,
-// v<1.16.0).
-mlir::Attribute updateAttribute(mlir::Attribute attr,
-                                const MeshToAxisMap& duplicateMeshesToAxisMap) {
-  if (!attr) return attr;
-
-  // Handle core ReplicaGroupMeshAxesAttr symbol references.
-  if (auto rgv3 =
-          mlir::dyn_cast<mlir::stablehlo::ReplicaGroupMeshAxesAttr>(attr)) {
-    if (auto symbolRef =
-            mlir::dyn_cast<mlir::FlatSymbolRefAttr>(rgv3.getMesh())) {
-      auto it = duplicateMeshesToAxisMap.find(symbolRef.getValue());
-      if (it != duplicateMeshesToAxisMap.end()) {
-        mlir::StringRef mainMeshName = it->getSecond().first;
-        auto newSymbolRef =
-            mlir::FlatSymbolRefAttr::get(attr.getContext(), mainMeshName);
-        return mlir::stablehlo::ReplicaGroupMeshAxesAttr::get(
-            attr.getContext(), newSymbolRef, rgv3.getAxes());
-      }
-    }
-    return rgv3;
-  }
-
-  // Reconstruct ArrayAttr containers bottom-up if any nested attribute changes
-  // (e.g., inside an array of replica groups).
-  if (auto arrayAttr = mlir::dyn_cast<mlir::ArrayAttr>(attr)) {
-    mlir::SmallVector<mlir::Attribute> newAttrs;
-    bool changed = false;
-    for (mlir::Attribute subAttr : arrayAttr.getValue()) {
-      mlir::Attribute newSubAttr =
-          updateAttribute(subAttr, duplicateMeshesToAxisMap);
-      newAttrs.push_back(newSubAttr);
-      if (newSubAttr != subAttr) {
-        changed = true;
-      }
-    }
-    // Reconstruct the array container only if elements changed.
-    if (changed) {
-      return mlir::ArrayAttr::get(attr.getContext(), newAttrs);
-    }
-    return arrayAttr;
-  }
-
-  // Reconstruct DictionaryAttr containers bottom-up if any nested attribute
-  // changes (e.g., the operation's top-level attribute dictionary).
-  if (auto dictAttr = mlir::dyn_cast<mlir::DictionaryAttr>(attr)) {
-    mlir::SmallVector<mlir::NamedAttribute> newNamedAttrs;
-    bool changed = false;
-    for (mlir::NamedAttribute namedAttr : dictAttr.getValue()) {
-      mlir::Attribute newSubAttr =
-          updateAttribute(namedAttr.getValue(), duplicateMeshesToAxisMap);
-      newNamedAttrs.push_back(
-          mlir::NamedAttribute(namedAttr.getName(), newSubAttr));
-      if (newSubAttr != namedAttr.getValue()) {
-        changed = true;
-      }
-    }
-    // Reconstruct the dictionary container only if elements changed.
-    if (changed) {
-      return mlir::DictionaryAttr::get(attr.getContext(), newNamedAttrs);
-    }
-    return dictAttr;
-  }
-
-  return attr;
-}
-
-// Walks all operations in the module to find and update any custom StableHLO
-// replica group attributes referencing duplicate mesh symbols that are being
-// deleted.
-void dedupStablehloReplicaGroups(
-    ModuleOp moduleOp, const MeshToAxisMap& duplicateMeshesToAxisMap) {
-  moduleOp->walk([&](mlir::Operation* op) {
-    mlir::SmallVector<mlir::NamedAttribute> newAttrs;
-    bool changed = false;
-    for (mlir::NamedAttribute namedAttr : op->getAttrs()) {
-      mlir::Attribute newAttr =
-          updateAttribute(namedAttr.getValue(), duplicateMeshesToAxisMap);
-      newAttrs.push_back(mlir::NamedAttribute(namedAttr.getName(), newAttr));
-      if (newAttr != namedAttr.getValue()) {
-        changed = true;
-      }
-    }
-    if (changed) {
-      op->setAttrs(newAttrs);
-    }
-  });
-}
-
 // Replaces `oldSharding`, if it refers to some mesh that isn't the main
 // mesh saved in the pair of `MeshToAxisMap`, with the main mesh.
 TensorShardingAttr replaceAxesInSharding(
@@ -501,6 +400,67 @@ void replaceManualAxes(sdy::ManualComputationOp manualComputation,
       sdy::ManualAxesAttr::get(manualComputation.getContext(), newManualAxes));
 }
 
+Attribute rewriteReplicaGroupsAttr(
+    Attribute attr, MLIRContext* context,
+    const MeshToAxisMap& duplicateMeshesToAxisMap) {
+  auto rgv3 = mlir::dyn_cast<mlir::stablehlo::ReplicaGroupMeshAxesAttr>(attr);
+  if (!rgv3) {
+    return attr;
+  }
+  mlir::Attribute meshAttr = rgv3.getMesh();
+  StringRef oldMeshName;
+  if (auto symbolRef = mlir::dyn_cast<mlir::FlatSymbolRefAttr>(meshAttr)) {
+    oldMeshName = symbolRef.getValue();
+  } else if (auto stringAttr = mlir::dyn_cast<mlir::StringAttr>(meshAttr)) {
+    oldMeshName = stringAttr.getValue();
+  }
+  if (oldMeshName.empty()) {
+    return attr;
+  }
+  auto meshNameAndAxisMap = duplicateMeshesToAxisMap.find(oldMeshName);
+  if (meshNameAndAxisMap == duplicateMeshesToAxisMap.end()) {
+    return attr;
+  }
+  auto [mainMeshName, axisMap] = meshNameAndAxisMap->getSecond();
+
+  SmallVector<mlir::Attribute> newAxes;
+  for (mlir::Attribute axis : rgv3.getAxes()) {
+    auto axisRef = mlir::cast<mlir::stablehlo::AxisRefAttr>(axis);
+    StringRef axisName = axisRef.getName();
+    auto it = axisMap.find(axisName);
+    if (it == axisMap.end()) {
+      continue;
+    }
+    for (AxisRefAttr mainAxisRef : it->second) {
+      mlir::stablehlo::SubAxisInfoAttr subAxisInfo = nullptr;
+      if (auto sdySubAxisInfo = mainAxisRef.getSubAxisInfo()) {
+        subAxisInfo = mlir::stablehlo::SubAxisInfoAttr::get(
+            context, sdySubAxisInfo.getPreSize(), sdySubAxisInfo.getSize());
+      }
+      newAxes.push_back(mlir::stablehlo::AxisRefAttr::get(
+          context, mainAxisRef.getName(), subAxisInfo));
+    }
+  }
+
+  return mlir::stablehlo::ReplicaGroupMeshAxesAttr::get(
+      context, mlir::FlatSymbolRefAttr::get(context, mainMeshName),
+      mlir::ArrayAttr::get(context, newAxes));
+}
+
+void replaceReplicaGroups(ModuleOp moduleOp,
+                          const MeshToAxisMap& duplicateMeshesToAxisMap) {
+  MLIRContext* context = moduleOp.getContext();
+  moduleOp.walk([&](Operation* op) {
+    if (auto attr = op->getAttr("replica_groups")) {
+      Attribute newAttr =
+          rewriteReplicaGroupsAttr(attr, context, duplicateMeshesToAxisMap);
+      if (newAttr != attr) {
+        op->setAttr("replica_groups", newAttr);
+      }
+    }
+  });
+}
+
 // Maintains the following meshes and remove all the other meshes.
 // 1. For each unique combination of total size and device id order, keep one
 //    main mesh.
@@ -523,7 +483,15 @@ void dedupMeshes(ModuleOp moduleOp, const SymbolTable& symbolTable,
                             duplicateMeshesToAxisMap);
         }
       });
-  dedupStablehloReplicaGroups(moduleOp, duplicateMeshesToAxisMap);
+  replaceReplicaGroups(moduleOp, duplicateMeshesToAxisMap);
+  for (const auto& [targetMesh, mainMeshAndMap] : duplicateMeshesToAxisMap) {
+    StringRef mainMeshName = mainMeshAndMap.first;
+    if (failed(SymbolTable::replaceAllSymbolUses(
+            symbolTable.lookup(targetMesh),
+            StringAttr::get(moduleOp.getContext(), mainMeshName), moduleOp))) {
+      assert(false && "failed to rename mesh symbol in replica_groups");
+    }
+  }
 }
 
 void eraseMeshes(SymbolTable& symbolTable,

@@ -25,11 +25,19 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest-spi.h>
+#include "absl/base/nullability.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/status/status_macros.h"
+#include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/array2d.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -38,14 +46,17 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/shape_util.h"
-#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
-#include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/hlo_interpreter_reference_mixin.h"
+#include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
+#include "xla/tools/hlo_dump/hlo_dump_utils.h"
+#include "xla/tools/hlo_isolation/hlo_isolation.pb.h"
 #include "xla/tools/hlo_isolation/hlo_isolation_api.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "tsl/platform/path.h"
 
@@ -54,8 +65,8 @@ namespace hlo_isolation {
 namespace {
 
 class HloIsolationTest
-    : public HloIsolationTestMixin<
-          HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>> {};
+    : public HloIsolationTestMixin<HloInterpreterReferenceMixin<HloTestBase>> {
+};
 
 TEST_F(HloIsolationTest, RunSimpleModule) {
   const char* hlo_text = R"(
@@ -68,8 +79,8 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   RunAndVerifyIsolationTest(*module);
 }
 
@@ -86,8 +97,8 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   RunAndVerifyIsolationTest(*module);
 }
 
@@ -110,9 +121,9 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(
       std::vector<NumericMismatch> mismatches,
       ExtractAndEnrichTopMismatches(error_message, module.get()));
   ASSERT_FALSE(mismatches.empty());
@@ -301,10 +312,10 @@ ENTRY %multiply_reduce_fusion.94 (parameter.0: f32[14,40,100,128], parameter.1: 
 }
 )hlo";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<bool> output_is_reduce,
-                          DetectReducesInModuleOutput(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::vector<bool> output_is_reduce,
+                       DetectReducesInModuleOutput(module.get()));
 
   EXPECT_EQ(output_is_reduce.size(), 5);
   EXPECT_EQ(output_is_reduce[0], true);
@@ -348,8 +359,8 @@ Absolute error breakdown of elements exceeding rel error bound:
   >= 1      : 35637554 (95.3762%)
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(NumericMismatch mismatch,
-                          ExtractTopRelativeErrorMismatch(error_message));
+  ASSERT_OK_AND_ASSIGN(NumericMismatch mismatch,
+                       ExtractTopRelativeErrorMismatch(error_message));
   EXPECT_EQ(mismatch.actual(), 0.06885);
   EXPECT_EQ(mismatch.expected(), 0);
   EXPECT_EQ(mismatch.rel_error(), std::numeric_limits<double>::infinity());
@@ -397,9 +408,9 @@ Elements exceeding abs error bound 0.01: 100 (50.5%)
 Elements exceeding rel error bound 0.1: 50 (25.2%)
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<NumericMismatch> mismatches,
-                          ExtractTopMismatches(error_message,
-                                               /*is_tuple=*/true));
+  ASSERT_OK_AND_ASSIGN(std::vector<NumericMismatch> mismatches,
+                       ExtractTopMismatches(error_message,
+                                            /*is_tuple=*/true));
   EXPECT_EQ(mismatches.size(), 2);
   EXPECT_EQ(mismatches[0].output_shape_index(), 0);
 
@@ -451,9 +462,9 @@ Absolute error breakdown of elements exceeding rel error bound:
   >= 1      :     356 (100.0000%)
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<NumericMismatch> mismatches,
-                          ExtractTopMismatches(error_message,
-                                               /*is_tuple=*/false));
+  ASSERT_OK_AND_ASSIGN(std::vector<NumericMismatch> mismatches,
+                       ExtractTopMismatches(error_message,
+                                            /*is_tuple=*/false));
   EXPECT_EQ(mismatches.size(), 1);
   EXPECT_EQ(mismatches[0].output_shape_index(), 0);
 
@@ -487,8 +498,8 @@ TEST_F(HloIsolationTest, TestLiteralContainsInfOrNan) {
 }
 
 TEST_F(HloIsolationTest, MakeFakeArgumentsForDynamicSliceKnownBits) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnUnverifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(R"(
 HloModule test_module
 
 ENTRY %main (param_1: s8[262144,2048], param_2: s32[]) -> s8[131072,2048] {
@@ -499,23 +510,17 @@ ENTRY %main (param_1: s8[262144,2048], param_2: s32[]) -> s8[131072,2048] {
 }
 )"));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> args,
-      MakeFakeArguments(module.get(),
-                        /*pseudo_random=*/true,
-                        /*use_large_range=*/false,
-                        /*treat_gte_as_data_formatting=*/false,
-                        /*max_bits_of_precision=*/std::nullopt,
-                        /*engine=*/nullptr,
-                        /*generate_aligned_ds_indices=*/false,
-                        [](const HloInstruction* use,
-                           int64_t sliced_dim) -> std::optional<uint64_t> {
-                          if (use->opcode() == HloOpcode::kDynamicSlice &&
-                              sliced_dim == 0) {
-                            return 131071;
-                          }
-                          return std::nullopt;
-                        }));
+  FakeArgumentsOptions options;
+  options.get_index_known_zeroes =
+      [](const HloInstruction* use,
+         int64_t sliced_dim) -> std::optional<uint64_t> {
+    if (use->opcode() == HloOpcode::kDynamicSlice && sliced_dim == 0) {
+      return 131071;
+    }
+    return std::nullopt;
+  };
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> args,
+                       MakeFakeArguments(module.get(), options));
   ASSERT_EQ(args.size(), 2);
 
   int32_t index = args[1].Get<int32_t>({});
@@ -524,8 +529,8 @@ ENTRY %main (param_1: s8[262144,2048], param_2: s32[]) -> s8[131072,2048] {
 }
 
 TEST_F(HloIsolationTest, MakeFakeArgumentsForDynamicUpdateSliceKnownBits) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnUnverifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(R"(
 HloModule test_module
 
 ENTRY %main (param_1: s8[262144,2048], param_2: s8[131072,2048], param_3: s32[]) -> s8[262144,2048] {
@@ -537,23 +542,17 @@ ENTRY %main (param_1: s8[262144,2048], param_2: s8[131072,2048], param_3: s32[])
 }
 )"));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> args,
-      MakeFakeArguments(module.get(),
-                        /*pseudo_random=*/true,
-                        /*use_large_range=*/false,
-                        /*treat_gte_as_data_formatting=*/false,
-                        /*max_bits_of_precision=*/std::nullopt,
-                        /*engine=*/nullptr,
-                        /*generate_aligned_ds_indices=*/false,
-                        [](const HloInstruction* use,
-                           int64_t sliced_dim) -> std::optional<uint64_t> {
-                          if (use->opcode() == HloOpcode::kDynamicUpdateSlice &&
-                              sliced_dim == 0) {
-                            return 131071;
-                          }
-                          return std::nullopt;
-                        }));
+  FakeArgumentsOptions options_dus;
+  options_dus.get_index_known_zeroes =
+      [](const HloInstruction* use,
+         int64_t sliced_dim) -> std::optional<uint64_t> {
+    if (use->opcode() == HloOpcode::kDynamicUpdateSlice && sliced_dim == 0) {
+      return 131071;
+    }
+    return std::nullopt;
+  };
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> args,
+                       MakeFakeArguments(module.get(), options_dus));
   ASSERT_EQ(args.size(), 3);
 
   int32_t index = args[2].Get<int32_t>({});
@@ -576,10 +575,120 @@ ENTRY %main (param.0: f32[100000000]) -> f32[100000000] {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   RunAndVerifyIsolationTest(*module);
 }
+
+class DelegatingRunner : public HloRunnerInterface {
+ public:
+  explicit DelegatingRunner(HloRunnerInterface* delegate)
+      : delegate_(delegate) {}
+  HloRunnerInterface* delegate_;
+  bool last_run_hlo_passes_ = false;
+  int last_hlo_output_callbacks_size_ = -1;
+
+  absl::StatusOr<std::unique_ptr<OpaqueExecutable>> CreateExecutable(
+      std::unique_ptr<HloModule> module, bool run_hlo_passes) override {
+    last_run_hlo_passes_ = run_hlo_passes;
+    return delegate_->CreateExecutable(std::move(module), run_hlo_passes);
+  }
+
+  absl::StatusOr<std::unique_ptr<OpaqueExecutable>> DeserializeExecutable(
+      absl::string_view serialized) const override {
+    return delegate_->DeserializeExecutable(serialized);
+  }
+
+  absl::StatusOr<Literal> Execute(std::unique_ptr<HloModule> module,
+                                  absl::Span<const Literal* const> arguments,
+                                  bool run_hlo_passes) override {
+    return delegate_->Execute(std::move(module), arguments, run_hlo_passes);
+  }
+
+  absl::StatusOr<Literal> ExecuteWithBufferAssignment(
+      std::unique_ptr<HloModule> module,
+      const BufferAssignmentProto* buffer_assignment_proto,
+      absl::Span<const Literal* const> arguments,
+      bool run_hlo_passes) override {
+    return delegate_->ExecuteWithBufferAssignment(
+        std::move(module), buffer_assignment_proto, arguments, run_hlo_passes);
+  }
+
+  absl::StatusOr<std::vector<absl::StatusOr<Literal>>> ExecuteWithExecutable(
+      OpaqueExecutable* executable, absl::Span<const Literal* const> arguments,
+      int64_t num_repeats) override {
+    return delegate_->ExecuteWithExecutable(executable, arguments, num_repeats);
+  }
+
+  absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
+      std::unique_ptr<HloModule> module,
+      const ReplicatedExecuteOptions& options) override {
+    return delegate_->ExecuteReplicated(std::move(module), options);
+  }
+
+  absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
+      std::unique_ptr<HloModule> module,
+      const ReplicatedExecuteOptions& options,
+      DeviceAssignment* device_assignment) override {
+    return delegate_->ExecuteReplicated(std::move(module), options,
+                                        device_assignment);
+  }
+
+  absl::StatusOr<std::vector<Literal>> ExecuteReplicatedWithExecutable(
+      OpaqueExecutable* executable,
+      const ReplicatedExecuteOptions& options) override {
+    last_hlo_output_callbacks_size_ = options.hlo_output_callbacks.size();
+    for (const auto& cb : options.hlo_output_callbacks) {
+      EXPECT_EQ(cb.num_operands, 1);
+    }
+    return delegate_->ExecuteReplicatedWithExecutable(executable, options);
+  }
+
+  absl::StatusOr<std::vector<Literal>> ExecuteReplicatedWithExecutable(
+      OpaqueExecutable* executable, const ReplicatedExecuteOptions& options,
+      DeviceAssignment* device_assignment) override {
+    last_hlo_output_callbacks_size_ = options.hlo_output_callbacks.size();
+    for (const auto& cb : options.hlo_output_callbacks) {
+      EXPECT_EQ(cb.num_operands, 1);
+    }
+    return delegate_->ExecuteReplicatedWithExecutable(executable, options,
+                                                      device_assignment);
+  }
+
+  absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
+      absl::AnyInvocable<OpaqueExecutable*(int64_t)> executable_provider,
+      absl::AnyInvocable<int64_t(int64_t)> argument_count_provider,
+      absl::AnyInvocable<const Literal*(int64_t, int64_t)> argument_provider,
+      const ReplicatedExecuteOptions& options,
+      DeviceAssignment* device_assignment) override {
+    return delegate_->ExecuteReplicated(
+        std::move(executable_provider), std::move(argument_count_provider),
+        std::move(argument_provider), options, device_assignment);
+  }
+
+  absl::string_view Name() const override { return delegate_->Name(); }
+
+  int device_count() const override { return delegate_->device_count(); }
+
+  bool HasProperty(HloRunnerPropertyTag::Type tag) const override {
+    return delegate_->HasProperty(tag);
+  }
+
+  absl::StatusOr<const HloModule* absl_nonnull> HloModuleFromWrapped(
+      const OpaqueExecutable* wrapped) const override {
+    return delegate_->HloModuleFromWrapped(wrapped);
+  }
+
+  bool ExecutablesAreEquivalent(const OpaqueExecutable* lhs,
+                                const OpaqueExecutable* rhs) const override {
+    return delegate_->ExecutablesAreEquivalent(lhs, rhs);
+  }
+
+  absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
+      int num_replicas, int num_partitions) const override {
+    return delegate_->GetDefaultDeviceAssignment(num_replicas, num_partitions);
+  }
+};
 
 TEST_F(HloIsolationTest, TestDumpMiscompareFiles) {
   const absl::string_view hlo_string = R"hlo(
@@ -603,16 +712,32 @@ ENTRY main.1 {
   ROOT add_abs_fusion = f32[3,6]{1,0:T(4,128)} fusion(sine_abs_fusion), kind=kLoop, calls=fused_computation, metadata={op_name="jit(f)/abs" stack_frame_id=14}
 }
 )hlo";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+
+  const char* env_p = std::getenv("TEST_UNDECLARED_OUTPUTS_DIR");
+  const std::string outputs_dir = env_p ? env_p : ::testing::TempDir();
+
+  // Proactively clean up any stale matching files from previous runs to
+  // prevent false positives.
+  std::vector<std::string> stale_paths;
+  tsl::Env* env = tsl::Env::Default();
+  if (env->GetMatchingPaths(tsl::io::JoinPath(outputs_dir, "*sine_abs_fusion*"),
+                            &stale_paths)
+          .ok()) {
+    for (const std::string& path : stale_paths) {
+      (void)env->DeleteFile(path);
+    }
+  }
 
   PipelineIsolationOptions options;
   options.module_options.run_module_fn =
       [](std::unique_ptr<HloModule> m, HloRunnerInterface* runner,
-         absl::Span<const Literal> input_data) -> absl::StatusOr<Literal> {
+         absl::Span<const Literal> input_data,
+         const RunModuleOptions& run_opts) -> absl::StatusOr<Literal> {
     const bool should_inject = (m->name() == "sine_abs_fusion");
-    TF_ASSIGN_OR_RETURN(Literal output,
-                        RunModule(std::move(m), runner, input_data));
+    ABSL_ASSIGN_OR_RETURN(Literal output,
+                     RunModule(std::move(m), runner, input_data, run_opts));
     if (should_inject) {
       // Flip an exponent bit in the first element to guarantee a mismatch.
       // Using untyped_data handles all primitive types without crashing.
@@ -623,21 +748,39 @@ ENTRY main.1 {
     return output;
   };
 
+  DelegatingRunner test_runner(&this->test_runner());
+  DelegatingRunner reference_runner(&this->reference_runner());
+
+  // Directly run the pipeline while intercepting testing failures.
+  std::vector<HloIsolationTestResult> pipeline_results;
   ::testing::TestPartResultArray failures;
   {
     ::testing::ScopedFakeTestPartResultReporter reporter(
         ::testing::ScopedFakeTestPartResultReporter::INTERCEPT_ALL_THREADS,
         &failures);
-    RunAndVerifyIsolationTest(*module, options);
+    ASSERT_OK_AND_ASSIGN(pipeline_results,
+                         RunIsolationPipeline(*module, &test_runner,
+                                              &reference_runner, options));
   }
-  // We expect 3 failures:
-  // 1. TPU_VS_DEFUSED_TPU
-  // 2. TPU_VS_INTERPRETER
-  // 3. HloIsolationTestBase expects result.state() == SUCCESS or SKIPPED.
-  EXPECT_EQ(failures.size(), 3);
+  // We expect 2 failures:
+  // 1. TPU_VS_DEFUSED_TPU mismatch.
+  // 2. TPU_VS_INTERPRETER mismatch.
+  EXPECT_EQ(failures.size(), 2);
+  EXPECT_GT(test_runner.last_hlo_output_callbacks_size_, 0);
 
-  const char* env_p = std::getenv("TEST_UNDECLARED_OUTPUTS_DIR");
-  const std::string outputs_dir = env_p ? env_p : ::testing::TempDir();
+  // Check the pipeline results contains our mismatch results.
+  bool found_sine_abs_fusion = false;
+  for (const auto& res : pipeline_results) {
+    if (res.module_name() == "sine_abs_fusion") {
+      found_sine_abs_fusion = true;
+      EXPECT_GE(res.numeric_checks_size(), 1);
+      for (const auto& check : res.numeric_checks()) {
+        EXPECT_GT(check.top_mismatches_size(), 0);
+        EXPECT_TRUE(check.has_top_mismatch());
+      }
+    }
+  }
+  EXPECT_TRUE(found_sine_abs_fusion);
 
   // Check that the failed module file is present.
   std::vector<std::string> module_matches;
@@ -648,6 +791,15 @@ ENTRY main.1 {
                       &module_matches)
                   .ok() &&
               !module_matches.empty());
+  // Check that the failed module HTML file is present.
+  std::vector<std::string> html_matches;
+  EXPECT_TRUE(tsl::Env::Default()
+                  ->GetMatchingPaths(
+                      tsl::io::JoinPath(outputs_dir,
+                                        "failed-module-sine_abs_fusion.html"),
+                      &html_matches)
+                  .ok() &&
+              !html_matches.empty());
   // Check that the actual, expected, and mismatches files are present.
   for (absl::string_view suffix : {"actual", "expected", "mismatches"}) {
     std::vector<std::string> matches;
@@ -660,6 +812,609 @@ ENTRY main.1 {
                     .ok() &&
                 !matches.empty());
   }
+}
+
+TEST_F(HloIsolationTest, TestInitIsolatorOptionsRunHloPasses) {
+  DelegatingRunner test_runner(&this->test_runner());
+  DelegatingRunner reference_runner(&this->reference_runner());
+  ModuleIsolationOptions options;
+  options.run_hlo_passes = true;
+  options.make_fake_arguments_fn =
+      [](const HloModule&) -> absl::StatusOr<std::vector<Literal>> {
+    std::vector<Literal> args;
+    args.push_back(LiteralUtil::CreateR0<float>(1.0f));
+    args.push_back(LiteralUtil::CreateR0<float>(2.0f));
+    return args;
+  };
+
+  const char* hlo_text = R"(
+HloModule SimpleModule
+
+ENTRY main {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT add = f32[] add(a, b)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  auto result_or = RunIsolationTestOnModule(*module, &test_runner,
+                                            &reference_runner, options);
+  EXPECT_TRUE(result_or.ok());
+  EXPECT_TRUE(test_runner.last_run_hlo_passes_);
+}
+
+TEST_F(
+    HloIsolationTest,
+    TestRunIsolationTestOnModule_FusionDebuggerRetryPassWithExpectedLiterals) {
+  DelegatingRunner test_runner(&this->test_runner());
+  DelegatingRunner reference_runner(&this->reference_runner());
+
+  const char* hlo_text = R"(
+HloModule TestModule
+
+ENTRY main {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  add = f32[] add(a, b)
+  ROOT mul = f32[] multiply(add, b)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  bool saw_reference_with_expected_literals = false;
+  bool saw_retry_with_expected_literals = false;
+
+  ModuleIsolationOptions options;
+  options.run_module_fn =
+      [&](std::unique_ptr<HloModule> m, HloRunnerInterface* r,
+          absl::Span<const Literal> input_data,
+          const RunModuleOptions& run_opts) -> absl::StatusOr<Literal> {
+    if (run_opts.use_fusion_debugger && run_opts.expected_literals != nullptr) {
+      if (run_opts.hlo_output_callbacks.empty()) {
+        saw_reference_with_expected_literals = true;
+      } else {
+        saw_retry_with_expected_literals = true;
+      }
+    }
+
+    std::string module_name = std::string(m->name());
+    ABSL_ASSIGN_OR_RETURN(Literal output,
+                     RunModule(std::move(m), r, input_data, run_opts));
+
+    // Inject mismatch on main test runner run to trigger stage 1 and stage 2
+    // failures
+    if (r == &test_runner && run_opts.hlo_output_callbacks.empty() &&
+        !absl::StrContains(module_name, "defused")) {
+      *static_cast<float*>(output.untyped_data()) += 100.0f;
+    }
+
+    return output;
+  };
+
+  std::vector<Literal> args;
+  args.push_back(LiteralUtil::CreateR0<float>(2.0f));
+  args.push_back(LiteralUtil::CreateR0<float>(3.0f));
+
+  ::testing::TestPartResultArray failures;
+  absl::StatusOr<HloIsolationTestResult> result_or;
+  {
+    ::testing::ScopedFakeTestPartResultReporter reporter(
+        ::testing::ScopedFakeTestPartResultReporter::INTERCEPT_ALL_THREADS,
+        &failures);
+    result_or = RunIsolationTestOnModule(*module, &test_runner,
+                                         &reference_runner, options, args);
+  }
+
+  ASSERT_OK(result_or.status());
+  EXPECT_EQ(result_or->state(), State::FAILURE);
+  EXPECT_EQ(result_or->reason(), "NUMERIC_MISMATCH");
+
+  EXPECT_TRUE(saw_reference_with_expected_literals);
+  EXPECT_TRUE(saw_retry_with_expected_literals);
+}
+
+TEST_F(HloIsolationTest, TestRunModuleUseFusionDebuggerOption) {
+  DelegatingRunner test_runner(&this->test_runner());
+
+  const char* hlo_text = R"(
+HloModule SimpleModule
+
+ENTRY main {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT add = f32[] add(a, b)
+}
+)";
+
+  // 1. When use_fusion_debugger is false, callbacks should be empty.
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text));
+    RunModuleOptions run_opts;
+    run_opts.use_fusion_debugger = false;
+    std::vector<Literal> args;
+    args.push_back(LiteralUtil::CreateR0<float>(1.0f));
+    args.push_back(LiteralUtil::CreateR0<float>(2.0f));
+    auto output_or = RunModule(std::move(module), &test_runner, args, run_opts);
+    ASSERT_TRUE(output_or.ok());
+    EXPECT_EQ(test_runner.last_hlo_output_callbacks_size_, 0);
+  }
+
+  // 2. When use_fusion_debugger is true, callbacks should be non-empty.
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text));
+    RunModuleOptions run_opts;
+    run_opts.use_fusion_debugger = true;
+    std::vector<Literal> args;
+    args.push_back(LiteralUtil::CreateR0<float>(1.0f));
+    args.push_back(LiteralUtil::CreateR0<float>(2.0f));
+    auto output_or = RunModule(std::move(module), &test_runner, args, run_opts);
+    ASSERT_TRUE(output_or.ok());
+    EXPECT_GT(test_runner.last_hlo_output_callbacks_size_, 0);
+  }
+}
+
+TEST_F(HloIsolationTest, TestDumpHloOutputCallbacks) {
+  const char* hlo_text = R"(
+HloModule TestModule
+
+ENTRY main {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  add = f32[] add(a, b)
+  ROOT mul = f32[] multiply(add, b)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  // 1. Normal execution with eval_literal_mutator
+  auto expected_literals = std::make_shared<ExpectedLiteralsMap>();
+  auto mutator = [](absl::string_view hlo_name, Literal* literal) {
+    if (hlo_name == "add") {
+      *static_cast<float*>(literal->untyped_data()) += 10.0f;
+    }
+  };
+
+  std::vector<HloOutputCallback> callbacks =
+      CreateDumpHloOutputCallbacks(module.get(), expected_literals, mutator);
+
+  for (const auto& cb : callbacks) {
+    Literal dummy = LiteralUtil::CreateR0<float>(5.0f);
+    std::vector<std::shared_ptr<const Literal>> lits = {
+        std::make_shared<Literal>(std::move(dummy))};
+    cb.callback(/*replica_id=*/0, /*partition_id=*/0, lits);
+  }
+
+  EXPECT_TRUE(expected_literals->contains("add"));
+  EXPECT_TRUE(expected_literals->contains("mul"));
+  EXPECT_FLOAT_EQ(expected_literals->at("add")->Get<float>({}), 15.0f);
+  EXPECT_FLOAT_EQ(expected_literals->at("mul")->Get<float>({}), 5.0f);
+
+  // 2. Edge cases: empty/null literals and null expected_literals map
+  expected_literals->clear();
+  std::vector<std::shared_ptr<const Literal>> empty_lits;
+  callbacks[0].callback(/*replica_id=*/0, /*partition_id=*/0, empty_lits);
+  std::vector<std::shared_ptr<const Literal>> null_lits = {nullptr};
+  callbacks[0].callback(/*replica_id=*/0, /*partition_id=*/0, null_lits);
+  EXPECT_TRUE(expected_literals->empty());
+
+  std::vector<HloOutputCallback> null_map_callbacks =
+      CreateDumpHloOutputCallbacks(module.get(), /*expected_literals=*/nullptr,
+                                   nullptr);
+  Literal valid_lit = LiteralUtil::CreateR0<float>(1.0f);
+  std::vector<std::shared_ptr<const Literal>> valid_lits = {
+      std::make_shared<Literal>(std::move(valid_lit))};
+  null_map_callbacks[0].callback(/*replica_id=*/0, /*partition_id=*/0,
+                                 valid_lits);
+}
+
+TEST_F(HloIsolationTest, TestComparisonHloOutputCallbacks) {
+  const char* hlo_text = R"(
+HloModule TestModule
+
+ENTRY main {
+  a = f32[2,2] parameter(0)
+  ROOT add = f32[2,2] add(a, a)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> ref_module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  absl::flat_hash_map<GroupKey, std::vector<std::string>> ref_groups;
+  for (const auto* computation : ref_module->computations()) {
+    for (const auto* instruction : computation->MakeInstructionPostOrder()) {
+      GroupKey key(instruction->opcode(), instruction->shape().ToString());
+      ref_groups[key].push_back(std::string(instruction->name()));
+    }
+  }
+
+  ModuleIsolationOptions options;
+  options.abs_error_bound = 1e-4;
+  options.rel_error_bound = 1e-4;
+  auto result_mutex = std::make_shared<absl::Mutex>();
+
+  // 1. Match & Eviction: matching literal removes expected literal and records
+  // no error
+  {
+    auto expected_literals = std::make_shared<ExpectedLiteralsMap>();
+    (*expected_literals)["add"] = std::make_shared<Literal>(
+        LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}));
+    HloIsolationTestResult test_result;
+
+    std::unique_ptr<HloModule> clone = module->Clone();
+    std::vector<HloOutputCallback> callbacks =
+        CreateComparisonHloOutputCallbacks(clone.get(), ref_groups,
+                                           expected_literals, *module, options,
+                                           result_mutex, &test_result);
+
+    for (const auto& cb : callbacks) {
+      Literal actual =
+          LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}});
+      std::vector<std::shared_ptr<const Literal>> lits = {
+          std::make_shared<Literal>(std::move(actual))};
+      cb.callback(/*replica_id=*/0, /*partition_id=*/0, lits);
+    }
+
+    EXPECT_FALSE(expected_literals->contains("add"));
+    EXPECT_EQ(test_result.numeric_checks_size(), 0);
+  }
+
+  // 2. Mismatch: differing literal records numeric check failure and evicts
+  {
+    auto expected_literals = std::make_shared<ExpectedLiteralsMap>();
+    (*expected_literals)["add"] = std::make_shared<Literal>(
+        LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}));
+    HloIsolationTestResult test_result;
+
+    std::unique_ptr<HloModule> clone = module->Clone();
+    std::vector<HloOutputCallback> callbacks =
+        CreateComparisonHloOutputCallbacks(clone.get(), ref_groups,
+                                           expected_literals, *module, options,
+                                           result_mutex, &test_result);
+
+    ::testing::TestPartResultArray failures;
+    {
+      ::testing::ScopedFakeTestPartResultReporter reporter(
+          ::testing::ScopedFakeTestPartResultReporter::INTERCEPT_ALL_THREADS,
+          &failures);
+      for (const auto& cb : callbacks) {
+        Literal mismatch =
+            LiteralUtil::CreateR2<float>({{100.0f, 2.0f}, {3.0f, 4.0f}});
+        std::vector<std::shared_ptr<const Literal>> lits = {
+            std::make_shared<Literal>(std::move(mismatch))};
+        cb.callback(/*replica_id=*/0, /*partition_id=*/0, lits);
+      }
+    }
+
+    EXPECT_FALSE(expected_literals->contains("add"));
+    EXPECT_GT(failures.size(), 0);
+    ASSERT_EQ(test_result.numeric_checks_size(), 1);
+    EXPECT_EQ(test_result.numeric_checks(0).name(), "FusionDebugger:add");
+    EXPECT_TRUE(test_result.numeric_checks(0).has_top_mismatch());
+  }
+
+  // 3. Incompatible Shape: logs warning and returns early without recording
+  // mismatch
+  {
+    auto expected_literals = std::make_shared<ExpectedLiteralsMap>();
+    (*expected_literals)["add"] = std::make_shared<Literal>(
+        LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f}));
+    HloIsolationTestResult test_result;
+
+    std::unique_ptr<HloModule> clone = module->Clone();
+    std::vector<HloOutputCallback> callbacks =
+        CreateComparisonHloOutputCallbacks(clone.get(), ref_groups,
+                                           expected_literals, *module, options,
+                                           result_mutex, &test_result);
+
+    for (const auto& cb : callbacks) {
+      Literal actual =
+          LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}});
+      std::vector<std::shared_ptr<const Literal>> lits = {
+          std::make_shared<Literal>(std::move(actual))};
+      cb.callback(/*replica_id=*/0, /*partition_id=*/0, lits);
+    }
+
+    EXPECT_EQ(test_result.numeric_checks_size(), 0);
+  }
+
+  // 4. Edge cases: missing key, null map, empty/null literals
+  {
+    HloIsolationTestResult test_result;
+    auto empty_expected_literals = std::make_shared<ExpectedLiteralsMap>();
+    std::unique_ptr<HloModule> clone = module->Clone();
+    std::vector<HloOutputCallback> callbacks =
+        CreateComparisonHloOutputCallbacks(clone.get(), ref_groups,
+                                           empty_expected_literals, *module,
+                                           options, result_mutex, &test_result);
+
+    for (const auto& cb : callbacks) {
+      Literal actual =
+          LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}});
+      std::vector<std::shared_ptr<const Literal>> lits = {
+          std::make_shared<Literal>(std::move(actual))};
+      cb.callback(/*replica_id=*/0, /*partition_id=*/0, lits);
+    }
+    EXPECT_EQ(test_result.numeric_checks_size(), 0);
+
+    // Null expected_literals map
+    std::unique_ptr<HloModule> clone_null = module->Clone();
+    std::vector<HloOutputCallback> callbacks_null =
+        CreateComparisonHloOutputCallbacks(clone_null.get(), ref_groups,
+                                           /*expected_literals=*/nullptr,
+                                           *module, options, result_mutex,
+                                           &test_result);
+    for (const auto& cb : callbacks_null) {
+      Literal actual =
+          LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}});
+      std::vector<std::shared_ptr<const Literal>> lits = {
+          std::make_shared<Literal>(std::move(actual))};
+      cb.callback(/*replica_id=*/0, /*partition_id=*/0, lits);
+    }
+
+    // Null / empty literals in callback
+    std::vector<std::shared_ptr<const Literal>> empty_lits;
+    callbacks_null[0].callback(/*replica_id=*/0, /*partition_id=*/0,
+                               empty_lits);
+    std::vector<std::shared_ptr<const Literal>> null_lits = {nullptr};
+    callbacks_null[0].callback(/*replica_id=*/0, /*partition_id=*/0, null_lits);
+    EXPECT_EQ(test_result.numeric_checks_size(), 0);
+  }
+}
+
+TEST_F(HloIsolationTest, TestPopulateNumericCheckMismatches) {
+  NumericCheck numeric_check;
+
+  // 1. Error status
+  absl::StatusOr<std::vector<NumericMismatch>> error_status =
+      absl::InternalError("Failed extraction");
+  PopulateNumericCheckMismatches(&numeric_check, error_status);
+  EXPECT_EQ(numeric_check.top_mismatches_size(), 0);
+  EXPECT_FALSE(numeric_check.has_top_mismatch());
+
+  // 2. Empty vector
+  absl::StatusOr<std::vector<NumericMismatch>> empty_vector =
+      std::vector<NumericMismatch>{};
+  PopulateNumericCheckMismatches(&numeric_check, empty_vector);
+  EXPECT_EQ(numeric_check.top_mismatches_size(), 0);
+  EXPECT_FALSE(numeric_check.has_top_mismatch());
+
+  // 3. Ok status with mismatches
+  NumericMismatch mismatch1;
+  mismatch1.set_rel_error(0.5);
+  NumericMismatch mismatch2;
+  mismatch2.set_rel_error(1.5);
+  absl::StatusOr<std::vector<NumericMismatch>> valid_vector =
+      std::vector<NumericMismatch>{mismatch1, mismatch2};
+  PopulateNumericCheckMismatches(&numeric_check, valid_vector);
+  EXPECT_EQ(numeric_check.top_mismatches_size(), 2);
+  ASSERT_TRUE(numeric_check.has_top_mismatch());
+  EXPECT_DOUBLE_EQ(numeric_check.top_mismatch().rel_error(), 1.5);
+
+  // 4. Calling PopulateNumericCheckMismatches again should clear the old list
+  NumericMismatch mismatch3;
+  mismatch3.set_rel_error(2.5);
+  absl::StatusOr<std::vector<NumericMismatch>> valid_vector2 =
+      std::vector<NumericMismatch>{mismatch3};
+  PopulateNumericCheckMismatches(&numeric_check, valid_vector2);
+  EXPECT_EQ(numeric_check.top_mismatches_size(), 1);
+  ASSERT_TRUE(numeric_check.has_top_mismatch());
+  EXPECT_DOUBLE_EQ(numeric_check.top_mismatch().rel_error(), 2.5);
+}
+
+TEST_F(HloIsolationTest, PopulateMismatchAnnotations_Basic) {
+  const absl::string_view hlo_string = R"hlo(
+HloModule test_module
+ENTRY main {
+  p0 = f32[10] parameter(0)
+  ROOT add = f32[10] add(p0, p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+
+  HloIsolationTestResult result;
+  NumericCheck* check = result.add_numeric_checks();
+  check->set_name("TPU_VS_INTERPRETER");
+  NumericMismatch m;
+  m.set_actual(1.0);
+  m.set_expected(2.0);
+  m.set_rel_error(0.5);
+  *check->add_top_mismatches() = m;
+
+  auto annotations = numerics::debug_info::PopulateMismatchAnnotations(
+      *module, ExtractMismatchDetails(*module, result));
+  EXPECT_FALSE(annotations.empty());
+  auto root_key = numerics::debug_info::TensorKey::Create("add", ShapeIndex{});
+  EXPECT_TRUE(annotations.contains(root_key));
+  EXPECT_EQ(annotations[root_key].background_color, "pink");
+  EXPECT_TRUE(annotations[root_key].tooltip_data.has_value());
+  EXPECT_TRUE(
+      absl::StrContains(*annotations[root_key].tooltip_data, "Actual: 1"));
+  EXPECT_TRUE(
+      absl::StrContains(*annotations[root_key].tooltip_data, "Expected: 2"));
+}
+
+TEST_F(HloIsolationTest, PopulateMismatchAnnotations_Fusion) {
+  const absl::string_view hlo_string = R"hlo(
+HloModule fusion_module
+fused_computation {
+  p0.1 = f32[10] parameter(0)
+  ROOT add.1 = f32[10] add(p0.1, p0.1)
+}
+ENTRY main {
+  p0 = f32[10] parameter(0)
+  ROOT fusion = f32[10] fusion(p0), kind=kLoop, calls=fused_computation
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+
+  HloIsolationTestResult result;
+  NumericCheck* check = result.add_numeric_checks();
+  check->set_name("TPU_VS_INTERPRETER");
+  NumericMismatch m;
+  m.set_actual(1.0);
+  m.set_expected(2.0);
+  m.set_rel_error(0.25);
+  *check->add_top_mismatches() = m;
+
+  NumericCheck* fusion_check = result.add_numeric_checks();
+  fusion_check->set_name("FusionDebugger:add.1");
+  *fusion_check->add_top_mismatches() = m;
+
+  auto details = ExtractMismatchDetails(*module, result);
+  auto annotations =
+      numerics::debug_info::PopulateMismatchAnnotations(*module, details);
+  auto graph_data =
+      numerics::debug_info::PopulateMismatchGraphData(*module, details);
+
+  auto outer_key =
+      numerics::debug_info::TensorKey::Create("fusion", ShapeIndex{});
+  auto inner_key =
+      numerics::debug_info::TensorKey::Create("add.1", ShapeIndex{});
+  ASSERT_TRUE(annotations.contains(outer_key));
+  ASSERT_TRUE(annotations.contains(inner_key));
+  EXPECT_EQ(annotations[outer_key].background_color, "pink");
+  EXPECT_EQ(annotations[inner_key].background_color, "pink");
+  EXPECT_EQ(annotations[outer_key].tooltip_data,
+            annotations[inner_key].tooltip_data);
+
+  bool found_fusion = false;
+  bool found_add1 = false;
+  for (const auto& node : graph_data.nodes) {
+    if (node.key == "fusion") {
+      found_fusion = true;
+      EXPECT_EQ(node.diff_score, 25.0);
+    } else if (node.key == "fusion/add.1") {
+      found_add1 = true;
+      EXPECT_EQ(node.diff_score, 25.0);
+    }
+  }
+  EXPECT_TRUE(found_fusion);
+  EXPECT_TRUE(found_add1);
+}
+
+TEST_F(HloIsolationTest, PopulateMismatchGraphData_ZeroRelError) {
+  const absl::string_view hlo_string = R"hlo(
+HloModule test_module
+ENTRY main {
+  p0 = f32[10] parameter(0)
+  ROOT add = f32[10] add(p0, p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+
+  HloIsolationTestResult result;
+  NumericCheck* check = result.add_numeric_checks();
+  check->set_name("TPU_VS_INTERPRETER");
+  NumericMismatch m;
+  m.set_actual(1.0);
+  m.set_expected(1.0);
+  m.set_rel_error(0.0);
+  *check->add_top_mismatches() = m;
+
+  auto graph_data = numerics::debug_info::PopulateMismatchGraphData(
+      *module, ExtractMismatchDetails(*module, result));
+  bool found_add = false;
+  for (const auto& node : graph_data.nodes) {
+    if (node.key == "add") {
+      found_add = true;
+      EXPECT_EQ(node.diff_score, 100.0);
+    }
+  }
+  EXPECT_TRUE(found_add);
+}
+
+TEST_F(HloIsolationTest,
+       ExtractMismatchDetails_CombinedParentAndFusionDebugger) {
+  const absl::string_view hlo_string = R"hlo(
+HloModule fusion_module
+fused_computation {
+  p0.1 = f32[10] parameter(0)
+  sin.0 = f32[10] sine(p0.1)
+  ROOT add.1 = f32[10] add(sin.0, sin.0)
+}
+ENTRY main {
+  p0 = f32[10] parameter(0)
+  ROOT fusion = f32[10] fusion(p0), kind=kLoop, calls=fused_computation
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+
+  HloIsolationTestResult result;
+  result.set_module_name("fusion_module");
+  result.set_state(State::FAILURE);
+  result.set_reason("NUMERIC_MISMATCH");
+
+  // Add parent check
+  NumericCheck* parent_check = result.add_numeric_checks();
+  parent_check->set_name("TPU_VS_INTERPRETER");
+  NumericMismatch parent_mismatch;
+  parent_mismatch.set_actual(1.0);
+  parent_mismatch.set_expected(2.0);
+  parent_mismatch.set_rel_error(0.5);
+  *parent_check->add_top_mismatches() = parent_mismatch;
+
+  // Add fusion debugger check for intermediate op sin.0
+  NumericCheck* fusion_check = result.add_numeric_checks();
+  fusion_check->set_name("FusionDebugger:sin.0");
+  NumericMismatch fusion_mismatch;
+  fusion_mismatch.set_output_shape_index(0);
+  fusion_mismatch.set_actual(3.0);
+  fusion_mismatch.set_expected(4.0);
+  fusion_mismatch.set_rel_error(0.25);
+  *fusion_check->add_top_mismatches() = fusion_mismatch;
+
+  std::vector<numerics::debug_info::MismatchDetails> all_details =
+      ExtractMismatchDetails(*module, result);
+
+  // Expect details for fusion (parent check) and sin.0 (fusion debugger check)
+  EXPECT_EQ(all_details.size(), 2);
+
+  auto annotations =
+      numerics::debug_info::PopulateMismatchAnnotations(*module, all_details);
+  auto outer_key =
+      numerics::debug_info::TensorKey::Create("fusion", ShapeIndex{});
+  auto sin_key = numerics::debug_info::TensorKey::Create("sin.0", ShapeIndex{});
+
+  ASSERT_TRUE(annotations.contains(outer_key));
+  ASSERT_TRUE(annotations.contains(sin_key));
+
+  EXPECT_EQ(annotations[outer_key].background_color, "pink");
+  EXPECT_EQ(annotations[sin_key].background_color, "pink");
+  EXPECT_TRUE(annotations[sin_key].tooltip_data.has_value());
+
+  auto graph_data =
+      numerics::debug_info::PopulateMismatchGraphData(*module, all_details);
+  bool found_fusion = false;
+  bool found_add1 = false;
+  bool found_sin = false;
+  for (const auto& node : graph_data.nodes) {
+    if (node.key == "fusion") {
+      found_fusion = true;
+      EXPECT_EQ(node.diff_score, 50.0);
+    } else if (node.key == "fusion/add.1") {
+      found_add1 = true;
+      EXPECT_EQ(node.diff_score, 0.0);
+    } else if (node.key == "fusion/sin.0") {
+      found_sin = true;
+      EXPECT_EQ(node.diff_score, 25.0);
+    }
+  }
+  EXPECT_TRUE(found_fusion);
+  EXPECT_TRUE(found_add1);
+  EXPECT_TRUE(found_sin);
 }
 
 }  // namespace

@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/codegen/tiling/experimental/tile.h"
 
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <utility>
 
@@ -77,10 +76,10 @@ DimTile GetFullDimTile(int64_t dim_size, MLIRContext* ctx) {
                  CreateSymbolicConstant(dim_size, ctx)};
 }
 
-DimTile GetDefaultDimTile(int64_t id, SymbolicExpr tile_size,
+DimTile GetDefaultDimTile(TiledDimId id, SymbolicExpr tile_size,
                           int64_t dim_size) {
   MLIRContext* ctx = tile_size.GetContext();
-  auto tile_id = CreateDimExpr(id, ctx);
+  SymbolicExpr tile_id = CreateDimExpr(id.value(), ctx);
   return DimTile{tile_id * tile_size, tile_size, CreateSymbolicConstant(1, ctx),
                  CreateSymbolicConstant(dim_size, ctx)};
 }
@@ -88,6 +87,12 @@ DimTile GetDefaultDimTile(int64_t id, SymbolicExpr tile_size,
 bool DimTile::operator==(const DimTile& other) const {
   return offset == other.offset && size == other.size &&
          stride == other.stride && upper_bound == other.upper_bound;
+}
+
+std::string DimTile::ToString() const {
+  return absl::StrCat("offset [", offset.ToString(), "], size [",
+                      size.ToString(), "], stride [", stride.ToString(),
+                      "], upper bound [", upper_bound.ToString(), "]");
 }
 
 Tile::Tile(const TilingSpace& tiling_space, ArrayRef<SymbolicExpr> offsets,
@@ -236,6 +241,10 @@ void Tile::Simplify() {
 Tile Tile::CloneWithNewDims(llvm::SmallVector<DimTile> new_dim_tiles) const {
   Tile ret{*tiling_space_, std::move(new_dim_tiles), replica_ids_};
   return ret;
+}
+
+Tile Tile::CloneWithNewTilingSpace(const TilingSpace& new_space) const {
+  return Tile(new_space, dim_tiles_, replica_ids_);
 }
 
 bool Tile::operator==(const Tile& other) const {

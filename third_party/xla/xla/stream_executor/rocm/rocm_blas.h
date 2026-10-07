@@ -21,6 +21,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_ROCM_ROCM_BLAS_H_
 
 #include "absl/base/thread_annotations.h"
+#include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "rocm/rocm_config.h"
@@ -183,10 +184,6 @@ class ROCMBlas : public blas::BlasSupport {
 
   // container holding solutions vector (to avoid reallocating it each time)
   std::vector<rocblas_int> solutions_;
-
-  void MaybeLogGemmOp(StreamExecutor::GemmCallTrace::GemmType op,
-                      blas::CallContext context, uint64_t size1,
-                      uint64_t size2);
 
   rocm::BlasLt blas_lt_;
 

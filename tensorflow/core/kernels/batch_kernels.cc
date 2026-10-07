@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/base/attributes.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -53,7 +54,6 @@ limitations under the License.
 #include "tensorflow/core/lib/random/random.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/logging.h"
-#include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/platform/numbers.h"
 #include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/platform/threadpool.h"
@@ -74,10 +74,10 @@ constexpr int64_t kBatchThreadPoolSize = 128;
 }  // namespace
 
 // Per-model inflight batches parameters.
-const int64_t kMinInflightBatches = 1;
-const int64_t kInitialInflightBatches = 2;
-const int64_t kBatchesToAverageOver = 10;
-const int64_t kMaxInflightBatches = 64;
+ABSL_CONST_INIT const int64_t kMinInflightBatches = 1;
+ABSL_CONST_INIT const int64_t kInitialInflightBatches = 2;
+ABSL_CONST_INIT const int64_t kBatchesToAverageOver = 10;
+ABSL_CONST_INIT const int64_t kMaxInflightBatches = 64;
 
 void RecordBatchSplitUsage(
     std::optional<bool> maybe_enable_large_batch_splitting,
@@ -190,8 +190,10 @@ class BatchResource : public serving::BatchResourceBase {
                   enable_large_batch_splitting,
                   /*enable_priority_aware_batch_scheduler=*/false,
                   /*enable_priority_aware_batch_scheduler_resplit=*/false,
+                  /*enable_batching_task_lazy_cancellation=*/false,
                   /*batch_padding_policy=*/"PAD_UP",
-                  /*num_warmup_batch_threads=*/0, resource);
+                  /*num_warmup_batch_threads=*/0,
+                  /*per_criticality_batch_timeout_micros=*/{}, resource);
   }
 
   static absl::Status Create(
@@ -207,7 +209,9 @@ class BatchResource : public serving::BatchResourceBase {
       bool enable_large_batch_splitting,
       bool enable_priority_aware_batch_scheduler,
       bool enable_priority_aware_batch_scheduler_resplit,
+      bool enable_batching_task_lazy_cancellation,
       absl::string_view batch_padding_policy, int32_t num_warmup_batch_threads,
+      const std::vector<int64_t>& per_criticality_batch_timeout_micros,
       std::unique_ptr<BatchResource>* resource) {
     BatcherT::Options batcher_options;
     batcher_options.num_batch_threads = num_batch_threads;
@@ -242,7 +246,9 @@ class BatchResource : public serving::BatchResourceBase {
             low_priority_max_enqueued_batches, low_priority_allowed_batch_sizes,
             mixed_priority_batching_policy,
             enable_priority_aware_batch_scheduler,
-            enable_priority_aware_batch_scheduler_resplit),
+            enable_priority_aware_batch_scheduler_resplit,
+            enable_batching_task_lazy_cancellation,
+            per_criticality_batch_timeout_micros),
         allowed_batch_sizes));
     return absl::OkStatus();
   }
@@ -307,7 +313,7 @@ class BatchResource : public serving::BatchResourceBase {
 
     auto* flib = last_task_context->function_library();
     FunctionLibraryRuntime::Handle fhandle =
-        down_cast<const BatchTask&>(last_task).fhandle;
+        absl::down_cast<const BatchTask&>(last_task).fhandle;
     flib->Run(opts, fhandle, inputs, combined_outputs,
               [&](const absl::Status& run_status) {
                 done(run_status);
@@ -361,6 +367,16 @@ BatchFunctionKernel::BatchFunctionKernel(OpKernelConstruction* c)
                               &enable_priority_aware_batch_scheduler_resplit_));
   }
 
+  if (c->HasAttr("per_criticality_batch_timeout_micros")) {
+    OP_REQUIRES_OK(c, c->GetAttr("per_criticality_batch_timeout_micros",
+                                 &per_criticality_batch_timeout_micros_));
+  }
+
+  if (c->HasAttr("enable_batching_task_lazy_cancellation")) {
+    OP_REQUIRES_OK(c, c->GetAttr("enable_batching_task_lazy_cancellation",
+                                 &enable_batching_task_lazy_cancellation_));
+  }
+
   if (c->HasAttr("num_warmup_batch_threads")) {
     OP_REQUIRES_OK(
         c, c->GetAttr("num_warmup_batch_threads", &num_warmup_batch_threads_));
@@ -390,6 +406,7 @@ BatchFunctionKernel::BatchFunctionKernel(OpKernelConstruction* c)
   }
 
   OP_REQUIRES_OK(c, ValidateAllowedBatchSizes());
+  OP_REQUIRES_OK(c, ValidatePerCriticalityBatchTimeoutMicros());
 }
 
 bool BatchFunctionKernel::IsExpensive() { return false; }
@@ -491,8 +508,10 @@ void BatchFunctionKernel::ComputeAsync(OpKernelContext* c, DoneCallback done) {
           low_priority_max_enqueued_batches_, low_priority_allowed_batch_sizes_,
           mixed_priority_batching_policy, enable_large_batch_splitting_,
           enable_priority_aware_batch_scheduler_,
-          enable_priority_aware_batch_scheduler_resplit_, batch_padding_policy_,
-          num_warmup_batch_threads_, &new_resource));
+          enable_priority_aware_batch_scheduler_resplit_,
+          enable_batching_task_lazy_cancellation_, batch_padding_policy_,
+          num_warmup_batch_threads_, per_criticality_batch_timeout_micros_,
+          &new_resource));
       if (session_metadata) {
         new_resource->set_session_metadata(*session_metadata);
       }
@@ -594,6 +613,28 @@ absl::Status BatchFunctionKernel::GetOrCreateFunctionHandle(
     fhandle_ = *handle;
   } else {
     *handle = fhandle_.value();
+  }
+  return absl::OkStatus();
+}
+
+absl::Status BatchFunctionKernel::ValidatePerCriticalityBatchTimeoutMicros()
+    const {
+  if (per_criticality_batch_timeout_micros_.empty()) {
+    return absl::OkStatus();
+  }
+  if (per_criticality_batch_timeout_micros_.size() !=
+      tsl::criticality::kAllCriticalitiesDescending.size()) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "per_criticality_batch_timeout_micros must be either empty or of size ",
+        tsl::criticality::kAllCriticalitiesDescending.size()));
+  }
+  for (const int64_t timeout : per_criticality_batch_timeout_micros_) {
+    if (timeout < 0) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("per_criticality_batch_timeout_micros must contain "
+                       "nonnegative values; found negative timeout ",
+                       timeout));
+    }
   }
   return absl::OkStatus();
 }
@@ -819,6 +860,20 @@ class UnbatchResource : public ResourceBase {
     const Tensor& data_t = context->input(0);
     const Tensor& batch_index_t = context->input(1);
 
+    // The rank must be validated before any dim_size access, which has
+    // undefined behavior for out-of-range dimension indices.
+    if (!TensorShapeUtils::IsMatrix(batch_index_t.shape())) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Wrong shape for index tensor. Expected a matrix of "
+                       "shape [batch_size, 3]; Got: ",
+                       batch_index_t.shape().DebugString(), "."));
+    }
+    if (data_t.dims() == 0) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Wrong shape for data tensor. Expected at least a "
+                       "vector; Got: ",
+                       data_t.shape().DebugString(), "."));
+    }
     if (batch_index_t.shape().dim_size(0) > data_t.shape().dim_size(0)) {
       return absl::InvalidArgumentError(absl::StrCat(
           "Wrong shape for index tensor. Expected 0th dimension size to be no "
@@ -1094,6 +1149,14 @@ class UnbatchGradResource : public ResourceBase {
             "batch_index is empty while the tensor isn't.");
       }
       std::unordered_set<int64_t> missing_tensors;
+      // The rank must be validated before any dim_size access, which has
+      // undefined behavior for out-of-range dimension indices.
+      if (!TensorShapeUtils::IsMatrix(batch_index_t.shape())) {
+        return absl::InvalidArgumentError(
+            absl::StrCat("Wrong shape for index tensor. Expected a matrix of "
+                         "shape [batch_size, 3]; Got: ",
+                         batch_index_t.shape().DebugString(), "."));
+      }
       if (batch_index_t.NumElements() != batch_index_t.dim_size(0) * 3) {
         return absl::InvalidArgumentError(absl::StrCat(
             "batch_index should contain ", batch_index_t.dim_size(0) * 3,

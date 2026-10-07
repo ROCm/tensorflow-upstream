@@ -50,7 +50,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -275,6 +275,75 @@ TEST_F(PjrtCApiTest, GetDefaultDeviceAssignmentBufferTooSmall) {
   EXPECT_EQ(status.message(),
             "PJRT_Client_DefaultDeviceAssignment: `default_assignment_size` 7"
             " < `num_replicas * num_partitions`, 4 * 2 = 8");
+}
+
+TEST_F(PjrtCApiTest, GetDefaultDeviceAssignmentOverflow) {
+  constexpr int kNumReplicas = 65536;
+  constexpr int kNumPartitions = 65537;
+  constexpr size_t kBufferSize = 65536;
+  std::vector<int> assignment_buffer(kBufferSize);
+  PJRT_Client_DefaultDeviceAssignment_Args args;
+  args.struct_size = PJRT_Client_DefaultDeviceAssignment_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.client = client_;
+  args.num_replicas = kNumReplicas;
+  args.num_partitions = kNumPartitions;
+  args.default_assignment_size = assignment_buffer.size();
+  args.default_assignment = assignment_buffer.data();
+  auto error = ToUniquePtr(api_->PJRT_Client_DefaultDeviceAssignment(&args));
+  ASSERT_NE(error, nullptr);
+  absl::Status status = ::pjrt::PjrtErrorToStatus(error.get(), api_);
+  EXPECT_EQ(status.code(), absl::StatusCode::kFailedPrecondition);
+  EXPECT_EQ(
+      status.message(),
+      "PJRT_Client_DefaultDeviceAssignment: `default_assignment_size` 65536"
+      " < `num_replicas * num_partitions`, 65536 * 65537 = 4295032832");
+}
+
+TEST_F(PjrtCApiTest, GetDefaultDeviceAssignmentNegative) {
+  constexpr int kNumReplicas = -1;
+  constexpr int kNumPartitions = 2;
+  constexpr size_t kBufferSize = 7;
+  std::vector<int> assignment_buffer(kBufferSize);
+  PJRT_Client_DefaultDeviceAssignment_Args args;
+  args.struct_size = PJRT_Client_DefaultDeviceAssignment_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.client = client_;
+  args.num_replicas = kNumReplicas;
+  args.num_partitions = kNumPartitions;
+  args.default_assignment_size = assignment_buffer.size();
+  args.default_assignment = assignment_buffer.data();
+  auto error = ToUniquePtr(api_->PJRT_Client_DefaultDeviceAssignment(&args));
+  ASSERT_NE(error, nullptr);
+  absl::Status status = ::pjrt::PjrtErrorToStatus(error.get(), api_);
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ(status.message(),
+            "PJRT_Client_DefaultDeviceAssignment: `num_replicas` and "
+            "`num_partitions` must be "
+            "positive, got -1 and 2");
+}
+
+TEST_F(PjrtCApiTest, GetDefaultDeviceAssignmentZero) {
+  constexpr int kNumReplicas = 2;
+  constexpr int kNumPartitions = 0;
+  constexpr size_t kBufferSize = 7;
+  std::vector<int> assignment_buffer(kBufferSize);
+  PJRT_Client_DefaultDeviceAssignment_Args args;
+  args.struct_size = PJRT_Client_DefaultDeviceAssignment_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.client = client_;
+  args.num_replicas = kNumReplicas;
+  args.num_partitions = kNumPartitions;
+  args.default_assignment_size = assignment_buffer.size();
+  args.default_assignment = assignment_buffer.data();
+  auto error = ToUniquePtr(api_->PJRT_Client_DefaultDeviceAssignment(&args));
+  ASSERT_NE(error, nullptr);
+  absl::Status status = ::pjrt::PjrtErrorToStatus(error.get(), api_);
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ(status.message(),
+            "PJRT_Client_DefaultDeviceAssignment: `num_replicas` and "
+            "`num_partitions` must be "
+            "positive, got 2 and 0");
 }
 
 TEST_F(PjrtCApiTest, LookupDeviceNegativeId) {

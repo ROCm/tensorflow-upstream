@@ -21,13 +21,13 @@
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt_proxy/common/array_util.pb.h"
@@ -105,7 +105,7 @@ absl::StatusOr<ArrayMemRegion> ArrayMemRegion::FromZerothElementPointer(
   // element_strides=[10,-1]).
   uint64_t last_element_byte_offset = 0;
   for (int i = 0; i < byte_strides->size(); ++i) {
-    int stride = (*byte_strides)[i];
+    int64_t stride = (*byte_strides)[i];
     if (shape.dims()[i] < 0) {
       return absl::InvalidArgumentError(
           absl::StrCat("A shape dimension is negative: ", shape));
@@ -125,7 +125,13 @@ absl::StatusOr<ArrayMemRegion> ArrayMemRegion::FromZerothElementPointer(
       // `shape.dims()[i]` cannot be negative (we explicitly check for this
       // above) or zero (we return early for `shape.num_elements() == 0`).
       DCHECK_GT(shape.dims()[i], 0);
-      last_element_byte_offset += (stride * (shape.dims()[i] - 1));
+      int64_t product;
+      if (__builtin_mul_overflow(stride, shape.dims()[i] - 1, &product)) {
+        return absl::InvalidArgumentError(absl::StrCat(
+            "byte_stride[", i, "] * (dim[", i,
+            "] - 1) overflows: stride=", stride, " dim=", shape.dims()[i]));
+      }
+      last_element_byte_offset += static_cast<uint64_t>(product);
     }
   }
   return ArrayMemRegion(mem_region_start, last_element_byte_offset + byte_size);
@@ -140,7 +146,7 @@ absl::StatusOr<ArrayMemRegion> ArrayMemRegion::FromMinimalMemRegion(
   // FromZerothElementPointer() currently returns an error for any situation
   // where the zeroth_element will is not equal to the place where the minimal
   // memory region starts.
-  ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto result,
       FromZerothElementPointer(mem_region.data(), dtype, shape, byte_strides));
 
@@ -192,7 +198,7 @@ absl::StatusOr<std::vector<absl::Cord>> DeserializeStringHostBufferFromString(
 }
 
 absl::Status DeserializeFromCordIntoPreallocatedStringHostBuffer(
-    const absl::Cord& serialized_string_buffer,
+    const absl::Cord& serialized_string_buffer, int64_t num_elements,
     absl::Cord* preallocated_buffer) {
   proto::StringArrayContents string_array_proto;
 
@@ -204,6 +210,17 @@ absl::Status DeserializeFromCordIntoPreallocatedStringHostBuffer(
 #endif
     return absl::InvalidArgumentError(
         "Failed to parse serialized string buffer");
+  }
+
+  // `preallocated_buffer` was sized from the array shape, while the serialized
+  // buffer carries its own string count. Reject a mismatch before writing any
+  // element so an inconsistent buffer cannot write past the end of
+  // `preallocated_buffer`. This mirrors the element-count validation on the
+  // server-side string deserialization path.
+  if (string_array_proto.strings_size() != num_elements) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "String host buffer has ", string_array_proto.strings_size(),
+        " elements but shape requires ", num_elements, " elements"));
   }
 
   auto* current_cord = preallocated_buffer;

@@ -43,7 +43,7 @@ namespace ttng = mlir::triton::nvidia_gpu;
 // @triton//:third_party/nvidia/backend/compiler.py
 static void MakeTTIR(mlir::OpPassManager* pm,
                      const stream_executor::CudaComputeCapability& cuda_cc) {
-  pm->addPass(mt_xla::CreateRoundF32ToTF32ForTf32DotRewritePass());
+  pm->addPass(mt_xla::createRoundF32ToTF32ForTf32DotRewritePass());
   pm->addPass(mlir::createInlinerPass());
   if (!cuda_cc.IsAtLeastHopper()) {
     pm->addPass(mt::createTritonRewriteTensorDescriptorToPointer());
@@ -71,6 +71,7 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(mt::gpu::createTritonGPUOptimizeThreadLocality());
   pm->addPass(mt::gpu::createTritonGPUAccelerateMatmul());
+  pm->addPass(ttng::createTritonNvidiaGPUCheckMatmulTwoCTAPass());
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(
       mt::gpu::createTritonGPUOptimizeDotOperands({cuda_cc.IsAtLeastAmpere()}));
@@ -114,8 +115,12 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
       mt::gpu::createTritonGPUOptimizeDotOperands({cuda_cc.IsAtLeastAmpere()}));
   pm->addPass(mt::gpu::createTritonGPUCoalesceAsyncCopy());
   pm->addPass(ttng::createTritonNvidiaGPUOptimizeTMemLayoutsPass());
+  pm->addPass(ttng::createTritonNvidiaGPUFuseTMEMLoadReducePass());
   if (cuda_cc.IsAtLeastHopper()) {
     pm->addPass(ttng::createTritonNvidiaGPUTMALoweringPass());
+  }
+  if (cuda_cc.IsAtLeastBlackwell()) {
+    pm->addPass(ttng::createTritonNvidiaGPULowerCLCPass());
   }
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(ttng::createTritonNvidiaGPUInterleaveTMemPass());
@@ -125,12 +130,14 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   pm->addPass(mlir::createSymbolDCEPass());
   pm->addPass(ttng::createTritonGPUFenceInsertion({cuda_cc_as_int}));
   pm->addPass(ttng::createTritonNvidiaGPUMMALoweringPass());
+  pm->addPass(
+      ttng::createTritonNvidiaGPUHoistMBarrierLifecyclePass({cuda_cc_as_int}));
   pm->addPass(mlir::createSCCPPass());
   pm->addPass(mlir::createCSEPass());
   pm->addPass(mlir::createCanonicalizerPass());
   // Corresponds to "mod.get_tensordesc_metadata()"
   // in @triton//:third_party/nvidia/backend/compiler.py
-  pm->addPass(mt_xla::CreateExtractTmaInfoPass());
+  pm->addPass(mt_xla::createExtractTmaInfoPass());
 }
 
 int GetDefaultPtxVersion(
@@ -159,7 +166,6 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   pm->addPass(
       mt::createAllocateSharedMemoryNvPass(cuda_cc_as_int, final_ptx_version));
   pm->addPass(ttng::createTritonTensorMemoryAllocationPass());
-  pm->addPass(ttng::createTritonNvidiaGPUCheckMatmulTwoCTAPass());
   // We could add a flag to XLA to optionally enable the following passes:
   // if "consan" in options.instrumentation_mode
   // pm->addPass(mt::instrument::createTritonInstrumentConcurrencySanitizer());
@@ -169,6 +175,8 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   pm->addPass(ttng::createTritonNvidiaGPUTMemBarrierInsertionPass());
   pm->addPass(
       mt::createConvertTritonGPUToLLVMPass(cuda_cc_as_int, final_ptx_version));
+  pm->addPass(mt::createInitializeWSClusterBarriers(
+      {cuda_cc_as_int, final_ptx_version}));
   pm->addNestedPass<mlir::LLVM::LLVMFuncOp>(
       mlir::triton::gpu::createCanonicalizeLLVMIR());
   pm->addPass(mlir::createCSEPass());
@@ -182,8 +190,10 @@ static void MakeLLIR(mlir::OpPassManager* pm,
 
   // Add XLA custom pass to implement extern_elementwise functions
   // This must run after MLIR->LLVM conversion but before final optimizations
-  pm->addPass(mt_xla::CreateTritonXLAImplementExternElementWisePass(
-      mt_xla::TargetBackend::CUDA));
+  mt_xla::TritonXLAImplementExternElementWisePassOptions impl_extern_options;
+  impl_extern_options.target_ = mt_xla::TargetBackend::CUDA;
+  pm->addPass(mt_xla::createTritonXLAImplementExternElementWisePass(
+      impl_extern_options));
 }
 
 void CreateTritonCudaPipeline(

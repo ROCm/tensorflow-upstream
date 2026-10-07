@@ -59,7 +59,7 @@ absl::Status TensorResponse::InitFrom(RecvTensorResponse* response) {
   meta_.Swap(response);
   if (on_host_) {
     if (!tensor_.FromProto(allocator_, meta_.tensor())) {
-      s = errors::InvalidArgument("Cannot parse tensor from response");
+      s = absl::InvalidArgumentError("Cannot parse tensor from response");
     }
   } else {
     s = device_->MakeTensorFromProto(meta_.tensor(), alloc_attrs_, &tensor_);
@@ -93,7 +93,7 @@ absl::Status TensorResponse::ParseFrom(Source* source) {
 
     // Pre-parse into local storage, then delegate to device.
     if (!meta_.ParseFromCodedStream(&input) || !input.ConsumedEntireMessage()) {
-      return errors::InvalidArgument("Cannot parse tensor from response");
+      return absl::InvalidArgumentError("Cannot parse tensor from response");
     }
     TF_RETURN_IF_ERROR(
         device_->MakeTensorFromProto(meta_.tensor(), alloc_attrs_, &tensor_));
@@ -112,7 +112,7 @@ absl::Status TensorResponse::ParseFrom(Source* source) {
   if (ParseFast(source)) return absl::OkStatus();
   meta_.Clear();
   if (ParseSlow(source)) return absl::OkStatus();
-  return errors::InvalidArgument("Cannot parse tensor from response");
+  return absl::InvalidArgumentError("Cannot parse tensor from response");
 }
 
 // Define some helper routines for decoding protocol buffer wire format data
@@ -165,6 +165,9 @@ bool TensorResponse::ParseTensorSubmessage(
         TensorShape shape;
         if (!TensorShape::BuildTensorShape(tensor_meta->tensor_shape(), &shape)
                  .ok()) {
+          return false;
+        }
+        if (shape.num_elements() != 0) {
           return false;
         }
         Tensor t(allocator_, tensor_meta->dtype(), shape);

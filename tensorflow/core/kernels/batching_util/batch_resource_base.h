@@ -64,7 +64,9 @@ struct BatchResourceOptions {
   MixedPriorityBatchingPolicy mixed_priority_batching_policy;
   bool enable_priority_aware_batch_scheduler;
   bool enable_priority_aware_batch_scheduler_resplit;
+  bool enable_batching_task_lazy_cancellation;
   int32_t num_warmup_batch_threads;
+  std::vector<int64_t> per_criticality_batch_timeout_micros;
 };
 
 // Base class for resource that encapsulating the state and logic for batching
@@ -283,7 +285,9 @@ class BatchResourceBase : public ResourceBase {
       const std::vector<int32>& low_priority_allowed_batch_sizes,
       MixedPriorityBatchingPolicy mixed_priority_batching_policy,
       bool enable_priority_aware_batch_scheduler,
-      bool enable_priority_aware_batch_scheduler_resplit);
+      bool enable_priority_aware_batch_scheduler_resplit,
+      bool enable_batching_task_lazy_cancellation,
+      const std::vector<int64_t>& per_criticality_batch_timeout_micros);
 
   static AdaptiveBatcherT::QueueOptions GetAdaptiveBatcherQueueOptions(
       int32_t max_batch_size, int32_t batch_timeout_micros,

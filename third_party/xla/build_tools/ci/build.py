@@ -33,7 +33,6 @@ import subprocess
 import sys
 from typing import Any, ClassVar, Dict, List, Tuple
 
-
 # TODO(ddunleavy): move this to the bazelrc
 _DEFAULT_BAZEL_OPTIONS = dict(
     color="yes",
@@ -97,13 +96,12 @@ class BuildType(enum.Enum):
 
   XLA_LINUX_X86_CPU_GITHUB_ACTIONS = enum.auto()
   XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_CPU_WORKSPACE_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_ARM64_CPU_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_L4_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_GPU_T4_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_8X_H100_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_ROCM_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_ROCM_LOCAL_SYSROOT_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_GPU_HERMETIC_ROCM_GITHUB_ACTIONS = enum.auto()
 
   # Presubmit builds for regression testing.
   XLA_LINUX_ARM64_CPU_48_VCPU_PRESUBMIT_GITHUB_ACTIONS = enum.auto()
@@ -120,10 +118,7 @@ class BuildType(enum.Enum):
 
   JAX_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS = enum.auto()
   JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS = enum.auto()
-  JAX_LINUX_X86_GPU_L4_GITHUB_ACTIONS = enum.auto()
-
-  TENSORFLOW_LINUX_X86_CPU_GITHUB_ACTIONS = enum.auto()
-  TENSORFLOW_LINUX_X86_GPU_L4_GITHUB_ACTIONS = enum.auto()
+  JAX_LINUX_X86_GPU_T4_GITHUB_ACTIONS = enum.auto()
 
   @classmethod
   def from_str(cls, s):
@@ -256,7 +251,7 @@ class Build:
     return cmds
 
 
-_CUDA_COMPUTE_CAPABILITIES = (60, 70, 80, 90, 100, 103, 120)
+_CUDA_COMPUTE_CAPABILITIES = (60, 70, 80, 90, 100, 103, 107, 120)
 
 
 def _tag_filters_only_for_compute_capability(
@@ -289,13 +284,17 @@ def _tag_filters_for_compute_capability(
   return tag_filters
 
 
-nvidia_single_gpu_filters = (
+nvidia_single_gpu_build_filters = (
     "-no_oss",
     "requires-gpu-nvidia",
     "-rocm-only",
     "-oneapi-only",
-    "-multi_gpu",
     "gpu",
+)
+
+nvidia_single_gpu_test_filters = (
+    *nvidia_single_gpu_build_filters,
+    "-multi_gpu",
 )
 
 
@@ -312,6 +311,9 @@ def nvidia_gpu_build_with_compute_capability(
     options = {
         "//xla/tsl:ci_build": True,
         **_DEFAULT_BAZEL_OPTIONS,
+        # TODO(b/464116734): Remove once we have more machines
+        "test_sharding_strategy": "disabled",
+        "test_strategy": "exclusive",
     }
     nvidia_only_multi_gpu_filters = (
         "-no_oss",
@@ -325,16 +327,16 @@ def nvidia_gpu_build_with_compute_capability(
         nvidia_only_multi_gpu_filters
         + _tag_filters_only_for_compute_capability(compute_capability)
     )
-    repo_env["REMOTE_GPU_TESTING"] = 0
+    repo_env["REMOTE_GPU_TESTING"] = 0  # pyrefly: ignore[bad-assignment]
   else:
     options = {
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         "//xla/tsl:ci_build": True,
         **_DEFAULT_BAZEL_OPTIONS,
     }
-    build_tag_filters = nvidia_single_gpu_filters
+    build_tag_filters = nvidia_single_gpu_build_filters
     test_tag_filters = (
-        nvidia_single_gpu_filters
+        nvidia_single_gpu_test_filters
         + _tag_filters_for_compute_capability(compute_capability)
     )
 
@@ -347,7 +349,7 @@ def nvidia_gpu_build_with_compute_capability(
       build_tag_filters=build_tag_filters,
       options=options,
       repo_env=repo_env,
-      extra_setup_commands=(["nvidia-smi"],),
+      extra_setup_commands=(["nvidia-smi"],) if multi_gpu else (),
   )
 
 
@@ -390,7 +392,7 @@ Build(
         "//xla/...",
         "//build_tools/...",
         "@tsl//tsl/...",
-        "-//xla/stream_executor/tpu/...",
+        "-//xla/tpu/...",
         # mpitrampoline and gloo are not windows compatible
         "-//xla/backends/cpu/collectives:gloo_collectives_test",
         "-//xla/backends/cpu/collectives:mpi_collectives",
@@ -401,9 +403,6 @@ Build(
         "-//xla/backends/profiler/subprocess:subprocess_profiling_session_test",
         "-//xla/backends/profiler/subprocess:subprocess_registry",
         "-//xla/backends/profiler/subprocess:subprocess_registry_test",
-        "-//xla/tools/benchmarks/utils:generate_benchmark_matrices_cc",
-        "-//xla/tools/benchmarks/utils:generate_benchmark_matrices_main",
-        "-//xla/tools/benchmarks/utils:generate_benchmark_matrices_test",
         # xnnpack is not windows compatible
         "-//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk",
         "-//xla/backends/cpu/runtime/ynnpack:ynn_interop",
@@ -428,9 +427,9 @@ Build(
 )
 
 Build(
-    type_=BuildType.XLA_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS,
+    type_=BuildType.XLA_LINUX_X86_CPU_WORKSPACE_GITHUB_ACTIONS,
     repo="openxla/xla",
-    configs=("warnings", "nonccl", "rbe_linux_cpu", "bzlmod"),
+    configs=("warnings", "nonccl", "rbe_linux_cpu", "workspace"),
     target_patterns=_XLA_DEFAULT_TARGET_PATTERNS,
     build_tag_filters=cpu_x86_tag_filter,
     test_tag_filters=cpu_x86_tag_filter,
@@ -460,7 +459,7 @@ Build(
 )
 
 nvidia_gpu_build_with_compute_capability(
-    type_=BuildType.XLA_LINUX_X86_GPU_L4_GITHUB_ACTIONS,
+    type_=BuildType.XLA_LINUX_X86_GPU_T4_GITHUB_ACTIONS,
     configs=("warnings", "rbe_linux_cuda_nvcc", "hermetic_cuda_umd"),
     compute_capability=75,
     multi_gpu=False,
@@ -482,6 +481,7 @@ oneapi_build_tag_filter = (
     "-cuda-only",
     "-rocm-only",
     "-no-oneapi",
+    "gpu",
 )
 
 oneapi_test_tag_filter = (
@@ -495,6 +495,7 @@ oneapi_test_tag_filter = (
     "-cuda-only",
     "-rocm-only",
     "-no-oneapi",
+    "gpu",
 )
 
 Build(
@@ -542,21 +543,14 @@ rocm_tag_filter = (
 )
 
 Build(
-    type_=BuildType.XLA_LINUX_X86_GPU_ROCM_GITHUB_ACTIONS,
+    type_=BuildType.XLA_LINUX_X86_GPU_HERMETIC_ROCM_GITHUB_ACTIONS,
     repo="openxla/xla",
-    configs=("warnings", "rbe_linux_cpu", "rocm_clang_hermetic"),
-    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS,
-    build_tag_filters=rocm_tag_filter,
-    test_tag_filters=rocm_tag_filter,
-    options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
-    subcommand="build",
-)
-
-# ROCm builds - hermetic LLVM with local sysroot
-Build(
-    type_=BuildType.XLA_LINUX_X86_GPU_ROCM_LOCAL_SYSROOT_GITHUB_ACTIONS,
-    repo="openxla/xla",
-    configs=("warnings", "rbe_linux_cpu", "rocm_clang_hermetic_local_sysroot"),
+    configs=(
+        "warnings",
+        "rbe_linux_cpu",
+        "rocm_clang_hermetic",
+        "rocm_ci_hermetic",
+    ),
     target_patterns=_XLA_DEFAULT_TARGET_PATTERNS,
     build_tag_filters=rocm_tag_filter,
     test_tag_filters=rocm_tag_filter,
@@ -595,9 +589,9 @@ Build(
     repo="openxla/xla",
     target_patterns=_XLA_GPU_PRESUBMIT_BENCHMARKS_DEFAULT_TARGET_PATTERNS,
     configs=("warnings", "rbe_linux_cuda_nvcc", "hermetic_cuda_umd"),
-    test_tag_filters=nvidia_single_gpu_filters
+    test_tag_filters=nvidia_single_gpu_test_filters
     + _tag_filters_for_compute_capability(compute_capability=75),
-    build_tag_filters=nvidia_single_gpu_filters,
+    build_tag_filters=nvidia_single_gpu_build_filters,
     options={
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         "//xla/tsl:ci_build": True,
@@ -620,9 +614,9 @@ Build(
         "hermetic_cuda_umd",
         "cuda_libraries_from_stubs",
     ),
-    test_tag_filters=nvidia_single_gpu_filters
+    test_tag_filters=nvidia_single_gpu_test_filters
     + _tag_filters_for_compute_capability(compute_capability=75),
-    build_tag_filters=nvidia_single_gpu_filters,
+    build_tag_filters=nvidia_single_gpu_build_filters,
     options={
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         "//xla/tsl:ci_build": True,
@@ -640,9 +634,9 @@ Build(
     repo="openxla/xla",
     configs=("warnings", "rbe_linux_cuda_nvcc", "hermetic_cuda_umd"),
     target_patterns=_XLA_GPU_PRESUBMIT_BENCHMARKS_DEFAULT_TARGET_PATTERNS,
-    test_tag_filters=nvidia_single_gpu_filters
+    test_tag_filters=nvidia_single_gpu_test_filters
     + _tag_filters_for_compute_capability(compute_capability=75),
-    build_tag_filters=nvidia_single_gpu_filters,
+    build_tag_filters=nvidia_single_gpu_build_filters,
     options={
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         "//xla/tsl:ci_build": True,
@@ -665,9 +659,9 @@ Build(
         "cuda_libraries_from_stubs",
     ),
     target_patterns=_XLA_GPU_PRESUBMIT_BENCHMARKS_DEFAULT_TARGET_PATTERNS,
-    test_tag_filters=nvidia_single_gpu_filters
+    test_tag_filters=nvidia_single_gpu_test_filters
     + _tag_filters_for_compute_capability(compute_capability=75),
-    build_tag_filters=nvidia_single_gpu_filters,
+    build_tag_filters=nvidia_single_gpu_build_filters,
     options={
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         "//xla/tsl:ci_build": True,
@@ -685,9 +679,9 @@ Build(
     repo="openxla/xla",
     configs=(),
     target_patterns=_XLA_GPU_PRESUBMIT_BENCHMARKS_DEFAULT_TARGET_PATTERNS,
-    test_tag_filters=nvidia_single_gpu_filters
+    test_tag_filters=nvidia_single_gpu_test_filters
     + _tag_filters_for_compute_capability(compute_capability=100),
-    build_tag_filters=nvidia_single_gpu_filters,
+    build_tag_filters=nvidia_single_gpu_build_filters,
     options={
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         # Use User Mode and Kernel Mode Drivers pre-installed on the system.
@@ -696,8 +690,6 @@ Build(
     },
     repo_env={
         "TF_CUDA_COMPUTE_CAPABILITIES": "10",
-        "HERMETIC_CUDA_VERSION": "12.8.0",
-        "HERMETIC_CUDNN_VERSION": "9.8.0",
     },
     extra_setup_commands=(["nvidia-smi"],),
     subcommand="build",
@@ -708,9 +700,9 @@ Build(
     repo="openxla/xla",
     configs=("cuda_libraries_from_stubs",),
     target_patterns=_XLA_GPU_PRESUBMIT_BENCHMARKS_DEFAULT_TARGET_PATTERNS,
-    test_tag_filters=nvidia_single_gpu_filters
+    test_tag_filters=nvidia_single_gpu_test_filters
     + _tag_filters_for_compute_capability(compute_capability=100),
-    build_tag_filters=nvidia_single_gpu_filters,
+    build_tag_filters=nvidia_single_gpu_build_filters,
     options={
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         # Use User Mode and Kernel Mode Drivers pre-installed on the system.
@@ -719,8 +711,6 @@ Build(
     },
     repo_env={
         "TF_CUDA_COMPUTE_CAPABILITIES": "10",
-        "HERMETIC_CUDA_VERSION": "12.8.0",
-        "HERMETIC_CUDNN_VERSION": "9.8.0",
     },
     extra_setup_commands=(["nvidia-smi"],),
     subcommand="build",
@@ -798,7 +788,7 @@ Build(
 Build(
     type_=BuildType.JAX_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS,
     repo="google/jax",
-    configs=("rbe_linux_x86_64", "bzlmod"),
+    configs=("rbe_linux_x86_64",),
     target_patterns=(
         "//tests:cpu_tests",
         "//tests:backend_independent_tests",
@@ -853,9 +843,9 @@ Build(
 )
 
 Build(
-    type_=BuildType.JAX_LINUX_X86_GPU_L4_GITHUB_ACTIONS,
+    type_=BuildType.JAX_LINUX_X86_GPU_T4_GITHUB_ACTIONS,
     repo="google/jax",
-    configs=("rbe_linux_x86_64_cuda",),
+    configs=("rbe_linux_x86_64_cuda13",),
     target_patterns=(
         "//tests:gpu_tests",
         "//tests:backend_independent_tests",
@@ -884,92 +874,7 @@ Build(
         **_DEFAULT_BAZEL_OPTIONS,
         "@local_config_cuda//cuda:override_include_cuda_libs": True,
     },
-    repo_env={"HERMETIC_PYTHON_VERSION": "3.11"},
-    extra_setup_commands=(["nvidia-smi"],),
-)
-
-tensorflow_tag_filters = (
-    "-no_oss",
-    "-tf_tosa",
-    "-oss_excluded",
-    "-oss_serial",
-    "-tpu",
-    "-benchmark-test",
-    "-v1only",
-)
-
-tensorflow_cpu_tag_filters = tensorflow_tag_filters + ("-gpu",)
-tensorflow_gpu_tag_filters = tensorflow_tag_filters + (
-    "-no_gpu",
-    "-no_gpu_presubmit",
-    "-no_cuda11",
-    "+gpu",
-)
-
-Build(
-    type_=BuildType.TENSORFLOW_LINUX_X86_CPU_GITHUB_ACTIONS,
-    repo="tensorflow/tensorflow",
-    configs=(
-        "release_cpu_linux",
-        "rbe_linux_cpu",
-    ),
-    target_patterns=(
-        "//tensorflow/compiler/...",
-        "-//tensorflow/compiler/tf2tensorrt/...",
-        "//tensorflow/python/...",
-        "-//tensorflow/python/distribute/...",
-        "-//tensorflow/python/kernel_tests/...",
-        "-//tensorflow/python/data/...",
-        "-//tensorflow/python/compiler/tensorrt/...",
-    ),
-    build_tag_filters=tensorflow_cpu_tag_filters,
-    test_tag_filters=tensorflow_cpu_tag_filters,
-    options=dict(
-        verbose_failures=True,
-        test_output="errors",
-        profile="profile.json.gz",
-        test_lang_filters="cc,py",
-        color="yes",
-    ),
-    override_repository=dict(
-        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
-    ),
-    override_module=dict(
-        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
-    ),
-    repo_env={"USE_PYWRAP_RULES": "True"},
-)
-
-Build(
-    type_=BuildType.TENSORFLOW_LINUX_X86_GPU_L4_GITHUB_ACTIONS,
-    repo="tensorflow/tensorflow",
-    configs=("release_gpu_linux", "rbe_linux_cuda", "hermetic_cuda_umd"),
-    target_patterns=(
-        "//tensorflow/compiler/...",
-        "-//tensorflow/compiler/tf2tensorrt/...",
-        "//tensorflow/python/...",
-        "-//tensorflow/python/distribute/...",
-        "-//tensorflow/python/kernel_tests/...",
-        "-//tensorflow/python/data/...",
-        "-//tensorflow/python/compiler/tensorrt/...",
-    ),
-    build_tag_filters=tensorflow_gpu_tag_filters,
-    test_tag_filters=tensorflow_gpu_tag_filters,
-    override_repository=dict(
-        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
-    ),
-    override_module=dict(
-        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
-    ),
-    options=dict(
-        verbose_failures=True,
-        test_output="errors",
-        profile="profile.json.gz",
-        test_lang_filters="cc,py",
-        color="yes",
-    ),
-    repo_env={"USE_PYWRAP_RULES": "True"},
-    extra_setup_commands=(["nvidia-smi"],),
+    repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
 )
 
 

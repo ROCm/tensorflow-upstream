@@ -88,6 +88,9 @@ std::string CudnnConvKindToString(CudnnConvKind kind);
 // Matrix multiplication rewritten into a GEMM custom call.
 // All matrix multiplications should be rewritten as such custom calls
 // after a GemmRewriter lowering pass.
+bool IsCublasLtGemm(const HloInstruction& hlo);
+
+// Legacy alias for IsCublasLtGemm that also includes legacy cublas.
 bool IsCublasGemm(const HloInstruction& hlo);
 
 // Matrix multiplication that calls into legacy cublas.
@@ -188,6 +191,9 @@ inline constexpr absl::string_view kCudnnConvReorderFilterAndBiasCallTarget =
 // one of the kCudnnConvFoo constants above, but returns *false* for HLOs with a
 // kConvolution opcode.
 bool IsCustomCallToDnnConvolution(const HloInstruction& hlo);
+
+// Returns true if `hlo` is a cuDNN fusion.
+bool IsCudnnFusion(const HloInstruction& hlo);
 
 // Returns true if `hlo` will be implemented as a call to cuDNN convolution
 // reordering helper (required for int8x32 convolutions).

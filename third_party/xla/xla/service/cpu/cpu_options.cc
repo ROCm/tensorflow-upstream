@@ -38,6 +38,20 @@ bool OptimizeForSizeRequested(const HloModuleConfig& config) {
   return extra_options_map.count(kXlaOptimizeForSizeCpuOption) > 0;
 }
 
+bool IsMsanEnabled(const HloModuleConfig& config) {
+  const auto& extra_options_map =
+      config.debug_options().xla_backend_extra_options();
+  auto it = extra_options_map.find(kXlaCpuEnableMsan);
+  if (it != extra_options_map.end()) {
+    return it->second == "true";
+  }
+#ifdef MEMORY_SANITIZER
+  return true;
+#else
+  return false;
+#endif
+}
+
 bool VectorizedReduceDisabled(const HloModuleConfig& config) {
   const auto& extra_options_map =
       config.debug_options().xla_backend_extra_options();
@@ -166,6 +180,11 @@ bool EnableTiledEmitter(const HloModuleConfig& config) {
   const auto& extra_options_map =
       config.debug_options().xla_backend_extra_options();
   return extra_options_map.count(kDisableTiledEmitter) == 0;
+}
+
+bool EnableExperimentalTiling(const HloModuleConfig& config) {
+  return config.debug_options()
+      .xla_cpu_experimental_enable_tiling_propagation();
 }
 
 }  // namespace xla::cpu::options

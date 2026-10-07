@@ -23,6 +23,7 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -33,13 +34,13 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/execution_graph.h"
@@ -194,7 +195,7 @@ ThunkExecutor::ThunkExecutor(ThunkSequence thunk_sequence,
 absl::StatusOr<ThunkExecutor> ThunkExecutor::Create(
     ThunkSequence thunk_sequence, const ThunkExecutor::Options& options) {
   // Construct an execution graph for the given thunk sequence.
-  ASSIGN_OR_RETURN(ExecutionGraph execution_graph,
+  ABSL_ASSIGN_OR_RETURN(ExecutionGraph execution_graph,
                    ExecutionGraph::Create<ThunkOperation>(
                        CreateThunkOperations(thunk_sequence)));
 
@@ -438,7 +439,10 @@ void ThunkExecutor::Execute(std::shared_ptr<ExecuteState> state,
                             Thunk::ExecuteSession::Lock lock) {
   DCHECK(!ready_queue.Empty()) << "Ready queue must not be empty";
 
-  tsl::profiler::TraceMe trace("ThunkExecutor::Execute");
+  std::optional<tsl::profiler::TraceMe> trace;
+  if (ABSL_PREDICT_FALSE(tsl::profiler::TraceMe::Active())) {
+    trace.emplace("ThunkExecutor::Execute");
+  }
   bool has_runner = params.task_runner != nullptr;
   bool has_lock = static_cast<bool>(lock);
 

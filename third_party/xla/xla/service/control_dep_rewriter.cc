@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -41,12 +42,12 @@ absl::StatusOr<bool> ControlDepRewriter::RunImpl(
         CHECK_EQ(instruction->operand_count(), 2);
         HloInstruction* src = instruction->mutable_operand(0);
         HloInstruction* dst = instruction->mutable_operand(1);
-        TF_RETURN_IF_ERROR(src->AddControlDependencyTo(dst));
+        ABSL_RETURN_IF_ERROR(src->AddControlDependencyTo(dst));
         to_remove.push_back(instruction);
       }
     }
     for (HloInstruction* instruction : to_remove) {
-      TF_RETURN_IF_ERROR(computation->RemoveInstruction(instruction));
+      ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(instruction));
     }
   }
   return changed;

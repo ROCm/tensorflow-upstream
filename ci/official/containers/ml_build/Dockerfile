@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 ################################################################################
 ARG BASE_IMAGE=ubuntu:22.04@sha256:445586e41c1de7dfda82d2637f5ff688deea9eb5f5812f8c145afacc35b9f0db
 FROM $BASE_IMAGE AS devel
@@ -21,22 +36,36 @@ RUN /setup.python.sh python3.13 /builder.requirements.txt
 RUN /setup.python.sh python3.13-nogil /builder.requirements.txt
 RUN /setup.python.sh python3.14 /builder.requirements.txt
 RUN /setup.python.sh python3.14-nogil /builder.requirements.txt
+RUN /setup.python.sh python3.15 /builder.requirements.txt
+RUN /setup.python.sh python3.15-nogil /builder.requirements.txt
 
 # Since we are using python3.12 as the default python version, we need to
 # install python3.12 last for now.
 # TODO(b/376338367): switch to pyenv.
 RUN /setup.python.sh python3.12 /builder.requirements.txt
 
-COPY setup.sources.cudnn.sh /setup.sources.cudnn.sh
 ARG INSTALL_NVIDIA_PACKAGES=false
-ARG NVIDIA_PACKAGES_FILE=cuda12.1_cudnn9.1.packages.txt
+ARG NVIDIA_PACKAGES_FILE=cuda12.1_cudnn9.8.packages.txt
 COPY ${NVIDIA_PACKAGES_FILE} /nvidia.packages.txt
+COPY setup.sources.cudnn.sh /setup.sources.cudnn.sh
+
+ARG INSTALL_CMAKE_TOOLCHAIN=false
+ARG CMAKE_TOOLCHAIN_PACKAGES_FILE=cmake_toolchain.packages.txt
+COPY ${CMAKE_TOOLCHAIN_PACKAGES_FILE} /cmake_toolchain.packages.txt
+COPY setup.toolchain.cmake.sh /setup.toolchain.cmake.sh
 
 RUN if [ "${INSTALL_NVIDIA_PACKAGES}" = "true" ]; then \
       echo "Installing Nvidia packages"; \
       /setup.sources.cudnn.sh && /setup.packages.sh /nvidia.packages.txt; \
     else \
-      echo "Nvidia packages are not installed"; \
+      echo "Nvidia packages will not be installed"; \
+    fi
+
+RUN if [ "${INSTALL_CMAKE_TOOLCHAIN}" = "true" ]; then \
+      echo "Installing CMake toolchain"; \
+      /setup.toolchain.cmake.sh && /setup.packages.sh /cmake_toolchain.packages.txt; \
+    else \
+      echo "CMake toolchain will not be installed"; \
     fi
 
 # Setup links for TensorFlow to compile.
@@ -75,6 +104,13 @@ RUN wget https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud
     google-cloud-sdk/install.sh --quiet && \
     ln -s /google-cloud-sdk/bin/gcloud /usr/bin/gcloud
 ENV PATH="$PATH:/google-cloud-sdk/bin/:/usr/local/cuda/bin/"
+
+# Download and install gh CLI v2.49.0 from GitHub.
+RUN wget https://github.com/cli/cli/releases/download/v2.49.0/gh_2.49.0_linux_amd64.tar.gz && \
+    echo "3f7ef10a8ae6164220db20cf6d4fb96528c61d614f0803ccf39b1cabb6ae7263  gh_2.49.0_linux_amd64.tar.gz" | sha256sum --check && \
+    tar zxf gh_2.49.0_linux_amd64.tar.gz && \
+    mv gh_2.49.0_linux_amd64/bin/gh /usr/local/bin/gh && \
+    rm -rf gh_2.49.0_linux_amd64*
 
 # Download and install patchelf v0.18.0 from GitHub. The default Ubuntu focal
 # packages only provide the "0.10-2build1" version. We use patchelf to manipulate
