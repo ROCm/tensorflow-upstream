@@ -76,8 +76,10 @@ bool IsTableLookup(const HloInstruction* hlo) {
 }
 
 std::optional<int64_t> GetScalarInt64Value(const HloInstruction* constant) {
-  CHECK_EQ(constant->opcode(), HloOpcode::kConstant);
-  CHECK(ShapeUtil::IsEffectiveScalar(constant->shape()));
+  if (constant == nullptr || constant->opcode() != HloOpcode::kConstant ||
+      !ShapeUtil::IsEffectiveScalar(constant->shape())) {
+    return std::nullopt;
+  }
   absl::InlinedVector<int64_t, 8> multi_index(
       constant->shape().dimensions().size());
   return constant->literal().GetIntegralAsS64(multi_index);
@@ -208,7 +210,14 @@ std::optional<std::pair<int64_t, int64_t>> GetKnownRange(
 
 // Backtracks through no-ops to find the "base" instruction responsible for
 // some instruction's value.
-const HloInstruction* BacktrackToBase(const HloInstruction* instruction) {
+const HloInstruction* BacktrackToBase(
+    const HloInstruction* instruction,
+    absl::flat_hash_map<const HloInstruction*, const HloInstruction*>* cache =
+        nullptr) {
+  if (cache) {
+    auto it = cache->find(instruction);
+    if (it != cache->end()) return it->second;
+  }
   const HloInstruction* cur = instruction;
 
   while (true) {
@@ -231,8 +240,10 @@ const HloInstruction* BacktrackToBase(const HloInstruction* instruction) {
     if (cur->opcode() == HloOpcode::kClamp) {
       // For some clamp ops it's possible to prove they are no-ops at compile
       // time.
-      std::optional<int64_t> lower_bound = GetScalarInt64Value(cur->operand(0));
-      std::optional<int64_t> upper_bound = GetScalarInt64Value(cur->operand(2));
+      std::optional<int64_t> lower_bound =
+          GetScalarInt64Value(BacktrackToBase(cur->operand(0), cache));
+      std::optional<int64_t> upper_bound =
+          GetScalarInt64Value(BacktrackToBase(cur->operand(2), cache));
       std::optional<std::pair<int64_t, int64_t>> range =
           GetKnownRange(cur->operand(1));
       if (lower_bound.has_value() && upper_bound.has_value() &&
@@ -246,17 +257,19 @@ const HloInstruction* BacktrackToBase(const HloInstruction* instruction) {
     break;
   }
 
+  if (cache) {
+    cache->emplace(instruction, cur);
+  }
   return cur;
 }
 
 // Evaluates an offset expression for a given device ID, returning the computed
 // offset value. Handles multiply, clamp, subtract, table lookup, and direct ID
 // patterns. Returns nullopt if the expression cannot be resolved.
-std::optional<int64_t> EvaluateOffset(const HloInstruction* expr, int64_t id,
-                                      const MapIdToTableOffset& map_id) {
-  // Strip through reshape/copy/convert/no-op-clamp wrappers.
-  expr = BacktrackToBase(expr);
-
+std::optional<int64_t> EvaluateOffset(
+    const HloInstruction* expr, int64_t id, const MapIdToTableOffset& map_id,
+    absl::flat_hash_map<const HloInstruction*, const HloInstruction*>* cache =
+        nullptr) {
   if (expr->opcode() == HloOpcode::kMultiply) {
     if (!ShapeUtil::IsEffectiveScalar(expr->shape())) {
       return std::nullopt;
@@ -273,7 +286,9 @@ std::optional<int64_t> EvaluateOffset(const HloInstruction* expr, int64_t id,
     if (!multiplier || *multiplier == 0) {
       return std::nullopt;
     }
-    auto inner = EvaluateOffset(expr->operand(1 - const_operand), id, map_id);
+    auto inner =
+        EvaluateOffset(BacktrackToBase(expr->operand(1 - const_operand), cache),
+                       id, map_id, cache);
     if (!inner) {
       return std::nullopt;
     }
@@ -281,12 +296,13 @@ std::optional<int64_t> EvaluateOffset(const HloInstruction* expr, int64_t id,
   }
 
   if (expr->opcode() == HloOpcode::kClamp) {
-    auto inner = EvaluateOffset(expr->operand(1), id, map_id);
+    auto inner = EvaluateOffset(BacktrackToBase(expr->operand(1), cache), id,
+                                map_id, cache);
     if (!inner) {
       return std::nullopt;
     }
-    auto lower = GetScalarInt64Value(expr->operand(0));
-    auto upper = GetScalarInt64Value(expr->operand(2));
+    auto lower = GetScalarInt64Value(BacktrackToBase(expr->operand(0), cache));
+    auto upper = GetScalarInt64Value(BacktrackToBase(expr->operand(2), cache));
     if (!lower || !upper) {
       return std::nullopt;
     }
@@ -300,8 +316,8 @@ std::optional<int64_t> EvaluateOffset(const HloInstruction* expr, int64_t id,
     // patterns where a non-provable clamp wraps one branch but not the other.
     // TODO(maggioni): Make sure this is actually needed. Its to pass existing
     // GPU tests
-    const HloInstruction* lhs_base = BacktrackToBase(expr->operand(0));
-    const HloInstruction* rhs_base = BacktrackToBase(expr->operand(1));
+    const HloInstruction* lhs_base = BacktrackToBase(expr->operand(0), cache);
+    const HloInstruction* rhs_base = BacktrackToBase(expr->operand(1), cache);
     if (lhs_base->opcode() == HloOpcode::kMultiply && IsTableLookup(rhs_base)) {
       const HloInstruction* id_operand = nullptr;
       if (lhs_base->operand(0)->IsConstant()) {
@@ -310,9 +326,9 @@ std::optional<int64_t> EvaluateOffset(const HloInstruction* expr, int64_t id,
         id_operand = lhs_base->operand(0);
       }
       if (id_operand) {
-        const HloInstruction* id_base = BacktrackToBase(id_operand);
+        const HloInstruction* id_base = BacktrackToBase(id_operand, cache);
         const HloInstruction* table_idx_base =
-            BacktrackToBase(rhs_base->operand(1));
+            BacktrackToBase(rhs_base->operand(1), cache);
         if (id_base != table_idx_base) {
           VLOG(2) << "Subtract pattern rejected: id_base mismatch between "
                      "multiply and table lookup";
@@ -320,8 +336,8 @@ std::optional<int64_t> EvaluateOffset(const HloInstruction* expr, int64_t id,
         }
       }
     }
-    auto lhs = EvaluateOffset(expr->operand(0), id, map_id);
-    auto rhs = EvaluateOffset(expr->operand(1), id, map_id);
+    auto lhs = EvaluateOffset(lhs_base, id, map_id, cache);
+    auto rhs = EvaluateOffset(rhs_base, id, map_id, cache);
     if (!lhs || !rhs) {
       return std::nullopt;
     }
@@ -363,11 +379,14 @@ bool IsPerIdOffset(const HloInstruction* offset, int64_t shard_size,
   const int64_t num_groups =
       iota_group ? 1 : instruction->replica_groups().size();
 
+  absl::flat_hash_map<const HloInstruction*, const HloInstruction*>
+      backtrack_cache;
+  offset = BacktrackToBase(offset, &backtrack_cache);
   for (int64_t i = 0; i < num_groups; ++i) {
     for (int64_t j = 0; j < group_size; ++j) {
       int64_t id =
           iota_group ? j : instruction->replica_groups()[i].replica_ids(j);
-      auto val = EvaluateOffset(offset, id, map_id);
+      auto val = EvaluateOffset(offset, id, map_id, &backtrack_cache);
       if (!val || *val != shard_size * j) {
         VLOG(2) << "Offset mismatch for device " << id << ": got "
                 << (val ? absl::StrCat(*val) : "nullopt") << ", expected "
@@ -565,6 +584,9 @@ BuildDSSplitReplicaGroups(const HloChannelInstruction* instruction,
 
   absl::flat_hash_map<int64_t, int64_t> shard_map;
 
+  absl::flat_hash_map<const HloInstruction*, const HloInstruction*>
+      backtrack_cache;
+  offset = BacktrackToBase(offset, &backtrack_cache);
   for (int64_t i = 0; i < num_groups; ++i) {
     int64_t group_size =
         iota_group
@@ -577,7 +599,7 @@ BuildDSSplitReplicaGroups(const HloChannelInstruction* instruction,
         continue;
       }
 
-      auto offset_val = EvaluateOffset(offset, id, map_id);
+      auto offset_val = EvaluateOffset(offset, id, map_id, &backtrack_cache);
       if (!offset_val) {
         VLOG(2) << "Failed to evaluate offset for device " << id;
         return std::nullopt;
@@ -946,7 +968,7 @@ MatchPermutedSliceAndPartitionOffset(const HloAllGatherInstruction* ag,
     return HloPredicateIsOp<HloOpcode::kPartitionId>(hlo) ? id : -1;
   };
 
-  VLOG(0) << "dynamic slice: " << dynamic_slice->ToString()
+  VLOG(2) << "dynamic slice: " << dynamic_slice->ToString()
           << " split dim: " << split_dim_spec->split_dim;
   // Section 3: extract the offset spec from dynamic slice and ag.
   std::optional<PartitionOffsetSpec> ds_offset_spec =
@@ -1248,9 +1270,9 @@ std::optional<PartitionOffsetSpec> GetIndicesSpecForDynamicSlice(
       }
       int64_t table_index =
           GetIndexForId(offset_hlo->operand(1), partition_id, map_id);
-      VLOG(0) << "offset_hlo: " << offset_hlo->ToString();
-      VLOG(0) << "table_index: " << table_index;
-      VLOG(0) << offset_hlo->operand(0)->literal().ToString();
+      VLOG(2) << "offset_hlo: " << offset_hlo->ToString();
+      VLOG(2) << "table_index: " << table_index;
+      VLOG(2) << offset_hlo->operand(0)->literal().ToString();
       if (table_index < 0) {
         VLOG(2) << "Failed to infer table index from "
                 << offset_hlo->operand(1);
@@ -1264,7 +1286,7 @@ std::optional<PartitionOffsetSpec> GetIndicesSpecForDynamicSlice(
         slice_offset =
             *offset_hlo->operand(0)->literal().GetIntegralAsS64({table_index});
       }
-      VLOG(0) << "slice_offset: " << slice_offset;
+      VLOG(2) << "slice_offset: " << slice_offset;
       if (!indices_spec.per_replica_group_offsets[group_idx]
                .try_emplace(slice_offset, partition_id)
                .second) {

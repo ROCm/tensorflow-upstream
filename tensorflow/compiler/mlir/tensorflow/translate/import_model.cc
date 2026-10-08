@@ -884,7 +884,8 @@ absl::Status CreateSavedModelIR(
             builder.getStringAttr(object_names.GetSymbolTableName(node_id)),
             mlir::ElementsAttr(),
             /*type=*/mlir::TypeAttr::get(type),
-            /*is_mutable=*/builder.getUnitAttr());
+            /*is_mutable=*/builder.getUnitAttr(),
+            /*sym_visibility=*/nullptr);
         op->setAttr(
             kTfSavedModelExportedNamesAttr,
             builder.getStrArrayAttr(object_names.GetExportedNames(node_id)));
@@ -917,7 +918,8 @@ absl::Status CreateSavedModelIR(
             builder.getStringAttr(object_names.GetSymbolTableName(node_id)),
             value_attr,
             /*type=*/mlir::TypeAttr::get(type),
-            /*is_mutable=*/builder.getUnitAttr());
+            /*is_mutable=*/builder.getUnitAttr(),
+            /*sym_visibility=*/nullptr);
         op->setAttr(
             kTfSavedModelExportedNamesAttr,
             builder.getStrArrayAttr(object_names.GetExportedNames(node_id)));
@@ -939,7 +941,8 @@ absl::Status CreateSavedModelIR(
           builder.getStringAttr(object_names.GetSymbolTableName(node_id)),
           value_attr,
           /*type=*/mlir::TypeAttr::get(value_attr.getType()),
-          /*is_mutable=*/nullptr);
+          /*is_mutable=*/nullptr,
+          /*sym_visibility=*/nullptr);
       op->setAttr(
           kTfSavedModelExportedNamesAttr,
           builder.getStrArrayAttr(object_names.GetExportedNames(node_id)));
@@ -1230,7 +1233,8 @@ SavedModelSignatureDefImporterLite::ConvertAssets() {
             absl::StrCat("__tf_saved_model_asset", i++, "_", asset.filename())),
         /*filename=*/
         builder.getStringAttr(
-            io::JoinPath(kSavedModelAssetsDirectory, asset.filename())));
+            io::JoinPath(kSavedModelAssetsDirectory, asset.filename())),
+        /*sym_visibility=*/nullptr);
 
     results.push_back({asset.tensor_info().name(), asset_op});
   }
@@ -1274,7 +1278,7 @@ absl::Status SavedModelSignatureDefImporterLite::MoveConvertedFunctionsToModule(
 
   // Copy all functions used by this signature to the final MLIR module.
   for (auto func : sub_module.getOps<mlir::func::FuncOp>()) {
-    absl::MutexLock l(&symbol_table_mu_);
+    absl::MutexLock l(symbol_table_mu_);
     // The insert here is a NO-OP if the function already exists.
     symbol_table_.insert(func.clone());
   }
@@ -1495,7 +1499,7 @@ SavedModelSignatureDefImporterLite::ConvertSignatures() {
       thread_pool.Schedule([&]() {
         auto status = ConvertSignature(sig_def_key, signature_def);
         if (!status.ok()) {
-          absl::MutexLock l(&error_status_mu);
+          absl::MutexLock l(error_status_mu);
           error_status = std::move(status);
         }
       });
@@ -1519,7 +1523,8 @@ SavedModelSignatureDefImporterLite::ConvertSignatures() {
         builder.getStringAttr("__tf_saved_model_variables"),
         /*filename=*/
         builder.getStringAttr(io::JoinPath(kSavedModelVariablesDirectory,
-                                           kSavedModelVariablesFilename)));
+                                           kSavedModelVariablesFilename)),
+        /*sym_visibility=*/nullptr);
     variable_and_assets.push_back(
         {input_.meta_graph_def().saver_def().filename_tensor_name(),
          variable_filename_op});

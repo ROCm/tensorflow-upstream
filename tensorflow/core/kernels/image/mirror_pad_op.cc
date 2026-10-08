@@ -15,11 +15,10 @@ limitations under the License.
 
 // See docs in ../ops/nn_ops.cc.
 
+#include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #define EIGEN_USE_THREADS
-
-#include "tensorflow/core/kernels/image/mirror_pad_op.h"
-
-#include <string>
 
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tensorflow/core/framework/op.h"
@@ -29,6 +28,7 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/tensor_types.h"
 #include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/image/mirror_pad_op.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/mirror_pad_mode.h"
@@ -120,12 +120,12 @@ class MirrorPadOp : public OpKernel {
     Tensor* output = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
 
-#define MIRROR_PAD_CASE(i)                                                \
-  case i: {                                                               \
-    functor::MirrorPad<Device, T, Tpaddings, i>()(                        \
-        context->eigen_device<Device>(), To32Bit(output->tensor<T, i>()), \
-        To32Bit(in0.tensor<T, i>()), paddings, offset_);                  \
-    break;                                                                \
+#define MIRROR_PAD_CASE(i)                                       \
+  case i: {                                                      \
+    functor::MirrorPad<Device, T, Tpaddings, i>()(               \
+        context->eigen_device<Device>(), output->tensor<T, i>(), \
+        in0.tensor<T, i>(), paddings, offset_);                  \
+    break;                                                       \
   }
 
     // Invoke the dims-specific implementation.
@@ -153,12 +153,12 @@ using GpuDevice = Eigen::GpuDevice;
 namespace functor {
 // Forward declarations of the functor specializations defined in the sharded
 // files.
-#define DECLARE_CPU_SPEC(T, Tpaddings, i)                     \
-  template <>                                                 \
-  void MirrorPad<CpuDevice, T, Tpaddings, i>::operator()(     \
-      const CpuDevice&, typename TTypes<T, i, int32>::Tensor, \
-      typename TTypes<T, i, int32>::ConstTensor,              \
-      TTypes<Tpaddings>::ConstMatrix, int);                   \
+#define DECLARE_CPU_SPEC(T, Tpaddings, i)                                 \
+  template <>                                                             \
+  void MirrorPad<CpuDevice, T, Tpaddings, i>::operator()(                 \
+      const CpuDevice&, typename TTypes<T, i>::Tensor,                    \
+      typename TTypes<T, i>::ConstTensor, TTypes<Tpaddings>::ConstMatrix, \
+      int);                                                               \
   extern template struct MirrorPad<CpuDevice, T, Tpaddings, i>;
 
 #define DECLARE_CPU_SPECS(T)       \
@@ -204,12 +204,12 @@ TF_CALL_tstring(REGISTER_KERNEL);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 namespace functor {
 // Forward declarations of the functor specializations for GPU.
-#define DECLARE_GPU_SPEC(T, Tpaddings, i)                     \
-  template <>                                                 \
-  void MirrorPad<GpuDevice, T, Tpaddings, i>::operator()(     \
-      const GpuDevice&, typename TTypes<T, i, int32>::Tensor, \
-      typename TTypes<T, i, int32>::ConstTensor,              \
-      TTypes<Tpaddings>::ConstMatrix, int);                   \
+#define DECLARE_GPU_SPEC(T, Tpaddings, i)                                 \
+  template <>                                                             \
+  void MirrorPad<GpuDevice, T, Tpaddings, i>::operator()(                 \
+      const GpuDevice&, typename TTypes<T, i>::Tensor,                    \
+      typename TTypes<T, i>::ConstTensor, TTypes<Tpaddings>::ConstMatrix, \
+      int);                                                               \
   extern template struct MirrorPad<GpuDevice, T, Tpaddings, i>;
 
 #define DECLARE_GPU_SPECS(T)       \
@@ -342,13 +342,12 @@ class MirrorPadGradOp : public OpKernel {
     Tensor* output = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
 
-#define MIRROR_PAD_GRAD_CASE(k)                                           \
-  case k: {                                                               \
-    functor::MirrorPadGrad<Device, T, Tpaddings, k>()(                    \
-        context->eigen_device<Device>(), To32Bit(output->tensor<T, k>()), \
-        To32Bit(in0.tensor<T, k>()), paddings, offset_,                   \
-        To32Bit(scratch.tensor<T, k>()));                                 \
-    break;                                                                \
+#define MIRROR_PAD_GRAD_CASE(k)                                         \
+  case k: {                                                             \
+    functor::MirrorPadGrad<Device, T, Tpaddings, k>()(                  \
+        context->eigen_device<Device>(), output->tensor<T, k>(),        \
+        in0.tensor<T, k>(), paddings, offset_, scratch.tensor<T, k>()); \
+    break;                                                              \
   }
 
     // Invoke the dims-specific implementation.
@@ -373,13 +372,12 @@ class MirrorPadGradOp : public OpKernel {
 namespace functor {
 // Forward declarations of the functor specializations defined in the sharded
 // files.
-#define DECLARE_CPU_SPEC(T, Tpaddings, k)                     \
-  template <>                                                 \
-  void MirrorPadGrad<CpuDevice, T, Tpaddings, k>::operator()( \
-      const CpuDevice&, typename TTypes<T, k, int32>::Tensor, \
-      typename TTypes<T, k, int32>::ConstTensor,              \
-      TTypes<Tpaddings>::ConstMatrix, int,                    \
-      typename TTypes<T, k, int32>::Tensor);                  \
+#define DECLARE_CPU_SPEC(T, Tpaddings, k)                                      \
+  template <>                                                                  \
+  void MirrorPadGrad<CpuDevice, T, Tpaddings, k>::operator()(                  \
+      const CpuDevice&, typename TTypes<T, k>::Tensor,                         \
+      typename TTypes<T, k>::ConstTensor, TTypes<Tpaddings>::ConstMatrix, int, \
+      typename TTypes<T, k>::Tensor);                                          \
   extern template struct MirrorPadGrad<CpuDevice, T, Tpaddings, k>;
 
 #define DECLARE_CPU_SPECS(T)       \
@@ -419,13 +417,12 @@ TF_CALL_NUMBER_TYPES(REGISTER_KERNEL);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 namespace functor {
 // Forward declarations of the functor specializations for GPU.
-#define DECLARE_GPU_SPEC(T, Tpaddings, k)                     \
-  template <>                                                 \
-  void MirrorPadGrad<GpuDevice, T, Tpaddings, k>::operator()( \
-      const GpuDevice&, typename TTypes<T, k, int32>::Tensor, \
-      typename TTypes<T, k, int32>::ConstTensor,              \
-      TTypes<Tpaddings>::ConstMatrix, int,                    \
-      typename TTypes<T, k, int32>::Tensor);                  \
+#define DECLARE_GPU_SPEC(T, Tpaddings, k)                                      \
+  template <>                                                                  \
+  void MirrorPadGrad<GpuDevice, T, Tpaddings, k>::operator()(                  \
+      const GpuDevice&, typename TTypes<T, k>::Tensor,                         \
+      typename TTypes<T, k>::ConstTensor, TTypes<Tpaddings>::ConstMatrix, int, \
+      typename TTypes<T, k>::Tensor);                                          \
   extern template struct MirrorPadGrad<GpuDevice, T, Tpaddings, k>;
 
 #define DECLARE_GPU_SPECS(T)       \

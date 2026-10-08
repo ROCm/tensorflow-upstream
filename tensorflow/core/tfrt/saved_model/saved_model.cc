@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -549,6 +550,10 @@ void EmitSavedModelUnifiedModelId(absl::string_view saved_model_dir,
 absl::StatusOr<std::unique_ptr<SavedModel>> SavedModelImpl::LoadSavedModel(
     Options options, absl::string_view saved_model_dir,
     const std::unordered_set<std::string>& tags) {
+  if (absl::StrContains(saved_model_dir, "..")) {
+    return absl::InvalidArgumentError(
+        "saved_model_dir cannot contain '..' for security reasons.");
+  }
   TF_ASSIGN_OR_RETURN(auto meta_graph_def,
                       ReadSavedModel(saved_model_dir, tags));
   return LoadSavedModel(std::move(options), std::move(meta_graph_def),
@@ -558,6 +563,10 @@ absl::StatusOr<std::unique_ptr<SavedModel>> SavedModelImpl::LoadSavedModel(
 absl::StatusOr<std::unique_ptr<SavedModel>> SavedModelImpl::LoadSavedModel(
     Options options, tensorflow::MetaGraphDef meta_graph_def,
     absl::string_view saved_model_dir) {
+  if (absl::StrContains(saved_model_dir, "..")) {
+    return absl::InvalidArgumentError(
+        "saved_model_dir cannot contain '..' for security reasons.");
+  }
   LOG(INFO) << "TFRT loading v1 savedmodel: " << saved_model_dir;
 
   EmitSavedModelUnifiedModelId(saved_model_dir, options);

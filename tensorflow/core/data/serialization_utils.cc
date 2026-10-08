@@ -113,6 +113,11 @@ absl::Status ReadElementsFromCheckpoint(
   int64_t num_elements;
   TF_RETURN_IF_ERROR(
       reader->ReadScalar(key_prefix, kNumElements, &num_elements));
+  if (num_elements < 0) {
+    return absl::InternalError(
+        absl::StrCat("Num_elements in tf.data checkpoint must be >= 0, got: ",
+                     num_elements));
+  }
   DCHECK(elements->empty());
   elements->reserve(num_elements);
   for (int i = 0; i < num_elements; ++i) {
@@ -120,6 +125,12 @@ absl::Status ReadElementsFromCheckpoint(
     int64_t num_components;
     TF_RETURN_IF_ERROR(
         reader->ReadScalar(element_prefix, kNumComponents, &num_components));
+    if (num_components < 0) {
+      return absl::InternalError(
+          absl::StrCat("Num of Tensor size in tf.data checkpoint must be >= 0, "
+                       "got: ",
+                       num_components));
+    }
     elements->emplace_back();
     std::vector<Tensor>& element = elements->at(i);
     element.reserve(num_components);

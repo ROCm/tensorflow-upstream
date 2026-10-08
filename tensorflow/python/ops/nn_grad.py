@@ -18,6 +18,7 @@ import functools
 import itertools
 import operator
 
+from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
@@ -289,6 +290,15 @@ def _SoftmaxGrad(op: ops.Operation, grad_softmax):
 
     grad_x = grad_softmax * softmax - sum(grad_softmax * softmax) * softmax
 
+  For ``float64``, when one logit dominates (e.g. [40.0, 0.0]), the stored
+  probabilities round to [1.0, 0.0], causing (grad_softmax - sum_channels)
+  to suffer catastrophic cancellation (1.0 - 1.0 = 0.0) at the dominant
+  position while dropping the finite tail (~4.25e-18), which breaks the
+  logit-translation invariance sum_j(grad_x[j]) = 0. Since mathematically
+  sum_j(grad_x[j]) = 0, the dominant component equals -sum_{j != k}(grad_x[j]).
+  Correcting the dominant component by subtracting the residual sum restores
+  both the finite tail and the exact sum-to-zero invariant.
+
   Args:
      op: the Softmax op.
      grad_softmax:  the tensor representing the gradient w.r.t. the softmax
@@ -296,11 +306,19 @@ def _SoftmaxGrad(op: ops.Operation, grad_softmax):
 
   Returns:
      gradient w.r.t the input to the softmax
-
   """
   softmax = op.outputs[0]
   sum_channels = math_ops.reduce_sum(grad_softmax * softmax, -1, keepdims=True)
-  return (grad_softmax - sum_channels) * softmax
+  grad_x = (grad_softmax - sum_channels) * softmax
+  if softmax.dtype == dtypes.float64:
+    k = math_ops.argmax(softmax, axis=-1)
+    num_classes = array_ops.shape(softmax)[-1]
+    one_hot_mask = array_ops.stop_gradient(
+        array_ops.one_hot(k, depth=num_classes, dtype=dtypes.float64)
+    )
+    grad_sum = math_ops.reduce_sum(grad_x, -1, keepdims=True)
+    grad_x = grad_x - grad_sum * one_hot_mask
+  return grad_x
 
 
 @ops.RegisterGradient("LogSoftmax")
@@ -318,7 +336,11 @@ def _LogSoftmaxGrad(op: ops.Operation, grad):
     The gradients w.r.t. the input.
   """
   softmax = math_ops.exp(op.outputs[0])
-  return grad - math_ops.reduce_sum(grad, -1, keepdims=True) * softmax
+  result = grad - math_ops.reduce_sum(grad, -1, keepdims=True) * softmax
+  if result.dtype == dtypes.float64:
+    # Remove the zero-sum residual left by cancellation at saturated logits.
+    result = result - math_ops.reduce_sum(result, -1, keepdims=True) * softmax
+  return result
 
 
 @ops.RegisterGradient("BiasAdd")
@@ -458,12 +480,26 @@ def _LeakyReluGradGrad(op: ops.Operation, grad):
 
 @ops.RegisterGradient("Elu")
 def _EluGrad(op: ops.Operation, grad):
-  return gen_nn_ops.elu_grad(grad, op.outputs[0])
+  x = op.inputs[0]
+  # Computing the gradient from the ELU output loses precision when exp(x) is
+  # too small to affect -1. Compute it directly from the input instead.
+  return grad * math_ops.exp(math_ops.minimum(x, 0.0))
 
 
 @ops.RegisterGradient("Selu")
 def _SeluGrad(op: ops.Operation, grad):
-  return gen_nn_ops.selu_grad(grad, op.outputs[0])
+  x = op.inputs[0]
+  scale = constant_op.constant(1.0507009873554804934193349852946, dtype=x.dtype)
+  scale_alpha = constant_op.constant(
+      1.7580993408473768599402175208123, dtype=x.dtype
+  )
+  # Reconstructing the negative-branch derivative from the SELU output loses
+  # precision when the output rounds to -scale_alpha. Compute it from x.
+  derivative = array_ops.where_v2(
+      x < 0.0, scale_alpha * math_ops.exp(math_ops.minimum(x, 0.0)), scale
+  )
+  derivative = array_ops.where_v2(math_ops.is_nan(x), x, derivative)
+  return grad * derivative
 
 @ops.RegisterGradient("Gelu")
 def _GeluGrad(op, grad):
@@ -472,7 +508,7 @@ def _GeluGrad(op, grad):
 
 @ops.RegisterGradient("Softplus")
 def _SoftplusGrad(op: ops.Operation, grad):
-  return grad * math_ops.sigmoid(op.inputs[0])
+  return gen_nn_ops.softplus_grad(grad, op.inputs[0])
 
 
 @ops.RegisterGradient("SoftplusGrad")
@@ -491,6 +527,20 @@ def _SoftplusGradGrad(op: ops.Operation, grad):
 @ops.RegisterGradient("Softsign")
 def _SoftsignGrad(op: ops.Operation, grad):
   return gen_nn_ops.softsign_grad(grad, op.inputs[0])
+
+
+@ops.RegisterGradient("SoftsignGrad")
+def _SoftsignGradGrad(op: ops.Operation, grad):
+  x = op.inputs[1]
+  denominator = 1.0 + math_ops.abs(x)
+  return (
+      gen_nn_ops.softsign_grad(grad, x),
+      -2.0
+      * grad
+      * op.inputs[0]
+      * math_ops.sign(x)
+      / (denominator * denominator * denominator),
+  )
 
 
 @ops.RegisterGradient("ReluGrad")
