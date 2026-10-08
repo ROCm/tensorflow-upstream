@@ -19,6 +19,7 @@ on:
   pull_request:
     branches:
       - develop-upstream
+      - r2.22-rocm-enhanced
       - r2.21-rocm-enhanced
       - r2.20-rocm-enhanced
   workflow_call:
