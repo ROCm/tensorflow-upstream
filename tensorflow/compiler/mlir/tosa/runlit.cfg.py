@@ -68,4 +68,5 @@ tool_names = [
 ]
 tools = [ToolSubst(s, unresolved='ignore') for s in tool_names]
 llvm_config.add_tool_substitutions(tools, tool_dirs)
+llvm_config.with_environment('LD_LIBRARY_PATH', config.test_exec_root + "/local_config_rocm/rocm/rocm_dist/lib/", append_path=True)
 # pylint: enable=undefined-variable
