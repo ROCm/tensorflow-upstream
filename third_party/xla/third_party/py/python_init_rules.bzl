@@ -15,6 +15,7 @@ def python_init_rules(extra_patches = []):
         patch_file = [
             "@xla//third_party/protobuf:protobuf.patch",
             "@xla//third_party/protobuf:protobuf_arena.patch",
+            "@xla//third_party/protobuf:protobuf_headers.patch",
         ],
         sha256 = "6e09bbc950ba60c3a7b30280210cd285af8d7d8ed5e0a6ed101c72aff22e8d88",
         strip_prefix = "protobuf-6.31.1",

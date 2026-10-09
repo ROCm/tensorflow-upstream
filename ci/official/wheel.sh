@@ -28,11 +28,6 @@ if [[ "$TFCI_NVIDIA_SMI_ENABLE" == 1 ]]; then
   tfrun nvidia-smi
 fi
 
-# Record GPU count and ROCM version status
-if [[ "$TFCI_ROCM_SMI_ENABLE" == 1 ]]; then
-  tfrun rocm-smi
-fi
-
 # Update the version numbers for Nightly only
 if [[ "$TFCI_NIGHTLY_UPDATE_VERSION_ENABLE" == 1 ]]; then
   python_bin=python3
@@ -52,7 +47,10 @@ if [[ "$TFCI_WHL_NUMPY_VERSION" == 1 ]]; then
   cp ./ci/official/requirements_updater/numpy1_requirements/*.txt .
 fi
 
-tfrun bazel $TFCI_BAZEL_BAZELRC_ARGS build $TFCI_BAZEL_COMMON_ARGS --config=$TFCI_BAZEL_CONFIG //tensorflow/tools/pip_package:wheel $TFCI_BUILD_PIP_PACKAGE_BASE_ARGS $TFCI_BUILD_PIP_PACKAGE_WHEEL_NAME_ARG --verbose_failures
+tfrun bazel $TFCI_BAZEL_BAZELRC_ARGS build  $TFCI_BAZEL_COMMON_ARGS --config=$TFCI_BAZEL_CONFIG  --config=rocm_cache --dynamic_mode=off --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" --repo_env=ROCM_DISTRO_HASH="" //tensorflow/tools/pip_package:wheel $TFCI_BUILD_PIP_PACKAGE_BASE_ARGS $TFCI_BUILD_PIP_PACKAGE_WHEEL_NAME_ARG --verbose_failures
+
+ROCM_DIST="$(bazel info output_base)/external/local_config_rocm/rocm/rocm_dist"
+export LD_LIBRARY_PATH="${ROCM_DIST}/lib:${ROCM_DIST}/lib/rocm_sysdeps/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 tfrun "$TFCI_FIND_BIN" ./bazel-bin/tensorflow/tools/pip_package -iname "*.whl" -exec cp {} $TFCI_OUTPUT_DIR \;
 tfrun mkdir -p ./dist
