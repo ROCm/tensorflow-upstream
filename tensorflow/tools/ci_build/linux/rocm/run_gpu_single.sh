@@ -20,14 +20,7 @@ set -x
 N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
 # If rocm-smi exists locally (it should) use it to find
 # out how many GPUs we have to test with.
-amd-smi list >/dev/null 2>&1
-STATUS=$?
-if [ $STATUS -ne 0 ]; then
-  TF_GPU_COUNT=1
-else
-  TF_GPU_COUNT=$(amd-smi list 2>/dev/null | grep -c '^GPU:')
-  [ "$TF_GPU_COUNT" -eq 0 ] && TF_GPU_COUNT=1
-fi
+TF_GPU_COUNT=4
 TF_TESTS_PER_GPU=1
 N_TEST_JOBS=$(expr ${TF_GPU_COUNT} \* ${TF_TESTS_PER_GPU})
 
@@ -35,32 +28,12 @@ echo ""
 echo "Bazel will use ${N_BUILD_JOBS} concurrent build job(s) and ${N_TEST_JOBS} concurrent test job(s)."
 echo ""
 
-# First positional argument (if any) specifies the ROCM_INSTALL_DIR
-if [[ -n $1 ]]; then
-    ROCM_INSTALL_DIR=$1
-else
-    if [[ -z "${ROCM_PATH}" ]]; then
-        ROCM_INSTALL_DIR=/opt/rocm/
-    else
-        ROCM_INSTALL_DIR=$ROCM_PATH
-    fi
-fi
-
-# Run configure.
-export PYTHON_BIN_PATH=$(which python3)
-
-PYTHON_VERSION=$(python3 -c "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-export TF_PYTHON_VERSION=$PYTHON_VERSION
 export TF_NEED_ROCM=1
-export ROCM_PATH=$ROCM_INSTALL_DIR
 
-yes "" | $PYTHON_BIN_PATH configure.py
 
-TARGET_ARCHS=$(rocminfo | grep "Name: *gfx" | awk '/Name:/ {print $2}' | sort -u)
-if [ -z "$TARGET_ARCHS" ]; then
-    echo "No gpu found"
-    exit 1
-fi
+TARGET_ARCHS="gfx90a"
+ROCM_DISTRO_URL="https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.0.0.tar.gz"
+ROCM_DISTRO_HASH="1c5e807875d26a2470ecc7323daa5b5b9009208a55c3290ac255a909cde15fc6"
 
 if [ ! -d /tf ];then
     # The bazelrc files expect /tf to exist
@@ -89,18 +62,19 @@ EXCLUDED_TESTS=(
 
 # Run bazel test command. Double test timeouts to avoid flakes.
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
-    --config=rocm \
+    --config=rocm_ci_hermetic \
     --config=rocm_cache \
     --config=sigbuild_local_cache \
     --config=pycpp \
-    -k \
     --jobs=${N_BUILD_JOBS} \
     --local_test_jobs=${N_TEST_JOBS} \
     --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
     --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
     --test_env=MIOPEN_DEBUG_CONV_WINOGRAD=0 \
     --repo_env="TF_ROCM_AMDGPU_TARGETS=$TARGET_ARCHS" \
-    --repo_env="ROCM_PATH=$ROCM_PATH" \
+    --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
+    --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
+    --repo_env=ROCM_PATH="" \
     --build_tests_only \
     --test_output=errors \
     --verbose_failures \
