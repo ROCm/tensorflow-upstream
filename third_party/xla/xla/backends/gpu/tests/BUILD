@@ -272,11 +272,7 @@ xla_test(
     name = "gpu_too_many_blocks_test",
     srcs = ["gpu_too_many_blocks_test.cc"],
     backends = ["gpu"],
-<<<<<<< HEAD
-    use_legacy_runtime = True,
-=======
     tags = ["cuda-only"],
->>>>>>> upstream/r2.22
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla/hlo/ir:hlo",
@@ -293,14 +289,10 @@ xla_test(
         "gb200": ["broken"],
     },
     backends = ["gpu"],
-<<<<<<< HEAD
-    use_legacy_runtime = True,
-=======
     tags = [
         "cuda-only",
         "nozapfhahn",
     ],
->>>>>>> upstream/r2.22
     deps = [
         ":hlo_pjrt_gpu_test_base",
         "//xla:error_spec",

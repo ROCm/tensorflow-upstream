@@ -68,19 +68,6 @@ class OneDnnThreadPool final
   uint64_t get_flags() const final { return is_async_ ? ASYNCHRONOUS : 0; }
 
 #ifdef ENABLE_ONEDNN_ASYNC
-  // The wait() method only exists with oneDNN's experimental support for
-  // asynchronous execution determined by the ENABLE_ONEDNN_ASYNC.
-  void wait() override {
-    if (is_async_) {
-      // While performing asynchronous execution, wait() method is needed to
-      // notify the user that the output is ready. oneDNN will not call wait()
-      // inside the library to avoid deadlock.
-      tsl::BlockUntilReady(done_event_);
-    }
-  }
-#endif  // ENABLE_ONEDNN_ASYNC
-
-#ifdef ENABLE_ONEDNN_ASYNC
   // This is a placeholder implementation for the wait method, as we
   // need to satisfy the interface requirements of the
   // dnnl::threadpool_interop::threadpool_iface with the experimental

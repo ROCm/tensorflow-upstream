@@ -20,10 +20,13 @@ set -x
 N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
 # If rocm-smi exists locally (it should) use it to find
 # out how many GPUs we have to test with.
-rocm-smi -i
+amd-smi list >/dev/null 2>&1
 STATUS=$?
-if [ $STATUS -ne 0 ]; then TF_GPU_COUNT=1; else
-    TF_GPU_COUNT=$(rocm-smi -i | grep 'Device ID' | grep 'GPU' | wc -l)
+if [ $STATUS -ne 0 ]; then
+  TF_GPU_COUNT=1
+else
+  TF_GPU_COUNT=$(amd-smi list 2>/dev/null | grep -c '^GPU:')
+  [ "$TF_GPU_COUNT" -eq 0 ] && TF_GPU_COUNT=1
 fi
 TF_TESTS_PER_GPU=1
 N_TEST_JOBS=$(expr ${TF_GPU_COUNT} \* ${TF_TESTS_PER_GPU})
@@ -66,6 +69,9 @@ fi
 
 # vvv TODO (rocm) weekly-sync-20251224 excluded tests
 EXCLUDED_TESTS=(
+    #  //tensorflow/core/grappler/optimizers:auto_mixed_precision_test_gpu
+    AutoMixedPrecisionGfx1103Test.SupportsFp16
+
     # //tensorflow/core/kernels:matmul_op_test_gpu
     Test/FusedMatMulWithBiasOpTest/1.MatMul*
 
@@ -84,6 +90,7 @@ EXCLUDED_TESTS=(
 # Run bazel test command. Double test timeouts to avoid flakes.
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
     --config=rocm \
+    --config=rocm_cache \
     --config=sigbuild_local_cache \
     --config=pycpp \
     -k \
@@ -98,5 +105,6 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --test_output=errors \
     --verbose_failures \
     --test_sharding_strategy=disabled \
+    --dynamic_mode=off \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute

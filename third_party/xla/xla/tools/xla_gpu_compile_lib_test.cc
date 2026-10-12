@@ -89,14 +89,6 @@ TEST_F(XlaCompileLibTest, DoesNotOverridePartitionsAndReplicas) {
 }
 
 TEST_F(XlaCompileLibTest, CompilesForGpuWithoutDevice) {
-<<<<<<< HEAD
-  const std::string spec_file =
-      test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuRocm)
-          ? "mi200.txtpb"
-          : "h100_sxm.txtpb";
-  auto path = tsl::testing::XlaSrcRoot();
-  path = path.erase(path.length() - 4);
-=======
   const std::string spec_file = [&] {
     if (test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuRocm)) {
       return "mi200.txtpb";
@@ -106,7 +98,8 @@ TEST_F(XlaCompileLibTest, CompilesForGpuWithoutDevice) {
     }
     return "h100_sxm.txtpb";
   }();
->>>>>>> upstream/r2.22
+  auto path = tsl::testing::XlaSrcRoot();
+  path = path.erase(path.length() - 4);
   const std::string target_config_path =
       tsl::io::JoinPath(path, "external/xla/xla",
                         "backends/gpu/target_config/specs", spec_file);
@@ -137,7 +130,8 @@ TEST_F(XlaCompileLibTest, ErrorForIncorrectPlatformAOTCompile) {
     return "bmg_g21.txtpb";
   }();
   const std::string target_config_path = tsl::io::JoinPath(
-      tsl::testing::XlaSrcRoot(), "backends/gpu/target_config/specs",
+      tsl::testing::XlaSrcRoot(), "../external/xla/xla",
+      "backends/gpu/target_config/specs",
       incorrect_spec_file);
   stream_executor::GpuTargetConfigProto target_config_proto;
   ASSERT_OK(tsl::ReadTextProto(tsl::Env::Default(), target_config_path,

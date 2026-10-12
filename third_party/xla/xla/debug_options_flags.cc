@@ -1609,22 +1609,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Available fusion types: dot, eltwise, and reduce.\n"
       "The default list is currently empty."));
   flag_list->push_back(tsl::Flag(
-      "xla_cpu_experimental_onednn_fusion_type",
-      SetterForRepeatedEnum<DebugOptions::LibraryFusionType>(
-          "xla_cpu_experimental_onednn_fusion_type",
-          /*enum_prefix=*/"LIBRARY_FUSION_TYPE_",
-          &DebugOptions::LibraryFusionType_Parse,
-          debug_options->mutable_xla_cpu_experimental_onednn_fusion_type()),
-      "",
-      "Comma-separated list of oneDNN fusion types to be enabled; "
-      "no whitespace around commas. Two ways to pass values:\n"
-      "  1. Exact type names. This overwrites the default setting.\n"
-      "  2. '+' or '-' prefix: This adds or removes a fusion type "
-      "from the default list. Cannot be mixed with the overwrite "
-      "mode. Every item must have the sign prefix.\n"
-      "Available fusion types: dot, eltwise, and reduce.\n"
-      "The default list is currently empty."));
-  flag_list->push_back(tsl::Flag(
       "xla_cpu_use_acl", bool_setter_for(&DebugOptions::set_xla_cpu_use_acl),
       debug_options->xla_cpu_use_acl(),
       "Generate calls to ACL (Arm Compute Library) in the CPU backend."));

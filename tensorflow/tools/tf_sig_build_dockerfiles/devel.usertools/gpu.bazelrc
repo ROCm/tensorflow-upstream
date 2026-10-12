@@ -12,6 +12,10 @@ build:sigbuild_remote_cache_push --remote_cache="https://storage.googleapis.com/
 # the CACHEBUSTER to the PR number.
 build --action_env=CACHEBUSTER=565341047
 
+build:rocm_cache --remote_cache="grpcs://wardite.cluster.engflow.com"
+build:rocm_cache --tls_client_certificate="/data/ci-cert.crt"
+build:rocm_cache --tls_client_key="/data/ci-cert.key"
+
 # Build options for GPU Linux
 #build --config=release_gpu_linux
 

@@ -1746,17 +1746,9 @@ cc_library(
 )
 
 xla_cc_test(
-<<<<<<< HEAD
-    name = "dynamic_slice_fusion_rewriter_test",
-    srcs = ["dynamic_slice_fusion_rewriter_test.cc"],
-    tags = [
-        "gpu",
-    ],
-=======
     name = "dynamic_slice_fusion_rewriter_v2_test",
     srcs = ["dynamic_slice_fusion_rewriter_v2_test.cc"],
     tags = ["gpu"],
->>>>>>> upstream/r2.22
     deps = [
         ":dynamic_slice_annotator",
         ":dynamic_slice_fusion",

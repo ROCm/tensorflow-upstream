@@ -50,11 +50,7 @@ auto OpGradientInfoInit(const T &a) {
 
 absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedInputIndices(
     const tensorflow::string &op_name) {
-<<<<<<< HEAD
   static std::array<OpIndexInfo, 368> a = {{
-=======
-  static std::array<OpIndexInfo, 365> a = {{
->>>>>>> upstream/r2.22
       {"Acosh"},
       {"AllToAll", 1, {0}},
       {"ApproximateEqual"},
@@ -116,6 +112,7 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedInputIndices(
       {"DrawBoundingBoxes"},
       {"Dropout", 4, {0, 2, 3, 4}},
       {"EditDistance"},
+      {"Elu"},
       {"EncodeBase64"},
       {"EnsureShape"},
       {"Enter"},
@@ -297,6 +294,7 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedInputIndices(
       {"SdcaFprint"},
       {"SegmentSum", 1, {0}},
       {"Select", 1, {2}},
+      {"Selu"},
       {"SerializeTensor"},
       {"SetSize"},
       {"Shape"},
@@ -433,18 +431,13 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedInputIndices(
 
 absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
     const tensorflow::string &op_name) {
-<<<<<<< HEAD
   static std::array<OpIndexInfo, 493> a = {{
-=======
-  static std::array<OpIndexInfo, 490> a = {{
->>>>>>> upstream/r2.22
       {"Abs"},
       {"AccumulateNV2"},
       {"Acos"},
       {"Add"},
       {"AddN"},
       {"AddV2"},
-      {"AdjustContrastv2"},
       {"AllToAll"},
       {"Angle"},
       {"ApproxTopK", 1, {0}},
@@ -538,7 +531,6 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
       {"DynamicPartition"},
       {"EditDistance"},
       {"Einsum"},
-      {"Elu"},
       {"EluGrad"},
       {"EncodeBase64"},
       {"EncodeProto"},
@@ -770,7 +762,6 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
       {"SegmentMean"},
       {"SegmentSum"},
       {"Select"},
-      {"Selu"},
       {"SeluGrad"},
       {"SerializeTensor"},
       {"SetSize"},
@@ -784,7 +775,6 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
       {"Softplus"},
       {"SoftplusGrad"},
       {"Softsign"},
-      {"SoftsignGrad"},
       {"SpaceToBatch"},
       {"SpaceToBatchND"},
       {"SpaceToDepth"},

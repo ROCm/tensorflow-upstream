@@ -20,10 +20,13 @@ set -x
 N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
 # If rocm-smi exists locally (it should) use it to find
 # out how many GPUs we have to test with.
-rocm-smi -i
+amd-smi list >/dev/null 2>&1
 STATUS=$?
-if [ $STATUS -ne 0 ]; then TF_GPU_COUNT=1; else
-    TF_GPU_COUNT=$(rocm-smi -i|grep 'Device ID' |grep 'GPU' |wc -l)
+if [ $STATUS -ne 0 ]; then
+  TF_GPU_COUNT=1
+else
+  TF_GPU_COUNT=$(amd-smi list 2>/dev/null | grep -c '^GPU:')
+  [ "$TF_GPU_COUNT" -eq 0 ] && TF_GPU_COUNT=1
 fi
 if [[ $TF_GPU_COUNT -lt 4 ]]; then
     echo "Found only ${TF_GPU_COUNT} gpus, multi-gpu tests need atleast 4 gpus."
@@ -64,12 +67,14 @@ fi
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
         --local_test_jobs=${N_TEST_JOBS} \
-        --jobs=30 \
+        --jobs=${N_BUILD_JOBS} \
         --local_ram_resources=60000 \
         --local_cpu_resources=15 \
         --verbose_failures \
         --config=rocm \
+        --config=rocm_cache \
         --config=nonpip_multi_gpu \
         --config=sigbuild_local_cache \
         --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
         --repo_env="ROCM_PATH=$ROCM_PATH" \
+        --dynamic_mode=off
