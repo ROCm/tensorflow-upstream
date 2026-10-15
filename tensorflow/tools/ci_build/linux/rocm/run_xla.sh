@@ -55,190 +55,44 @@ if [ ! -d /tf ];then
         mkdir /tf
     fi
 
-# vvv TODO (rocm) weekly-sync-20251021 excluded tests
+# vvv TODO (rocm) weekly-sync-20260915 excluded tests
 EXCLUDED_TESTS=(
-    # @xla//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any
-    TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_*
+    # @xla//xla/backends/gpu/autotuner:fission_backend_test_amdgpu_any
+    CublasFissionBackendTest.CublasFallbackForBf16Bf16F32Algorithm
 
-    # @xla//xla/backends/gpu/codegen/triton:triton_gemm_fusion_test_amdgpu_any
-    CompareTest.SplitK
-    CompareTest.SplitKBatch
-    CompareTest.SupportsSplitKWithIndivisibleKUsingPaddingEqual1
-    TritonGemmTest.S8ToF32DotWithManyWarpsDoesNotCrash
-    TritonGemmTest.SplitAndTransposeLhsExecutesCorrectly #failing on mi250
-    
-    # @xla//xla/backends/gpu/codegen/triton:fusion_emitter_device_test_amdgpu_any
-    TritonEmitterTest.FusionWithOutputContainingMoreThanInt32MaxElementsExecutesCorrectly
-    TritonEmitterTest.ConvertF16ToF8E5M2Exhaustive
-    TritonEmitterTest.RocmWarpSizeIsSetCorrectly
-    BasicDotAlgorithmEmitterTestSuite/BasicDotAlgorithmEmitterTest.BasicAlgorithmIsEmittedCorrectly/ALG_DOT_F16_F16_F16
+    # @xla//xla/backends/gpu/autotuner:triton_test_amdgpu_any
+    TritonBackendTestSuite/TritonBackendTest.CostModelOptions_*
 
-    # @xla//xla/backends/gpu/codegen/triton:fusion_emitter_int4_device_test_amdgpu_any
-    TritonTest.FuseSubchannelDequantizationWithTranspose
-
-    # @xla//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_test_amdgpu_any
-    TritonNormalizationTest.CanFuseAndEmitDiamondWithBF16Converts
-    ElementwiseTestSuiteF16/UnaryElementwiseTest.ElementwiseUnaryOpExecutesCorrectly/f16_cosine
-    ElementwiseTestSuiteF16/BinaryElementwiseTest.ElementwiseBinaryOpExecutesCorrectly/f16_atan2
-    ElementwiseTestSuiteF16/BinaryElementwiseTest.ElementwiseFusionExecutesCorrectly/f16_atan2
-
-    # @xla//xla/service/gpu/tests:command_buffer_test_amdgpu_any
-    CommandBufferTests/CommandBufferTest.WhileLoop/*
-    CommandBufferTests/CommandBufferTest.IndexConditional/*
-    CommandBufferTests/CommandBufferTest.TrueFalseConditional/*
-
-    # @xla//xla/backends/gpu/runtime:command_buffer_conversion_pass_test_amdgpu_any
-    CommandBufferConversionPassTest.ConvertWhileThunk
-    CommandBufferConversionPassTest.ConvertWhileThunkWithAsyncPair
-
-    # @xla//xla/backends/gpu/runtime:topk_test_amdgpu_any
-    TopKTests/TopKKernelTest.*
-
-    # @xla//xla/pjrt/c:pjrt_c_api_gpu_test_amdgpu_any
-    PjrtCAPIGpuExtensionTest.TritonCompile
+    # @xla//xla/backends/gpu/transforms:gemm_rewriter_test_amdgpu_any
+    GemmRewriteTest.CheckCustomCallHipblasLtBF16
+    ParameterizedGemmRewriteTest.GemmTypeCombinationCheck
 
     # @xla//xla/service/gpu:dot_algorithm_support_test_amdgpu_any
-    DotTf32Tf32F32Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
-    DotTf32Tf32F32X3Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
+    F8E5M2Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_*
+    F8E4M3FNTests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_*
 
-    # @xla//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any_notfrt
-    # @xla//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any
-    TritonFusionNumericsVerifierTest.CompilationSucceedsEvenIfKernelWillSpillRegisters
-    TritonFusionNumericsVerifierTest.VerifyThatDisablingTritonIsFast
-    TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/0
-    TritonFusionNumericsVerifierTestSuite/TritonFusionNumericsVerifierTest.VerifyMultipleNestedFusionNumerics/1
+    # @xla//xla/backends/gpu/codegen/triton/dot_algorithms-test_amdgpu_any
+    BlasAlgorithmTest.Algorithm_BF16_BF16_F32*
 
-    # @xla//xla/service/gpu/transforms:dot_dimension_sorter_test_amdgpu_any
-    WithoutDotDimensionSorterTest.UnsortedDimsCreateTransposes # failing on mi250
-    WithoutDotDimensionSorterTest.DimOrderCanBeChanged # failing on mi250
+    # @xla//xla/service/gpu:float_support_test_amdgpu_any
+    FloatSupportTestWithCublas.MixedTypeDotIsNotUpcasted
 
-    # @xla//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any
-    CubSortKeysTest.CompareToReferenceNumpyOrderGt
-    CubSortKeysTest.CompareToReferenceTotalOrderLt
-    CubSort/CubSortKeysTest.*
-    CubSort/CubSortPairsTest.*
+    # @xla//xla/tests:convolution_1d_autotune_disabled_test_amdgpu_any
+    Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestHalf.Convolve1D1Window/6
 
-    # @xla//xla/service/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any
-    CublasLtGemmRewriteTest.MatrixBiasSwishActivation
-    CublasLtGemmRewriteTest.VectorBiasReluActivationF16Padded
-    CublasLtGemmRewriteTest.VectorBiasF16Padded
-    CublasLtGemmRewriteTest.ReluActivationF16Padded
-    CublasLtGemmRewriteTest.VectorBiasReluActivationBF16Padded
-    CublasLtGemmRewriteTest.BF16VectorBiasPadded
-    CublasLtGemmRewriteTest.ApproxGeluActivationBF16
-    CublasLtGemmRewriteTest.ReluActivationBF16Padded
-    CublasLtGemmRewriteTest.VectorBiasBF16Padded
-
-    # @xla//xla/service/gpu:determinism_test_amdgpu_any
-    DeterminismTest.Conv
-
-    # @xla//xla/tests:sample_file_test_amdgpu_any
-    # @xla//xla/tests:sample_file_test_amdgpu_any_notfrt
-    SampleFileTest.Convolution
-
-    # @xla//xla/tests:scatter_deterministic_expander_test_amdgpu_any
-    # @xla//xla/tests:scatter_deterministic_expander_test_amdgpu_any_notfrt
-    # @xla//xla/tests:scatter_test_amdgpu_any
-    # @xla//xla/tests:scatter_test_amdgpu_any_notfrt
-    ScatterTest.TensorFlowScatterV1_UpdateTwice
-
-    # @xla//xla/tests:multioutput_fusion_test_amdgpu_any
-    MultiOutputFusionTest.MultiOutputReduceFusionMajorWithExtraOutput
-
-    # vvv TODO (rocm) weekly-sync-20251224 excluded tests
-    # @xla//xla/service/gpu:gpu_compiler_test_amdgpu_any
-    PersistedAutotuningTest.SingleOperationGetsAutotuned
-
-    # @xla//xla/backends/gpu/codegen/triton:support_test
-    BitcastOrReshapeTestSuite/BitcastOrReshapeTest.IsTritonSupportedBitcastOrReshape*
-    BitcastOrReshapeTestSuite/BitcastOrReshapeTest.IsTritonSupported0DBitcastOrReshape*
-    BitcastConvertSuite/BitcastConvertTest.BitcastConvertDisguisedAsBitcast*
-    UnaryElementwiseTestSuite/UnaryElementwiseTest.IsTritonSupportedUnaryElementwise*
-    ConvertTestSuite/ConvertTest.Convert*
-    BinaryElementwiseTestSuite/BinaryElementwiseTest.IsTritonSupportedBinaryElementwise*
-    TernaryElementwiseTestSuite/TernaryElementwiseTest.IsTritonSupportedTernaryElementwise*
-    ReductionComputationTestSuite/ReductionComputationTest.DifferentBinaryOps*
-    TransposeTestSuite/TransposeTest.LoadTranspose3D*
-    SliceTestSuite/SliceTest.ContinuousSlice*
-    BroadcastTestSuite/BroadcastTest.Broadcast*
-    ParameterTestSuite/ParameterTest.Parameter*
-    ConstantTestSuite/ConstantTest.ConstantEffectiveScalar*
-    DotTestSuite/DotTypesTest.Dot*
-
-    # @xla//xla/backends/gpu/codegen/triton:support_legacy_test
-    DotTestTestSuite/DotTest.IsTritonSupportedExecutesCorrectlyForDot/f8e5m2_dot
+    # @xla//xla/tests:convolution_autotune_disabled_test_amdgpu_any
+    ConvolutionTest.Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid
 
     # @xla//xla/backends/gpu/profiler:kernel_name_tracer_test
     KernelNameTracerTest.Create
     KernelNameTracerTest.CaptureKernelNames
     KernelNameTracerTest.CaptureKernelNamesFromCommandBufferThunk
-
-    # @xla//xla/service/gpu/tests:swap_conv_operands_test
-    SwapConvOperandsTest.LargePadding
-    SwapConvOperandsTest.SmallPadding
-    SwapConvOperandsTest.DoesNotLower
-
-    # @xla//xla/service/gpu/tests:gpu_triton_custom_call_test
-    GpuIrEmitterUnnestedTest.CanNotEmitTritonCustomCallOnPreAmpereGpu
-
-    # @xla//xla/tests:convolution_autotune_disabled_test
-    Transposed2DConvHloTest/Transposed2DConvHloTest.Simple*
-    ConvolveWithAndWithoutCanonicalization_Instantiation/ConvolveWithAndWithoutCanonicalization.Convolve2D_NoSpatialDims*
-    ConvolutionHloTest.ConvolveBackwardInput
-    ConvolutionHloTest.TestConv0D
-    ConvolutionHloTest.TestConv2DF16
-    ConvolutionHloTest.SwappedOperandConvolveWithStride
-    ConvolutionHloTest.TestFusedConv2D
-    ConvolutionHloTest.TestFusedConv3D
-    ConvolutionHloTest.SwappedOperandConvolve
-    ConvolutionHloTest.TestBooleanInput
-    ConvolutionHloTest.SwappedOperandConvolve2
-    ConvolutionTest.Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid
-    ConvolutionTest.ConvolveF32BackwardInputGroupedConvolution
-    Convolve_1x1x4x4_1x1x2x2_Valid/2.Types
-    Convolve_1x1x4x4_1x1x2x2_Valid/1.Types
-    Convolve_1x1x4x4_1x1x2x2_Same/1.Types
-    Convolve_1x1x4x4_1x1x2x2_Same/2.Types
-    Convolve_1x1x4x4_1x1x3x3_Same/1.Types
-    Convolve_1x1x4x4_1x1x3x3_Same/2.Types
-    Convolve2D*
-
-    # @xla//xla/tests:convolution_1d_autotune_disabled_test
-    ConvolutionTest.Convolve1D*
-    Convolve1D_1x2x5_1x2x2*
-    Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestFloat*
-    Convolve1D1WindowTest_Instantiation/Convolve1D1WindowTestHalf*
-
-    # @xla//xla/service/gpu/transforms:cudnn_fused_conv_rewriter_autotune_disabled_test_amdgpu_any
-    CudnnFusedConvRewriterTest.TestRelu6
-    CudnnFusedConvRewriterTest.TestLeakyRelu
-    CudnnFusedConvRewriterTest.TestBiasMultiCall
-    CudnnFusedConvRewriterTest.TestElu
-    CudnnFusedConvRewriterTest.TestBias
-    CudnnFusedConvRewriterTest.TestBiasNoRelu
-    CudnnFusedConvRewriterTest.Test3D
-    CudnnFusedConvRewriterTest.TestRelu6OddChannels
-    CudnnFusedConvRewriterTest.TestConvOnly
-
-    # @xla//xla/tools:xla_gpu_compile_lib_test_amdgpu_any
-    XlaCompileLibTest.CompilesForGpuWithoutDevice
-
-    # @xla//xla/tools:xla_deviceless_compile_lib_test 
-    XlaDevicelessCompileLibTest/XlaDevicelessCompileLibTest.CompilesForGpuWithoutDevice/LegacyAotFlow
-    XlaDevicelessCompileLibTest/XlaDevicelessCompileLibTest.CompilesForGpuWithoutDevice/NewAotFlow
-
-    # @xla//xla/service/gpu/autotuning:gemm_fusion_autotuner_test_amdgpu_any
-    GemmFusionAutotunerTest.Int8FusedGemm # failing on mi250
-
-    # Failing on theRock
-    GpuKernelTilingTest.ReductionInputTooLarge
-    F8E5M2Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_any_f8_any_f8_f32_*
-    BitcodeLinkTest.TestLinkFromInstallation
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
     --config=sigbuild_local_cache \
     --config=rocm \
+    --config=rocm_cache \
     --config=xla_cpp_filters \
     --test_output=errors \
     --local_test_jobs=${N_TEST_JOBS} \
@@ -248,8 +102,7 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --test_env=MIOPEN_FIND_MODE=1 \
     --action_env="ROCM_PATH=$ROCM_PATH" \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
-    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     --dynamic_mode=off \
+    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     -- @xla//xla/... \
-    -@xla//xla/backends/gpu/codegen/triton:triton_gemm_fusion_test_amdgpu_any
-    # ^^^ TODO (rocm) times out on theRock
+    # ^^^ TODO (rocm) weekly-sync-20251021 excluded test files

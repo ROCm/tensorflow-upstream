@@ -69,25 +69,18 @@ fi
 
 # vvv TODO (rocm) weekly-sync-20251224 excluded tests
 EXCLUDED_TESTS=(
+    #  //tensorflow/core/grappler/optimizers:auto_mixed_precision_test_gpu
+    AutoMixedPrecisionGfx1103Test.SupportsFp16
+
     # //tensorflow/core/kernels:matmul_op_test_gpu
     Test/FusedMatMulWithBiasOpTest/1.MatMul*
 
     # //tensorflow/core/common_runtime:process_function_library_runtime_test_gpu
     ProcessFunctionLibraryRuntimeTest.MultiDevice_ResourceOutput_GPU
 
-    # //tensorflow/compiler/tests:randomized_tests_seeded
-    # //tensorflow/compiler/tests:randomized_tests_mlir_seeded
-    OpTest.ScatterNd
-
     # //tensorflow/core/util/autotune_maps:autotune_serialize_test_gpu
     AutotuneSerializeTest.Consistency
     AutotuneSerializeTest.VersionControl
-
-    # //tensorflow/python/kernel_tests/nn_ops:depthwise_conv_op_d9m_test
-    DepthwiseConv2DDeterministicTest.testBackwardDeterminismGPU
-
-    # //tensorflow/python/kernel_tests/sparse_ops:sparse_ops_test
-    SparseFillEmptyRowsTest.testSparseFillEmptyRowsGradInvalidReverseIndexMap
 
     # //tensorflow/core/profiler/backends/gpu:device_tracer_test
     DeviceTracerTest.StartTwoTracers
@@ -97,6 +90,7 @@ EXCLUDED_TESTS=(
 # Run bazel test command. Double test timeouts to avoid flakes.
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
     --config=rocm \
+    --config=rocm_cache \
     --config=sigbuild_local_cache \
     --config=pycpp \
     -k \
@@ -111,6 +105,6 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --test_output=errors \
     --verbose_failures \
     --test_sharding_strategy=disabled \
-    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     --dynamic_mode=off \
+    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     --run_under=//tensorflow/tools/ci_build/gpu_build:parallel_gpu_execute
