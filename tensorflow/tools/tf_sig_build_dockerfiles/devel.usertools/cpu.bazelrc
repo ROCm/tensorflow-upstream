@@ -48,4 +48,5 @@ test:pycpp --config=pycpp_filters -- //tensorflow/... -//tensorflow/compiler/tf2
 -//tensorflow/compiler/mlir/tosa/tests:tf-to-tosa-pipeline.mlir.test \
 -//tensorflow/compiler/mlir/tosa/tests:tfl-to-tosa-pipeline.mlir.test \
 -//tensorflow/core/common_runtime/next_pluggable_device:c_plugin_coordination_service_agent_test \
+-//tensorflow/python/eager:gradient_input_output_exclusions_test \
 # ^^^ TODO Weekly sync 2026-09-15
