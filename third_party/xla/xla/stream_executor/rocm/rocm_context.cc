@@ -70,7 +70,7 @@ bool GetReservedMemory(uint64_t* reserve) {
     LOG(FATAL) << "failed to query current device: " << ToString(res);
     return false;
   }
-  res = wrap::hipGetDeviceProperties(&props, dev);
+  res = wrap::hipGetDevicePropertiesR0600(&props, dev);
   if (res != hipSuccess) {
     LOG(ERROR) << "failed to query device properties: " << ToString(res);
     return false;

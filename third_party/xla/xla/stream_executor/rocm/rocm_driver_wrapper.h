@@ -98,7 +98,6 @@ namespace wrap {
   __macro(hipFuncSetAttribute)                      \
   __macro(hipGetDevice)                             \
   __macro(hipGetDeviceCount)                        \
-  __macro(hipGetDeviceProperties)                   \
   __macro(hipGetErrorString)                        \
   __macro(hipGraphAddKernelNode)                    \
   __macro(hipGraphAddChildGraphNode)                \
@@ -172,6 +171,11 @@ namespace wrap {
   __macro(hipStreamWaitEvent)  // clang-format on
 
 HIP_ROUTINE_EACH(STREAM_EXECUTOR_HIP_WRAP)
+
+// The unversioned hipGetDeviceProperties exported by libamdhip64 fills the
+// pre-ROCm-6.0 hipDeviceProp_t layout. The HIP headers only redirect it to
+// hipGetDevicePropertiesR0600 at compile time, which a dlsym lookup bypasses.
+STREAM_EXECUTOR_HIP_WRAP(hipGetDevicePropertiesR0600)
 
 #if TF_ROCM_VERSION >= 60200
 
