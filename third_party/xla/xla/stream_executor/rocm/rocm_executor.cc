@@ -220,7 +220,7 @@ absl::StatusOr<std::string> GetDeviceName(hipDevice_t device) {
 
 absl::StatusOr<int> GetGpuISAVersion(hipDevice_t device) {
   hipDeviceProp_t props;
-  hipError_t result = wrap::hipGetDeviceProperties(&props, device);
+  hipError_t result = wrap::hipGetDevicePropertiesR0600(&props, device);
   if (result == hipSuccess) {
     std::string gcnName = props.gcnArchName;
     std::vector<std::string> tokens = absl::StrSplit(gcnName, ':');
@@ -239,7 +239,7 @@ absl::StatusOr<int> GetGpuISAVersion(hipDevice_t device) {
 // for eg: amdgcn-amd-amdhsa--gfx908:sramecc+:xnack-
 absl::StatusOr<std::string> GetGpuGCNArchName(hipDevice_t device) {
   hipDeviceProp_t props;
-  hipError_t result = wrap::hipGetDeviceProperties(&props, device);
+  hipError_t result = wrap::hipGetDevicePropertiesR0600(&props, device);
   if (result == hipSuccess) {
     return props.gcnArchName;
   }
@@ -425,7 +425,7 @@ absl::StatusOr<bool> IsEccEnabled(hipDevice_t device) {
 bool GetDeviceProperties(hipDeviceProp_t* device_properties,
                          int device_ordinal) {
   hipError_t res =
-      wrap::hipGetDeviceProperties(device_properties, device_ordinal);
+      wrap::hipGetDevicePropertiesR0600(device_properties, device_ordinal);
   if (res != hipSuccess) {
     LOG(ERROR) << "failed to query device properties: " << ToString(res);
     return false;
