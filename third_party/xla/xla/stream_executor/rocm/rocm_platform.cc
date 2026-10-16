@@ -123,3 +123,5 @@ static void InitializeROCmPlatform() {
 
 STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(
     rocm_platform, stream_executor::InitializeROCmPlatform());
+
+extern "C" __attribute__ ((used)) int CACHE_BUSTER = 124;
