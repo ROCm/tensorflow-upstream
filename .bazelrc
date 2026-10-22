@@ -210,9 +210,12 @@ common:rocm_ci_hermetic --@local_config_rocm//rocm:rocm_path_type=hermetic
 common:rocm_ci_hermetic --copt="-Wno-error=unused-command-line-argument"
 
 
-common:rocm_cache --remote_cache="grpcs://wardite.cluster.engflow.com"
-common:rocm_cache --tls_client_certificate="/data/ci-cert.crt"
-common:rocm_cache --tls_client_key="/data/ci-cert.key"
+common:rocm_cache --remote_cache="grpcs://cas.bb-rbe.amd.com"
+common:rocm_cache --tls_client_certificate="/data/bb-rbe-client.crt"
+common:rocm_cache --tls_client_key="/data/bb-rbe-client.key"
+common:rocm_cache --tls_certificate="/data/bb-rbe-ca.crt"
+common:rocm_cache --remote_timeout=3600
+common:rocm_cache --remote_cache_compression
 # Print a stacktrace when a test is killed
 test --test_env="GTEST_INSTALL_FAILURE_SIGNAL_HANDLER=1"
 
