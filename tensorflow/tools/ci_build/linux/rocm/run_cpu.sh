@@ -47,7 +47,7 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/cpu.ba
           --repo_env=ROCM_PATH=/opt/rocm \
           --dynamic_mode=off \
           --test_timeout=400,600,1800,3600 \
-          --jobs=${N_BUILD_JOBS}
+          --jobs=${N_BUILD_JOBS} \
           --dynamic_mode=off \
           --test_timeout=400,600,1800,3600 \
           --test_env=TF_NUM_INTEROP_THREADS=4 \
