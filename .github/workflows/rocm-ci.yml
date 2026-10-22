@@ -59,15 +59,6 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Get RBE cluster keys
-        env:
-          RBE_CI_CERT: ${{ secrets.RBE_CI_CERT }}
-          RBE_CI_KEY: ${{ secrets.RBE_CI_KEY }}
-        run: |
-          mkdir -p /data
-          echo "$RBE_CI_CERT" > /data/ci-cert.crt
-          echo "$RBE_CI_KEY" > /data/ci-cert.key
-
       - name: Test CPU
         env:
           TFCI: 'py312,linux_x86_rocm,no_docker'
