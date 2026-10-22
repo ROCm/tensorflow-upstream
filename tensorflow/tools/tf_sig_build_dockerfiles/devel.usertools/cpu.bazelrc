@@ -15,9 +15,10 @@ build --action_env=CACHEBUSTER=565341047
 # Build options for CPU Linux
 build --config=release_cpu_linux
 
-build:rocm_cache --remote_cache="grpcs://wardite.cluster.engflow.com"
-build:rocm_cache --tls_client_certificate="/data/ci-cert.crt"
-build:rocm_cache --tls_client_key="/data/ci-cert.key"
+build:rocm_cache --remote_cache="grpcs://cas.bb-rbe.amd.com"
+build:rocm_cache --tls_client_certificate="/data/bb-rbe-client.crt"
+build:rocm_cache --tls_client_key="/data/bb-rbe-client.key"
+build:rocm_cache --tls_certificate="/data/bb-rbe-ca.crt"
 
 # "nonpip" tests are regular py_test tests.
 # Pass --config=nonpip to run the same suite of tests. If you want to run just
