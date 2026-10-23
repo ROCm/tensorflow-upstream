@@ -404,6 +404,14 @@ common:rocm_ci_hermetic --repo_env="OS=ubuntu_22.04"
 common:rocm_ci_hermetic --repo_env="ROCM_VERSION=6.2.0"
 common:rocm_ci_hermetic --@local_config_rocm//rocm:use_rocm_hermetic_rpath=True
 
+
+common:rocm_cache --remote_cache="grpcs://cas.bb-rbe.amd.com"
+common:rocm_cache --tls_client_certificate="/data/bb-rbe-client.crt"
+common:rocm_cache --tls_client_key="/data/bb-rbe-client.key"
+common:rocm_cache --tls_certificate="/data/bb-rbe-ca.crt"
+common:rocm_cache --remote_timeout=3600
+common:rocm_cache --remote_cache_compression
+
 common:sycl --config=clang_local
 common:sycl --crosstool_top=@local_config_sycl//crosstool:toolchain
 common:sycl --define=using_sycl=true
