@@ -1,0 +1,163 @@
+diff --git a/src/google/protobuf/BUILD.bazel b/src/google/protobuf/BUILD.bazel
+--- a/src/google/protobuf/BUILD.bazel
++++ b/src/google/protobuf/BUILD.bazel
+@@ -803,7 +803,14 @@
+         "//src/google/protobuf/io:gzip_stream",
+         "//src/google/protobuf/io:printer",
+         "//src/google/protobuf/io:tokenizer",
++        # Added by TensorFlow: header-only, so this adds no sources or link
++        # dependencies. tsl/platform/protobuf.h re-exports
++        # google/protobuf/util/*.h and consumers reach it through targets that
++        # only depend on ":protobuf", which otherwise does not put those
++        # headers on the include path.
++        "//src/google/protobuf/json:json_headers",
+         "//src/google/protobuf/stubs",
++        "//src/google/protobuf/util:util_headers",
+         "//third_party/utf8_range:utf8_validity",
+         "@abseil-cpp//absl/algorithm:container",
+         "@abseil-cpp//absl/base",
+@@ -891,6 +898,15 @@
+ # shared libraries for dynamic loading. This target is available until Bazel
+ # adds native support for such use cases.
+ # TODO: Remove this target once the support gets added to Bazel.
++#
++# NOTE(TensorFlow): the glob below only matches headers in *this* package --
++# Bazel globs stop at package boundaries. The io/, util/, stubs/ and json/
++# subdirectories are separate packages, so headers such as
++# google/protobuf/io/coded_stream.h and
++# google/protobuf/util/delimited_message_util.h were missing here even though
++# generated .pb.h files and tsl/platform/protobuf.h include them. The deps
++# below pull in those subpackages' headers so this target really does provide
++# "just the header files" for the whole library.
+ cc_library(
+     name = "protobuf_headers",
+     hdrs = glob([
+@@ -898,6 +914,12 @@
+         "**/*.inc",
+     ]),
+     strip_include_prefix = "/src",
++    deps = [
++        "//src/google/protobuf/io:io_headers",
++        "//src/google/protobuf/json:json_headers",
++        "//src/google/protobuf/stubs:stubs_headers",
++        "//src/google/protobuf/util:util_headers",
++    ],
+ )
+ 
+ cc_library(
+diff --git a/src/google/protobuf/io/BUILD.bazel b/src/google/protobuf/io/BUILD.bazel
+--- a/src/google/protobuf/io/BUILD.bazel
++++ b/src/google/protobuf/io/BUILD.bazel
+@@ -255,6 +255,25 @@
+ # Distribution packaging
+ ################################################################################
+ 
++# Added by TensorFlow: a header-only view of this package.
++#
++# //src/google/protobuf:protobuf_headers globs "**/*.h", but Bazel globs do not
++# cross package boundaries, so the headers in this subpackage were silently
++# omitted from it. Projects that build shared libraries for dynamic loading
++# (e.g. TensorFlow custom ops) depend on protobuf_headers alone and need these.
++cc_library(
++    name = "io_headers",
++    hdrs = glob(
++        [
++            "**/*.h",
++            "**/*.inc",
++        ],
++        allow_empty = True,
++    ),
++    strip_include_prefix = "/src",
++    visibility = ["//visibility:public"],
++)
++
+ pkg_files(
+     name = "dist_files",
+     srcs = glob(["**/*"]),
+diff --git a/src/google/protobuf/json/BUILD.bazel b/src/google/protobuf/json/BUILD.bazel
+--- a/src/google/protobuf/json/BUILD.bazel
++++ b/src/google/protobuf/json/BUILD.bazel
+@@ -278,6 +278,25 @@
+     ],
+ )
+ 
++# Added by TensorFlow: a header-only view of this package.
++#
++# //src/google/protobuf:protobuf_headers globs "**/*.h", but Bazel globs do not
++# cross package boundaries, so the headers in this subpackage were silently
++# omitted from it. Projects that build shared libraries for dynamic loading
++# (e.g. TensorFlow custom ops) depend on protobuf_headers alone and need these.
++cc_library(
++    name = "json_headers",
++    hdrs = glob(
++        [
++            "**/*.h",
++            "**/*.inc",
++        ],
++        allow_empty = True,
++    ),
++    strip_include_prefix = "/src",
++    visibility = ["//visibility:public"],
++)
++
+ cc_library(
+     name = "message_path",
+     srcs = ["internal/message_path.cc"],
+diff --git a/src/google/protobuf/stubs/BUILD.bazel b/src/google/protobuf/stubs/BUILD.bazel
+--- a/src/google/protobuf/stubs/BUILD.bazel
++++ b/src/google/protobuf/stubs/BUILD.bazel
+@@ -91,6 +91,25 @@
+ # Distribution packaging
+ ################################################################################
+ 
++# Added by TensorFlow: a header-only view of this package.
++#
++# //src/google/protobuf:protobuf_headers globs "**/*.h", but Bazel globs do not
++# cross package boundaries, so the headers in this subpackage were silently
++# omitted from it. Projects that build shared libraries for dynamic loading
++# (e.g. TensorFlow custom ops) depend on protobuf_headers alone and need these.
++cc_library(
++    name = "stubs_headers",
++    hdrs = glob(
++        [
++            "**/*.h",
++            "**/*.inc",
++        ],
++        allow_empty = True,
++    ),
++    strip_include_prefix = "/src",
++    visibility = ["//visibility:public"],
++)
++
+ pkg_files(
+     name = "dist_files",
+     srcs = glob(["**/*"]),
+diff --git a/src/google/protobuf/util/BUILD.bazel b/src/google/protobuf/util/BUILD.bazel
+--- a/src/google/protobuf/util/BUILD.bazel
++++ b/src/google/protobuf/util/BUILD.bazel
+@@ -335,6 +335,25 @@
+ # Distribution packaging
+ ################################################################################
+ 
++# Added by TensorFlow: a header-only view of this package.
++#
++# //src/google/protobuf:protobuf_headers globs "**/*.h", but Bazel globs do not
++# cross package boundaries, so the headers in this subpackage were silently
++# omitted from it. Projects that build shared libraries for dynamic loading
++# (e.g. TensorFlow custom ops) depend on protobuf_headers alone and need these.
++cc_library(
++    name = "util_headers",
++    hdrs = glob(
++        [
++            "**/*.h",
++            "**/*.inc",
++        ],
++        allow_empty = True,
++    ),
++    strip_include_prefix = "/src",
++    visibility = ["//visibility:public"],
++)
++
+ pkg_files(
+     name = "dist_files",
+     srcs = glob(["**"]),
