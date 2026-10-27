@@ -38,6 +38,7 @@ fi
 EXCLUDED_TESTS=()
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/cpu.bazelrc test \
+          -k \
           --config=sigbuild_local_cache \
           --config=pycpp \
           --config=rocm_cache \

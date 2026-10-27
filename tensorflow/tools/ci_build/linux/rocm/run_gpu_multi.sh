@@ -17,6 +17,11 @@
 set -e
 set -x
 
+if [[ $TF_GPU_COUNT -lt 4 ]]; then
+    echo "Found only ${TF_GPU_COUNT} gpus, multi-gpu tests need atleast 4 gpus."
+    exit
+fi
+
 N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
 N_TEST_JOBS=1 # run tests serially
 
@@ -35,6 +40,7 @@ fi
 # //tensorflow/python/distribute:multi_process_runner_test_2gpu TIMEOUT
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
+        -k \
         --local_test_jobs=${N_TEST_JOBS} \
         --jobs=${N_BUILD_JOBS} \
         --local_ram_resources=60000 \
