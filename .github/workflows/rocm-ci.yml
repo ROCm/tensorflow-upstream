@@ -31,23 +31,65 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: TF ROCm build and test
+  rocm_config:
+    outputs:
+      docker-image: ${{ steps.out.outputs.docker-image }}
+      rocm-tarball: ${{ steps.out.outputs.rocm-tarball }}
+      rocm-tarball-hash: ${{ steps.out.outputs.rocm-tarball-hash }}
+      num_gpus: ${{ steps.gpu_info.outputs.gpu_count }}
+      gpu_arch: ${{ steps.gpu_info.outputs.target_archs }}
     runs-on: ${{ inputs.runner_label || 'linux-tensorflow-mi250-4' }}
-    env:
-      PIP_NO_CACHE_DIR: 1
     defaults:
       run:
         shell: bash
     container:
       # rocm/ufb-private:rocm10.0-py3.12-tf2.22-ubuntu22.04-dev
       image: rocm/ufb-private@sha256:7ab50c72e4d3703661c64f6e3cf72c627713d5bc779aa20381a638c6a1e35b03
+      # amd-smi below needs the GPU devices forwarded into the job container.
+      options: --device /dev/kfd --device /dev/dri --group-add video
+    steps:
+      - id: out
+        run: |
+          echo "docker-image=ghcr.io/rocm/jax-build-ubu24.rocmless@sha256:68854ed30b800d3e8c390f6e651721e2bead58830da1c59e1b828354eb8f077f" >> "$GITHUB_OUTPUT"
+          echo "rocm-tarball=https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.0.0.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "rocm-tarball-hash=1c5e807875d26a2470ecc7323daa5b5b9009208a55c3290ac255a909cde15fc6" >> "$GITHUB_OUTPUT"
+      - id: gpu_info
+        run: |
+          echo "gpu_count=$(amd-smi list 2>/dev/null | grep -c '^GPU:')" >> "$GITHUB_OUTPUT"
+          echo "target_archs=$(amd-smi static --gpu 0 | grep TARGET_GRAPHICS_VERSION | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+  build-and-test:
+    needs: rocm_config
+    name: TF ROCm build and test
+    runs-on: ${{ inputs.runner_label || 'linux-tensorflow-mi250-4' }}
+    env:
+      PIP_NO_CACHE_DIR: 1
+      ROCM_DISTRO_URL: ${{ needs.rocm_config.outputs.rocm-tarball }}
+      ROCM_DISTRO_HASH: ${{ needs.rocm_config.outputs.rocm-tarball-hash }}
+      TF_GPU_COUNT: ${{ needs.rocm_config.outputs.num_gpus || 1 }}
+      TARGET_ARCHS: ${{ needs.rocm_config.outputs.gpu_arch }}
+      TFCI: 'py312,linux_x86_rocm,no_docker'
+      TFCI_GITHUB_ACTIONS: true
+    defaults:
+      run:
+        shell: bash
+    container:
+      image: ${{ needs.rocm_config.outputs.docker-image }}  # zizmor: ignore[unpinned-images]
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # TFCI is set to no_docker, so tfrun executes directly in this container;
+      # it must therefore expose the ROCm devices itself.
+      options: >-
+        --device /dev/kfd --device /dev/dri --group-add video
+        --cap-add SYS_PTRACE --security-opt seccomp=unconfined
+        --ipc host --network host --shm-size 64G
     timeout-minutes: 960
     steps:
 
@@ -59,45 +101,25 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Get RBE cluster keys
-        env:
-          RBE_CI_CERT: ${{ secrets.RBE_CI_CERT }}
-          RBE_CI_KEY: ${{ secrets.RBE_CI_KEY }}
-        run: |
-          mkdir -p /data
-          echo "$RBE_CI_CERT" > /data/ci-cert.crt
-          echo "$RBE_CI_KEY" > /data/ci-cert.key
-
       - name: Test CPU
         env:
-          TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_cpu.sh'
-          TFCI_GITHUB_ACTIONS: true
         run: ./ci/official/any.sh
 
       - name: Test Single GPU
         env:
-          TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_single.sh'
-          TFCI_GITHUB_ACTIONS: true
         run: ./ci/official/any.sh
 
       - name: Test Multi GPU
         env:
-          TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_multi.sh'
-          TFCI_GITHUB_ACTIONS: true
         run: ./ci/official/any.sh
 
       - name: Test XLA
         env:
-          TFCI: 'py312,linux_x86_rocm,no_docker'
           TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_xla.sh'
-          TFCI_GITHUB_ACTIONS: true
         run: ./ci/official/any.sh
 
       - name: Test TF Wheel
-        env:
-          TFCI: 'py312,linux_x86_rocm,no_docker'
-          TFCI_GITHUB_ACTIONS: true
         run: ./ci/official/wheel.sh

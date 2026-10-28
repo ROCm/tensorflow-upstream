@@ -15,13 +15,13 @@
 source ci/official/envs/linux_x86
 # Using image rocm/tensorflow-build:latest-jammy-pythonall-rocm7.2.1-ci_official
 TFCI_DOCKER_IMAGE="rocm/tensorflow-build@sha256:66eb4c1e39db76fae2eb0a1029490acbe7bfce0e00d6ab435e170f743921f4c4"
-TFCI_BAZEL_COMMON_ARGS="--repo_env=HERMETIC_PYTHON_VERSION=$TFCI_PYTHON_VERSION --repo_env=USE_PYWRAP_RULES=True --config rocm"
+TFCI_BAZEL_COMMON_ARGS="--repo_env=HERMETIC_PYTHON_VERSION=$TFCI_PYTHON_VERSION --repo_env=USE_PYWRAP_RULES=True --config rocm_ci_hermetic"
 TFCI_BUILD_PIP_PACKAGE_WHEEL_NAME_ARG="--repo_env=WHEEL_NAME=tensorflow"
 TFCI_DOCKER_ARGS="--device /dev/dri --device /dev/kfd     --device=/dev/infiniband --network host --ipc host     --group-add video --cap-add SYS_PTRACE --security-opt     seccomp=unconfined --privileged  --shm-size 64G"
 TFCI_LIB_SUFFIX="-gpu-linux-x86_64"
 TFCI_ROCM_SMI_ENABLE=1
 TFCI_NVIDIA_SMI_ENABLE=0
-TFCI_BAZEL_CONFIG="rocm"
+TFCI_BAZEL_CONFIG="rocm_ci_hermetic"
 TFCI_LIB_SUFFIX="-gpu-linux-x86_64"
 # TODO: Set back to 610M once the wheel size is fixed.
 TFCI_WHL_SIZE_LIMIT=630M

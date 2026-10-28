@@ -57,6 +57,7 @@ if platform.system() == 'Windows':
                                      [llvm_config.config.llvm_tools_dir])
 else:
   llvm_config.use_default_substitutions()
+  llvm_config.with_environment('LD_LIBRARY_PATH', config.test_exec_root + "/local_config_rocm/rocm/rocm_dist/lib/", append_path=True)
 
 llvm_config.config.substitutions.append(
     ('%tfrt_bindir', 'tensorflow/compiler/aot'))
