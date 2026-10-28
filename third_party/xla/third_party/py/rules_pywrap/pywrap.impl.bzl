@@ -719,7 +719,13 @@ def _linker_input_filters_impl(ctx):
         for li in pw.cc_info.linking_context.linker_inputs.to_list()[1:]:
             all_dynamic = None
             for lib in li.libraries:
-                if lib.static_library or lib.pic_static_library or not lib.dynamic_library:
+                if lib.static_library or lib.pic_static_library or not (
+                    lib.dynamic_library or (
+                        lib.interface_library and lib.interface_library.basename.endswith(
+                            (".so", ".dylib", ".dll", ".ifso")
+                        )
+                    )
+                ):
                     all_dynamic = False
                     break
                 elif all_dynamic == None:
