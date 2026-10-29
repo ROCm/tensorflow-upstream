@@ -17,45 +17,19 @@
 set -e
 set -x
 
-N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
-# If rocm-smi exists locally (it should) use it to find
-# out how many GPUs we have to test with.
-amd-smi list >/dev/null 2>&1
-STATUS=$?
-if [ $STATUS -ne 0 ]; then
-  TF_GPU_COUNT=1
-else
-  TF_GPU_COUNT=$(amd-smi list 2>/dev/null | grep -c '^GPU:')
-  [ "$TF_GPU_COUNT" -eq 0 ] && TF_GPU_COUNT=1
-fi
 if [[ $TF_GPU_COUNT -lt 4 ]]; then
     echo "Found only ${TF_GPU_COUNT} gpus, multi-gpu tests need atleast 4 gpus."
     exit
 fi
+
+N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
 N_TEST_JOBS=1 # run tests serially
 
 echo ""
 echo "Bazel will use ${N_BUILD_JOBS} concurrent build job(s) and ${N_TEST_JOBS} concurrent test job(s)."
 echo ""
 
-# First positional argument (if any) specifies the ROCM_INSTALL_DIR
-if [[ -n $1 ]]; then
-    ROCM_INSTALL_DIR=$1
-else
-    if [[ -z "${ROCM_PATH}" ]]; then
-        ROCM_INSTALL_DIR=/opt/rocm/
-    else
-        ROCM_INSTALL_DIR=$ROCM_PATH
-    fi
-fi
-
-# Run configure.
-export PYTHON_BIN_PATH=`which python3`
-PYTHON_VERSION=`python3 -c "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')"`
-export TF_PYTHON_VERSION=$PYTHON_VERSION
-
 export TF_NEED_ROCM=1
-export ROCM_PATH=$ROCM_INSTALL_DIR
 
 if [ ! -d /tf ];then
     # The bazelrc files expect /tf to exist
@@ -66,15 +40,18 @@ fi
 # //tensorflow/python/distribute:multi_process_runner_test_2gpu TIMEOUT
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
+        -k \
         --local_test_jobs=${N_TEST_JOBS} \
         --jobs=${N_BUILD_JOBS} \
         --local_ram_resources=60000 \
         --local_cpu_resources=15 \
         --verbose_failures \
-        --config=rocm \
+        --config=rocm_ci_hermetic \
         --config=rocm_cache \
         --config=nonpip_multi_gpu \
         --config=sigbuild_local_cache \
-        --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
-        --repo_env="ROCM_PATH=$ROCM_PATH" \
+        --repo_env="TF_ROCM_AMDGPU_TARGETS=$TARGET_ARCHS" \
+        --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
+        --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
+        --repo_env=ROCM_PATH="" \
         --dynamic_mode=off

@@ -19,13 +19,6 @@ set -e
 set -x
 
 N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
-# If rocm-smi exists locally (it should) use it to find
-# out how many GPUs we have to test with.
-rocm-smi -i
-STATUS=$?
-if [ $STATUS -ne 0 ]; then TF_GPU_COUNT=1; else
-   TF_GPU_COUNT=$(rocm-smi -i|grep 'Device ID' |grep 'GPU' |wc -l)
-fi
 TF_TESTS_PER_GPU=1
 N_TEST_JOBS=$(expr ${TF_GPU_COUNT} \* ${TF_TESTS_PER_GPU})
 
@@ -33,27 +26,12 @@ echo ""
 echo "Bazel will use ${N_BUILD_JOBS} concurrent build job(s) and ${N_TEST_JOBS} concurrent test job(s)."
 echo ""
 
-# First positional argument (if any) specifies the ROCM_INSTALL_DIR
-if [[ -n $1 ]]; then
-    ROCM_INSTALL_DIR=$1
-else
-    if [[ -z "${ROCM_PATH}" ]]; then
-        ROCM_INSTALL_DIR=/opt/rocm/
-    else
-        ROCM_INSTALL_DIR=$ROCM_PATH
-    fi
-fi
-
-export PYTHON_BIN_PATH=`which python3`
-PYTHON_VERSION=`python3 -c "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')"`
-export TF_PYTHON_VERSION=$PYTHON_VERSION
 export TF_NEED_ROCM=1
-export ROCM_PATH=$ROCM_INSTALL_DIR
 
 if [ ! -d /tf ];then
         # The bazelrc files in /usertools expect /tf to exist
         mkdir /tf
-    fi
+fi
 
 # vvv TODO (rocm) weekly-sync-20260915 excluded tests
 EXCLUDED_TESTS=(
@@ -90,17 +68,22 @@ EXCLUDED_TESTS=(
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
+    -k \
     --config=sigbuild_local_cache \
-    --config=rocm \
+    --config=rocm_ci_hermetic \
     --config=rocm_cache \
     --config=xla_cpp_filters \
     --test_output=errors \
+    --test_sharding_strategy=disabled \
     --local_test_jobs=${N_TEST_JOBS} \
     --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
     --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
     --test_env=MIOPEN_FIND_ENFORCE=5 \
     --test_env=MIOPEN_FIND_MODE=1 \
-    --action_env="ROCM_PATH=$ROCM_PATH" \
+    --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
+    --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
+    --repo_env=ROCM_PATH="" \
+    --repo_env="TF_ROCM_AMDGPU_TARGETS=$TARGET_ARCHS" \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --dynamic_mode=off \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
