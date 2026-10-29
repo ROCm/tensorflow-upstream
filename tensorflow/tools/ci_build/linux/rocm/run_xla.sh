@@ -64,11 +64,12 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
 	--config=sigbuild_local_cache \
 	--config=rocm \
 	--config=xla_cpp_filters \
+    --config=rocm_cache \
 	--test_output=errors \
 	--local_test_jobs=${N_TEST_JOBS} \
 	--test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
 	--test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
-        --repo_env="ROCM_PATH=$ROCM_PATH" \
+    --repo_env="ROCM_PATH=$ROCM_PATH" \
 	--action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
 	--test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
 	--dynamic_mode=off \

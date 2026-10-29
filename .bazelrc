@@ -398,6 +398,13 @@ build:rocm_ci_hermetic --repo_env="OS=ubuntu_22.04"
 build:rocm_ci_hermetic --repo_env="ROCM_VERSION=6.2.0"
 build:rocm_ci_hermetic --@local_config_rocm//rocm:use_rocm_hermetic_rpath=True
 
+build:rocm_cache --remote_cache="grpcs://cas.bb-rbe.amd.com"
+build:rocm_cache --tls_client_certificate="/data/bb-rbe-client.crt"
+build:rocm_cache --tls_client_key="/data/bb-rbe-client.key"
+build:rocm_cache --tls_certificate="/data/bb-rbe-ca.crt"
+build:rocm_cache --remote_timeout=3600
+build:rocm_cache --remote_cache_compression
+
 build:sycl --crosstool_top=@local_config_sycl//crosstool:toolchain
 build:sycl --define=using_sycl=true
 build:sycl --define=tensorflow_mkldnn_contraction_kernel=0
