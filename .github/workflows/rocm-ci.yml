@@ -59,8 +59,8 @@ jobs:
       - id: out
         run: |
           echo "docker-image=ghcr.io/rocm/jax-build-ubu24.rocmless@sha256:68854ed30b800d3e8c390f6e651721e2bead58830da1c59e1b828354eb8f077f" >> "$GITHUB_OUTPUT"
-          echo "rocm-tarball=https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.0.0.tar.gz" >> "$GITHUB_OUTPUT"
-          echo "rocm-tarball-hash=1c5e807875d26a2470ecc7323daa5b5b9009208a55c3290ac255a909cde15fc6" >> "$GITHUB_OUTPUT"
+          echo "rocm-tarball=https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.1.0.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "rocm-tarball-hash=a95c72f0052168f2262365dff71c2259331721ad0a65da7957dc7d96ccb77021" >> "$GITHUB_OUTPUT"
       - id: gpu_info
         run: |
           echo "gpu_count=$(amd-smi list 2>/dev/null | grep -c '^GPU:')" >> "$GITHUB_OUTPUT"

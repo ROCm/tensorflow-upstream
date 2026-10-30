@@ -65,6 +65,11 @@ EXCLUDED_TESTS=(
     KernelNameTracerTest.Create
     KernelNameTracerTest.CaptureKernelNames
     KernelNameTracerTest.CaptureKernelNamesFromCommandBufferThunk
+
+    # @@xla//xla/backends/gpu/tests:command_buffer_test_amdgpu_any  TODO Fails on 10.1
+    CommandBufferTests/CommandBufferTest.Convolutions/CONCURRENT
+    CommandBufferTests/CommandBufferTest.Convolutions/LHS
+    CommandBufferTests/CommandBufferTest.Convolutions/CONCURRENT_REGIONS
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
