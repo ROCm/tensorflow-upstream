@@ -806,6 +806,7 @@ dtensor_test(
         "no_oss_py38",  # TODO(b/267017937)
         "cuda-only",
     ],
+    size = "medium",
     deps = [
         ":test_util",
         "//tensorflow/dtensor/python:api",

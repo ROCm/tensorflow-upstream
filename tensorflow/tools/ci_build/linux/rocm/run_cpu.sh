@@ -18,6 +18,7 @@ set -e
 set -x
 
 N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
+N_TEST_JOBS=4
 
 echo ""
 echo "Bazel will use ${N_BUILD_JOBS} concurrent build job(s) and ${N_BUILD__JOBS} concurrent test job(s)."
@@ -35,10 +36,18 @@ if [ ! -d /tf ];then
 fi
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/cpu.bazelrc test \
+          -k \
           --config=sigbuild_local_cache \
-          --verbose_failures \
           --config=pycpp \
+          --config=rocm_cache \
           --action_env=TF_NEED_ROCM=0 \
           --action_env=TF_PYTHON_VERSION=$PYTHON_VERSION \
-          --local_test_jobs=${N_BUILD_JOBS} \
-          --jobs=${N_BUILD_JOBS}
+          --local_test_jobs=${N_TEST_JOBS} \
+          --test_sharding_strategy=disabled \
+          --dynamic_mode=off \
+          --test_timeout=400,600,1800,3600 \
+          --test_env=TF_NUM_INTEROP_THREADS=4 \
+          --test_env=TF_NUM_INTRAOP_THREADS=4 \
+          --jobs=${N_BUILD_JOBS} \
+          --test_env=HIP_VISIBLE_DEVICES=0 \
+          --verbose_failures \

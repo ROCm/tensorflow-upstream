@@ -72,6 +72,7 @@ bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.b
     --config=rocm \
     --config=sigbuild_local_cache \
     --config=pycpp \
+    --config=rocm_cache \
     -k \
     --jobs=${N_BUILD_JOBS} \
     --local_test_jobs=${N_TEST_JOBS} \
