@@ -174,8 +174,10 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:absl_check",
         "@com_google_absl//absl/log:absl_log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
@@ -183,7 +185,6 @@ cc_library(
         "@com_google_googletest//:gtest",
         "@eigen_archive//:eigen3",
         "@flatbuffers",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1434,6 +1435,23 @@ cc_test(
 )
 
 cc_test(
+    name = "batch_matmul_blockwise_test",
+    size = "small",
+    srcs = ["batch_matmul_blockwise_test.cc"],
+    deps = [
+        ":kernel_util",
+        ":test_main",
+        "//tensorflow/lite/core:framework_stable",
+        "//tensorflow/lite/core/c:common",
+        "//tensorflow/lite/core/kernels:builtin_ops",
+        "//tensorflow/lite/schema:schema_fbs",
+        "@com_google_googletest//:gtest",
+        "@eigen_archive//:eigen3",
+        "@flatbuffers",
+    ],
+)
+
+cc_test(
     name = "batch_matmul_test",
     size = "small",
     srcs = ["batch_matmul_test.cc"],
@@ -1650,6 +1668,24 @@ cc_test(
         "//tensorflow/lite/core:framework_stable",
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "dequantize_blockwise_test",
+    size = "small",
+    srcs = ["dequantize_blockwise_test.cc"],
+    deps = [
+        ":kernel_util",
+        ":test_main",
+        ":test_util",
+        "//tensorflow/lite/core:framework_stable",
+        "//tensorflow/lite/core/c:common",
+        "//tensorflow/lite/core/kernels:builtin_ops",
+        "//tensorflow/lite/schema:schema_fbs",
+        "@com_google_googletest//:gtest",
+        "@eigen_archive//:eigen3",
+        "@flatbuffers",
     ],
 )
 
@@ -2227,6 +2263,7 @@ cc_test(
     deps = [
         ":test_main",
         ":test_util",
+        "//tensorflow/lite:array",
         "//tensorflow/lite:framework_stable",
         "//tensorflow/lite/core:framework_stable",
         "//tensorflow/lite/kernels/internal:tensor",
@@ -2268,6 +2305,7 @@ cc_test(
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_absl//absl/log:absl_check",
         "@com_google_googletest//:gtest",
+        "@flatbuffers",
     ],
 )
 
@@ -2391,6 +2429,7 @@ cc_test(
         "//tensorflow/lite:string",
         "//tensorflow/lite:string_util",
         "//tensorflow/lite/core:framework_stable",
+        "//tensorflow/lite/core/c:common",
         "//tensorflow/lite/kernels/internal:tensor",
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_googletest//:gtest",
@@ -2526,10 +2565,17 @@ cc_test(
     deps = [
         ":test_main",
         ":test_util",
+        "//tensorflow/lite:string_util",
+        "//tensorflow/lite/core/c:common",
+        "//tensorflow/lite/kernels/internal:reference_base",
+        "//tensorflow/lite/kernels/internal:tensor",
+        "//tensorflow/lite/kernels/internal:types",
         "//tensorflow/lite/schema:schema_fbs",
         "//tensorflow/lite/types:half",
+        "@com_google_benchmark//:benchmark",
         "@com_google_googletest//:gtest",
         "@eigen_archive//:eigen3",
+        "@ruy//ruy/profiler:instrumentation",
     ],
 )
 
@@ -3549,3 +3595,14 @@ tflite_combine_cc_tests(
 )
 
 tflite_self_contained_libs_test_suite(name = "self_contained_libs_tests")
+
+cc_test(
+    name = "register_ref_test",
+    srcs = ["register_ref_test.cc"],
+    deps = [
+        ":reference_ops",
+        "//tensorflow/lite/core/kernels:builtin_ops",
+        "//tensorflow/lite/schema:schema_fbs",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

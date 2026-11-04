@@ -17,7 +17,6 @@ limitations under the License.
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <utility>
 #include <vector>
 
 #include "absl/strings/string_view.h"
@@ -40,6 +39,8 @@ class BitcastConvertTest : public ClientLibraryTestRunnerMixin<
  public:
   BitcastConvertTest() {
     mutable_debug_options()->add_xla_disable_hlo_passes("algsimp");
+    mutable_debug_options()->add_xla_disable_hlo_passes(
+        "gpu-algebraic-simplifier");
     mutable_debug_options()->add_xla_disable_hlo_passes("inline");
   }
 };

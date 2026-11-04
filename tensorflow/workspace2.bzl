@@ -28,6 +28,7 @@ load("@xla//third_party/benchmark:workspace.bzl", benchmark = "repo")
 load("@xla//third_party/clang_toolchain:cc_configure_clang.bzl", "cc_download_clang_toolchain")
 load("@xla//third_party/compute_library:workspace.bzl", compute_library = "repo")
 load("@xla//third_party/cpuinfo:workspace.bzl", cpuinfo = "repo")
+load("@xla//third_party/cuda_tile:workspace.bzl", cuda_tile = "repo")
 load("@xla//third_party/cudnn_frontend:workspace.bzl", cudnn_frontend = "repo")
 load("@xla//third_party/cutlass:workspace.bzl", cutlass = "repo")
 load("@xla//third_party/dlpack:workspace.bzl", dlpack = "repo")
@@ -63,10 +64,12 @@ load("@xla//third_party/shardy:workspace.bzl", shardy = "repo")
 load("@xla//third_party/slinky:workspace.bzl", slinky = "repo")
 load("@xla//third_party/spdlog:workspace.bzl", spdlog = "repo")
 load("@xla//third_party/stablehlo:workspace.bzl", stablehlo = "repo")
+load("@xla//third_party/tensor_ir:workspace.bzl", tensor_ir = "repo")
 load("@xla//third_party/tensorrt:tensorrt_configure.bzl", "tensorrt_configure")
 load("@xla//third_party/tensorrt:workspace.bzl", tensorrt = "repo")
 load("@xla//third_party/triton:workspace.bzl", triton = "repo")
 load("@xla//third_party/xnnpack:workspace.bzl", xnnpack = "repo")
+load("@xla//third_party/xz:workspace.bzl", xz = "repo")
 load("@xla//tools/def_file_filter:def_file_filter_configure.bzl", "def_file_filter_configure")
 load("@xla//tools/toolchains:cpus/aarch64/aarch64_compiler_configure.bzl", "aarch64_compiler_configure")
 load("@xla//tools/toolchains:cpus/arm/arm_compiler_configure.bzl", "arm_compiler_configure")
@@ -125,6 +128,7 @@ def _initialize_third_party():
     bazel_features_deps()
     benchmark()
     com_google_highway()
+    cuda_tile()
     ducc()
     dlpack()
     eigen3()
@@ -162,6 +166,7 @@ def _initialize_third_party():
     spdlog()
     sobol_data()
     stablehlo()
+    tensor_ir()
     vulkan_headers()
     tensorrt()
     nvshmem()
@@ -255,13 +260,14 @@ def _tf_repositories():
     )
 
     xnnpack()
+    xz()
 
     # XNNPack dependency.
     tf_http_archive(
         name = "KleidiAI",
-        sha256 = "652ee046ebf99bee5ed78aaf8961ea1df6ac09b6ebbd3a33106d9ce255efba69",
-        strip_prefix = "kleidiai-4bc7bd457930de119f8b826ecfdebfbd9c08cf8c",
-        urls = tf_mirror_urls("https://gitlab.arm.com/kleidi/kleidiai/-/archive/4bc7bd457930de119f8b826ecfdebfbd9c08cf8c/kleidiai-4bc7bd457930de119f8b826ecfdebfbd9c08cf8c.zip"),
+        sha256 = "17f5b233b9afa3abe873da40e6832a98423aa0de8c66205d09197ca5fbfa3135",
+        strip_prefix = "kleidiai-0e1439fe30a039880b3633252ae8390fd301a125",
+        urls = tf_mirror_urls("https://gitlab.arm.com/kleidi/kleidiai/-/archive/0e1439fe30a039880b3633252ae8390fd301a125/kleidiai-0e1439fe30a039880b3633252ae8390fd301a125.zip"),
     )
 
     FXdiv()
@@ -429,10 +435,10 @@ def _tf_repositories():
     tf_http_archive(
         name = "curl",
         build_file = "@xla//third_party:curl.BUILD",
-        sha256 = "264537d90e58d2b09dddc50944baf3c38e7089151c8986715e2aaeaaf2b8118f",
-        strip_prefix = "curl-8.11.0",
+        sha256 = "d54dd598bf05927a726deb38df31c6a255ba83ff1de57c5d1464dac3ed8f44a1",
+        strip_prefix = "curl-8.22.0",
         system_build_file = "//third_party/systemlibs:curl.BUILD",
-        urls = tf_mirror_urls("https://curl.se/download/curl-8.11.0.tar.gz"),
+        urls = tf_mirror_urls("https://curl.se/download/curl-8.22.0.tar.gz"),
     )
 
     tf_http_archive(
@@ -505,11 +511,27 @@ def _tf_repositories():
     tflite_mobilenet()
     tflite_ovic_testdata()
 
+    rules_android_patch_cmds = [
+        "sed -i -e 's|@androidsdk//:sdk|:toolchain_type|g' toolchains/android_sdk/BUILD",
+        "sed -i -e 's|:bootclasspath_android_only|@rules_java//toolchains:platformclasspath|g' tools/jdk/BUILD",
+        "sed -i -e '/@bazel_gazelle/d; /gazelle(/d' BUILD",
+        "sed -i -e 's|jars = \\[.*\\]|jars = []|g; s|runtime_deps = \\[.*\\]|runtime_deps = []|g; /r8:desugar/d; /:d8_desugar_params/d; /:full_desugar_jdk_libs_config_json/d' tools/android/BUILD",
+    ]
+
     tf_http_archive(
         name = "build_bazel_rules_android",
-        sha256 = "cd06d15dd8bb59926e4d65f9003bfc20f9da4b2519985c27e190cddc8b7a7806",
-        strip_prefix = "rules_android-0.1.1",
-        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_android/archive/v0.1.1.zip"),
+        patch_cmds = rules_android_patch_cmds,
+        sha256 = "af84b69ab3d16dd1a41056286e6511f147a94ccea995603e13e934c915c1631c",
+        strip_prefix = "rules_android-0.6.0",
+        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_android/releases/download/v0.6.0/rules_android-v0.6.0.tar.gz"),
+    )
+
+    tf_http_archive(
+        name = "rules_android",
+        patch_cmds = rules_android_patch_cmds,
+        sha256 = "af84b69ab3d16dd1a41056286e6511f147a94ccea995603e13e934c915c1631c",
+        strip_prefix = "rules_android-0.6.0",
+        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_android/releases/download/v0.6.0/rules_android-v0.6.0.tar.gz"),
     )
 
     tf_http_archive(
@@ -523,15 +545,15 @@ def _tf_repositories():
     # https://github.com/bazelbuild/rules_apple/releases
     tf_http_archive(
         name = "build_bazel_rules_apple",
-        sha256 = "b4df908ec14868369021182ab191dbd1f40830c9b300650d5dc389e0b9266c8d",
-        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_apple/releases/download/3.5.1/rules_apple.3.5.1.tar.gz"),
+        sha256 = "a78f26c22ac8d6e3f3fcaad50eace4d9c767688bd7254b75bdf4a6735b299f6a",
+        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_apple/releases/download/3.22.0/rules_apple.3.22.0.tar.gz"),
     )
 
     # https://github.com/bazelbuild/rules_swift/releases
     tf_http_archive(
         name = "build_bazel_rules_swift",
-        sha256 = "bb01097c7c7a1407f8ad49a1a0b1960655cf823c26ad2782d0b7d15b323838e2",
-        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_swift/releases/download/1.18.0/rules_swift.1.18.0.tar.gz"),
+        sha256 = "f7a67197cd8a79debfe70b8cef4dc19d03039af02cc561e31e0718e98cad83ac",
+        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_swift/releases/download/2.9.0/rules_swift.2.9.0.tar.gz"),
     )
 
     # https://github.com/bazelbuild/apple_support/releases

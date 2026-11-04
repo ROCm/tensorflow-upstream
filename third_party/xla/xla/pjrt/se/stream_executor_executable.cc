@@ -230,7 +230,7 @@ StreamExecutorExecutable::GetCompiledMemoryStats() const {
         ComputeIndefiniteAllocationsInBytes(*proto, /*memory_color=*/0);
   }
   memory_stats.PopulateBufferStatsFromAllocations(
-      local_exec->executable()->GetAllocations());
+      local_exec->executable()->GetAllocations(), /*assignment=*/nullptr);
   memory_stats.generated_code_size_in_bytes =
       SizeOfGeneratedCodeInBytesLocked();
   return memory_stats;
@@ -262,6 +262,7 @@ absl::StatusOr<absl::string_view> MemoryKindFromLayout(
       return PinnedHostMemorySpace::kKind;
     case Layout::kGenericFastMemorySpace:
     case Layout::kDefaultMemorySpace:
+    case Layout::kCollectiveMemorySpace:
       return default_memory_kind;
     default:
       return InvalidArgument("Unexpected memory space %d in output layout",

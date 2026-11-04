@@ -19,11 +19,22 @@ load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls", "tf_vendored
 load("//third_party/tf_runtime:workspace.bzl", tf_runtime = "repo")
 
 def workspace():
+    """Loads a set of TensorFlow dependencies. To be used in a WORKSPACE file."""
+    tf_http_archive(
+        name = "rules_proto",
+        sha256 = "14a225870ab4e91869652cfd69ef2028277fc1dc4910d65d353b62d6e0ae21f4",
+        strip_prefix = "rules_proto-7.1.0",
+        urls = tf_mirror_urls(
+            "https://github.com/bazelbuild/rules_proto/archive/refs/tags/7.1.0.tar.gz",
+        ),
+    )
+
     tf_vendored(name = "xla", path = "third_party/xla")
     tf_vendored(name = "tsl", path = "third_party/xla/third_party/tsl")
 
     tf_http_archive(
         name = "io_bazel_rules_closure",
+        patch_file = ["//third_party:rules_closure.patch"],
         sha256 = "5b00383d08dd71f28503736db0500b6fb4dda47489ff5fc6bed42557c07c6ba9",
         strip_prefix = "rules_closure-308b05b2419edb5c8ee0471b67a40403df940149",
         urls = tf_mirror_urls(
@@ -60,19 +71,19 @@ def workspace():
 
     tf_http_archive(
         name = "bazel_features",
-        sha256 = "4fd9922d464686820ffd8fcefa28ccffa147f7cdc6b6ac0d8b07fde565c65d66",
-        strip_prefix = "bazel_features-1.25.0",
+        sha256 = "094367e732ece23f334eaf84089a720b861d053beeba6a6a68356d3aee1dc32b",
+        strip_prefix = "bazel_features-1.50.0",
         urls = tf_mirror_urls(
-            "https://github.com/bazel-contrib/bazel_features/releases/download/v1.25.0/bazel_features-v1.25.0.tar.gz",
+            "https://github.com/bazel-contrib/bazel_features/releases/download/v1.50.0/bazel_features-v1.50.0.tar.gz",
         ),
     )
 
     tf_http_archive(
         name = "rules_cc",
-        sha256 = "69e05df29f0010ba248ef8dafc1f084c8fd2f5c553da634422d8167f5c4b277b",
-        strip_prefix = "rules_cc-0.2.20",
+        sha256 = "bd7124a844d0403b4b353bcea34d6c8b2ba88dc26881c26c9ee668da89b71846",
+        strip_prefix = "rules_cc-0.2.25",
         urls = tf_mirror_urls(
-            "https://github.com/bazelbuild/rules_cc/releases/download/0.2.20/rules_cc-0.2.20.tar.gz",
+            "https://github.com/bazelbuild/rules_cc/releases/download/0.2.25/rules_cc-0.2.25.tar.gz",
         ),
     )
 
@@ -80,10 +91,17 @@ def workspace():
     # Details: https://github.com/google-ml-infra/rules_ml_toolchain
     tf_http_archive(
         name = "rules_ml_toolchain",
+<<<<<<< HEAD
         sha256 = "e22beab7f24f924735d3d5903606ea3c346128cc7076772f7328706dd8ce5da5",
         strip_prefix = "rules_ml_toolchain-09925f69ffb6e1e765a246073ace69bfb33fbb57",
         urls = tf_mirror_urls(
             "https://github.com/google-ml-infra/rules_ml_toolchain/archive/09925f69ffb6e1e765a246073ace69bfb33fbb57.tar.gz",
+=======
+        sha256 = "edea971abaf9f4ccdfba1533030ce76c6fcd0dee75a3234c4a5c5141981243ae",
+        strip_prefix = "rules_ml_toolchain-9114bb1c3abf4f1a5889ef8fd7ae5a72b1351db3",
+        urls = tf_mirror_urls(
+            "https://github.com/google-ml-infra/rules_ml_toolchain/archive/9114bb1c3abf4f1a5889ef8fd7ae5a72b1351db3.tar.gz",
+>>>>>>> upstream/master
         ),
     )
     # Maven dependencies.

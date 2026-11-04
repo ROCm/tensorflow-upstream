@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
@@ -54,7 +55,7 @@ class FeatureReader {
   virtual void ReadValue(int64_t batch, int64_t n, uint64_t* out) const = 0;
   virtual void ReadValue(int64_t batch, int64_t n, tstring* out) const = 0;
 
-  virtual ~FeatureReader() {}
+  virtual ~FeatureReader() = default;
 };
 
 using FeatureReaders = std::vector<std::unique_ptr<FeatureReader>>;
@@ -169,7 +170,7 @@ class SparseFeatureReader : public FeatureReader {
 class OutputWriter {
  public:
   virtual void WriteOutputSlice(int64_t begin, int64_t end) = 0;
-  virtual ~OutputWriter() {}
+  virtual ~OutputWriter() = default;
 };
 
 template <typename ValuesType, typename SplitsType>
@@ -190,7 +191,7 @@ class OutputWriterImpl : public OutputWriter {
   // Reads features from the specified slice of batch indices, computes
   // feature crosses for each one, and writes them to values_out_.
   void WriteOutputSlice(int64_t begin, int64_t end) override {
-    std::vector<int> combination(features_.size(), 0);
+    std::vector<int64_t> combination(features_.size(), 0);
     for (int64_t b = begin; b < end; ++b) {
       auto row_start = splits_out_(b);
       auto row_limit = splits_out_(b + 1);
@@ -198,7 +199,8 @@ class OutputWriterImpl : public OutputWriter {
         WriteCombination(b, combination, &values_out_(i));
         NextCombination(b, &combination);
       }
-      combination.assign(features_.size(), 0);  // reset for next batch.
+      combination.assign(features_.size(),
+                         int64_t{0});  // reset for next batch.
     }
   }
 
@@ -206,7 +208,7 @@ class OutputWriterImpl : public OutputWriter {
   // Joins the specified combination of input features into a single string,
   // and writes it to *out.
   void WriteCombination(int64_t batch_index,
-                        const std::vector<int>& combination, tstring* out) {
+                        const std::vector<int64_t>& combination, tstring* out) {
     static const auto k_feature_separator = "_X_";
     absl::InlinedVector<tstring, 6> cross_vec(features_.size());
     for (int i = 0; i < combination.size(); ++i) {
@@ -218,7 +220,7 @@ class OutputWriterImpl : public OutputWriter {
   // Joins the specified combination of input features into a single
   // fingerprint, and writes it to *out.
   void WriteCombination(int64_t batch_index,
-                        const std::vector<int>& combination, int64_t* out) {
+                        const std::vector<int64_t>& combination, int64_t* out) {
     // Do the fingerprint concatenation on uint64.
     uint64_t hashed_output = hash_key_;
     for (size_t i = 0; i < combination.size(); ++i) {
@@ -237,7 +239,7 @@ class OutputWriterImpl : public OutputWriter {
 
   // Updates `combination` to the next combination of input features.
   void NextCombination(int64_t batch_index,
-                       std::vector<int>* combination) const {
+                       std::vector<int64_t>* combination) const {
     bool carry = true;
     for (int i = combination->size() - 1; i >= 0; i--) {
       if (carry) {
@@ -396,8 +398,16 @@ class RaggedCrossOp : public OpKernel {
       }
 
       int64_t num_values = ragged_values_list[i].NumElements();
-      TF_RETURN_IF_ERROR(RaggedTensorVerifySplits<SplitsType>(
-          ragged_splits_list[i], true, num_values));
+      if (ragged_splits_list[i].dtype() == DT_INT32) {
+        TF_RETURN_IF_ERROR(RaggedTensorVerifySplits<int32_t>(
+            ragged_splits_list[i], true, num_values));
+      } else if (ragged_splits_list[i].dtype() == DT_INT64) {
+        TF_RETURN_IF_ERROR(RaggedTensorVerifySplits<int64_t>(
+            ragged_splits_list[i], true, num_values));
+      } else {
+        return absl::InvalidArgumentError(
+            "ragged_splits must have type int32 or int64.");
+      }
     }
     for (int i = 0; i < num_sparse; ++i) {
       if (!TensorShapeUtils::IsMatrix(sparse_indices_list[i].shape()) ||
@@ -409,6 +419,25 @@ class RaggedCrossOp : public OpKernel {
       if (sparse_shape_list[i].NumElements() != 2) {
         return absl::InvalidArgumentError(
             "tf.ragged.cross only supports inputs with rank=2.");
+      }
+      if (sparse_indices_list[i].shape().dim_size(1) != 2) {
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Expected sparse indices to have 2 columns, got ",
+            sparse_indices_list[i].shape().dim_size(1), " at position ", i));
+      }
+      // sparse_shape_list[i].NumElements() == 2 is verified above.
+      auto shape_vec = sparse_shape_list[i].flat<int64_t>();
+      if (shape_vec(0) < 0 || shape_vec(1) < 0) {
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Sparse shape dimensions must be non-negative, got [", shape_vec(0),
+            ", ", shape_vec(1), "] at position ", i));
+      }
+      if (sparse_indices_list[i].shape().dim_size(0) !=
+          sparse_values_list[i].shape().dim_size(0)) {
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Expected size of values to be ",
+            sparse_indices_list[i].shape().dim_size(0), " got ",
+            sparse_values_list[i].shape().dim_size(0), " at position ", i));
       }
     }
     for (int i = 0; i < dense_list.size(); ++i) {
@@ -602,10 +631,21 @@ class RaggedCrossOp : public OpKernel {
     auto flat_row_splits = (*row_splits_out)->flat<SplitsType>();
     int64_t cross_count_total = 0;
     flat_row_splits(0) = 0;
+    const int64_t kMaxCrossCountTotal =
+        std::min(static_cast<int64_t>(std::numeric_limits<SplitsType>::max()),
+                 std::numeric_limits<int64_t>::max() / 2);
     for (int64_t b = 0; b < batch_size; b++) {
       int64_t cross_count_by_batch_index = CrossCountByBatchIndex(features, b);
       if (cross_count_by_batch_index < 0) {
-        return absl::InvalidArgumentError("Invalid RaggedTensor");
+        return absl::InvalidArgumentError(
+            "RaggedCross: feature count is negative or the Cartesian product "
+            "of all feature counts exceeds the maximum supported value.");
+      }
+      if (cross_count_by_batch_index >
+          kMaxCrossCountTotal - cross_count_total) {
+        return absl::InvalidArgumentError(
+            "RaggedCross: the total number of crosses across all batches "
+            "exceeds the maximum supported value.");
       }
       cross_count_total += cross_count_by_batch_index;
       flat_row_splits(b + 1) = cross_count_total;
@@ -618,15 +658,19 @@ class RaggedCrossOp : public OpKernel {
     return absl::OkStatus();
   }
 
-  // Returns number of crosses for a given batch_index
+  // Returns number of crosses for a given batch_index, or -1 on overflow /
+  // invalid input.
   int64_t CrossCountByBatchIndex(const FeatureReaders& features,
-                                 int batch_index) {
+                                 int64_t batch_index) {
+    const int64_t kMaxCrossCount =
+        std::min(static_cast<int64_t>(std::numeric_limits<SplitsType>::max()),
+                 std::numeric_limits<int64_t>::max() / 2);
     int64_t cross_count = 1;
     for (int i = 0; i < features.size(); ++i) {
       const auto feature_count = features[i]->FeatureCount(batch_index);
-      // If feature_count is invalid, return -1 to let caller know.
       if (feature_count < 0) return -1;
       if (feature_count == 0) return 0;
+      if (cross_count > kMaxCrossCount / feature_count) return -1;
       cross_count *= feature_count;
     }
     return cross_count;

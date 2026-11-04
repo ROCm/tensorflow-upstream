@@ -18,6 +18,7 @@ limitations under the License.
 #ifndef XLA_HLO_TRANSFORMS_SIMPLIFIERS_FLATTEN_CALL_GRAPH_H_
 #define XLA_HLO_TRANSFORMS_SIMPLIFIERS_FLATTEN_CALL_GRAPH_H_
 
+#include <type_traits>
 #include <utility>
 
 #include "absl/container/flat_hash_set.h"
@@ -35,14 +36,25 @@ namespace xla {
 class FlattenCallGraph : public HloModulePass {
  public:
   FlattenCallGraph()
-      : skip_cloning_handler_([](const HloComputation&) { return false; }) {}
+      : skip_cloning_handler_([](const HloComputation&) { return false; }),
+        flatten_non_inlineable_calls_(false) {}
+  template <typename T, typename = std::enable_if_t<std::is_same_v<T, bool>>>
+  explicit FlattenCallGraph(T flatten_non_inlineable_calls)
+      : skip_cloning_handler_([](const HloComputation&) { return false; }),
+        flatten_non_inlineable_calls_(flatten_non_inlineable_calls) {}
   explicit FlattenCallGraph(
-      absl::AnyInvocable<bool(const HloComputation&)> skip_cloning_handler)
-      : skip_cloning_handler_(std::move(skip_cloning_handler)) {}
+      absl::AnyInvocable<bool(const HloComputation&)> skip_cloning_handler,
+      bool flatten_non_inlineable_calls = false)
+      : skip_cloning_handler_(std::move(skip_cloning_handler)),
+        flatten_non_inlineable_calls_(flatten_non_inlineable_calls) {}
 
   // A skip cloning handler that skips cloning for computations that are only
   // called by kCall instructions.
   static bool SkipCloningForCalls(const HloComputation& computation);
+
+  // A skip cloning handler that only clones asynchronous computations (i.e.,
+  // computations called by kAsyncStart, kAsyncUpdate, or kAsyncDone).
+  static bool SkipCloningForNonAsync(const HloComputation& computation);
 
   absl::string_view name() const override { return "flatten-call-graph"; }
 
@@ -54,7 +66,10 @@ class FlattenCallGraph : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
+  bool ShouldSkipNonInlineableCall(const HloInstruction* instruction) const;
+
   absl::AnyInvocable<bool(const HloComputation&)> skip_cloning_handler_;
+  bool flatten_non_inlineable_calls_ = false;
 };
 
 }  // namespace xla

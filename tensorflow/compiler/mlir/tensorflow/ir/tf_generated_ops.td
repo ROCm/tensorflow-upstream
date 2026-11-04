@@ -4284,6 +4284,11 @@ def TF_DivOp : TF_Op<"Div", [Pure, ResultsBroadcastableShape, TF_SameOperandsAnd
   let description = [{
 *NOTE*: `Div` supports broadcasting. More about broadcasting
 [here](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html)
+
+For signed integer types, dividing the minimum representable value by `-1`
+(e.g. `int_min / -1`) overflows the signed integer range and wraps around to
+the minimum signed integer value in two's complement arithmetic rather than
+raising an exception.
   }];
 
   let arguments = (ins
@@ -5841,6 +5846,11 @@ def TF_FloorDivOp : TF_Op<"FloorDiv", [Pure, ResultsBroadcastableShape]>,
   let description = [{
 *NOTE*: `FloorDiv` supports broadcasting. More about broadcasting
 [here](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html)
+
+For signed integer types, dividing the minimum representable value by `-1`
+(e.g. `int_min / -1`) overflows the signed integer range and wraps around to
+the minimum signed integer value in two's complement arithmetic rather than
+raising an exception.
   }];
 
   let arguments = (ins
@@ -9626,6 +9636,12 @@ a tensor shape `[..., M, K]`.  If `adjoint` is `False` then each output matrix
 satisfies `matrix[..., :, :] * output[..., :, :] = rhs[..., :, :]`.
 If `adjoint` is `True` then each output matrix satisfies
 `adjoint(matrix[..., :, :]) * output[..., :, :] = rhs[..., :, :]`.
+
+If a matrix is not invertible there is no guarantee what the op does. It
+may detect the condition and raise an exception or it may simply return a
+garbage result. In particular, under XLA compilation (e.g.
+`tf.function(jit_compile=True)`) the condition is not detected and the
+result is implementation-defined.
   }];
 
   let arguments = (ins
@@ -15516,7 +15532,7 @@ e.g. Max(segment_ids) should be equal to `num_segments` - 1 for a 1-d segment_id
 With inconsistent num_segments, the op still runs. only difference is,
 the output takes the size of num_segments irrespective of size of segment_ids and data.
 for num_segments less than expected output size, the last elements are ignored
-for num_segments more than the expected output size, last elements are assigned
+for num_segments more than the expected output size, last elements are assigned 
 smallest possible value for the specific numeric type.
 
 For example:
@@ -15686,7 +15702,7 @@ e.g. Max(segment_ids) should be equal to `num_segments` - 1 for a 1-d segment_id
 With inconsistent num_segments, the op still runs. only difference is,
 the output takes the size of num_segments irrespective of size of segment_ids and data.
 for num_segments less than expected output size, the last elements are ignored
-for num_segments more than the expected output size, last elements are assigned
+for num_segments more than the expected output size, last elements are assigned 
 the largest possible value for the specific numeric type.
 
 For example:
@@ -15792,7 +15808,7 @@ The only difference with SegmentProd is the additional input  `num_segments`.
 This helps in evaluating the output shape in compile time.
 `num_segments` should be consistent with segment_ids.
 e.g. Max(segment_ids) - 1 should be equal to `num_segments` for a 1-d segment_ids
-With inconsistent num_segments, the op still runs. only difference is,
+With inconsistent num_segments, the op still runs. only difference is, 
 the output takes the size of num_segments irrespective of size of segment_ids and data.
 for num_segments less than expected output size, the last elements are ignored
 for num_segments more than the expected output size, last elements are assigned 1.
@@ -20401,6 +20417,11 @@ Python Semantics.
 
 *NOTE*: `TruncateDiv` supports broadcasting. More about broadcasting
 [here](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html)
+
+For signed integer types, dividing the minimum representable value by `-1`
+(e.g. `int_min / -1`) overflows the signed integer range and wraps around to
+the minimum signed integer value in two's complement arithmetic rather than
+raising an exception.
   }];
 
   let arguments = (ins
@@ -21456,12 +21477,16 @@ values. These keys should be in byte format.}]>:$keys,
     Arg<Variadic<TF_Float32Tensor>, [{A list of float tensors containing prediction values.}]>:$predictions_list,
     Arg<TF_Int64Tensor, [{An int that speficies at which step the predictions are generated.}]>:$step,
     Arg<TF_Int64Tensor, [{The utc timestamp in microseconds of when the predictions were created.}]>:$timestamp_usec,
+    Arg<TF_StrTensor, [{An optional tensor of alternate Woodshed Keys corresponding to
+each of the prediction values. These keys should be in byte format. Must
+either be empty or have the same number of elements as `keys`.}]>:$alternate_keys,
 
     StrArrayAttr:$prediction_names,
     BoolAttr:$training,
     StrAttr:$file_path,
     DefaultValuedOptionalAttr<BoolAttr, "false">:$write_vector_predictions,
-    DefaultValuedOptionalAttr<F32Attr, "1.0f">:$sample_rate
+    DefaultValuedOptionalAttr<F32Attr, "1.0f">:$sample_rate,
+    DefaultValuedOptionalAttr<StrAttr, "\"\"">:$date
   );
 
   let results = (outs);

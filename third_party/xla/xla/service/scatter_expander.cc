@@ -15,16 +15,22 @@ limitations under the License.
 
 #include "xla/service/scatter_expander.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <iterator>
+#include <limits>
+#include <memory>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/no_destructor.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -33,7 +39,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_context.h"
+#include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/pass/hlo_pass_options.h"
+#include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/literal_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/gather_scatter_utils.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/scatter_utils.h"
@@ -43,6 +54,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -54,22 +66,33 @@ static absl::StatusOr<HloInstruction*> CheckIndexValidity(
   DCHECK_EQ(operand_dims.size(), window_sizes.size());
 
   // Valid range for the index: [0, operand_dims - window_sizes]
+  const PrimitiveType index_type = index->shape().element_type();
 
   // Check if the index has any negative values.
-  HloInstruction* zero_index = BroadcastZeros(
-      computation, index->shape().element_type(), index->shape().dimensions());
+  HloInstruction* zero_index =
+      BroadcastZeros(computation, index_type, index->shape().dimensions());
   ABSL_ASSIGN_OR_RETURN(HloInstruction * negative_index_check,
                    MakeCompareHlo(ComparisonDirection::kLe, zero_index, index));
 
   // Check if the index is OOB w.r.t. the operand dimensions and window sizes.
+  // An index can never exceed the maximum of its type, so a bound above that
+  // maximum is clamped to it instead of wrapping around in the constant.
+  const int64_t index_type_max = primitive_util::IntegralTypeSwitch(
+      [](auto primitive_type) -> int64_t {
+        using NativeT = primitive_util::NativeTypeOf<primitive_type>;
+        return static_cast<int64_t>(std::min(
+            static_cast<uint64_t>(std::numeric_limits<NativeT>::max()),
+            static_cast<uint64_t>(std::numeric_limits<int64_t>::max())));
+      },
+      index_type);
   std::vector<int64_t> max_valid_index(operand_dims.size());
   for (int i = 0; i < operand_dims.size(); ++i) {
-    max_valid_index[i] = operand_dims[i] - window_sizes[i];
+    max_valid_index[i] =
+        std::min(operand_dims[i] - window_sizes[i], index_type_max);
   }
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction * max_valid_index_constant,
-      MakeR1ConstantHlo<int64_t>(computation, index->shape().element_type(),
-                                 max_valid_index));
+      MakeR1ConstantHlo<int64_t>(computation, index_type, max_valid_index));
   ABSL_ASSIGN_OR_RETURN(HloInstruction * oob_index_check,
                    MakeCompareHlo(ComparisonDirection::kGe,
                                   max_valid_index_constant, index));
@@ -348,5 +371,33 @@ bool ScatterExpander::InstructionMatchesPattern(HloInstruction* inst) {
                                   (mode_ == kEliminateIndeterministicScatters &&
                                    !IsScatterDeterministic(scatter)));
 }
+
+namespace {
+
+class ScatterExpanderFactory : public HloPassFactory {
+ public:
+  absl::string_view name() const override { return "scatter_expander"; }
+
+  absl::StatusOr<std::unique_ptr<HloPassInterface>> Create(
+      const HloPassContext&, const HloPassOptions& options) const override {
+    static const absl::NoDestructor<
+        absl::flat_hash_map<absl::string_view, ScatterExpander::Mode>>
+        kModes({
+            {"eliminate_all_scatters", ScatterExpander::kEliminateAllScatters},
+            {"eliminate_simple_scatters",
+             ScatterExpander::kEliminateSimpleScatters},
+            {"eliminate_indeterministic_scatters",
+             ScatterExpander::kEliminateIndeterministicScatters},
+        });
+    ABSL_ASSIGN_OR_RETURN(ScatterExpander::Mode mode,
+                     options.GetEnum("mode", *kModes));
+    return std::make_unique<ScatterExpander>(mode);
+  }
+};
+
+const HloPassFactory* const kScatterExpanderRegistration =
+    RegisterHloPassFactory<ScatterExpanderFactory>();
+
+}  // namespace
 
 }  // namespace xla

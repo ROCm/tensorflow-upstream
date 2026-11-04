@@ -69,6 +69,19 @@ TEST_P(FloatTypeTest, ExponentWidth) {
       << "Failed for " << PrimitiveType_Name(data.type);
 }
 
+TEST_P(FloatTypeTest, HasFloatingPointPrecision) {
+  const FloatTypeTestData& data = GetParam();
+  EXPECT_TRUE(primitive_util::HasFloatingPointPrecision(
+      data.type, data.exponent_width, data.significand_width - 1))
+      << "Failed for " << PrimitiveType_Name(data.type);
+  EXPECT_FALSE(primitive_util::HasFloatingPointPrecision(
+      data.type, data.exponent_width + 1, data.significand_width - 1))
+      << "Failed for " << PrimitiveType_Name(data.type);
+  EXPECT_FALSE(primitive_util::HasFloatingPointPrecision(
+      data.type, data.exponent_width, data.significand_width))
+      << "Failed for " << PrimitiveType_Name(data.type);
+}
+
 TEST_P(FloatTypeTest, ExponentBias) {
   const FloatTypeTestData& data = GetParam();
   EXPECT_EQ(primitive_util::ExponentBias(data.type), data.exponent_bias)
@@ -198,6 +211,27 @@ TEST(PrimitiveUtilTest, CastPreservesValues) {
           << primitive_util::LowercasePrimitiveTypeName(from_type) << " -> "
           << primitive_util::LowercasePrimitiveTypeName(to_type);
     }
+  }
+}
+
+TEST(PrimitiveUtilTest, ByteWidthTypeSwitch) {
+  for (int type_int = PrimitiveType_MIN; type_int < PrimitiveType_ARRAYSIZE;
+       ++type_int) {
+    auto type = static_cast<PrimitiveType>(type_int);
+    if (!primitive_util::IsArrayType(type)) {
+      continue;
+    }
+    int byte_width = primitive_util::ByteWidthTypeSwitch(
+        [](auto primitive_type_constant) -> int {
+          using NativeT = primitive_util::NativeTypeOf<primitive_type_constant>;
+          static_assert(primitive_util::IsArrayType(primitive_type_constant));
+          static_assert(sizeof(NativeT) ==
+                        primitive_util::ByteWidth(primitive_type_constant));
+          return sizeof(NativeT);
+        },
+        type);
+    EXPECT_EQ(byte_width, primitive_util::ByteWidth(type))
+        << primitive_util::LowercasePrimitiveTypeName(type);
   }
 }
 

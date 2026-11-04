@@ -47,6 +47,9 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/pass:hlo_pass_context",
+        "//xla/hlo/pass:hlo_pass_options",
+        "//xla/hlo/pass:hlo_pass_registry",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/hlo/transforms/simplifiers:tuple_simplifier",
         "//xla/hlo/translate:stablehlo",
@@ -58,8 +61,6 @@ cc_library(
         "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_import",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -77,10 +78,14 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@shardy//shardy/common:file_utils",
+        "@shardy//shardy/dialect/sdy/transforms/common:partitioner_stage",
         "@shardy//shardy/dialect/sdy/transforms/common:propagation_options",
+        "@shardy//shardy/dialect/sdy/transforms/export:utils",
         "@shardy//shardy/dialect/sdy/transforms/propagation:passes",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -95,6 +100,7 @@ cc_library(
         "//xla/hlo/translate/hlo_to_mhlo:hlo_utils",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:hlo_dialect_registration",
+        "//xla/service/spmd/shardy/extensions:custom_call_extensions",
         "//xla/service/spmd/shardy/extensions:mhlo_extensions",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -121,6 +127,9 @@ xla_cc_test(
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@shardy//shardy/dialect/sdy/ir:dialect",
     ],
 )
 
@@ -143,10 +152,17 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/hlo/utils:hlo_matchers",
+        "//xla/python:inspect_sharding",
         "//xla/service:computation_layout",
         "//xla/service/spmd:sharding_format_picker",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
+        "@shardy//shardy/dialect/sdy/transforms/common:partitioner_stage",
+        "@shardy//shardy/dialect/sdy/transforms/common:propagation_options",
     ],
 )
 
@@ -156,6 +172,7 @@ xla_cc_binary(
     deps = [
         "//xla/mlir_hlo:hlo_dialect_registration",
         "//xla/mlir_hlo:stablehlo_extension_passes",
+        "//xla/service/spmd/shardy/extensions:custom_call_extensions",
         "//xla/service/spmd/shardy/extensions:mhlo_extensions",
         "//xla/service/spmd/shardy/round_trip_common:import_constants",
         "//xla/service/spmd/shardy/round_trip_common:import_sdy_custom_calls",

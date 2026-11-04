@@ -1,10 +1,9 @@
 // RUN: fusion_to_xtile %s | fusion_compiler_opt --canonicalize -cse \
 // RUN:   | FileCheck %s
 // RUN: fusion_to_xtile %s | fusion_compiler_opt \
-// RUN:   --xtile-cpu-new-xtile-to-vector --xtile-cpu-new-vector-to-llvm \
-// RUN:   | FileCheck %s --check-prefix=NEW-VECTOR-LLVM
+// RUN:   --xtile-cpu-xtile-to-vector --xtile-cpu-vector-to-llvm \
+// RUN:   | FileCheck %s --check-prefix=CHECK-LLVM
 // RUN: test_correctness %s
-// RUN: test_correctness %s --xla_cpu_use_new_xtile_lowering=true
 
 fusion {
 
@@ -33,7 +32,7 @@ ENTRY main {
 // CHECK:        xtile.entry_func @wrapped_fusion(
 // CHECK-SAME:     %[[ARG0:[^:]+]]: memref<16x40x40x64xf32>,
 // CHECK-SAME:     %[[ARG1:[^:]+]]: memref<64x40x40x16xf32>,
-// CHECK-SAME:     %[[PID:[^:]+]]: index)
+// CHECK-SAME:     %[[PID:[^:]+]]: index {xla.range = [0 : index, 7 : index]})
 
 // CHECK:        %[[C0:.*]] = arith.constant 0 : index
 // CHECK:        %[[C1:.*]] = arith.constant 1 : index
@@ -48,7 +47,7 @@ ENTRY main {
 // CHECK:        }
 // CHECK:        xtile.return
 
-// NEW-VECTOR-LLVM-LABEL: llvm.func internal @wrapped_fusion_impl
-// NEW-VECTOR-LLVM-NOT: llvm.alloc
-// NEW-VECTOR-LLVM: llvm.shufflevector
+// CHECK-LLVM-LABEL: llvm.func internal @wrapped_fusion_impl
+// CHECK-LLVM-NOT: llvm.alloc
+// CHECK-LLVM: llvm.shufflevector
 

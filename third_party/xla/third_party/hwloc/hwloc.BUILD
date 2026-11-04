@@ -17,6 +17,8 @@
 
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -43,16 +45,19 @@ VAR_SETTINGS_COPTS = [
 
 _INCLUDE_HWLOC_AUTOIGEN_CONFIG_H_COMMON_SUBS = {
     "#undef HWLOC_VERSION_MAJOR": "#define HWLOC_VERSION_MAJOR 2",
-    "#undef HWLOC_VERSION_MINOR": "#define HWLOC_VERSION_MINOR 0",
-    "#undef HWLOC_VERSION_RELEASE": "#define HWLOC_VERSION_RELEASE 3",
+    "#undef HWLOC_VERSION_MINOR": "#define HWLOC_VERSION_MINOR 13",
+    "#undef HWLOC_VERSION_RELEASE": "#define HWLOC_VERSION_RELEASE 0",
     "#undef HWLOC_VERSION_GREEK": "#define HWLOC_VERSION_GREEK \"\"",
-    "#undef HWLOC_VERSION": "#define HWLOC_VERSION \"2.0.3\"",
+    "#undef HWLOC_VERSION": "#define HWLOC_VERSION \"2.13.0\"",
     "#undef hwloc_pid_t": "#define hwloc_pid_t pid_t",
     "#undef hwloc_thread_t": "#define hwloc_thread_t pthread_t",
     "#  undef HWLOC_HAVE_STDINT_H": "#  define HWLOC_HAVE_STDINT_H 1",
-    "#undef HWLOC_SYM_TRANSFORM": "#define HWLOC_SYM_TRANSFORM 0",
-    "#undef HWLOC_SYM_PREFIX_CAPS": "#define HWLOC_SYM_PREFIX_CAPS HWLOC_",
-    "#undef HWLOC_SYM_PREFIX": "#define HWLOC_SYM_PREFIX hwloc_",
+    # Prefix bundled APIs (tf_hwloc_*) so they cannot interpose system hwloc
+    # (openxla/xla#39355, tensorflow#125854). Public symbols must stay visible
+    # across DSOs (libplatform_port.so vs libtensorflow_framework.so).
+    "#undef HWLOC_SYM_TRANSFORM": "#define HWLOC_SYM_TRANSFORM 1",
+    "#undef HWLOC_SYM_PREFIX_CAPS": "#define HWLOC_SYM_PREFIX_CAPS TF_",
+    "#undef HWLOC_SYM_PREFIX": "#define HWLOC_SYM_PREFIX tf_",
 }
 
 _INCLUDE_HWLOC_AUTOIGEN_CONFIG_H_LINUX_SUBS = dict(_INCLUDE_HWLOC_AUTOIGEN_CONFIG_H_COMMON_SUBS)
@@ -176,23 +181,23 @@ _INCLUDE_PRIVATE_HWLOC_AUTOIGEN_CONFIG_H_COMMON_SUBS = {
     "#undef HWLOC_HAVE_X86_CPUID": "#define HWLOC_HAVE_X86_CPUID 1",
     "#undef HWLOC_SIZEOF_UNSIGNED_INT": "#define HWLOC_SIZEOF_UNSIGNED_INT 4",
     "#undef HWLOC_SIZEOF_UNSIGNED_LONG": "#define HWLOC_SIZEOF_UNSIGNED_LONG 8",
-    "#undef HWLOC_SYM_PREFIX_CAPS": "#define HWLOC_SYM_PREFIX_CAPS HWLOC_",
-    "#undef HWLOC_SYM_PREFIX": "#define HWLOC_SYM_PREFIX hwloc_",
-    "#undef HWLOC_SYM_TRANSFORM": "#define HWLOC_SYM_TRANSFORM 0",
+    "#undef HWLOC_SYM_PREFIX_CAPS": "#define HWLOC_SYM_PREFIX_CAPS TF_",
+    "#undef HWLOC_SYM_PREFIX": "#define HWLOC_SYM_PREFIX tf_",
+    "#undef HWLOC_SYM_TRANSFORM": "#define HWLOC_SYM_TRANSFORM 1",
     "#undef HWLOC_USE_NCURSES": "#define HWLOC_USE_NCURSES 1",
     "#undef HWLOC_VERSION_GREEK": "#define HWLOC_VERSION_GREEK \"\"",
     "#undef HWLOC_VERSION_MAJOR": "#define HWLOC_VERSION_MAJOR 2",
-    "#undef HWLOC_VERSION_MINOR": "#define HWLOC_VERSION_MINOR 0",
-    "#undef HWLOC_VERSION_RELEASE": "#define HWLOC_VERSION_RELEASE 3",
-    "#undef HWLOC_VERSION": "#define HWLOC_VERSION \"2.0.3\"",
+    "#undef HWLOC_VERSION_MINOR": "#define HWLOC_VERSION_MINOR 13",
+    "#undef HWLOC_VERSION_RELEASE": "#define HWLOC_VERSION_RELEASE 0",
+    "#undef HWLOC_VERSION": "#define HWLOC_VERSION \"2.13.0\"",
     "#undef HWLOC_X86_64_ARCH": "#define HWLOC_X86_64_ARCH 1",
     "#undef LT_OBJDIR": "#define LT_OBJDIR \".libs/\"",
     "#undef PACKAGE_BUGREPORT": "#define PACKAGE_BUGREPORT \"http://github.com/open-mpi/hwloc/issues",
     "#undef PACKAGE_NAME": "#define PACKAGE_NAME \"hwloc\"",
-    "#undef PACKAGE_STRING": "#define PACKAGE_STRING \"hwloc 2.0.3\"",
+    "#undef PACKAGE_STRING": "#define PACKAGE_STRING \"hwloc 2.13.0\"",
     "#undef PACKAGE_TARNAME": "#define PACKAGE_TARNAME \"hwloc\"",
     "#undef PACKAGE_URL": "#define PACKAGE_URL \"\"",
-    "#undef PACKAGE_VERSION": "#define PACKAGE_VERSION \"2.0.3\"",
+    "#undef PACKAGE_VERSION": "#define PACKAGE_VERSION \"2.13.0\"",
     "#undef PACKAGE": "#define PACKAGE \"hwloc\"",
     "#undef SIZEOF_UNSIGNED_INT": "#define SIZEOF_UNSIGNED_INT 4",
     "#undef SIZEOF_UNSIGNED_LONG": "#define SIZEOF_UNSIGNED_LONG 8",
@@ -204,7 +209,7 @@ _INCLUDE_PRIVATE_HWLOC_AUTOIGEN_CONFIG_H_COMMON_SUBS = {
     "# undef _POSIX_PTHREAD_SEMANTICS": "# define _POSIX_PTHREAD_SEMANTICS 1",
     "# undef _TANDEM_SOURCE": "# define _TANDEM_SOURCE 1",
     "# undef __EXTENSIONS__": "# define __EXTENSIONS__ 1",
-    "#undef VERSION": "#define VERSION \"2.0.3\"",
+    "#undef VERSION": "#define VERSION \"2.13.0\"",
     "#undef _HPUX_SOURCE": "#define _HPUX_SOURCE 1",
     "#undef hwloc_pid_t": "#define hwloc_pid_t pid_t",
     "#undef hwloc_thread_t": "#define hwloc_thread_t pthread_t",

@@ -28,7 +28,9 @@ class Ifrt_Op<string mnemonic, list<Trait> traits = []> :
     Op<Ifrt_Dialect, mnemonic, traits>;
 
 def Ifrt_ReshardOp
-    : Ifrt_Op<"Reshard", [AttrSizedOperandSegments, NestedInIfrtFunc]> {
+    : Ifrt_Op<"Reshard",
+              [AttrSizedOperandSegments, NestedInIfrtFunc,
+               Ifrt_PairwiseArrayOpInterface]> {
   let summary = "Reshards a sequence of host tensors or device arrays";
   let description = [{
     Copies the host tensors or device arrays to a new sharding.
@@ -50,7 +52,7 @@ def Ifrt_ReshardOp
     Ifrt_ControlType:$control_output);
 
   let assemblyFormat = [{
-    `(` $inputs `)` oilist(`after` $control_inputs) attr-dict
+    `(` $inputs `)` oilist(`after` $control_inputs) prop-dict attr-dict
     `:` functional-type($inputs, $outputs)
   }];
 
@@ -58,7 +60,9 @@ def Ifrt_ReshardOp
 }
 
 def Ifrt_CopyArraysOp
-    : Ifrt_Op<"CopyArrays", [AttrSizedOperandSegments, NestedInIfrtFunc]> {
+    : Ifrt_Op<"CopyArrays",
+              [AttrSizedOperandSegments, NestedInIfrtFunc,
+               Ifrt_PairwiseArrayOpInterface]> {
   let summary = "Copies arrays to a new set of devices";
   let description = [{
     Copies the input arrays to the output arrays.
@@ -80,7 +84,7 @@ def Ifrt_CopyArraysOp
     Ifrt_ControlType:$control_output);
 
   let assemblyFormat = [{
-    `(` $inputs `)` oilist(`after` $control_inputs) attr-dict
+    `(` $inputs `)` oilist(`after` $control_inputs) prop-dict attr-dict
     `:` functional-type($inputs, $outputs)
   }];
 
@@ -143,7 +147,9 @@ def Ifrt_DisassembleOp : Ifrt_Op<"Disassemble", [NestedInIfrtFunc]> {
 }
 
 def Ifrt_RemapArraysOp
-    : Ifrt_Op<"RemapArrays", [AttrSizedOperandSegments, NestedInIfrtFunc]> {
+    : Ifrt_Op<"RemapArrays",
+              [AttrSizedOperandSegments, NestedInIfrtFunc,
+               Ifrt_ArrayOpInterface]> {
   let summary = "Remaps shards from input `Array`s to create new `Array`s.";
   let description = [{
     A metadata-only op that remaps shards across input `Array`s to create
@@ -166,14 +172,16 @@ def Ifrt_RemapArraysOp
 
   let assemblyFormat = [{
     `(` $inputs `)` `mappings` `=` $mappings oilist(`after` $control_inputs)
-    attr-dict `:` functional-type($inputs, $outputs)
+    prop-dict attr-dict `:` functional-type($inputs, $outputs)
   }];
 
   let hasVerifier = 1;
 }
 
 def Ifrt_BitcastArraysOp
-    : Ifrt_Op<"BitcastArrays", [AttrSizedOperandSegments, NestedInIfrtFunc]> {
+    : Ifrt_Op<"BitcastArrays",
+              [AttrSizedOperandSegments, NestedInIfrtFunc,
+               Ifrt_PairwiseArrayOpInterface]> {
   let summary = "Bitcasts `Array`s to new `Array`s with a different type.";
   let description = [{
     A metadata-only op that can change the per-shard interpretation without
@@ -193,7 +201,7 @@ def Ifrt_BitcastArraysOp
     Ifrt_ControlType:$control_output);
 
   let assemblyFormat = [{
-    `(` $inputs `)` oilist(`after` $control_inputs) attr-dict
+    `(` $inputs `)` oilist(`after` $control_inputs) prop-dict attr-dict
     `:` functional-type($inputs, $outputs)
   }];
 
@@ -204,6 +212,7 @@ def Ifrt_CallOp : Ifrt_Op<"Call",
     [AttrSizedOperandSegments,
      NestedInIfrtFunc,
      IfrtCallLike<"::mlir::func::FuncOp">,
+     Ifrt_ArrayOpInterface,
      DeclareOpInterfaceMethods<CallOpInterface>,
      DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Call some function on a set of devices";
@@ -244,7 +253,7 @@ def Ifrt_CallOp : Ifrt_Op<"Call",
 
   let assemblyFormat = [{
     $callee `(` $inputs `)` oilist(`after` $control_inputs)
-    `on` `devices` $devices attr-dict `:` functional-type($inputs, $outputs)
+    `on` `devices` $devices prop-dict attr-dict `:` functional-type($inputs, $outputs)
   }];
   let hasVerifier = 1;
 }
@@ -253,6 +262,7 @@ def Ifrt_CallLoadedExecutableOp : Ifrt_Op<"CallLoadedExecutable",
     [AttrSizedOperandSegments,
      NestedInIfrtFunc,
      IfrtCallLike<"LoadedExecutableOp">,
+     Ifrt_ArrayOpInterface,
      DeclareOpInterfaceMethods<CallOpInterface>,
      DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Call some loaded executable";
@@ -285,7 +295,7 @@ def Ifrt_CallLoadedExecutableOp : Ifrt_Op<"CallLoadedExecutable",
     Ifrt_ControlType:$control_output);
 
   let assemblyFormat = [{
-    $callee `(` $inputs `)` oilist(`after` $control_inputs) attr-dict
+    $callee `(` $inputs `)` oilist(`after` $control_inputs) prop-dict attr-dict
     `:` functional-type($inputs, $outputs)
   }];
   let hasVerifier = 1;

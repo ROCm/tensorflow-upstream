@@ -98,7 +98,7 @@ xla_cc_binary(
 )
 
 xla_cc_binary(
-    name = "fusion_to_mlir",
+    name = "cpu_fusion_to_mlir",
     testonly = True,
     srcs = ["fusion_to_mlir.cc"],
     deps = [
@@ -133,6 +133,5 @@ xla_cc_binary(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:RegisterAllPasses",  # buildcleaner: keep
         "@llvm-project//mlir:Support",
-        "@stablehlo//:linalg_passes",
     ],
 )

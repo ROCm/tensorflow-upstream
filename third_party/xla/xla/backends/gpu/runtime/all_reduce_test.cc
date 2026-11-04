@@ -13,64 +13,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/runtime/all_reduce.h"
-
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
 #include <memory>
-#include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
-#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_format.h"
-#include "absl/strings/str_join.h"
-#include "absl/types/span.h"
-#include "xla/array.h"
-#include "xla/core/collectives/rank_id.h"
-#include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/primitive_util.h"
-#include "xla/service/gpu/gpu_constants.h"
-#include "xla/service/gpu/launch_dimensions.h"
-#include "xla/status_macros.h"
-#include "xla/stream_executor/device_address.h"
-#include "xla/stream_executor/gpu/all_reduce_kernel.h"
-#include "xla/stream_executor/gpu/collective_kernel_metadata.h"
-#include "xla/stream_executor/gpu/gpu_executor.h"
-#include "xla/stream_executor/gpu/gpu_init.h"
-#include "xla/stream_executor/gpu/multicast_memory.h"
-#include "xla/stream_executor/memory_space.h"
-#include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/platform_manager.h"
-#include "xla/stream_executor/stream.h"
-#include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
-#include "xla/tests/literal_test_util.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
-#include "xla/types.h"
-#include "xla/util.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
 
 using ::absl_testing::StatusIs;
-using ::stream_executor::gpu::AllReduceStrategy;
 using ::testing::HasSubstr;
 
+<<<<<<< HEAD
 se::StreamExecutor* GetGpuExecutor(int64_t device_ordinal) {
   auto* platform =
       se::PlatformManager::PlatformWithName(se::GpuPlatformName()).value();
@@ -466,6 +429,8 @@ INSTANTIATE_TEST_SUITE_P(
                              info.param.num_elements);
     });
 
+=======
+>>>>>>> upstream/master
 class AllReduceHloTest : public HloTestBase {};
 
 TEST_F(AllReduceHloTest, DefaultDeviceAssnWithHloRunner) {
@@ -486,8 +451,8 @@ TEST_F(AllReduceHloTest, DefaultDeviceAssnWithHloRunner) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   Literal input = LiteralUtil::CreateR1<float>(std::vector<float>(1, 2));
 
   EXPECT_THAT(test_runner().Execute(std::move(module), {std::move(input)}),

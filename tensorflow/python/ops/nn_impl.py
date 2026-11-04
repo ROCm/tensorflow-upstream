@@ -27,6 +27,7 @@ from tensorflow.python.framework import tensor_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import array_ops_stack
 from tensorflow.python.ops import candidate_sampling_ops
+from tensorflow.python.ops import check_ops
 from tensorflow.python.ops import cond as tf_cond
 from tensorflow.python.ops import ctc_ops  # pylint: disable=unused-import
 from tensorflow.python.ops import custom_gradient
@@ -456,7 +457,8 @@ def swish(features, beta=1.0):
 
   Args:
     features: A `Tensor` representing preactivation values.
-    beta: A 'Tensor' representing value of beta hyperparameter.
+    beta: A `Tensor` representing value of beta hyperparameter, broadcastable to
+      `features`. Default value 1.0.
 
   Returns:
     The activation value.
@@ -480,10 +482,9 @@ def swish(features, beta=1.0):
       with ops.control_dependencies([dy]):
         logits = beta * features
         if features.dtype == dtypes.float64:
-          # Evaluate the smaller sigmoid tail directly. For large positive
-          # logits, `1 - sigmoid(logits)` rounds to zero and erases finite
-          # higher-order derivatives.
-          use_complement = logits >= 0
+          is_extreme_neg = logits <= -500.0
+          safe_logits = array_ops.where_v2(is_extreme_neg, logits, -500.0)
+          use_complement = logits >= 0.0
           sigmoid_tail = math_ops.sigmoid(
               array_ops.where_v2(use_complement, -logits, logits)
           )
@@ -491,15 +492,47 @@ def swish(features, beta=1.0):
               use_complement, 1.0 - sigmoid_tail, sigmoid_tail
           )
           sigmoid_grad = sigmoid_tail * (1.0 - sigmoid_tail)
+          scaled_logits = safe_logits * 0.0625
+          half_exp = math_ops.exp(scaled_logits * 8.0)
+
+          standard_act_grad = sigmoid_features + logits * sigmoid_grad
+          extreme_neg_act_grad = (
+              ((0.0625 + scaled_logits) * half_exp) * half_exp
+          ) * 16.0
+          activation_grad = array_ops.where_v2(
+              is_extreme_neg, extreme_neg_act_grad, standard_act_grad
+          )
+
+          beta_common = dy * math_ops.square(features)
+          extreme_neg_beta_grad_terms = (beta_common * half_exp) * half_exp
+          standard_beta_grad_terms = beta_common * sigmoid_grad
+          beta_grad = array_ops.where_v2(
+              is_extreme_neg,
+              extreme_neg_beta_grad_terms,
+              standard_beta_grad_terms,
+          )
         else:
           sigmoid_features = math_ops.sigmoid(logits)
           sigmoid_grad = sigmoid_features * (1.0 - sigmoid_features)
+          activation_grad = sigmoid_features + logits * sigmoid_grad
+          beta_grad = dy * math_ops.square(features) * sigmoid_grad
 
-      activation_grad = sigmoid_features + logits * sigmoid_grad
-      beta_grad = math_ops.reduce_sum(
-          dy * math_ops.square(features) * sigmoid_grad
+      features_grad = dy * activation_grad
+
+      # Reduce each gradient back to its input shape after broadcasting.
+      features_shape = array_ops.shape(features)
+      beta_shape = array_ops.shape(beta)
+      features_axes, beta_axes = array_ops.broadcast_gradient_args(
+          features_shape, beta_shape
       )
-      return (dy * activation_grad, beta_grad)
+      return (
+          array_ops.reshape(
+              math_ops.reduce_sum(features_grad, features_axes), features_shape
+          ),
+          array_ops.reshape(
+              math_ops.reduce_sum(beta_grad, beta_axes), beta_shape
+          ),
+      )
 
     return features * math_ops.sigmoid(beta * features), grad
 
@@ -614,6 +647,19 @@ def l2_normalize(x, axis=None, epsilon=1e-12, name=None, dim=None):
       norm_real = math_ops.multiply(math_ops.real(x), x_inv_norm)
       norm_imag = math_ops.multiply(math_ops.imag(x), x_inv_norm)
       return math_ops.complex(norm_real, norm_imag, name=name)
+    if x.dtype.base_dtype in (dtypes.float16, dtypes.bfloat16):
+      # The sum of squares overflows float16 (and `epsilon` underflows it),
+      # and bfloat16 loses precision, so normalize in `float32`.
+      x32 = math_ops.cast(x, dtypes.float32)
+      square_sum = math_ops.reduce_sum(
+          math_ops.square(x32), axis, keepdims=True
+      )
+      x_inv_norm = math_ops.rsqrt(
+          math_ops.maximum(square_sum, math_ops.cast(epsilon, dtypes.float32))
+      )
+      return math_ops.cast(
+          math_ops.multiply(x32, x_inv_norm), x.dtype, name=name
+      )
     square_sum = math_ops.reduce_sum(math_ops.square(x), axis, keepdims=True)
     x_inv_norm = math_ops.rsqrt(math_ops.maximum(square_sum, epsilon))
     return math_ops.multiply(x, x_inv_norm, name=name)
@@ -680,6 +726,131 @@ def zero_fraction(value, name=None):
       zero_fraction_float32 = num_zero_float32 / size_float32
 
     return array_ops.identity(zero_fraction_float32, "fraction")
+
+
+def _check_dilated_depthwise_shapes(input, filter, rate, padding, data_format):
+  """Raises a descriptive error if a dilated depthwise conv has no window.
+
+  `with_space_to_batch` evaluates the dilated convolution densely over
+  space-to-batch blocks. When the input (plus any explicit padding) is smaller
+  than the dilated filter, no valid window exists: `tf.function` then fails
+  with an opaque negative-dimension error while eager silently returns a tensor
+  of the wrong shape. Validating the shapes up front gives both execution modes
+  the same descriptive error.
+
+  Shapes that are not statically known are left for the op to report at run
+  time. "SAME" padding always admits an output and is not checked.
+
+  Args:
+    input: The `input` argument of `depthwise_conv2d`.
+    filter: The `filter` argument of `depthwise_conv2d`.
+    rate: The dilation rate, a list of two positive ints.
+    padding: The `padding` argument of `depthwise_conv2d`.
+    data_format: The `data_format` argument of `depthwise_conv2d`.
+
+  Raises:
+    ValueError: If a dilated filter does not fit in the padded input.
+  """
+  if all(r == 1 for r in rate):
+    return
+
+  channels_first = (data_format or "").startswith("NC")
+  if isinstance(padding, str):
+    if padding == "SAME":
+      # `with_space_to_batch` pads enough for an output to always exist.
+      return
+    spatial_pads = [(0, 0), (0, 0)]
+  else:
+    # Drop the batch and channel dimensions, keep the two spatial ones.
+    spatial_pads = [list(p) for p in padding]
+    spatial_pads = spatial_pads[2:] if channels_first else spatial_pads[1:-1]
+
+  if input.shape.rank != 4 or filter.shape.rank != 4:
+    return
+  in_shape = input.shape.as_list()
+  f_shape = filter.shape.as_list()
+  if None in in_shape or None in f_shape:
+    return
+
+  in_spatial = in_shape[2:4] if channels_first else in_shape[1:3]
+  # The filter layout is `[height, width, in_channels, channel_multiplier]`
+  # regardless of `data_format`.
+  f_spatial = f_shape[0:2]
+
+  for i, dim_name in enumerate(("height", "width")):
+    available = in_spatial[i] + spatial_pads[i][0] + spatial_pads[i][1]
+    dilated = (f_spatial[i] - 1) * rate[i] + 1
+    if available < dilated:
+      raise ValueError(
+          f"Input {dim_name} ({in_spatial[i]}) plus padding "
+          f"({spatial_pads[i][0] + spatial_pads[i][1]}) is too small for "
+          f"dilation rate {rate[i]} with filter size {f_spatial[i]}: the "
+          f"dilated filter spans {dilated} values but only {available} are "
+          "available, so the convolution has no valid window."
+      )
+
+
+def _assert_dilated_depthwise_fits(input, filter, rate, padding, data_format):
+  """Guards a dilated depthwise conv whose spatial shapes are dynamic.
+
+  `_check_dilated_depthwise_shapes` cannot see shapes that are unknown at
+  tracing time (a `tf.function` accepting a `TensorSpec` with `None`
+  dimensions). Without a run-time check, an input too small for the dilated
+  filter makes the underlying op silently return a wrongly shaped result
+  instead of failing, which is the `tf.function` half of #113320.
+
+  Args:
+    input: The `input` argument of `depthwise_conv2d`.
+    filter: The `filter` argument of `depthwise_conv2d`.
+    rate: The dilation rate, a list of two positive ints.
+    padding: The `padding` argument of `depthwise_conv2d`.
+    data_format: The `data_format` argument of `depthwise_conv2d`.
+
+  Returns:
+    `input`, with a control dependency on the shape assertion.
+  """
+  # A rank other than 4 is invalid for the op itself; leave it to the op to
+  # report, rather than slicing `array_ops.shape` below on a rank we cannot
+  # interpret.
+  if (input.shape.rank is not None and input.shape.rank != 4) or (
+      filter.shape.rank is not None and filter.shape.rank != 4
+  ):
+    return input
+
+  channels_first = (data_format or "").startswith("NC")
+  if isinstance(padding, str):
+    pads = [0, 0]
+  else:
+    # Drop the batch and channel dimensions, keep the two spatial ones.
+    spatial_pads = [list(p) for p in padding]
+    spatial_pads = spatial_pads[2:] if channels_first else spatial_pads[1:-1]
+    pads = [
+        spatial_pads[0][0] + spatial_pads[0][1],
+        spatial_pads[1][0] + spatial_pads[1][1],
+    ]
+
+  in_shape = array_ops.shape(input)
+  f_shape = array_ops.shape(filter)
+  in_spatial = in_shape[2:4] if channels_first else in_shape[1:3]
+  # The filter layout is `[height, width, in_channels, channel_multiplier]`
+  # regardless of `data_format`.
+  f_spatial = f_shape[0:2]
+
+  pads_tensor = ops.convert_to_tensor(pads, dtype=in_spatial.dtype)
+  available = in_spatial + pads_tensor
+  dilated = (f_spatial - 1) * ops.convert_to_tensor(
+      rate, dtype=f_spatial.dtype
+  ) + 1
+  check = check_ops.assert_greater_equal(
+      available,
+      dilated,
+      message=(
+          "Dilated depthwise convolution: the input (plus padding) is "
+          "smaller than the dilated filter, so there is no valid window."
+      ),
+  )
+  with ops.control_dependencies([check]):
+    return array_ops.identity(input)
 
 
 # pylint: disable=redefined-builtin
@@ -787,6 +958,21 @@ def depthwise_conv2d(input,
           f"`strides` {strides}"
       )
 
+    _check_dilated_depthwise_shapes(input, filter, rate, padding, data_format)
+
+    # The check above only sees static shapes. When tracing a `tf.function`
+    # whose spatial dimensions are unknown, fall back to a run-time assertion
+    # so that an oversized dilated filter fails instead of silently producing a
+    # wrongly shaped result. "SAME" padding always admits an output.
+    if any(_ > 1 for _ in rate) and not (
+        isinstance(padding, str) and padding == "SAME"
+    ):
+      in_shape = input.shape.as_list() if input.shape.rank == 4 else None
+      if in_shape is None or None in in_shape:
+        input = _assert_dilated_depthwise_fits(
+            input, filter, rate, padding, data_format
+        )
+
     # Use depthwise_conv2d_native if executing on TPU.
     if device_context.enclosing_tpu_context() is not None:
       if data_format == "NCHW":
@@ -850,7 +1036,8 @@ def depthwise_conv2d_v2(input,
   same horizontal and vertical strides, `strides = [1, stride, stride, 1]`.
   If any value in `dilations` is greater than 1, we perform atrous depthwise
   convolution, in which case all values in the `strides` tensor must be equal
-  to 1.
+  to 1; a `ValueError` is raised otherwise. A dilated depthwise convolution is
+  evaluated with space-to-batch, which cannot express a stride.
 
   Usage Example:
 
@@ -1147,6 +1334,30 @@ def sufficient_statistics(x, axes, shift=None, keep_dims=None, name=None,
     * the (possibly shifted) sum of squares of the elements in the array.
     * the shift by which the mean must be corrected or None if `shift` is None.
   """
+  if isinstance(axes, (tensor.Tensor, variables.Variable)):
+    # A `Tensor` built inside an explicit `ops.Graph()` stays symbolic even when
+    # eager execution is active, and symbolic tensors have no `numpy()`.
+    if context.executing_eagerly() and hasattr(axes, "numpy"):
+      axes = axes.numpy().tolist()
+    else:
+      axes_const = tensor_util.constant_value(axes)
+      if axes_const is None:
+        raise ValueError(
+            "`axes` must be statically known when passed as a tensor in "
+            f"graph mode, got {axes}."
+        )
+      axes = axes_const.tolist()
+  elif hasattr(axes, "tolist"):
+    # NumPy arrays are a documented `axes` type ("array of ints"). Convert
+    # them to Python ints so that the `set()` below works on hashable values.
+    axes = axes.tolist()
+  # `tf.nn.moments` accepts a scalar `axes`, and a single axis is naturally
+  # spelled that way. After the conversions above a scalar is a Python int,
+  # which `set()` cannot iterate, so wrap it into a list of one element.
+  # `hasattr(axes, "__iter__")` is used instead of a list/tuple/set whitelist
+  # because `range` and generators are accepted today and must keep working.
+  if not hasattr(axes, "__iter__"):
+    axes = [axes]
   axes = list(set(axes))
   keep_dims = deprecated_argument_lookup(
       "keepdims", keepdims, "keep_dims", keep_dims)
@@ -1291,6 +1502,12 @@ def moments(
       axes_const = tensor_util.constant_value(axes)
       if axes_const is not None:
         axes = axes_const.tolist()
+  elif hasattr(axes, "tolist"):
+    # `axes` is documented as an "array of ints", so NumPy arrays (and other
+    # array-likes) are legal inputs, but `tf.squeeze` only accepts a Python
+    # list or tuple in the `keepdims=False` path. Normalize them here, as
+    # `weighted_moments` already does (GitHub issues #129819, #101580).
+    axes = axes.tolist()
   with ops.name_scope(name, "moments", [x, axes]):
     # The dynamic range of fp16 is too limited to support the collection of
     # sufficient statistics. As a workaround we simply perform the operations
@@ -1547,10 +1764,25 @@ def batch_normalization(x,
     inv = math_ops.rsqrt(variance + variance_epsilon)
     if scale is not None:
       inv *= scale
-    # Note: tensorflow/contrib/quantize/python/fold_batch_norms.py depends on
-    # the precise order of ops that are generated by the expression below.
-    return x * math_ops.cast(inv, x.dtype) + math_ops.cast(
-        offset - mean * inv if offset is not None else -mean * inv, x.dtype)
+    if not ops.executing_eagerly_outside_functions():
+      # Graphs built outside eager/tf.function keep this exact expression,
+      # including its cancellation of `offset`, because graph rewrites and
+      # tests match its ops and names (for example
+      # tools/graph_transforms/fold_batch_norms.cc and
+      # python/grappler/layout_optimizer_test.py).
+      return x * math_ops.cast(inv, x.dtype) + math_ops.cast(
+          offset - mean * inv if offset is not None else -mean * inv, x.dtype
+      )
+    # Center first: `x * inv + (offset - mean * inv)` cancels `offset`
+    # against `mean * inv` once |mean * inv| >> |offset|. Stay in the input
+    # dtype so the batch tensor is not copied into a wider type.
+    x_dtype = dtypes.as_dtype(x.dtype).base_dtype
+    inv = math_ops.cast(inv, x_dtype)
+    centered = x - math_ops.cast(mean, x_dtype)
+    normalized = centered * inv
+    if offset is not None:
+      normalized += math_ops.cast(offset, x_dtype)
+    return normalized
 
 
 @tf_export(v1=["nn.fused_batch_norm"])
@@ -2296,7 +2528,9 @@ def sampled_softmax_loss(weights,
   A common use case is to use this method for training, and calculate the full
   softmax loss for evaluation or inference. In this case, you must set
   `partition_strategy="div"` for the two losses to be consistent, as in the
-  following example:
+  following example (the partition strategy only matters when `weights` is a
+  list of more than one shard; for a single `weights` tensor `"div"` and
+  `"mod"` give the same result):
 
   ```python
   if mode == "train":
@@ -2322,29 +2556,28 @@ def sampled_softmax_loss(weights,
 
   Args:
     weights: A `Tensor` of shape `[num_classes, dim]`, or a list of `Tensor`
-        objects whose concatenation along dimension 0 has shape
-        [num_classes, dim].  The (possibly-sharded) class embeddings.
+      objects whose concatenation along dimension 0 has shape [num_classes,
+      dim].  The (possibly-sharded) class embeddings.
     biases: A `Tensor` of shape `[num_classes]`.  The class biases.
-    labels: A `Tensor` of type `int64` and shape `[batch_size,
-        num_true]`. The target classes.  Note that this format differs from
-        the `labels` argument of `nn.softmax_cross_entropy_with_logits`.
-    inputs: A `Tensor` of shape `[batch_size, dim]`.  The forward
-        activations of the input network.
+    labels: A `Tensor` of type `int64` and shape `[batch_size, num_true]`. The
+      target classes.  Note that this format differs from the `labels` argument
+      of `nn.softmax_cross_entropy_with_logits`.
+    inputs: A `Tensor` of shape `[batch_size, dim]`.  The forward activations of
+      the input network.
     num_sampled: An `int`.  The number of classes to randomly sample per batch.
     num_classes: An `int`. The number of possible classes.
     num_true: An `int`.  The number of target classes per training example.
     sampled_values: a tuple of (`sampled_candidates`, `true_expected_count`,
-        `sampled_expected_count`) returned by a `*_candidate_sampler` function.
-        (if None, we default to `log_uniform_candidate_sampler`)
+      `sampled_expected_count`) returned by a `*_candidate_sampler` function.
+      (if None, we default to `log_uniform_candidate_sampler`)
     remove_accidental_hits:  A `bool`.  whether to remove "accidental hits"
-        where a sampled class equals one of the target classes.  Default is
-        True.
+      where a sampled class equals one of the target classes.  Default is True.
     partition_strategy: A string specifying the partitioning strategy, relevant
-        if `len(weights) > 1`. Currently `"div"` and `"mod"` are supported.
-        Default is `"mod"`. See `tf.nn.embedding_lookup` for more details.
+      if `len(weights) > 1`. Currently `"div"` and `"mod"` are supported.
+      Default is `"mod"`. See `tf.nn.embedding_lookup` for more details.
     name: A name for the operation (optional).
     seed: random seed for candidate sampling. Default to None, which doesn't set
-        the op-level random seed for candidate sampling.
+      the op-level random seed for candidate sampling.
 
   Returns:
     A `batch_size` 1-D tensor of per-example sampled softmax losses.

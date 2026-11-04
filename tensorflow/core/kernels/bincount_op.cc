@@ -20,11 +20,15 @@ limitations under the License.
 #include "tensorflow/core/kernels/bincount_op.h"
 
 #include <atomic>
+#include <cstdint>
+#include <limits>
+#include <type_traits>
 
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/kernels/fill_functor.h"
 #include "tensorflow/core/kernels/sparse_utils.h"
@@ -38,6 +42,9 @@ using thread::ThreadPool;
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+
+constexpr int64_t kMaxGpuHistogramBins =
+    std::numeric_limits<int32_t>::max() - 1024;
 
 namespace functor {
 
@@ -231,6 +238,18 @@ class BincountOp : public OpKernel {
     OP_REQUIRES(ctx, size >= 0,
                 absl::InvalidArgumentError(
                     absl::StrCat("size (", size, ") must be non-negative")));
+    if (std::is_same_v<Device, GPUDevice>) {
+      OP_REQUIRES(ctx, size <= kMaxGpuHistogramBins,
+                  absl::InvalidArgumentError(
+                      absl::StrCat("size (", size, ") must be at most ",
+                                   kMaxGpuHistogramBins, " on GPU")));
+      OP_REQUIRES(ctx,
+                  arr_t.NumElements() <= std::numeric_limits<int32_t>::max(),
+                  absl::InvalidArgumentError(absl::StrCat(
+                      "Bincount on GPU supports at most ",
+                      std::numeric_limits<int32_t>::max(),
+                      " input values, got ", arr_t.NumElements())));
+    }
 
     const Tensor& weights_t = ctx->input(2);
     const auto arr = arr_t.flat<int32_t>();
@@ -307,9 +326,23 @@ class DenseBincountOp : public OpKernel {
                 absl::InvalidArgumentError(
                     absl::StrCat("size (", size, ") must be non-negative")));
 
+    if (std::is_same_v<Device, GPUDevice>) {
+      OP_REQUIRES(ctx,
+                  data.NumElements() <= std::numeric_limits<int32_t>::max(),
+                  absl::InvalidArgumentError(
+                      absl::StrCat("Bincount on GPU supports at most ",
+                                   std::numeric_limits<int32_t>::max(),
+                                   " input values, got ", data.NumElements())));
+    }
     Tensor* out_t;
     functor::SetZeroFunctor<Device, T> fill;
     if (data.dims() <= 1) {
+      if (std::is_same_v<Device, GPUDevice> && !binary_output_) {
+        OP_REQUIRES(ctx, size <= kMaxGpuHistogramBins,
+                    absl::InvalidArgumentError(
+                        absl::StrCat("size (", size, ") must be at most ",
+                                     kMaxGpuHistogramBins, " on GPU")));
+      }
       OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({size}), &out_t));
       auto out = out_t->flat<T>();
       fill(ctx->eigen_device<Device>(), out);
@@ -328,8 +361,11 @@ class DenseBincountOp : public OpKernel {
           (weights.NumElements() == 0)
               ? weights.shaped<T, 2>(absl::InlinedVector<int64_t, 2UL>(2, 0))
               : weights.matrix<T>();
+      TensorShape output_shape;
       OP_REQUIRES_OK(
-          ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
+          ctx, TensorShape::BuildTensorShape(
+                   {num_rows, static_cast<int64_t>(size)}, &output_shape));
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(0, output_shape, &out_t));
       auto out = out_t->matrix<T>();
       fill(ctx->eigen_device<Device>(), out_t->flat<T>());
       if (binary_output_) {
@@ -409,6 +445,18 @@ class SparseBincountOp : public OpKernel {
     OP_REQUIRES_OK(ctx, sparse_utils::ValidateSparseTensor<int64_t>(
                             indices, values, dense_shape,
                             sparse_utils::IndexValidation::kUnordered));
+
+    // The 2-D path below reads `weights(i)` with the value index `i`, so a
+    // `weights` shorter than `values` would read past its buffer. The 1-D
+    // path and DenseBincount already enforce this; mirror it here.
+    OP_REQUIRES(
+        ctx, weights_size == 0 || weights_size == values.NumElements(),
+        absl::InvalidArgumentError(absl::StrCat(
+            "`weights` must be the same length as `values` or a length-0 "
+            "`Tensor`, in which case it acts as all weights equal to 1. Got a "
+            "length-",
+            weights_size, " `weights` for ", values.NumElements(),
+            " values.")));
 
     OP_REQUIRES(ctx, dense_shape.NumElements() > 0,
                 absl::InvalidArgumentError(absl::StrCat(
@@ -503,12 +551,13 @@ class RaggedBincountOp : public OpKernel {
                 absl::InvalidArgumentError(
                     absl::StrCat("size (", size, ") must be non-negative")));
 
-    int num_rows = splits.size() - 1;
-    int num_values = values.size();
-    int batch_idx = 0;
+    int64_t num_values = values.size();
+    int64_t batch_idx = 0;
 
     OP_REQUIRES(ctx, splits.size() > 0,
                 absl::InvalidArgumentError("Splits must be non-empty"));
+
+    int64_t num_rows = splits.size() - 1;
 
     OP_REQUIRES(ctx, splits(0) == 0,
                 absl::InvalidArgumentError(absl::StrCat(
@@ -519,6 +568,17 @@ class RaggedBincountOp : public OpKernel {
                     "Splits must end with the number of values, got ",
                     splits(num_rows), " instead of ", num_values)));
 
+    // The loop below reads `weights(idx)` with the value index `idx`, so a
+    // `weights` shorter than `values` would read past its buffer. The 1-D
+    // path and DenseBincount already enforce this; mirror it here.
+    OP_REQUIRES(
+        ctx, weights_size == 0 || weights_size == num_values,
+        absl::InvalidArgumentError(absl::StrCat(
+            "`weights` must be the same length as `values` or a length-0 "
+            "`Tensor`, in which case it acts as all weights equal to 1. Got a "
+            "length-",
+            weights_size, " `weights` for ", num_values, " values.")));
+
     Tensor* out_t;
     OP_REQUIRES_OK(
         ctx, ctx->allocate_output(0, TensorShape({num_rows, size}), &out_t));
@@ -526,7 +586,7 @@ class RaggedBincountOp : public OpKernel {
     fill(ctx->eigen_device<Device>(), out_t->flat<T>());
     const auto out = out_t->matrix<T>();
 
-    for (int idx = 0; idx < num_values; ++idx) {
+    for (int64_t idx = 0; idx < num_values; ++idx) {
       while (idx >= splits(batch_idx)) {
         batch_idx++;
       }
