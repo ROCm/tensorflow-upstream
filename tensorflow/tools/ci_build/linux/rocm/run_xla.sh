@@ -65,6 +65,9 @@ EXCLUDED_TESTS=(
     KernelNameTracerTest.Create
     KernelNameTracerTest.CaptureKernelNames
     KernelNameTracerTest.CaptureKernelNamesFromCommandBufferThunk
+
+    # @xla//xla/backends/gpu/tests:sorting_test_amdgpu_any
+    TypeSupportTest.SortSupportsType/u16
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
