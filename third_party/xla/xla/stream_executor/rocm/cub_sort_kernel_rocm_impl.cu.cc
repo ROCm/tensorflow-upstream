@@ -25,6 +25,7 @@ limitations under the License.
 #include "rocm/include/rocprim/type_traits.hpp"
 #include "xla/stream_executor/rocm/cub_sort_kernel_rocm.h"
 #include "xla/stream_executor/rocm/rocm_status.h"
+#include "xla/stream_executor/rocm/rocprim_target_guard.h"
 #include "tsl/platform/bfloat16.h"
 
 // Required for sorting Eigen::half and bfloat16.
@@ -169,6 +170,12 @@ absl::Status CubSortKeys(void* d_temp_storage, size_t& temp_bytes,
                          const void* d_keys_in, void* d_keys_out,
                          size_t num_items, bool descending, size_t batch_size,
                          hipStream_t stream) {
+  // A null `d_temp_storage` is a scratch-size query, which never launches.
+  if (d_temp_storage != nullptr) {
+    if (absl::Status s = EnsureRocprimTargetResolved(stream); !s.ok()) {
+      return s;
+    }
+  }
   return CubSortKeysImpl<KeyT>(d_temp_storage, temp_bytes, d_keys_in,
                                d_keys_out, num_items, descending, batch_size,
                                stream);
@@ -181,6 +188,12 @@ absl::Status CubSortPairs(void* d_temp_storage, size_t& temp_bytes,
                           const void* d_values_in, void* d_values_out,
                           size_t num_items, bool descending, size_t batch_size,
                           hipStream_t stream) {
+  // A null `d_temp_storage` is a scratch-size query, which never launches.
+  if (d_temp_storage != nullptr) {
+    if (absl::Status s = EnsureRocprimTargetResolved(stream); !s.ok()) {
+      return s;
+    }
+  }
   return CubSortPairsImpl<KeyT, ValT>(
       d_temp_storage, temp_bytes, d_keys_in, d_keys_out, d_values_in,
       d_values_out, num_items, descending, batch_size, stream);
