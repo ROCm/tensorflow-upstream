@@ -1,0 +1,1203 @@
+# Copyright 2026 The OpenXLA Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+diff --git a/clang/include/clang/Basic/BuiltinsAMDGPU.td b/clang/include/clang/Basic/BuiltinsAMDGPU.td
+index 4e4e0ee275a1..f7f3bb69828f 100644
+--- a/clang/include/clang/Basic/BuiltinsAMDGPU.td
++++ b/clang/include/clang/Basic/BuiltinsAMDGPU.td
+@@ -1187,19 +1187,19 @@ def __builtin_amdgcn_wmma_i32_16x16x64_iu8 : AMDGPUBuiltin<"_ExtVector<8, int>(_
+   let Documentation = [DocWMMA_i32_16x16x64_iu8_GFX1250];
+   let ArgNames = ["a_sign", "a", "b_sign", "b", "c", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+-def __builtin_amdgcn_wmma_f16_16x16x128_fp8_fp8 : AMDGPUBuiltin<"_ExtVector<8, _Float16>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, _Float16>, _Constant bool, _Constant bool)", [Const], "wmma-n16-insts,wavefrontsize32"> {
++def __builtin_amdgcn_wmma_f16_16x16x128_fp8_fp8 : AMDGPUBuiltin<"_ExtVector<8, _Float16>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, _Float16>, _Constant bool, _Constant bool)", [Const], "wmma-16x16x128fp8-insts,wavefrontsize32"> {
+   let Documentation = [DocWMMA_fp8_16x16x128_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+-def __builtin_amdgcn_wmma_f16_16x16x128_fp8_bf8 : AMDGPUBuiltin<"_ExtVector<8, _Float16>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, _Float16>, _Constant bool, _Constant bool)", [Const], "wmma-n16-insts,wavefrontsize32"> {
++def __builtin_amdgcn_wmma_f16_16x16x128_fp8_bf8 : AMDGPUBuiltin<"_ExtVector<8, _Float16>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, _Float16>, _Constant bool, _Constant bool)", [Const], "wmma-16x16x128fp8-insts,wavefrontsize32"> {
+   let Documentation = [DocWMMA_fp8_16x16x128_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+-def __builtin_amdgcn_wmma_f16_16x16x128_bf8_fp8 : AMDGPUBuiltin<"_ExtVector<8, _Float16>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, _Float16>, _Constant bool, _Constant bool)", [Const], "wmma-n16-insts,wavefrontsize32"> {
++def __builtin_amdgcn_wmma_f16_16x16x128_bf8_fp8 : AMDGPUBuiltin<"_ExtVector<8, _Float16>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, _Float16>, _Constant bool, _Constant bool)", [Const], "wmma-16x16x128fp8-insts,wavefrontsize32"> {
+   let Documentation = [DocWMMA_fp8_16x16x128_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+-def __builtin_amdgcn_wmma_f16_16x16x128_bf8_bf8 : AMDGPUBuiltin<"_ExtVector<8, _Float16>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, _Float16>, _Constant bool, _Constant bool)", [Const], "wmma-n16-insts,wavefrontsize32"> {
++def __builtin_amdgcn_wmma_f16_16x16x128_bf8_bf8 : AMDGPUBuiltin<"_ExtVector<8, _Float16>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, _Float16>, _Constant bool, _Constant bool)", [Const], "wmma-16x16x128fp8-insts,wavefrontsize32"> {
+   let Documentation = [DocWMMA_fp8_16x16x128_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+@@ -1207,19 +1207,19 @@ def __builtin_amdgcn_wmma_f32_16x16x128_f8f6f4 : AMDGPUBuiltin<"_ExtVector<8, fl
+   let Documentation = [DocWMMA_f8f6f4_GFX1250];
+   let ArgNames = ["matrix_a_fmt", "a", "matrix_b_fmt", "b", "c_mod", "c"];
+ }
+-def __builtin_amdgcn_wmma_f32_16x16x128_fp8_fp8 : AMDGPUBuiltin<"_ExtVector<8, float>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, float>, _Constant bool, _Constant bool)", [Const], "wmma-n16-insts,wavefrontsize32"> {
++def __builtin_amdgcn_wmma_f32_16x16x128_fp8_fp8 : AMDGPUBuiltin<"_ExtVector<8, float>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, float>, _Constant bool, _Constant bool)", [Const], "wmma-16x16x128fp8-insts,wavefrontsize32"> {
+   let Documentation = [DocWMMA_fp8_16x16x128_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+-def __builtin_amdgcn_wmma_f32_16x16x128_fp8_bf8 : AMDGPUBuiltin<"_ExtVector<8, float>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, float>, _Constant bool, _Constant bool)", [Const], "wmma-n16-insts,wavefrontsize32"> {
++def __builtin_amdgcn_wmma_f32_16x16x128_fp8_bf8 : AMDGPUBuiltin<"_ExtVector<8, float>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, float>, _Constant bool, _Constant bool)", [Const], "wmma-16x16x128fp8-insts,wavefrontsize32"> {
+   let Documentation = [DocWMMA_fp8_16x16x128_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+-def __builtin_amdgcn_wmma_f32_16x16x128_bf8_fp8 : AMDGPUBuiltin<"_ExtVector<8, float>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, float>, _Constant bool, _Constant bool)", [Const], "wmma-n16-insts,wavefrontsize32"> {
++def __builtin_amdgcn_wmma_f32_16x16x128_bf8_fp8 : AMDGPUBuiltin<"_ExtVector<8, float>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, float>, _Constant bool, _Constant bool)", [Const], "wmma-16x16x128fp8-insts,wavefrontsize32"> {
+   let Documentation = [DocWMMA_fp8_16x16x128_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+-def __builtin_amdgcn_wmma_f32_16x16x128_bf8_bf8 : AMDGPUBuiltin<"_ExtVector<8, float>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, float>, _Constant bool, _Constant bool)", [Const], "wmma-n16-insts,wavefrontsize32"> {
++def __builtin_amdgcn_wmma_f32_16x16x128_bf8_bf8 : AMDGPUBuiltin<"_ExtVector<8, float>(_ExtVector<16, int>, _ExtVector<16, int>, _Constant short, _ExtVector<8, float>, _Constant bool, _Constant bool)", [Const], "wmma-16x16x128fp8-insts,wavefrontsize32"> {
+   let Documentation = [DocWMMA_fp8_16x16x128_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+@@ -1239,16 +1239,16 @@ def __builtin_amdgcn_wmma_f16_16x16x32_f16 : AMDGPUBuiltin<"_ExtVector<8, _Float
+   let Documentation = [DocWMMA_half_16x16x32_GFX1250];
+   let ArgNames = ["a_neg", "a", "b_neg", "b", "c_mod", "c", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+-def __builtin_amdgcn_wmma_f32_32x16x128_f4 : AMDGPUBuiltin<"_ExtVector<16, float>(_ExtVector<16, int>, _ExtVector<8, int>, _Constant short, _ExtVector<16, float>)", [Const], "wmma-n16-insts,wavefrontsize32"> {
++def __builtin_amdgcn_wmma_f32_32x16x128_f4 : AMDGPUBuiltin<"_ExtVector<16, float>(_ExtVector<16, int>, _ExtVector<8, int>, _Constant short, _ExtVector<16, float>)", [Const], "wmma-f4-insts,wavefrontsize32"> {
+   let Documentation = [DocWMMA_f4_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c"];
+ }
+-def __builtin_amdgcn_wmma_scale_f32_32x16x128_f4 : AMDGPUBuiltin<"_ExtVector<16, float>(_ExtVector<16, int>, _ExtVector<8, int>, _Constant short, _ExtVector<16, float>, _Constant int, _Constant int, int, _Constant int, _Constant int, int, _Constant bool, _Constant bool)", [Const], "wmma-n16-insts,wavefrontsize32"> {
++def __builtin_amdgcn_wmma_scale_f32_32x16x128_f4 : AMDGPUBuiltin<"_ExtVector<16, float>(_ExtVector<16, int>, _ExtVector<8, int>, _Constant short, _ExtVector<16, float>, _Constant int, _Constant int, int, _Constant int, _Constant int, int, _Constant bool, _Constant bool)", [Const], "wmma-f4-insts,wavefrontsize32"> {
+   let Documentation = [DocWMMA_scale_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c", "matrix_a_scale", "matrix_a_scale_fmt", "matrix_a_scale_exp", "matrix_b_scale", "matrix_b_scale_fmt", "matrix_b_scale_exp", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+-def __builtin_amdgcn_wmma_scale16_f32_32x16x128_f4 : AMDGPUBuiltin<"_ExtVector<16, float>(_ExtVector<16, int>, _ExtVector<8, int>, _Constant short, _ExtVector<16, float>, _Constant int, _Constant int, long int, _Constant int, _Constant int, long int, _Constant bool, _Constant bool)", [Const], "wmma-n16-insts,wavefrontsize32"> {
+-  let Documentation = [DocWMMA_scale16_GFX1250];
++def __builtin_amdgcn_wmma_scale16_f32_32x16x128_f4 : AMDGPUBuiltin<"_ExtVector<16, float>(_ExtVector<16, int>, _ExtVector<8, int>, _Constant short, _ExtVector<16, float>, _Constant int, _Constant int, long int, _Constant int, _Constant int, long int, _Constant bool, _Constant bool)", [Const], "wmma-f4-insts,wavefrontsize32"> {
++  let Documentation = [DocWMMA_scale16_f4_GFX1250];
+   let ArgNames = ["a", "b", "c_mod", "c", "matrix_a_scale", "matrix_a_scale_fmt", "matrix_a_scale_exp", "matrix_b_scale", "matrix_b_scale_fmt", "matrix_b_scale_exp", "matrix_a_reuse", "matrix_b_reuse"];
+ }
+ def __builtin_amdgcn_swmmac_f32_16x16x64_bf16 : AMDGPUBuiltin<"_ExtVector<8, float>(_Constant bool, _ExtVector<16, __bf16>, _Constant bool, _ExtVector<32, __bf16>, _ExtVector<8, float>, int, _Constant bool, _Constant bool)", [Const], "swmmac-gfx1250-insts,wavefrontsize32">;
+diff --git a/clang/include/clang/Basic/BuiltinsAMDGPUDocs.td b/clang/include/clang/Basic/BuiltinsAMDGPUDocs.td
+index ad390e8d024c..056047ecc2d4 100644
+--- a/clang/include/clang/Basic/BuiltinsAMDGPUDocs.td
++++ b/clang/include/clang/Basic/BuiltinsAMDGPUDocs.td
+@@ -580,7 +580,7 @@ and adds the 32x16 f32 accumulator ``C``.
+ - ``c_mod``: accumulator modifier (0 = none, 1 = neg, 2 = abs,
+   3 = neg(abs)).
+ 
+-Requires target feature ``wmma-n16-insts`` and wave32.
++Requires target feature ``wmma-f4-insts`` and wave32.
+ }];
+ }
+ 
+@@ -601,7 +601,7 @@ WMMA with per-operand scale factors applied during the computation.
+ - ``matrix_a_reuse`` / ``matrix_b_reuse``: hints to the hardware that
+   matrix A or B data can be reused from a previous WMMA instruction.
+ 
+-Requires target feature ``wmma-n16-insts`` and wave32.
++Requires target feature ``wmma-f4-insts`` and wave32.
+ }];
+ }
+ 
+@@ -679,6 +679,28 @@ Requires target feature ``wmma-n16-insts`` and wave32.
+ }];
+ }
+ 
++def DocWMMA_scale16_f4_GFX1250 : Documentation {
++  let Category = DocCatWMMA;
++  let Content = [{
++Scaled wave matrix multiply-accumulate with 64-bit (16-bit per element)
++scale exponents, as opposed to the 32-bit exponents used by the non-16
++scale variant.
++
++- For ``..._f8f6f4`` variants, ``matrix_a_fmt`` / ``matrix_b_fmt`` are format
++  selectors for A and B. They must be compile-time constants.
++- ``c_mod``: accumulator modifier.
++- ``matrix_a_scale`` / ``matrix_b_scale``: scale factor selectors.
++  Must be compile-time constants.
++- ``matrix_a_scale_fmt`` / ``matrix_b_scale_fmt``: scale format selectors.
++  Must be compile-time constants.
++- ``matrix_a_scale_exp`` / ``matrix_b_scale_exp``: 64-bit scale exponents.
++- ``matrix_a_reuse`` / ``matrix_b_reuse``: hints to the hardware that
++  matrix A or B data can be reused from a previous WMMA instruction.
++
++Requires target feature ``wmma-f4-insts`` and wave32.
++}];
++}
++
+ def DocWMMA_f64_16x16x4_f64_GFX1251 : Documentation {
+   let Category = DocCatWMMA;
+   let Content = [{
+diff --git a/clang/test/SemaOpenCL/builtins-amdgcn-error-gfx1250-strict.cl b/clang/test/SemaOpenCL/builtins-amdgcn-error-gfx1250-strict.cl
+new file mode 100644
+index 000000000000..e80de1ab6dd3
+--- /dev/null
++++ b/clang/test/SemaOpenCL/builtins-amdgcn-error-gfx1250-strict.cl
+@@ -0,0 +1,27 @@
++// REQUIRES: amdgpu-registered-target
++// RUN: %clang_cc1 -triple amdgpu12.50s-- -verify -S -o - %s
++
++typedef unsigned int uint;
++typedef unsigned int __attribute__((ext_vector_type(2))) uint2;
++typedef unsigned int __attribute__((ext_vector_type(3))) uint3;
++typedef float  v16f  __attribute__((ext_vector_type(16)));
++typedef float  v8f   __attribute__((ext_vector_type(8)));
++typedef half   v8h   __attribute__((ext_vector_type(8)));
++typedef int    v16i   __attribute__((ext_vector_type(16)));
++typedef int    v8i   __attribute__((ext_vector_type(8)));
++
++void test(global v16f* out, v16i a, v8i b, v16f c, int scale_src0, int scale_src1, uint scale, uint src1, uint2 src2, uint3 src3,
++          global v8h* out8h, global v8f* out8f, v16i a16i, v16i b16i, v8h c8h, v8f c8f)
++{
++  *out = __builtin_amdgcn_wmma_f32_32x16x128_f4(a, b, false, c); // expected-error {{'__builtin_amdgcn_wmma_f32_32x16x128_f4' needs target feature wmma-f4-insts}}
++  *out = __builtin_amdgcn_wmma_scale_f32_32x16x128_f4(a, b, false, c, 1, 0, scale_src0, 2, 0, scale_src1, 1, 0); // expected-error {{'__builtin_amdgcn_wmma_scale_f32_32x16x128_f4' needs target feature wmma-f4-insts}}
++  *out = __builtin_amdgcn_wmma_scale16_f32_32x16x128_f4(a, b, false, c, 1, 0, scale_src0, 2, 0, scale_src1, 1, 0); // expected-error {{'__builtin_amdgcn_wmma_scale16_f32_32x16x128_f4' needs target feature wmma-f4-insts}}
++  *out8h = __builtin_amdgcn_wmma_f16_16x16x128_fp8_fp8(a16i, b16i, 0, c8h, false, true); // expected-error {{'__builtin_amdgcn_wmma_f16_16x16x128_fp8_fp8' needs target feature wmma-16x16x128fp8-insts}}
++  *out8h = __builtin_amdgcn_wmma_f16_16x16x128_fp8_bf8(a16i, b16i, 0, c8h, false, true); // expected-error {{'__builtin_amdgcn_wmma_f16_16x16x128_fp8_bf8' needs target feature wmma-16x16x128fp8-insts}}
++  *out8h = __builtin_amdgcn_wmma_f16_16x16x128_bf8_fp8(a16i, b16i, 0, c8h, false, true); // expected-error {{'__builtin_amdgcn_wmma_f16_16x16x128_bf8_fp8' needs target feature wmma-16x16x128fp8-insts}}
++  *out8h = __builtin_amdgcn_wmma_f16_16x16x128_bf8_bf8(a16i, b16i, 0, c8h, false, true); // expected-error {{'__builtin_amdgcn_wmma_f16_16x16x128_bf8_bf8' needs target feature wmma-16x16x128fp8-insts}}
++  *out8f = __builtin_amdgcn_wmma_f32_16x16x128_fp8_fp8(a16i, b16i, 0, c8f, false, true); // expected-error {{'__builtin_amdgcn_wmma_f32_16x16x128_fp8_fp8' needs target feature wmma-16x16x128fp8-insts}}
++  *out8f = __builtin_amdgcn_wmma_f32_16x16x128_fp8_bf8(a16i, b16i, 0, c8f, false, true); // expected-error {{'__builtin_amdgcn_wmma_f32_16x16x128_fp8_bf8' needs target feature wmma-16x16x128fp8-insts}}
++  *out8f = __builtin_amdgcn_wmma_f32_16x16x128_bf8_fp8(a16i, b16i, 0, c8f, false, true); // expected-error {{'__builtin_amdgcn_wmma_f32_16x16x128_bf8_fp8' needs target feature wmma-16x16x128fp8-insts}}
++  *out8f = __builtin_amdgcn_wmma_f32_16x16x128_bf8_bf8(a16i, b16i, 0, c8f, false, true); // expected-error {{'__builtin_amdgcn_wmma_f32_16x16x128_bf8_bf8' needs target feature wmma-16x16x128fp8-insts}}
++}
+diff --git a/llvm/include/llvm/IR/IntrinsicsAMDGPU.td b/llvm/include/llvm/IR/IntrinsicsAMDGPU.td
+index 037630ea8690..8d3312ffeece 100644
+--- a/llvm/include/llvm/IR/IntrinsicsAMDGPU.td
++++ b/llvm/include/llvm/IR/IntrinsicsAMDGPU.td
+@@ -697,6 +697,7 @@ def int_amdgcn_cvt_scale_pk8_bf16_fp4  : AMDGPUCvtScaleIntrinsic<llvm_v8bf16_ty,
+ def int_amdgcn_cvt_scale_pk8_f32_fp8   : AMDGPUCvtScaleIntrinsic<llvm_v8f32_ty,   llvm_v2i32_ty, "cvt_scale_pk8_f32_fp8">;
+ def int_amdgcn_cvt_scale_pk8_f32_bf8   : AMDGPUCvtScaleIntrinsic<llvm_v8f32_ty,   llvm_v2i32_ty, "cvt_scale_pk8_f32_bf8">;
+ def int_amdgcn_cvt_scale_pk8_f32_fp4   : AMDGPUCvtScaleIntrinsic<llvm_v8f32_ty,   llvm_i32_ty,   "cvt_scale_pk8_f32_fp4">;
++
+ def int_amdgcn_cvt_scale_pk16_f16_bf6  : AMDGPUCvtScaleIntrinsic<llvm_v16f16_ty,  llvm_v3i32_ty, "cvt_scale_pk16_f16_bf6">;
+ def int_amdgcn_cvt_scale_pk16_bf16_bf6 : AMDGPUCvtScaleIntrinsic<llvm_v16bf16_ty, llvm_v3i32_ty, "cvt_scale_pk16_bf16_bf6">;
+ def int_amdgcn_cvt_scale_pk16_f16_fp6  : AMDGPUCvtScaleIntrinsic<llvm_v16f16_ty,  llvm_v3i32_ty, "cvt_scale_pk16_f16_fp6">;
+@@ -4238,6 +4239,13 @@ let TargetFeatures = "wmma-n16-insts" in {
+   def int_amdgcn_wmma_f16_16x16x64_fp8_bf8  : AMDGPUWmmaIntrinsicModsC<llvm_anyint_ty, llvm_anyfloat_ty>;
+   def int_amdgcn_wmma_f16_16x16x64_bf8_fp8  : AMDGPUWmmaIntrinsicModsC<llvm_anyint_ty, llvm_anyfloat_ty>;
+   def int_amdgcn_wmma_f16_16x16x64_bf8_bf8  : AMDGPUWmmaIntrinsicModsC<llvm_anyint_ty, llvm_anyfloat_ty>;
++  def int_amdgcn_wmma_i32_16x16x64_iu8      : AMDGPUWmmaIntrinsicModsABClamp<llvm_anyint_ty, llvm_anyint_ty>;
++  def int_amdgcn_wmma_f32_16x16x128_f8f6f4  : AMDGPUWmmaIntrinsicModsC_MatrixFMT;
++  def int_amdgcn_wmma_scale_f32_16x16x128_f8f6f4   : AMDGPUWmmaScaleIntrinsicModsC<llvm_i32_ty>;
++  def int_amdgcn_wmma_scale16_f32_16x16x128_f8f6f4 : AMDGPUWmmaScaleIntrinsicModsC<llvm_i64_ty>;
++} // End TargetFeatures = "wmma-n16-insts"
++
++let TargetFeatures = "wmma-16x16x128fp8-insts" in {
+   def int_amdgcn_wmma_f16_16x16x128_fp8_fp8 : AMDGPUWmmaIntrinsicModsC<llvm_anyint_ty, llvm_anyfloat_ty>;
+   def int_amdgcn_wmma_f16_16x16x128_fp8_bf8 : AMDGPUWmmaIntrinsicModsC<llvm_anyint_ty, llvm_anyfloat_ty>;
+   def int_amdgcn_wmma_f16_16x16x128_bf8_fp8 : AMDGPUWmmaIntrinsicModsC<llvm_anyint_ty, llvm_anyfloat_ty>;
+@@ -4246,14 +4254,13 @@ let TargetFeatures = "wmma-n16-insts" in {
+   def int_amdgcn_wmma_f32_16x16x128_fp8_bf8 : AMDGPUWmmaIntrinsicModsC<llvm_anyint_ty, llvm_anyfloat_ty>;
+   def int_amdgcn_wmma_f32_16x16x128_bf8_fp8 : AMDGPUWmmaIntrinsicModsC<llvm_anyint_ty, llvm_anyfloat_ty>;
+   def int_amdgcn_wmma_f32_16x16x128_bf8_bf8 : AMDGPUWmmaIntrinsicModsC<llvm_anyint_ty, llvm_anyfloat_ty>;
+-  def int_amdgcn_wmma_i32_16x16x64_iu8      : AMDGPUWmmaIntrinsicModsABClamp<llvm_anyint_ty, llvm_anyint_ty>;
+-  def int_amdgcn_wmma_f32_16x16x128_f8f6f4  : AMDGPUWmmaIntrinsicModsC_MatrixFMT;
+-  def int_amdgcn_wmma_scale_f32_16x16x128_f8f6f4   : AMDGPUWmmaScaleIntrinsicModsC<llvm_i32_ty>;
+-  def int_amdgcn_wmma_scale16_f32_16x16x128_f8f6f4 : AMDGPUWmmaScaleIntrinsicModsC<llvm_i64_ty>;
++}
++
++let TargetFeatures = "wmma-f4-insts" in {
+   def int_amdgcn_wmma_f32_32x16x128_f4       : AMDGPUWmmaIntrinsicF4ModsC<llvm_anyint_ty, llvm_anyint_ty, llvm_anyfloat_ty>;
+   def int_amdgcn_wmma_scale_f32_32x16x128_f4 : AMDGPUWmmaScaleF4IntrinsicModsC<llvm_i32_ty>;
+   def int_amdgcn_wmma_scale16_f32_32x16x128_f4 : AMDGPUWmmaScaleF4IntrinsicModsC<llvm_i64_ty>;
+-} // End TargetFeatures = "wmma-n16-insts"
++} // End TargetFeatures = "wmma-f4-insts"
+ }
+ 
+ class AMDGPUSWmmacIntrinsicABIdx<LLVMType A, LLVMType B, LLVMType CD, LLVMType Index> :
+diff --git a/llvm/lib/Target/AMDGPU/AMDGPU.td b/llvm/lib/Target/AMDGPU/AMDGPU.td
+index a69a8ebfa73c..62def0452b55 100644
+--- a/llvm/lib/Target/AMDGPU/AMDGPU.td
++++ b/llvm/lib/Target/AMDGPU/AMDGPU.td
+@@ -536,6 +536,10 @@ defm F32ToF16BF16ConversionSRInsts : AMDGPUSubtargetFeature<"f32-to-f16bf16-cvt-
+   "Has f32 to f16bf16 conversion scale instructions"
+ >;
+ 
++defm Block16ConversionScaleInsts : AMDGPUSubtargetFeature<"block16-cvt-scale-insts",
++  "Has block16 conversion scale instructions"
++>;
++
+ defm AshrPkInsts : AMDGPUSubtargetFeature<"ashr-pk-insts",
+   "Has Arithmetic Shift Pack instructions"
+ >;
+@@ -973,6 +977,14 @@ defm WMMAN16Insts : AMDGPUSubtargetFeature<"wmma-n16-insts",
+   "Has WMMA instructions with N = 16"
+ >;
+ 
++defm WMMAF4Insts : AMDGPUSubtargetFeature<"wmma-f4-insts",
++  "Has WMMA_*_F4 instructions"
++>;
++
++defm WMMA16x16x128FP8Insts : AMDGPUSubtargetFeature<"wmma-16x16x128fp8-insts",
++  "Has 16x16x128 FP8/BF8 WMMA instructions"
++>;
++
+ defm SWMMACGfx1200Insts : AMDGPUSubtargetFeature<"swmmac-gfx1200-insts",
+   "Has GFX1200 SWMMAC instructions"
+ >;
+@@ -2398,7 +2410,6 @@ def FeatureISAVersion12_50_Common : FeatureSet<
+    FeatureOCPFP8ConversionInsts,
+    FeatureFP8F16ConversionInsts,
+    FeatureF16FP8ConversionInsts,
+-   FeatureFP8E5M3Insts,
+    FeaturePackedTID,
+    FeatureVcmpxPermlaneHazard,
+    FeatureSALUFloatInsts,
+@@ -2463,6 +2474,7 @@ def FeatureISAVersion12_50_STRICT : FeatureSet<
+   !listconcat(FeatureISAVersion12_50_Common.Features,
+   [FeatureGFX1250_STRICT,
+    FeatureAddressableLocalMemorySize327680,
++   FeatureWMMAN16Insts,
+    FeatureVOP3PX2IncrementsVaVdstTwice,
+    FeatureSetregVGPRMSBFixup,
+    FeatureCubeInsts,
+@@ -2490,6 +2502,8 @@ def FeatureISAVersion12_50 : FeatureSet<
+   !listconcat(FeatureISAVersion12_50_Common.Features,
+   [FeatureAddressableLocalMemorySize327680,
+    FeatureWMMAN16Insts,
++   FeatureWMMAF4Insts,
++   FeatureWMMA16x16x128FP8Insts,
+    FeatureVOP3PX2IncrementsVaVdstTwice,
+    FeatureSetregVGPRMSBFixup,
+    FeatureCubeInsts,
+@@ -2502,6 +2516,8 @@ def FeatureISAVersion12_50 : FeatureSet<
+    FeatureCvtNormInsts,
+    FeatureCvtPkNormVOP2Insts,
+    FeatureCvtPkNormVOP3Insts,
++   FeatureBlock16ConversionScaleInsts,
++   FeatureFP8E5M3Insts,
+    FeatureSWMMACGfx1200Insts,
+    FeatureSWMMACGfx1250Insts,
+    FeatureTransCoexecutionHazard,
+@@ -2516,6 +2532,8 @@ def FeatureISAVersion12_51 : FeatureSet<
+   !listconcat(FeatureISAVersion12_50_Common.Features,
+   [FeatureAddressableLocalMemorySize327680,
+    FeatureWMMAN16Insts,
++   FeatureWMMAF4Insts,
++   FeatureWMMA16x16x128FP8Insts,
+    FeatureFullRate64Ops,
+    FeatureVOP3PX2IncrementsVaVdstTwice,
+    FeatureDPALU_DPP,
+@@ -2533,6 +2551,8 @@ def FeatureISAVersion12_51 : FeatureSet<
+    FeatureCvtNormInsts,
+    FeatureCvtPkNormVOP2Insts,
+    FeatureCvtPkNormVOP3Insts,
++   FeatureBlock16ConversionScaleInsts,
++   FeatureFP8E5M3Insts,
+    FeatureSWMMACGfx1200Insts,
+    FeatureSWMMACGfx1250Insts,
+    FeatureUseAddPC64Inst,
+@@ -2550,6 +2570,8 @@ def FeatureISAVersion12_Generic: FeatureSet<
+ def FeatureISAVersion12_5_Generic: FeatureSet<
+   !listconcat(FeatureISAVersion12_50_Common.Features,
+   [FeatureAddressableLocalMemorySize327680,
++   FeatureBlock16ConversionScaleInsts,
++   FeatureFP8E5M3Insts,
+    FeatureSetregVGPRMSBFixup,
+    FeatureRequiresCOV6,
+    FeatureSupportsXNACK,
+@@ -2629,6 +2651,7 @@ def FeatureISAVersion13 : FeatureSet<
+    FeatureCvtNormInsts,
+    FeatureCvtPkNormVOP2Insts,
+    FeatureCvtPkNormVOP3Insts,
++   FeatureBlock16ConversionScaleInsts,
+    FeatureSmemPrefetchInsts,
+    FeatureAsyncLoadToLDSInsts,
+    FeatureIndexedResources
+@@ -3229,7 +3252,7 @@ def AMDGPUFrontendVisibleFeatures {
+   FeatureDot9Insts, FeatureExtendedImageInsts, FeatureF16BF16ToFP6BF6ConversionScaleInsts,
+   FeatureF32ToF16BF16ConversionSRInsts, FeatureF32ToFP6BF6ConversionScaleInsts, FeatureFP4ConversionScaleInsts,
+   FeatureFP6BF6ConversionScaleInsts, FeatureFP8ConversionInsts, FeatureFP8ConversionScaleInsts,
+-  FeatureFP8E5M3Insts, FeatureFP8Insts,
++  FeatureBlock16ConversionScaleInsts, FeatureFP8E5M3Insts, FeatureFP8Insts,
+   FeatureFlatBufferGlobalAtomicFaddF64Inst, FeatureFlatGlobalInsts,
+   FeatureGFX10Insts, FeatureGFX10_3Insts, FeatureGFX11Insts,
+   FeatureGFX1250Insts, FeatureGFX1251GEMMInsts, FeatureGFX12Insts,
+@@ -3244,7 +3267,8 @@ def AMDGPUFrontendVisibleFeatures {
+   FeatureSadInsts, FeatureSetPrioIncWgInst, FeatureSmemPrefetchInsts,
+   FeatureTanhInsts, FeatureTensorCvtLutInsts, FeatureTransposeLoadF4F6Insts,
+   FeatureVMemToLDSLoad, FeatureVmemPrefInsts, FeatureWMMA128bInsts,
+-  FeatureWMMA256bInsts, FeatureWMMAN16Insts, FeatureXF32Insts,
++  FeatureWMMA256bInsts, FeatureWMMAN16Insts, FeatureWMMAF4Insts,
++  FeatureWMMA16x16x128FP8Insts, FeatureXF32Insts,
+   FeatureWavefrontSize32, FeatureWavefrontSize64, FeatureSupportsWGP,
+   FeatureSupportsWave32, FeatureFastFMAF32, FeatureFastDenormalF32,
+   FeatureSupportsXNACK, FeatureSupportsSRAMECC, FeatureXNACKOnOffModes,
+diff --git a/llvm/lib/Target/AMDGPU/AMDGPULowerIntrinsics.cpp b/llvm/lib/Target/AMDGPU/AMDGPULowerIntrinsics.cpp
+index 6150e14f38c7..e8c42bd05753 100644
+--- a/llvm/lib/Target/AMDGPU/AMDGPULowerIntrinsics.cpp
++++ b/llvm/lib/Target/AMDGPU/AMDGPULowerIntrinsics.cpp
+@@ -41,6 +41,8 @@ private:
+   bool visitBarrier(IntrinsicInst &I);
+   bool visitPtrSBufferLoad(IntrinsicInst &I);
+   bool visitMonitorSleep(IntrinsicInst &I);
++  bool visitCvtScale(IntrinsicInst &I);
++  bool visitUnscaledWMMA(IntrinsicInst &I);
+ };
+ 
+ class AMDGPULowerIntrinsicsLegacy : public ModulePass {
+@@ -87,6 +89,27 @@ bool AMDGPULowerIntrinsicsImpl::run() {
+       forEachCall(
+           F, [&](IntrinsicInst *II) { Changed |= visitMonitorSleep(*II); });
+       break;
++    case Intrinsic::amdgcn_cvt_scale_pk8_f16_fp8:
++    case Intrinsic::amdgcn_cvt_scale_pk8_bf16_fp8:
++    case Intrinsic::amdgcn_cvt_scale_pk8_f16_bf8:
++    case Intrinsic::amdgcn_cvt_scale_pk8_bf16_bf8:
++    case Intrinsic::amdgcn_cvt_scale_pk8_f16_fp4:
++    case Intrinsic::amdgcn_cvt_scale_pk8_bf16_fp4:
++    case Intrinsic::amdgcn_cvt_scale_pk8_f32_fp8:
++    case Intrinsic::amdgcn_cvt_scale_pk8_f32_bf8:
++    case Intrinsic::amdgcn_cvt_scale_pk8_f32_fp4:
++    case Intrinsic::amdgcn_cvt_scale_pk16_f16_bf6:
++    case Intrinsic::amdgcn_cvt_scale_pk16_bf16_bf6:
++    case Intrinsic::amdgcn_cvt_scale_pk16_f16_fp6:
++    case Intrinsic::amdgcn_cvt_scale_pk16_bf16_fp6:
++    case Intrinsic::amdgcn_cvt_scale_pk16_f32_fp6:
++    case Intrinsic::amdgcn_cvt_scale_pk16_f32_bf6:
++      forEachCall(F, [&](IntrinsicInst *II) { Changed |= visitCvtScale(*II); });
++      break;
++    case Intrinsic::amdgcn_wmma_f32_16x16x128_f8f6f4:
++      forEachCall(
++          F, [&](IntrinsicInst *II) { Changed |= visitUnscaledWMMA(*II); });
++      break;
+     }
+   }
+ 
+@@ -241,6 +264,81 @@ bool AMDGPULowerIntrinsicsImpl::visitMonitorSleep(IntrinsicInst &I) {
+   return true;
+ }
+ 
++bool AMDGPULowerIntrinsicsImpl::visitCvtScale(IntrinsicInst &I) {
++  int MaxSel = 0;
++  switch (I.getIntrinsicID()) {
++  default:
++    llvm_unreachable("expected cvt_scale_* intrinsic");
++  case Intrinsic::amdgcn_cvt_scale_pk8_f16_fp8:
++  case Intrinsic::amdgcn_cvt_scale_pk8_bf16_fp8:
++  case Intrinsic::amdgcn_cvt_scale_pk8_f16_bf8:
++  case Intrinsic::amdgcn_cvt_scale_pk8_bf16_bf8:
++  case Intrinsic::amdgcn_cvt_scale_pk8_f32_fp8:
++  case Intrinsic::amdgcn_cvt_scale_pk8_f32_bf8:
++    MaxSel = 8;
++    break;
++  case Intrinsic::amdgcn_cvt_scale_pk8_f16_fp4:
++  case Intrinsic::amdgcn_cvt_scale_pk8_bf16_fp4:
++  case Intrinsic::amdgcn_cvt_scale_pk8_f32_fp4:
++  case Intrinsic::amdgcn_cvt_scale_pk16_f16_bf6:
++  case Intrinsic::amdgcn_cvt_scale_pk16_bf16_bf6:
++  case Intrinsic::amdgcn_cvt_scale_pk16_f16_fp6:
++  case Intrinsic::amdgcn_cvt_scale_pk16_bf16_fp6:
++  case Intrinsic::amdgcn_cvt_scale_pk16_f32_fp6:
++  case Intrinsic::amdgcn_cvt_scale_pk16_f32_bf6:
++    MaxSel = 4;
++    break;
++  }
++
++  const GCNSubtarget &ST = TM.getSubtarget<GCNSubtarget>(*I.getFunction());
++  if (ST.hasBlock16ConversionScaleInsts())
++    MaxSel *= 2;
++
++  int ScaleSel = cast<ConstantInt>(I.getArgOperand(2))->getSExtValue();
++  if (ScaleSel < MaxSel)
++    return false;
++
++  I.getContext().diagnose(DiagnosticInfoUnsupported(
++      *I.getFunction(),
++      I.getCalledFunction()->getName() +
++          Twine(" scale_sel maximum supported value is ") + Twine(MaxSel - 1),
++      I.getDebugLoc()));
++
++  return false;
++}
++
++bool AMDGPULowerIntrinsicsImpl::visitUnscaledWMMA(IntrinsicInst &I) {
++  assert(I.getIntrinsicID() == Intrinsic::amdgcn_wmma_f32_16x16x128_f8f6f4);
++
++  const GCNSubtarget &ST = TM.getSubtarget<GCNSubtarget>(*I.getFunction());
++  if (!ST.hasGFX1250_STRICT())
++    return false;
++
++  IRBuilder<> B(&I);
++
++  // Convert unscaled WMMA into a scaled version with scale factors 0.
++  SmallVector<Value *, 14> Args(I.args());
++  Args.push_back(B.getInt32(0)); // matrix_a_scale
++  Args.push_back(
++      B.getInt32(AMDGPU::WMMA::MATRIX_SCALE_FMT_E8)); // matrix_a_scale_fmt
++  Args.push_back(B.getInt32(0)); // matrix a scale exponential
++  Args.push_back(B.getInt32(0)); // matrix_b_scale
++  Args.push_back(
++      B.getInt32(AMDGPU::WMMA::MATRIX_SCALE_FMT_E8)); // matrix_b_scale_fmt
++  Args.push_back(B.getInt32(0)); // matrix b scale exponential
++  Args.push_back(B.getInt1(0));  // matrix_a_reuse
++  Args.push_back(B.getInt1(0));  // matrix_b_reuse
++
++  CallInst *NewI = B.CreateIntrinsicWithoutFolding(
++      I.getType(), Intrinsic::amdgcn_wmma_scale_f32_16x16x128_f8f6f4, Args);
++  I.replaceAllUsesWith(NewI);
++  NewI->copyMetadata(I);
++  NewI->takeName(&I);
++  I.eraseFromParent();
++
++  return true;
++}
++
+ PreservedAnalyses AMDGPULowerIntrinsicsPass::run(Module &M,
+                                                  ModuleAnalysisManager &MAM) {
+   AMDGPULowerIntrinsicsImpl Impl(M, TM);
+diff --git a/llvm/lib/Target/AMDGPU/AsmParser/AMDGPUAsmParser.cpp b/llvm/lib/Target/AMDGPU/AsmParser/AMDGPUAsmParser.cpp
+index e3667752f824..125ba02eab04 100644
+--- a/llvm/lib/Target/AMDGPU/AsmParser/AMDGPUAsmParser.cpp
++++ b/llvm/lib/Target/AMDGPU/AsmParser/AMDGPUAsmParser.cpp
+@@ -1870,6 +1870,7 @@ private:
+   bool validateMonitorSleep(const MCInst &Inst, const OperandVector &Operands);
+   bool validateClusterBarrierIsFirst(const MCInst &Inst,
+                                      const OperandVector &Operands);
++  bool validateScaleSel(const MCInst &Inst, const OperandVector &Operands);
+   unsigned getConstantBusLimit(unsigned Opcode) const;
+   bool usesConstantBus(const MCInst &Inst, unsigned OpIdx);
+   bool isInlineConstant(const MCInst &Inst, unsigned OpIdx) const;
+@@ -5655,6 +5656,49 @@ bool AMDGPUAsmParser::validateClusterBarrierIsFirst(
+   return false;
+ }
+ 
++bool AMDGPUAsmParser::validateScaleSel(const MCInst &Inst,
++                                       const OperandVector &Operands) {
++  unsigned Opc = Inst.getOpcode();
++  int ScaleSelIdx = AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::scale_sel);
++  if (ScaleSelIdx == -1)
++    return true;
++  int MaxSel = 0;
++  switch (Opc) {
++  case AMDGPU::V_CVT_SCALE_PK16_F16_FP6_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK16_BF16_FP6_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK16_F16_BF6_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK16_BF16_BF6_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK16_F32_FP6_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK16_F32_BF6_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK8_F16_FP4_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK8_BF16_FP4_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK8_F32_FP4_e64_gfx1250:
++    MaxSel = 4;
++    break;
++  case AMDGPU::V_CVT_SCALE_PK8_F16_FP8_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK8_BF16_FP8_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK8_F16_BF8_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK8_BF16_BF8_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK8_F32_FP8_e64_gfx1250:
++  case AMDGPU::V_CVT_SCALE_PK8_F32_BF8_e64_gfx1250:
++    MaxSel = 8;
++    break;
++  default:
++    return true;
++  }
++
++  if (getSTI().hasFeature(AMDGPU::FeatureBlock16ConversionScaleInsts))
++    MaxSel *= 2;
++
++  int ScaleSel = Inst.getOperand(ScaleSelIdx).getImm();
++  if (ScaleSel < MaxSel)
++    return true;
++
++  Error(getOperandLoc(Operands, ScaleSelIdx),
++        "scale_sel maximum supported value is " + Twine(MaxSel - 1));
++  return false;
++}
++
+ bool AMDGPUAsmParser::validateInstruction(const MCInst &Inst, SMLoc IDLoc,
+                                           const OperandVector &Operands) {
+   if (!validateLdsDirect(Inst, Operands))
+@@ -5792,6 +5836,9 @@ bool AMDGPUAsmParser::validateInstruction(const MCInst &Inst, SMLoc IDLoc,
+   if (!validateClusterBarrierIsFirst(Inst, Operands)) {
+     return false;
+   }
++  if (!validateScaleSel(Inst, Operands)) {
++    return false;
++  }
+ 
+   return true;
+ }
+diff --git a/llvm/lib/Target/AMDGPU/VOP3Instructions.td b/llvm/lib/Target/AMDGPU/VOP3Instructions.td
+index 05f47f696393..5ced93509225 100644
+--- a/llvm/lib/Target/AMDGPU/VOP3Instructions.td
++++ b/llvm/lib/Target/AMDGPU/VOP3Instructions.td
+@@ -1859,6 +1859,13 @@ let SubtargetPredicate = isGFX1250Plus in {
+     }
+ 
+     let Constraints = "@earlyclobber $vdst" in {
++        defm V_CVT_SCALE_PK16_F16_FP6  : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_f16_fp6",  VOP_V16F16_V3I32_I32,  int_amdgcn_cvt_scale_pk16_f16_fp6>;
++        defm V_CVT_SCALE_PK16_BF16_FP6 : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_bf16_fp6", VOP_V16BF16_V3I32_I32, int_amdgcn_cvt_scale_pk16_bf16_fp6>;
++        defm V_CVT_SCALE_PK16_F16_BF6  : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_f16_bf6",  VOP_V16F16_V3I32_I32,  int_amdgcn_cvt_scale_pk16_f16_bf6>;
++        defm V_CVT_SCALE_PK16_BF16_BF6 : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_bf16_bf6", VOP_V16BF16_V3I32_I32, int_amdgcn_cvt_scale_pk16_bf16_bf6>;
++        defm V_CVT_SCALE_PK16_F32_FP6  : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_f32_fp6",  VOP_V16F32_V3I32_I32,  int_amdgcn_cvt_scale_pk16_f32_fp6>;
++        defm V_CVT_SCALE_PK16_F32_BF6  : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_f32_bf6",  VOP_V16F32_V3I32_I32,  int_amdgcn_cvt_scale_pk16_f32_bf6>;
++
+       let WaveSizePredicate = isWave32 in {
+         defm V_CVT_SCALE_PK8_F16_FP8   : VOP3CvtScaleSelInst<"v_cvt_scale_pk8_f16_fp8",   VOP_V8F16_V2I32_I32,   int_amdgcn_cvt_scale_pk8_f16_fp8>;
+         defm V_CVT_SCALE_PK8_BF16_FP8  : VOP3CvtScaleSelInst<"v_cvt_scale_pk8_bf16_fp8",  VOP_V8BF16_V2I32_I32,  int_amdgcn_cvt_scale_pk8_bf16_fp8>;
+@@ -1866,20 +1873,14 @@ let SubtargetPredicate = isGFX1250Plus in {
+         defm V_CVT_SCALE_PK8_BF16_BF8  : VOP3CvtScaleSelInst<"v_cvt_scale_pk8_bf16_bf8",  VOP_V8BF16_V2I32_I32,  int_amdgcn_cvt_scale_pk8_bf16_bf8>;
+         defm V_CVT_SCALE_PK8_F32_FP8   : VOP3CvtScaleSelInst<"v_cvt_scale_pk8_f32_fp8",   VOP_V8F32_V2I32_I32,   int_amdgcn_cvt_scale_pk8_f32_fp8>;
+         defm V_CVT_SCALE_PK8_F32_BF8   : VOP3CvtScaleSelInst<"v_cvt_scale_pk8_f32_bf8",   VOP_V8F32_V2I32_I32,   int_amdgcn_cvt_scale_pk8_f32_bf8>;
+-      }
+-      defm V_CVT_SCALE_PK16_F16_FP6  : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_f16_fp6",  VOP_V16F16_V3I32_I32,  int_amdgcn_cvt_scale_pk16_f16_fp6>;
+-      defm V_CVT_SCALE_PK16_BF16_FP6 : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_bf16_fp6", VOP_V16BF16_V3I32_I32, int_amdgcn_cvt_scale_pk16_bf16_fp6>;
+-      defm V_CVT_SCALE_PK16_F16_BF6  : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_f16_bf6",  VOP_V16F16_V3I32_I32,  int_amdgcn_cvt_scale_pk16_f16_bf6>;
+-      defm V_CVT_SCALE_PK16_BF16_BF6 : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_bf16_bf6", VOP_V16BF16_V3I32_I32, int_amdgcn_cvt_scale_pk16_bf16_bf6>;
+-      defm V_CVT_SCALE_PK16_F32_FP6  : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_f32_fp6",  VOP_V16F32_V3I32_I32,  int_amdgcn_cvt_scale_pk16_f32_fp6>;
+-      defm V_CVT_SCALE_PK16_F32_BF6  : VOP3CvtScaleSelInst<"v_cvt_scale_pk16_f32_bf6",  VOP_V16F32_V3I32_I32,  int_amdgcn_cvt_scale_pk16_f32_bf6>;
++      } // End WaveSizePredicate = isWave32
+     } // End Constraints = "@earlyclobber $vdst"
+ 
+     let WaveSizePredicate = isWave32 in {
+       defm V_CVT_SCALE_PK8_F16_FP4   : VOP3CvtScaleSelInst<"v_cvt_scale_pk8_f16_fp4",   VOP_V8F16_I32_I32,     int_amdgcn_cvt_scale_pk8_f16_fp4>;
+       defm V_CVT_SCALE_PK8_BF16_FP4  : VOP3CvtScaleSelInst<"v_cvt_scale_pk8_bf16_fp4",  VOP_V8BF16_I32_I32,    int_amdgcn_cvt_scale_pk8_bf16_fp4>;
+       defm V_CVT_SCALE_PK8_F32_FP4   : VOP3CvtScaleSelInst<"v_cvt_scale_pk8_f32_fp4",   VOP_V8F32_I32_I32,     int_amdgcn_cvt_scale_pk8_f32_fp4>;
+-    }
++    } // End WaveSizePredicate = isWave32
+   } // End ReadsModeReg = 0
+ 
+   let Constraints = "@earlyclobber $vdst" in {
+diff --git a/llvm/lib/Target/AMDGPU/VOP3PInstructions.td b/llvm/lib/Target/AMDGPU/VOP3PInstructions.td
+index b5dc87861fd3..3662e58aa37f 100644
+--- a/llvm/lib/Target/AMDGPU/VOP3PInstructions.td
++++ b/llvm/lib/Target/AMDGPU/VOP3PInstructions.td
+@@ -2120,6 +2120,13 @@ let WaveSizePredicate = isWave32 in {
+       defm V_WMMA_I32_16X16X64_IU8_w32      : WMMAInstGFX12<"v_wmma_i32_16x16x64_iu8",      I32_IU8X64_WMMA_w32, "_w32">;
+       defm V_WMMA_F32_16X16X32_F16_w32      : WMMAInstGFX12<"v_wmma_f32_16x16x32_f16",      F32_F16X32_WMMA_w32, "_w32">;
+       defm V_WMMA_F16_16X16X32_F16_w32      : WMMAInstGFX12<"v_wmma_f16_16x16x32_f16",      F16_F16X32_WMMA_w32, "_w32">;
++
++      defm V_WMMA_F32_16X16X128_F8F6F4         : WMMAInst_SrcFormats_mc<"v_wmma_f32_16x16x128_f8f6f4", "F32_16X16X128_F8F6F4">;
++      defm V_WMMA_SCALE_F32_16X16X128_F8F6F4   : WMMAInst_SrcFormats_mc<"v_wmma_scale_f32_16x16x128_f8f6f4", "F32_16X16X128_F8F6F4_SCALE">;
++      defm V_WMMA_SCALE16_F32_16X16X128_F8F6F4 : WMMAInst_SrcFormats_mc<"v_wmma_scale16_f32_16x16x128_f8f6f4", "F32_16X16X128_F8F6F4_SCALE16">;
++    } // End SubtargetPredicate = HasWMMAN16Insts
++
++    let SubtargetPredicate = HasWMMA16x16x128FP8Insts in {
+       defm V_WMMA_F16_16X16X128_FP8_FP8_w32 : WMMAInstGFX12<"v_wmma_f16_16x16x128_fp8_fp8", F16_FP8BF8X128_WMMA_w32, "_w32">;
+       defm V_WMMA_F16_16X16X128_FP8_BF8_w32 : WMMAInstGFX12<"v_wmma_f16_16x16x128_fp8_bf8", F16_FP8BF8X128_WMMA_w32, "_w32">;
+       defm V_WMMA_F16_16X16X128_BF8_FP8_w32 : WMMAInstGFX12<"v_wmma_f16_16x16x128_bf8_fp8", F16_FP8BF8X128_WMMA_w32, "_w32">;
+@@ -2128,15 +2135,14 @@ let WaveSizePredicate = isWave32 in {
+       defm V_WMMA_F32_16X16X128_FP8_BF8_w32 : WMMAInstGFX12<"v_wmma_f32_16x16x128_fp8_bf8", F32_FP8BF8X128_WMMA_w32, "_w32">;
+       defm V_WMMA_F32_16X16X128_BF8_FP8_w32 : WMMAInstGFX12<"v_wmma_f32_16x16x128_bf8_fp8", F32_FP8BF8X128_WMMA_w32, "_w32">;
+       defm V_WMMA_F32_16X16X128_BF8_BF8_w32 : WMMAInstGFX12<"v_wmma_f32_16x16x128_bf8_bf8", F32_FP8BF8X128_WMMA_w32, "_w32">;
+-      defm V_WMMA_F32_32X16X128_F4_w32      : WMMAInstGFX12<"v_wmma_f32_32x16x128_f4",      F32_32X16X128_F4_WMMA_w32, "_w32">;
++    } // End SubtargetPredicate = HasWMMA16x16x128FP8Insts
+ 
+-      defm V_WMMA_F32_16X16X128_F8F6F4         : WMMAInst_SrcFormats_mc<"v_wmma_f32_16x16x128_f8f6f4", "F32_16X16X128_F8F6F4">;
+-      defm V_WMMA_SCALE_F32_16X16X128_F8F6F4   : WMMAInst_SrcFormats_mc<"v_wmma_scale_f32_16x16x128_f8f6f4", "F32_16X16X128_F8F6F4_SCALE">;
+-      defm V_WMMA_SCALE16_F32_16X16X128_F8F6F4 : WMMAInst_SrcFormats_mc<"v_wmma_scale16_f32_16x16x128_f8f6f4", "F32_16X16X128_F8F6F4_SCALE16">;
++    let SubtargetPredicate = HasWMMAF4Insts in {
++      defm V_WMMA_F32_32X16X128_F4_w32      : WMMAInstGFX12<"v_wmma_f32_32x16x128_f4",      F32_32X16X128_F4_WMMA_w32, "_w32">;
+ 
+       defm V_WMMA_SCALE_F32_32X16X128_F4_w32   : WMMAInstGFX12<"v_wmma_scale_f32_32x16x128_f4",   F32_32X16X128_F4_SCALE_w32, "_w32">;
+       defm V_WMMA_SCALE16_F32_32X16X128_F4_w32 : WMMAInstGFX12<"v_wmma_scale16_f32_32x16x128_f4", F32_32X16X128_F4_SCALE16_w32, "_w32">;
+-    } // End SubtargetPredicate = HasWMMAN16Insts
++    } // End SubtargetPredicate = HasWMMAF4Insts
+ 
+     let SubtargetPredicate = HasSWMMACGfx1250Insts in {
+       defm V_SWMMAC_F32_16X16X64_BF16_w32     : SWMMACInstGFX12<"v_swmmac_f32_16x16x64_bf16",     F32_BF16X64_SWMMAC_w32, "_w32">;
+@@ -2319,6 +2325,15 @@ let SubtargetPredicate = HasWMMAN16Insts in {
+   defm : WMMAPat<"V_WMMA_I32_16X16X64_IU8_w32",         int_amdgcn_wmma_i32_16x16x64_iu8,         I32_IU8X64_WMMA_w32>;
+   defm : WMMAPat<"V_WMMA_F32_16X16X32_F16_w32",         int_amdgcn_wmma_f32_16x16x32_f16,         F32_F16X32_WMMA_w32>;
+   defm : WMMAPat<"V_WMMA_F16_16X16X32_F16_w32",         int_amdgcn_wmma_f16_16x16x32_f16,         F16_F16X32_WMMA_w32>;
++
++  foreach I = ["f8_f8", "f8_f6", "f8_f4", "f6_f8", "f6_f6", "f6_f4", "f4_f8", "f4_f6", "f4_f4"] in {
++    defm : WMMAPat<"V_WMMA_F32_16X16X128_F8F6F4_" # I # "_w32",         int_amdgcn_wmma_f32_16x16x128_f8f6f4,         !cast<VOP3PWMMA_Profile>("F32_16X16X128_F8F6F4_" # I # "_w32")>;
++    defm : WMMAPat<"V_WMMA_SCALE_F32_16X16X128_F8F6F4_" # I # "_w32",   int_amdgcn_wmma_scale_f32_16x16x128_f8f6f4,   !cast<VOP3PWMMA_Profile>("F32_16X16X128_F8F6F4_SCALE_" # I # "_w32")>;
++    defm : WMMAPat<"V_WMMA_SCALE16_F32_16X16X128_F8F6F4_" # I # "_w32", int_amdgcn_wmma_scale16_f32_16x16x128_f8f6f4, !cast<VOP3PWMMA_Profile>("F32_16X16X128_F8F6F4_SCALE16_" # I # "_w32")>;
++  }
++} // End SubtargetPredicate = HasWMMAN16Insts
++
++let SubtargetPredicate = HasWMMA16x16x128FP8Insts in {
+   defm : WMMAPat<"V_WMMA_F16_16X16X128_FP8_FP8_w32",    int_amdgcn_wmma_f16_16x16x128_fp8_fp8,    F16_FP8BF8X128_WMMA_w32>;
+   defm : WMMAPat<"V_WMMA_F16_16X16X128_FP8_BF8_w32",    int_amdgcn_wmma_f16_16x16x128_fp8_bf8,    F16_FP8BF8X128_WMMA_w32>;
+   defm : WMMAPat<"V_WMMA_F16_16X16X128_BF8_FP8_w32",    int_amdgcn_wmma_f16_16x16x128_bf8_fp8,    F16_FP8BF8X128_WMMA_w32>;
+@@ -2327,16 +2342,13 @@ let SubtargetPredicate = HasWMMAN16Insts in {
+   defm : WMMAPat<"V_WMMA_F32_16X16X128_FP8_BF8_w32",    int_amdgcn_wmma_f32_16x16x128_fp8_bf8,    F32_FP8BF8X128_WMMA_w32>;
+   defm : WMMAPat<"V_WMMA_F32_16X16X128_BF8_FP8_w32",    int_amdgcn_wmma_f32_16x16x128_bf8_fp8,    F32_FP8BF8X128_WMMA_w32>;
+   defm : WMMAPat<"V_WMMA_F32_16X16X128_BF8_BF8_w32",    int_amdgcn_wmma_f32_16x16x128_bf8_bf8,    F32_FP8BF8X128_WMMA_w32>;
++} // End SubtargetPredicate = HasWMMA16x16x128FP8Insts
++
++let SubtargetPredicate = HasWMMAF4Insts in {
+   defm : WMMAPat<"V_WMMA_F32_32X16X128_F4_w32",         int_amdgcn_wmma_f32_32x16x128_f4,         F32_32X16X128_F4_WMMA_w32>;
+   defm : WMMAPat<"V_WMMA_SCALE_F32_32X16X128_F4_w32",   int_amdgcn_wmma_scale_f32_32x16x128_f4,   F32_32X16X128_F4_SCALE_w32>;
+   defm : WMMAPat<"V_WMMA_SCALE16_F32_32X16X128_F4_w32", int_amdgcn_wmma_scale16_f32_32x16x128_f4, F32_32X16X128_F4_SCALE16_w32>;
+-
+-  foreach I = ["f8_f8", "f8_f6", "f8_f4", "f6_f8", "f6_f6", "f6_f4", "f4_f8", "f4_f6", "f4_f4"] in {
+-    defm : WMMAPat<"V_WMMA_F32_16X16X128_F8F6F4_" # I # "_w32",         int_amdgcn_wmma_f32_16x16x128_f8f6f4,         !cast<VOP3PWMMA_Profile>("F32_16X16X128_F8F6F4_" # I # "_w32")>;
+-    defm : WMMAPat<"V_WMMA_SCALE_F32_16X16X128_F8F6F4_" # I # "_w32",   int_amdgcn_wmma_scale_f32_16x16x128_f8f6f4,   !cast<VOP3PWMMA_Profile>("F32_16X16X128_F8F6F4_SCALE_" # I # "_w32")>;
+-    defm : WMMAPat<"V_WMMA_SCALE16_F32_16X16X128_F8F6F4_" # I # "_w32", int_amdgcn_wmma_scale16_f32_16x16x128_f8f6f4, !cast<VOP3PWMMA_Profile>("F32_16X16X128_F8F6F4_SCALE16_" # I # "_w32")>;
+-  }
+-} // End SubtargetPredicate = HasWMMAN16Insts
++} // End SubtargetPredicate = HasWMMAF4Insts
+ 
+ let SubtargetPredicate = HasSWMMACGfx1250Insts in {
+   def : SWMMACPat<V_SWMMAC_F32_16X16X64_BF16_w32_twoaddr,     int_amdgcn_swmmac_f32_16x16x64_bf16,     F32_BF16X64_SWMMAC_w32>;
+@@ -2649,14 +2661,18 @@ defm V_WMMA_F16_16X16X128_BF8_FP8_w32 : VOP3P_Real_WMMA_gfx1250 <0x086, F16_FP8B
+ defm V_WMMA_F16_16X16X128_BF8_BF8_w32 : VOP3P_Real_WMMA_gfx1250 <0x087, F16_FP8BF8X128_WMMA_w32>;
+ defm V_WMMA_F32_32X16X128_F4_w32      : VOP3P_Real_WMMA_gfx1250 <0x088, F32_32X16X128_F4_WMMA_w32>;
+ 
+-let WaveSizePredicate = isWave32, SubtargetPredicate = HasWMMAN16Insts, DecoderNamespace = "GFX1250" in {
+-defm V_WMMA_F32_16X16X128_F8F6F4         : VOP3P_Real_WMMA_SrcFormats <"gfx1250", 0x033, "F32_16X16X128_F8F6F4">;
+-defm V_WMMA_SCALE_F32_16X16X128_F8F6F4   : VOP3PX2_Real_ScaledWMMA_SrcFormats <"gfx1250", 0x033, 0x35, "F32_16X16X128_F8F6F4_SCALE">;
+-defm V_WMMA_SCALE16_F32_16X16X128_F8F6F4 : VOP3PX2_Real_ScaledWMMA_SrcFormats <"gfx1250", 0x033, 0x3a, "F32_16X16X128_F8F6F4_SCALE16">;
++let WaveSizePredicate = isWave32, DecoderNamespace = "GFX1250" in {
++  let SubtargetPredicate = HasWMMAN16Insts in {
++    defm V_WMMA_F32_16X16X128_F8F6F4         : VOP3P_Real_WMMA_SrcFormats <"gfx1250", 0x033, "F32_16X16X128_F8F6F4">;
++    defm V_WMMA_SCALE_F32_16X16X128_F8F6F4   : VOP3PX2_Real_ScaledWMMA_SrcFormats <"gfx1250", 0x033, 0x35, "F32_16X16X128_F8F6F4_SCALE">;
++    defm V_WMMA_SCALE16_F32_16X16X128_F8F6F4 : VOP3PX2_Real_ScaledWMMA_SrcFormats <"gfx1250", 0x033, 0x3a, "F32_16X16X128_F8F6F4_SCALE16">;
++  }
+ 
+-defm V_WMMA_SCALE_F32_32X16X128_F4_w32   : VOP3PX2_Real_ScaledWMMA_F4 <"gfx1250", 0x088, 0x35, F32_32X16X128_F4_SCALE_w32>;
+-defm V_WMMA_SCALE16_F32_32X16X128_F4_w32 : VOP3PX2_Real_ScaledWMMA_F4 <"gfx1250", 0x088, 0x3a, F32_32X16X128_F4_SCALE16_w32>;
+-} // End WaveSizePredicate = isWave32, SubtargetPredicate = HasWMMAN16Insts, DecoderNamespace = "GFX1250"
++  let SubtargetPredicate = HasWMMAF4Insts in {
++    defm V_WMMA_SCALE_F32_32X16X128_F4_w32   : VOP3PX2_Real_ScaledWMMA_F4 <"gfx1250", 0x088, 0x35, F32_32X16X128_F4_SCALE_w32>;
++    defm V_WMMA_SCALE16_F32_32X16X128_F4_w32 : VOP3PX2_Real_ScaledWMMA_F4 <"gfx1250", 0x088, 0x3a, F32_32X16X128_F4_SCALE16_w32>;
++  }
++} // End WaveSizePredicate = isWave32, DecoderNamespace = "GFX1250"
+ 
+ let SubtargetPredicate = HasSWMMACGfx1250Insts in {
+   defm V_SWMMAC_F32_16X16X64_F16_w32      : VOP3P_Real_WMMA_gfx1250 <0x065, F32_F16X64_SWMMAC_w32>;
+diff --git a/llvm/test/CodeGen/AMDGPU/llvm.amdgcn.cvt.scale.pk-scale-range.ll b/llvm/test/CodeGen/AMDGPU/llvm.amdgcn.cvt.scale.pk-scale-range.ll
+new file mode 100644
+index 000000000000..5d62c1275f30
+--- /dev/null
++++ b/llvm/test/CodeGen/AMDGPU/llvm.amdgcn.cvt.scale.pk-scale-range.ll
+@@ -0,0 +1,268 @@
++; RUN: not llc -mtriple=amdgpu12.50 %s -filetype=null 2>&1 | FileCheck -check-prefix=GFX1250-ERR %s
++; RUN: not llc -mtriple=amdgpu12.50s %s -filetype=null 2>&1 | FileCheck -check-prefix=GFX1250S-ERR %s
++
++declare <8 x half> @llvm.amdgcn.cvt.scale.pk8.f16.fp8(<2 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.fp8(<2 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <8 x half> @llvm.amdgcn.cvt.scale.pk8.f16.bf8(<2 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.bf8(<2 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <8 x half> @llvm.amdgcn.cvt.scale.pk8.f16.fp4(i32 %src, i32 %scale, i32 %scale_sel)
++declare <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.fp4(i32 %src, i32 %scale, i32 %scale_sel)
++declare <8 x float> @llvm.amdgcn.cvt.scale.pk8.f32.fp8(<2 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <8 x float> @llvm.amdgcn.cvt.scale.pk8.f32.bf8(<2 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <8 x float> @llvm.amdgcn.cvt.scale.pk8.f32.fp4(i32 %src, i32 %scale, i32 %scale_sel)
++declare <16 x half> @llvm.amdgcn.cvt.scale.pk16.f16.fp6(<3 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <16 x bfloat> @llvm.amdgcn.cvt.scale.pk16.bf16.fp6(<3 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <16 x half> @llvm.amdgcn.cvt.scale.pk16.f16.bf6(<3 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <16 x bfloat> @llvm.amdgcn.cvt.scale.pk16.bf16.bf6(<3 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <16 x float> @llvm.amdgcn.cvt.scale.pk16.f32.fp6(<3 x i32> %src, i32 %scale, i32 %scale_sel)
++declare <16 x float> @llvm.amdgcn.cvt.scale.pk16.f32.bf6(<3 x i32> %src, i32 %scale, i32 %scale_sel)
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f16_fp8_scalesel_8 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f16.fp8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_f16_fp8_scalesel_8(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x half> @llvm.amdgcn.cvt.scale.pk8.f16.fp8(<2 x i32> %src, i32 %scale, i32 8)
++  store <8 x half> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f16_bf8_scalesel_8 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f16.bf8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_f16_bf8_scalesel_8(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x half> @llvm.amdgcn.cvt.scale.pk8.f16.bf8(<2 x i32> %src, i32 %scale, i32 8)
++  store <8 x half> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_bf16_fp8_scalesel_8 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.bf16.fp8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_bf16_fp8_scalesel_8(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.fp8(<2 x i32> %src, i32 %scale, i32 8)
++  store <8 x bfloat> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_bf16_bf8_scalesel_8 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.bf16.bf8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_bf16_bf8_scalesel_8(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.bf8(<2 x i32> %src, i32 %scale, i32 8)
++  store <8 x bfloat> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f16_fp4_scalesel_4 void (i32, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f16.fp4 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk8_f16_fp4_scalesel_4(i32 %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x half> @llvm.amdgcn.cvt.scale.pk8.f16.fp4(i32 %src, i32 %scale, i32 4)
++  store <8 x half> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_bf16_fp4_scalesel_4 void (i32, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.bf16.fp4 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk8_bf16_fp4_scalesel_4(i32 %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.fp4(i32 %src, i32 %scale, i32 4)
++  store <8 x bfloat> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f32_fp8_scalesel_8 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f32.fp8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_f32_fp8_scalesel_8(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x float> @llvm.amdgcn.cvt.scale.pk8.f32.fp8(<2 x i32> %src, i32 %scale, i32 8)
++  store <8 x float> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f32_bf8_scalesel_8 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f32.bf8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_f32_bf8_scalesel_8(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x float> @llvm.amdgcn.cvt.scale.pk8.f32.bf8(<2 x i32> %src, i32 %scale, i32 8)
++  store <8 x float> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f32_fp4_scalesel_4 void (i32, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f32.fp4 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk8_f32_fp4_scalesel_4(i32 %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x float> @llvm.amdgcn.cvt.scale.pk8.f32.fp4(i32 %src, i32 %scale, i32 4)
++  store <8 x float> %cvt, ptr addrspace(1) %out, align 32
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f16_fp6_scalesel_4 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f16.fp6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_f16_fp6_scalesel_4(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x half> @llvm.amdgcn.cvt.scale.pk16.f16.fp6(<3 x i32> %src, i32 %scale, i32 4)
++  store <16 x half> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_bf16_fp6_scalesel_4 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.bf16.fp6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_bf16_fp6_scalesel_4(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x bfloat> @llvm.amdgcn.cvt.scale.pk16.bf16.fp6(<3 x i32> %src, i32 %scale, i32 4)
++  store <16 x bfloat> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f16_bf6_scalesel_4 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f16.bf6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_f16_bf6_scalesel_4(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x half> @llvm.amdgcn.cvt.scale.pk16.f16.bf6(<3 x i32> %src, i32 %scale, i32 4)
++  store <16 x half> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_bf16_bf6_scalesel_4 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.bf16.bf6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_bf16_bf6_scalesel_4(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x bfloat> @llvm.amdgcn.cvt.scale.pk16.bf16.bf6(<3 x i32> %src, i32 %scale, i32 4)
++  store <16 x bfloat> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f32_fp6_scalesel_4 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f32.fp6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_f32_fp6_scalesel_4(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x float> @llvm.amdgcn.cvt.scale.pk16.f32.fp6(<3 x i32> %src, i32 %scale, i32 4)
++  store <16 x float> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f32_bf6_scalesel_4 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f32.bf6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_f32_bf6_scalesel_4(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x float> @llvm.amdgcn.cvt.scale.pk16.f32.bf6(<3 x i32> %src, i32 %scale, i32 4)
++  store <16 x float> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f16_fp8_scalesel_15 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f16.fp8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_f16_fp8_scalesel_15(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x half> @llvm.amdgcn.cvt.scale.pk8.f16.fp8(<2 x i32> %src, i32 %scale, i32 15)
++  store <8 x half> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f16_bf8_scalesel_15 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f16.bf8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_f16_bf8_scalesel_15(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x half> @llvm.amdgcn.cvt.scale.pk8.f16.bf8(<2 x i32> %src, i32 %scale, i32 15)
++  store <8 x half> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_bf16_fp8_scalesel_15 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.bf16.fp8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_bf16_fp8_scalesel_15(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.fp8(<2 x i32> %src, i32 %scale, i32 15)
++  store <8 x bfloat> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_bf16_bf8_scalesel_15 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.bf16.bf8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_bf16_bf8_scalesel_15(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.bf8(<2 x i32> %src, i32 %scale, i32 15)
++  store <8 x bfloat> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f16_fp4_scalesel_8 void (i32, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f16.fp4 scale_sel maximum supported value is 7
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f16_fp4_scalesel_8 void (i32, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f16.fp4 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk8_f16_fp4_scalesel_8(i32 %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x half> @llvm.amdgcn.cvt.scale.pk8.f16.fp4(i32 %src, i32 %scale, i32 8)
++  store <8 x half> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_bf16_fp4_scalesel_8 void (i32, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.bf16.fp4 scale_sel maximum supported value is 7
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_bf16_fp4_scalesel_8 void (i32, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.bf16.fp4 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk8_bf16_fp4_scalesel_8(i32 %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.fp4(i32 %src, i32 %scale, i32 8)
++  store <8 x bfloat> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f32_fp8_scalesel_15 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f32.fp8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_f32_fp8_scalesel_15(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x float> @llvm.amdgcn.cvt.scale.pk8.f32.fp8(<2 x i32> %src, i32 %scale, i32 15)
++  store <8 x float> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f32_bf8_scalesel_15 void (<2 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f32.bf8 scale_sel maximum supported value is 7
++
++define amdgpu_ps void @test_cvt_scale_pk8_f32_bf8_scalesel_15(<2 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x float> @llvm.amdgcn.cvt.scale.pk8.f32.bf8(<2 x i32> %src, i32 %scale, i32 15)
++  store <8 x float> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f32_fp4_scalesel_8 void (i32, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f32.fp4 scale_sel maximum supported value is 7
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk8_f32_fp4_scalesel_8 void (i32, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk8.f32.fp4 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk8_f32_fp4_scalesel_8(i32 %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <8 x float> @llvm.amdgcn.cvt.scale.pk8.f32.fp4(i32 %src, i32 %scale, i32 8)
++  store <8 x float> %cvt, ptr addrspace(1) %out, align 32
++  ret void
++}
++
++; GFX1250-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f16_fp6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f16.fp6 scale_sel maximum supported value is 7
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f16_fp6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f16.fp6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_f16_fp6_scalesel_8(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x half> @llvm.amdgcn.cvt.scale.pk16.f16.fp6(<3 x i32> %src, i32 %scale, i32 8)
++  store <16 x half> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_bf16_fp6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.bf16.fp6 scale_sel maximum supported value is 7
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_bf16_fp6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.bf16.fp6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_bf16_fp6_scalesel_8(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x bfloat> @llvm.amdgcn.cvt.scale.pk16.bf16.fp6(<3 x i32> %src, i32 %scale, i32 8)
++  store <16 x bfloat> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f16_bf6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f16.bf6 scale_sel maximum supported value is 7
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f16_bf6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f16.bf6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_f16_bf6_scalesel_8(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x half> @llvm.amdgcn.cvt.scale.pk16.f16.bf6(<3 x i32> %src, i32 %scale, i32 8)
++  store <16 x half> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_bf16_bf6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.bf16.bf6 scale_sel maximum supported value is 7
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_bf16_bf6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.bf16.bf6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_bf16_bf6_scalesel_8(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x bfloat> @llvm.amdgcn.cvt.scale.pk16.bf16.bf6(<3 x i32> %src, i32 %scale, i32 8)
++  store <16 x bfloat> %cvt, ptr addrspace(1) %out, align 8
++  ret void
++}
++
++; GFX1250-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f32_fp6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f32.fp6 scale_sel maximum supported value is 7
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f32_fp6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f32.fp6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_f32_fp6_scalesel_8(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x float> @llvm.amdgcn.cvt.scale.pk16.f32.fp6(<3 x i32> %src, i32 %scale, i32 8)
++  store <16 x float> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
++; GFX1250-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f32_bf6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f32.bf6 scale_sel maximum supported value is 7
++; GFX1250S-ERR-DAG: error: <unknown>:0:0: in function test_cvt_scale_pk16_f32_bf6_scalesel_8 void (<3 x i32>, i32, ptr addrspace(1)): llvm.amdgcn.cvt.scale.pk16.f32.bf6 scale_sel maximum supported value is 3
++
++define amdgpu_ps void @test_cvt_scale_pk16_f32_bf6_scalesel_8(<3 x i32> %src, i32 %scale, ptr addrspace(1) %out) {
++  %cvt = tail call <16 x float> @llvm.amdgcn.cvt.scale.pk16.f32.bf6(<3 x i32> %src, i32 %scale, i32 8)
++  store <16 x float> %cvt, ptr addrspace(1) %out, align 16
++  ret void
++}
++
+diff --git a/llvm/test/CodeGen/AMDGPU/llvm.amdgcn.cvt.scale.pk.ll b/llvm/test/CodeGen/AMDGPU/llvm.amdgcn.cvt.scale.pk.ll
+index 712fe047f770..bb1bcd02aaad 100644
+--- a/llvm/test/CodeGen/AMDGPU/llvm.amdgcn.cvt.scale.pk.ll
++++ b/llvm/test/CodeGen/AMDGPU/llvm.amdgcn.cvt.scale.pk.ll
+@@ -917,7 +917,7 @@ define amdgpu_ps void @test_cvt_scale_pk16_bf16_bf6_sl(<3 x i32> inreg %src, ptr
+ ; GFX1250-SDAG-NEXT:    v_dual_mov_b32 v10, s0 :: v_dual_mov_b32 v11, s1
+ ; GFX1250-SDAG-NEXT:    v_mov_b32_e32 v12, s2
+ ; GFX1250-SDAG-NEXT:    s_delay_alu instid0(VALU_DEP_1)
+-; GFX1250-SDAG-NEXT:    v_cvt_scale_pk16_bf16_bf6 v[2:9], v[10:12], 0x64 scale_sel:8
++; GFX1250-SDAG-NEXT:    v_cvt_scale_pk16_bf16_bf6 v[2:9], v[10:12], 0x64 scale_sel:7
+ ; GFX1250-SDAG-NEXT:    s_clause 0x1
+ ; GFX1250-SDAG-NEXT:    global_store_b128 v[0:1], v[6:9], off offset:16
+ ; GFX1250-SDAG-NEXT:    global_store_b128 v[0:1], v[2:5], off
+@@ -932,7 +932,7 @@ define amdgpu_ps void @test_cvt_scale_pk16_bf16_bf6_sl(<3 x i32> inreg %src, ptr
+ ; GFX1250-GISEL-NEXT:    v_dual_mov_b32 v12, s2 :: v_dual_mov_b32 v11, s1
+ ; GFX1250-GISEL-NEXT:    v_mov_b32_e32 v10, s0
+ ; GFX1250-GISEL-NEXT:    s_delay_alu instid0(VALU_DEP_1) | instskip(NEXT) | instid1(VALU_DEP_1)
+-; GFX1250-GISEL-NEXT:    v_cvt_scale_pk16_bf16_bf6 v[2:9], v[10:12], 0x64 scale_sel:8
++; GFX1250-GISEL-NEXT:    v_cvt_scale_pk16_bf16_bf6 v[2:9], v[10:12], 0x64 scale_sel:7
+ ; GFX1250-GISEL-NEXT:    v_readfirstlane_b32 s0, v2
+ ; GFX1250-GISEL-NEXT:    s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(VALU_DEP_3)
+ ; GFX1250-GISEL-NEXT:    v_readfirstlane_b32 s1, v3
+@@ -952,7 +952,7 @@ define amdgpu_ps void @test_cvt_scale_pk16_bf16_bf6_sl(<3 x i32> inreg %src, ptr
+ ; GFX1250-GISEL-NEXT:    global_store_b128 v[0:1], v[2:5], off
+ ; GFX1250-GISEL-NEXT:    global_store_b128 v[0:1], v[6:9], off offset:16
+ ; GFX1250-GISEL-NEXT:    s_endpgm
+-  %cvt = tail call <16 x bfloat> @llvm.amdgcn.cvt.scale.pk16.bf16.bf6(<3 x i32> %src, i32 100, i32 8)
++  %cvt = tail call <16 x bfloat> @llvm.amdgcn.cvt.scale.pk16.bf16.bf6(<3 x i32> %src, i32 100, i32 7)
+   store <16 x bfloat> %cvt, ptr addrspace(1) %out, align 8
+   ret void
+ }
+diff --git a/llvm/test/CodeGen/AMDGPU/llvm.amdgcn.wmma.f8f6f4.gfx1250.ll b/llvm/test/CodeGen/AMDGPU/llvm.amdgcn.wmma.f8f6f4.gfx1250.ll
+new file mode 100644
+index 000000000000..5b9373dfb55d
+--- /dev/null
++++ b/llvm/test/CodeGen/AMDGPU/llvm.amdgcn.wmma.f8f6f4.gfx1250.ll
+@@ -0,0 +1,35 @@
++; NOTE: Assertions have been autogenerated by utils/update_llc_test_checks.py UTC_ARGS: --version 6
++; RUN: llc -mtriple=amdgpu12.50 < %s | FileCheck %s --check-prefixes=GFX1250
++; RUN: llc -mtriple=amdgpu12.50s < %s | FileCheck %s --check-prefixes=GFX1250S
++
++define amdgpu_ps void @test_wmma_f32_16x16x128_f8f6f4(<16 x i32> %A, <16 x i32> %B, <8 x float> %C, ptr addrspace(1) %out) {
++; GFX1250-LABEL: test_wmma_f32_16x16x128_f8f6f4:
++; GFX1250:       ; %bb.0: ; %bb
++; GFX1250-NEXT:    s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 25, 1), 1 ; msbs: dst=0 src0=0 src1=0 src2=0
++; GFX1250-NEXT:    s_mov_b64 s[64:65], 0
++; GFX1250-NEXT:    v_nop
++; GFX1250-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
++; GFX1250-NEXT:    v_wmma_f32_16x16x128_f8f6f4 v[32:39], v[0:15], v[16:31], v[32:39] matrix_a_fmt:MATRIX_FMT_BF8 matrix_b_fmt:MATRIX_FMT_FP6
++; GFX1250-NEXT:    s_clause 0x1
++; GFX1250-NEXT:    global_store_b128 v[40:41], v[36:39], off offset:16
++; GFX1250-NEXT:    global_store_b128 v[40:41], v[32:35], off
++; GFX1250-NEXT:    s_endpgm
++;
++; GFX1250S-LABEL: test_wmma_f32_16x16x128_f8f6f4:
++; GFX1250S:       ; %bb.0: ; %bb
++; GFX1250S-NEXT:    s_setreg_imm32_b32 hwreg(HW_REG_WAVE_MODE, 25, 1), 1 ; msbs: dst=0 src0=0 src1=0 src2=0
++; GFX1250S-NEXT:    s_mov_b64 s[64:65], 0
++; GFX1250S-NEXT:    v_nop
++; GFX1250S-NEXT:    global_prefetch_b8 v0, s[64:65] scope:SCOPE_SE
++; GFX1250S-NEXT:    v_wmma_scale_f32_16x16x128_f8f6f4 v[32:39], v[0:15], v[16:31], v[32:39], 0, 0 matrix_a_fmt:MATRIX_FMT_BF8 matrix_b_fmt:MATRIX_FMT_FP6
++; GFX1250S-NEXT:    s_clause 0x1
++; GFX1250S-NEXT:    global_store_b128 v[40:41], v[36:39], off offset:16
++; GFX1250S-NEXT:    global_store_b128 v[40:41], v[32:35], off
++; GFX1250S-NEXT:    s_endpgm
++bb:
++  %res = call <8 x float> @llvm.amdgcn.wmma.f32.16x16x128.f8f6f4.v8f32.v16i32.v16i32(i32 1, <16 x i32> %A, i32 2, <16 x i32> %B, i16 0, <8 x float> %C)
++  store <8 x float> %res, ptr addrspace(1) %out
++  ret void
++}
++
++declare <8 x float> @llvm.amdgcn.wmma.f32.16x16x128.f8f6f4.v8f32.v16i32.v16i32(i32, <16 x i32>, i32, <16 x i32>, i16, <8 x float>)
+diff --git a/llvm/test/MC/AMDGPU/gfx1250-strict_err.s b/llvm/test/MC/AMDGPU/gfx1250-strict_err.s
+new file mode 100644
+index 000000000000..17c7337c8cb2
+--- /dev/null
++++ b/llvm/test/MC/AMDGPU/gfx1250-strict_err.s
+@@ -0,0 +1,180 @@
++// NOTE: Assertions have been autogenerated by utils/update_mc_test_checks.py UTC_ARGS: --version 6
++// RUN: not llvm-mc -triple=amdgpu12.50s -filetype=null %s 2>&1 | FileCheck --check-prefixes=GFX1250S-ERR --implicit-check-not=error: -strict-whitespace %s
++// RUN: not llvm-mc -triple=amdgpu12.50 -filetype=null %s 2>&1 | FileCheck --check-prefixes=GFX1250-ERR --implicit-check-not=error: -strict-whitespace %s
++
++v_wmma_f32_32x16x128_f4 v[0:15], v[8:23], v[0:7], v[0:15]
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_f32_32x16x128_f4
++
++v_wmma_scale_f32_32x16x128_f4 v[0:15], v[8:23], v[0:7], v[0:15], s0, s0
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_scale_f32_32x16x128_f4
++
++v_wmma_scale16_f32_32x16x128_f4 v[0:15], v[8:23], v[0:7], v[0:15], s[0:1], s[0:1]
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_scale16_f32_32x16x128_f4
++
++v_wmma_f16_16x16x128_fp8_fp8 v[16:19], v[0:15], v[8:23], v[16:19]
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_f16_16x16x128_fp8_fp8
++
++v_wmma_f16_16x16x128_fp8_bf8 v[16:19], v[0:15], v[8:23], v[16:19]
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_f16_16x16x128_fp8_bf8
++
++v_wmma_f16_16x16x128_bf8_fp8 v[16:19], v[0:15], v[8:23], v[16:19]
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_f16_16x16x128_bf8_fp8
++
++v_wmma_f16_16x16x128_bf8_bf8 v[16:19], v[0:15], v[8:23], v[16:19]
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_f16_16x16x128_bf8_bf8
++
++v_wmma_f32_16x16x128_fp8_fp8 v[16:23], v[0:15], v[8:23], v[16:23]
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_f32_16x16x128_fp8_fp8
++
++v_wmma_f32_16x16x128_fp8_bf8 v[16:23], v[0:15], v[8:23], v[16:23]
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_f32_16x16x128_fp8_bf8
++
++v_wmma_f32_16x16x128_bf8_fp8 v[16:23], v[0:15], v[8:23], v[16:23]
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_f32_16x16x128_bf8_fp8
++
++v_wmma_f32_16x16x128_bf8_bf8 v[16:23], v[0:15], v[8:23], v[16:23]
++// GFX1250S-ERR: :[[@LINE-1]]:1: error: instruction not supported on this GPU (gfx1250-strict): v_wmma_f32_16x16x128_bf8_bf8
++
++v_cvt_scale_pk16_f16_fp6 v[10:17], v[20:22], v8 scale_sel:8
++// GFX1250-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 7
++// GFX1250S-ERR: :[[@LINE-2]]:49: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_bf16_fp6 v[10:17], v[20:22], v8 scale_sel:8
++// GFX1250-ERR: :[[@LINE-1]]:50: error: scale_sel maximum supported value is 7
++// GFX1250S-ERR: :[[@LINE-2]]:50: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_f16_bf6 v[10:17], v[20:22], v8 scale_sel:8
++// GFX1250-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 7
++// GFX1250S-ERR: :[[@LINE-2]]:49: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_bf16_bf6 v[10:17], v[20:22], v8 scale_sel:8
++// GFX1250-ERR: :[[@LINE-1]]:50: error: scale_sel maximum supported value is 7
++// GFX1250S-ERR: :[[@LINE-2]]:50: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_f32_fp6 v[10:25], v[20:22], v8 scale_sel:8
++// GFX1250-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 7
++// GFX1250S-ERR: :[[@LINE-2]]:49: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_f32_bf6 v[10:25], v[20:22], v8 scale_sel:8
++// GFX1250-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 7
++// GFX1250S-ERR: :[[@LINE-2]]:49: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_f16_fp6 v[10:17], v[20:22], v8 scale_sel:4
++// GFX1250S-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_bf16_fp6 v[10:17], v[20:22], v8 scale_sel:4
++// GFX1250S-ERR: :[[@LINE-1]]:50: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_f16_bf6 v[10:17], v[20:22], v8 scale_sel:4
++// GFX1250S-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_bf16_bf6 v[10:17], v[20:22], v8 scale_sel:4
++// GFX1250S-ERR: :[[@LINE-1]]:50: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_f32_fp6 v[10:25], v[20:22], v8 scale_sel:4
++// GFX1250S-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk16_f32_bf6 v[10:25], v[20:22], v8 scale_sel:4
++// GFX1250S-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk8_f16_fp8 v[10:13], v[20:21], v8 scale_sel:16
++// GFX1250-ERR: :[[@LINE-1]]:48: error: invalid scale_sel value.
++// GFX1250S-ERR: :[[@LINE-2]]:48: error: invalid scale_sel value.
++
++v_cvt_scale_pk8_bf16_fp8 v[10:13], v[20:21], v8 scale_sel:16
++// GFX1250-ERR: :[[@LINE-1]]:49: error: invalid scale_sel value.
++// GFX1250S-ERR: :[[@LINE-2]]:49: error: invalid scale_sel value.
++
++v_cvt_scale_pk8_f16_bf8 v[10:13], v[20:21], v8 scale_sel:16
++// GFX1250-ERR: :[[@LINE-1]]:48: error: invalid scale_sel value.
++// GFX1250S-ERR: :[[@LINE-2]]:48: error: invalid scale_sel value.
++
++v_cvt_scale_pk8_bf16_bf8 v[10:13], v[20:21], v8 scale_sel:16
++// GFX1250-ERR: :[[@LINE-1]]:49: error: invalid scale_sel value.
++// GFX1250S-ERR: :[[@LINE-2]]:49: error: invalid scale_sel value.
++
++v_cvt_scale_pk8_f32_fp8 v[10:17], v[20:21], v8 scale_sel:16
++// GFX1250-ERR: :[[@LINE-1]]:48: error: invalid scale_sel value.
++// GFX1250S-ERR: :[[@LINE-2]]:48: error: invalid scale_sel value.
++
++v_cvt_scale_pk8_f32_bf8 v[10:17], v[20:21], v8 scale_sel:16
++// GFX1250-ERR: :[[@LINE-1]]:48: error: invalid scale_sel value.
++// GFX1250S-ERR: :[[@LINE-2]]:48: error: invalid scale_sel value.
++
++v_cvt_scale_pk8_f16_fp4 v[10:13], v20, v8 scale_sel:16
++// GFX1250-ERR: :[[@LINE-1]]:43: error: invalid scale_sel value.
++// GFX1250S-ERR: :[[@LINE-2]]:43: error: invalid scale_sel value.
++
++v_cvt_scale_pk8_bf16_fp4 v[10:13], v20, v8 scale_sel:16
++// GFX1250-ERR: :[[@LINE-1]]:44: error: invalid scale_sel value.
++// GFX1250S-ERR: :[[@LINE-2]]:44: error: invalid scale_sel value.
++
++v_cvt_scale_pk8_f32_fp4 v[10:17], v20, v8 scale_sel:16
++// GFX1250-ERR: :[[@LINE-1]]:43: error: invalid scale_sel value.
++// GFX1250S-ERR: :[[@LINE-2]]:43: error: invalid scale_sel value.
++
++v_cvt_scale_pk8_f16_fp8 v[10:13], v[20:21], v8 scale_sel:15
++// GFX1250S-ERR: :[[@LINE-1]]:48: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_bf16_fp8 v[10:13], v[20:21], v8 scale_sel:15
++// GFX1250S-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_f16_bf8 v[10:13], v[20:21], v8 scale_sel:15
++// GFX1250S-ERR: :[[@LINE-1]]:48: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_bf16_bf8 v[10:13], v[20:21], v8 scale_sel:15
++// GFX1250S-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_f32_fp8 v[10:17], v[20:21], v8 scale_sel:15
++// GFX1250S-ERR: :[[@LINE-1]]:48: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_f32_bf8 v[10:17], v[20:21], v8 scale_sel:15
++// GFX1250S-ERR: :[[@LINE-1]]:48: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_f16_fp4 v[10:13], v20, v8 scale_sel:8
++// GFX1250-ERR: :[[@LINE-1]]:43: error: scale_sel maximum supported value is 7
++// GFX1250S-ERR: :[[@LINE-2]]:43: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk8_bf16_fp4 v[10:13], v20, v8 scale_sel:8
++// GFX1250-ERR: :[[@LINE-1]]:44: error: scale_sel maximum supported value is 7
++// GFX1250S-ERR: :[[@LINE-2]]:44: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk8_f32_fp4 v[10:17], v20, v8 scale_sel:8
++// GFX1250-ERR: :[[@LINE-1]]:43: error: scale_sel maximum supported value is 7
++// GFX1250S-ERR: :[[@LINE-2]]:43: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk8_f16_fp8 v[10:13], v[20:21], v8 scale_sel:8
++// GFX1250S-ERR: :[[@LINE-1]]:48: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_bf16_fp8 v[10:13], v[20:21], v8 scale_sel:8
++// GFX1250S-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_f16_bf8 v[10:13], v[20:21], v8 scale_sel:8
++// GFX1250S-ERR: :[[@LINE-1]]:48: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_bf16_bf8 v[10:13], v[20:21], v8 scale_sel:8
++// GFX1250S-ERR: :[[@LINE-1]]:49: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_f32_fp8 v[10:17], v[20:21], v8 scale_sel:8
++// GFX1250S-ERR: :[[@LINE-1]]:48: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_f32_bf8 v[10:17], v[20:21], v8 scale_sel:8
++// GFX1250S-ERR: :[[@LINE-1]]:48: error: scale_sel maximum supported value is 7
++
++v_cvt_scale_pk8_f16_fp4 v[10:13], v20, v8 scale_sel:4
++// GFX1250S-ERR: :[[@LINE-1]]:43: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk8_bf16_fp4 v[10:13], v20, v8 scale_sel:4
++// GFX1250S-ERR: :[[@LINE-1]]:44: error: scale_sel maximum supported value is 3
++
++v_cvt_scale_pk8_f32_fp4 v[10:17], v20, v8 scale_sel:4
++// GFX1250S-ERR: :[[@LINE-1]]:43: error: scale_sel maximum supported value is 3
++
++v_cvt_pk_fp8_f32 v1.l, v2, v3 clamp
++// GFX1250S-ERR: :[[@LINE-1]]:31: error: invalid operand for instruction
++
++v_cvt_sr_fp8_f32 v1, v2, v3 clamp
++// GFX1250S-ERR: :[[@LINE-1]]:29: error: invalid operand for instruction
++
++v_cvt_f32_fp8 v1, v3 clamp
++// GFX1250S-ERR: :[[@LINE-1]]:22: error: invalid operand for instruction
