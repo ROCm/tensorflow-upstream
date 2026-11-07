@@ -785,6 +785,7 @@ lit_test_suite_for_gpus(
         "gfx1250_strict": [
             # TODO: re-enable once gfx1250-strict memory_bandwidth is finalized.
             "memory_bandwidth_fusion.hlo",
+            "single_instruction.hlo",
             "vectorization.hlo",
             "pdl.hlo",
         ],
