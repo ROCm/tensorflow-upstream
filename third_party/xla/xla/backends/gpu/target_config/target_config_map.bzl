@@ -39,6 +39,7 @@ target_config_map = {
     "gb200": "//xla/backends/gpu/target_config:specs/gb200.txtpb",
     "gb300": "//xla/backends/gpu/target_config:specs/gb300.txtpb",
     "gfx1250": "//xla/backends/gpu/target_config:specs/gfx1250.txtpb",
+    "gfx1250_strict": "//xla/backends/gpu/target_config:specs/gfx1250_strict.txtpb",
     "h100_pcie": "//xla/backends/gpu/target_config:specs/h100_pcie.txtpb",
     "h100_sxm": "//xla/backends/gpu/target_config:specs/h100_sxm.txtpb",
     "h100": "//xla/backends/gpu/target_config:specs/h100_sxm.txtpb",

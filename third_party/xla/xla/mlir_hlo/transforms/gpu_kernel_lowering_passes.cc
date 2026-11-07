@@ -14,7 +14,10 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cassert>
+#include <string>
 #include <utility>
+
+#include "absl/strings/str_replace.h"
 
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ComplexToLLVM/ComplexToLLVM.h"
@@ -136,8 +139,10 @@ void GpuKernelToNVVMPass::runOnOperation() {
 }
 
 void GpuKernelToROCDLPass::runOnOperation() {
+  std::string rocdl_chipset =
+      absl::StrReplaceAll(chipset, {{"gfx1250-strict", "gfx1250"}});
   llvm::FailureOr<mlir::amdgpu::Chipset> maybeChipset =
-      mlir::amdgpu::Chipset::parse(chipset);
+      mlir::amdgpu::Chipset::parse(rocdl_chipset);
   if (failed(maybeChipset)) {
     mlir::emitError(mlir::UnknownLoc::get(&getContext()),
                     "Invalid chipset name: " + chipset);

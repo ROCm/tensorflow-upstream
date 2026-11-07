@@ -782,12 +782,20 @@ lit_test_suite_for_gpus(
             "vectorization.hlo",
             "pdl.hlo",
         ],
+        "gfx1250_strict": [
+            # TODO: re-enable once gfx1250-strict memory_bandwidth is finalized.
+            "memory_bandwidth_fusion.hlo",
+            "single_instruction.hlo",
+            "vectorization.hlo",
+            "pdl.hlo",
+        ],
     },
     gpus = [
         "a100_pcie_80",
         "a6000",
         "b200",
         "gfx1250",
+        "gfx1250_strict",
         "h100_sxm",
         "mi200",
         "mi350",

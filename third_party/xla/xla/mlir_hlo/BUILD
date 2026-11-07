@@ -708,6 +708,7 @@ cc_library(
         ":mhlo_passes",
         ":mlir_hlo",
         ":transforms_passes",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AMDGPUUtils",
         "@llvm-project//mlir:AffineDialect",

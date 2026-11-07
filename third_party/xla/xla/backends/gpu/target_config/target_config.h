@@ -40,6 +40,7 @@ enum class GpuModel {
   H100_SXM,
   H200,
   MI200,
+  GFX1250_STRICT,
   P100,
   PVC,
   V100,

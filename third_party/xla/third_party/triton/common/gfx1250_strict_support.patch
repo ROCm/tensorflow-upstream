@@ -1,0 +1,2757 @@
+From 891d420c4ab5fed4f747f2646dad52115e914664 Mon Sep 17 00:00:00 2001
+From: "Nichols A. Romero" <165712832+naromero77amd@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 12:22:03 -0500
+Subject: [PATCH] [Release][Cherry-Pick] [AMD] Add initial GFX1250-strict
+ Support (#11945) (#12134)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Cherry-pick of https://github.com/triton-lang/triton/pull/11945 onto
+`release/3.9.x` for https://github.com/triton-lang/triton/issues/12121.
+
+Source commit: `210fb9952a776ac63fce6ca24e69c7a925a09c05`
+
+This was cherry-picked with `-x`.
+
+Conflict resolution:
+- #11945 updates two test cases introduced by #11707, which landed after
+the release branch cut and is not present on `release/3.9.x`.
+- Only those #11707-specific test hunks were omitted. All #11945
+implementation changes and tests applicable to the release branch are
+retained.
+
+Validation:
+- `python3 -m py_compile` on the changed Python files
+- `git diff --check upstream/release/3.9.x..HEAD`
+- IDE lint diagnostics: no errors
+
+**Local testing** on an MI450 (`gfx1250`) with ROCm 10.1.0rc3 and
+PyTorch 2.13.0. Built this PR's head (`62cfa305`) from source with the
+release branch's pinned LLVM (`b010a18d`) and AMD codegen (`6bc4aaf6`).
+
+Tests modified by this PR:
+- Lit, all 8 modified files (each runs both its `gfx1250` and
+`gfx1250-strict` RUN lines): 8/8 passed
+- `third_party/amd/python/test/test_warp_pipeline_gfx9.py`: 3 passed
+- `third_party/amd/python/test/test_gluon_cdna5.py`: 14,991 passed,
+15,006 skipped, 1 failed (pre-existing, see below)
+- `third_party/amd/python/test/test_gluon_cdna5.py` with
+`TRITON_OVERRIDE_ARCH=gfx1250-strict`: 12,898 passed, 17,100 skipped, 0
+failed
+- `third_party/amd/python/examples/gluon/f16_gemm_cdna5.py`: 699 passed,
+25 skipped, 16 failed (pre-existing, see below)
+- `third_party/amd/python/examples/gluon/f16_fa_cdna5.py`: 11 passed
+- `third_party/amd/python/examples/gluon/mxfp_fa_cdna5.py`: 90 passed
+
+Also ran the full lit suite (303 passed, 2 plugin tests unsupported) and
+the C++ unit tests (300/300 passed).
+
+The strict run uses `gfx1250` hardware, which supports every strict
+instruction, so it checks the strict compile paths and numerics but not
+instruction legality on real `gfx1250-strict` hardware.
+
+Pre-existing failures: all 17 also fail on unpatched `release/3.9.x`
+(`aad2a60d`), and the generated instructions for these kernels are
+identical with and without this PR.
+- `test_runtime_scaled_upcast_fp8_non_broadcast_block16`: wrong results
+(896/2048 elements) on every run, from the hardware Block16
+`v_cvt_scale_pk8_bf16_fp8` path on this board
+- `test_runtime_gemm_tdm_pipelined_multi_cta` (16 cases, all with 4×4
+clusters): intermittent GPU memory access fault ("Page not present")
+
+Co-authored-by: amirumoAMD <ameliamoorer@hotmail.com>
+(cherry picked from commit 5bc6abce2f84fa4f1a41bef6adc342c8850caa7e)
+---
+ python/triton/language/target_info.py         |   6 +-
+ .../triton_to_gluon_translator/amd_helpers.py |   2 +-
+ .../amd/async_ops_to_llvm_gfx1250.mlir        |   5 +
+ test/Conversion/amd/cluster_load.mlir         |  11 ++
+ .../Conversion/amd/tritongpu_tdm_to_llvm.mlir |   4 +
+ .../amd/tritongpu_to_llvm_gfx1250.mlir        |   4 +
+ .../tritongpu_wmma_dot_scaled_to_llvm.mlir    |  17 +++
+ .../amd/tritongpu_wmma_dot_to_llvm.mlir       | 108 +++++++------
+ .../accelerate-amd-matmul-wmma-gfx1250.mlir   |  53 ++++++-
+ .../amd/amd-scaled-upcast-gfx1250.mlir        |  32 ++++
+ third_party/amd/backend/compiler.py           |  41 ++---
+ .../Dialect/TritonAMDGPU/IR/TargetFeatures.h  |  11 ++
+ .../TritonAMDGPUTransforms/WmmaGroup.h        |  24 +--
+ .../TritonAMDGPU/IR/TargetFeatures.cpp        |  57 ++++++-
+ .../ScaledUpcastToLLVM.cpp                    |  98 ++++++++----
+ .../ConvertFpCastOpToLLVM.cpp                 |  94 +++++++-----
+ .../lib/TritonAMDGPUToLLVM/DotOpToLLVM.cpp    |  31 +++-
+ .../TritonAMDGPUToLLVM/DotOpToLLVM/WMMA.cpp   |  25 ++-
+ .../TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp  |  54 +++----
+ .../PatternTritonGPUOpToLLVM.h                |   1 +
+ .../amd/lib/TritonAMDGPUToLLVM/TargetInfo.cpp |  16 ++
+ .../amd/lib/TritonAMDGPUToLLVM/TargetInfo.h   |   6 +
+ .../TritonAMDGPUToLLVM/TritonGPUToLLVM.cpp    |   4 +-
+ .../AccelerateAMDMatmul.cpp                   |  77 +++++++---
+ .../lib/TritonAMDGPUTransforms/WmmaGroup.cpp  | 144 ++++++++++++------
+ .../amd/python/examples/gluon/f16_fa_cdna5.py |   7 +
+ .../python/examples/gluon/f16_gemm_cdna5.py   |  11 ++
+ .../python/examples/gluon/mxfp_fa_cdna5.py    |   8 +
+ .../amd/python/test/test_gluon_cdna5.py       |  55 ++++++-
+ .../python/test/test_warp_pipeline_gfx9.py    |   8 +-
+ .../ProtonAMDGPUToLLVM/TargetInfo.cpp         |   8 +-
+ 31 files changed, 750 insertions(+), 272 deletions(-)
+
+diff --git a/python/triton/language/target_info.py b/python/triton/language/target_info.py
+index dee3b71196..592ecd3898 100644
+--- a/python/triton/language/target_info.py
++++ b/python/triton/language/target_info.py
+@@ -45,16 +45,16 @@ def is_hip():
+ @constexpr_function
+ def is_hip_cdna3():
+     target = current_target()
+-    return target is not None and target.arch == "gfx942"
++    return target is not None and target.backend == "hip" and target.arch == "gfx942"
+ 
+ 
+ @constexpr_function
+ def is_hip_cdna4():
+     target = current_target()
+-    return target is not None and target.arch == "gfx950"
++    return target is not None and target.backend == "hip" and target.arch == "gfx950"
+ 
+ 
+ @constexpr_function
+ def is_hip_gfx1250():
+     target = current_target()
+-    return target is not None and target.arch == "gfx1250"
++    return target is not None and target.backend == "hip" and target.arch.startswith("gfx1250")
+diff --git a/python/triton/tools/triton_to_gluon_translator/amd_helpers.py b/python/triton/tools/triton_to_gluon_translator/amd_helpers.py
+index 71a078c65a..c446598694 100644
+--- a/python/triton/tools/triton_to_gluon_translator/amd_helpers.py
++++ b/python/triton/tools/triton_to_gluon_translator/amd_helpers.py
+@@ -22,7 +22,7 @@ from triton.tools.triton_to_gluon_translator.common_helpers import (
+ 
+ @gluon.constexpr_function
+ def _is_cdna5(target=None):
+-    return target is not None and target.arch == "gfx1250"
++    return target is not None and target.arch.startswith("gfx1250")
+ 
+ 
+ @gluon.constexpr_function
+diff --git a/test/Conversion/amd/async_ops_to_llvm_gfx1250.mlir b/test/Conversion/amd/async_ops_to_llvm_gfx1250.mlir
+index 7c24eb7ddc..b9073c828c 100644
+--- a/test/Conversion/amd/async_ops_to_llvm_gfx1250.mlir
++++ b/test/Conversion/amd/async_ops_to_llvm_gfx1250.mlir
+@@ -1,4 +1,5 @@
+ // RUN: triton-opt %s -split-input-file --allocate-shared-memory --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250 | FileCheck %s
++// RUN: triton-opt %s -split-input-file --allocate-shared-memory --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250-strict | FileCheck %s --check-prefix=STRICT
+ 
+ #blocked = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [1, 32], warpsPerCTA = [4, 1], order = [1, 0]}>
+ #shared = #ttg.swizzled_shared<{vec = 1, perPhase = 1, maxPhase = 8, order = [1, 0]}>
+@@ -61,6 +62,10 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.shar
+ #smem = #ttg.shared_memory
+ module attributes {"ttg.num-ctas" = 4 : i32, "ttg.num-warps" = 4 : i32, ttg.shared = 8192 : i32} {
+   // CHECK-LABEL: async_load_multicast_to_all_ctas
++  // STRICT-LABEL: async_load_multicast_to_all_ctas
++  // STRICT-NOT: rocdl.cluster.load.async.to.lds
++  // STRICT: rocdl.global.load.async.to.lds
++  // STRICT-NOT: rocdl.cluster.load.async.to.lds
+   tt.func public @async_load_multicast_to_all_ctas(%arg0: tensor<32x32x!tt.ptr<f32>, #blocked> {tt.divisibility = dense<[16, 16]> : tensor<2xi32>, tt.contiguity = dense<[16, 16]> : tensor<2xi32>, tt.constancy = dense<[1, 1]> : tensor<2xi32>},
+                                 %arg1: !ttg.memdesc<32x32xf32, #shared, #smem, mutable>) {
+     // CHECK: %[[GROUP_MASK:.*]] = llvm.mlir.constant(15 : i32) : i32
+diff --git a/test/Conversion/amd/cluster_load.mlir b/test/Conversion/amd/cluster_load.mlir
+index 9fe04c4d30..b3ec758866 100644
+--- a/test/Conversion/amd/cluster_load.mlir
++++ b/test/Conversion/amd/cluster_load.mlir
+@@ -1,5 +1,9 @@
+ // RUN: triton-opt %s -split-input-file --allocate-shared-memory --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250 | FileCheck %s
+ // RUN: triton-opt %s -split-input-file --allocate-shared-memory --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250 2>&1 | FileCheck %s --check-prefix=REMARK
++// RUN: triton-opt %s -split-input-file --allocate-shared-memory --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250-strict | FileCheck %s --check-prefix=STRICT
++// RUN: triton-opt %s -split-input-file --allocate-shared-memory --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250-strict 2>&1 >/dev/null | FileCheck %s --allow-empty --check-prefix=STRICTREMARK
++
++// STRICTREMARK-NOT: Multicast group contains
+ 
+ // CGA layout has no broadcasting so we should not emit cluster loads
+ #blocked = #ttg.blocked<{sizePerThread = [1, 8], threadsPerWarp = [8, 4], warpsPerCTA = [4, 1], order = [1, 0], CGALayout = [[1, 0], [2, 0], [4, 0]]}>
+@@ -18,6 +22,10 @@ module attributes {"ttg.num-ctas" = 8 : i32, "ttg.num-warps" = 4 : i32, ttg.shar
+ #blocked = #ttg.blocked<{sizePerThread = [1, 8], threadsPerWarp = [8, 4], warpsPerCTA = [4, 1], order = [1, 0], CGALayout = [[1, 0], [0, 0], [0, 0]]}>
+ module attributes {"ttg.num-ctas" = 8 : i32, "ttg.num-warps" = 4 : i32, ttg.shared = 8192 : i32} {
+   // CHECK-LABEL: cluster_load_b128
++  // STRICT-LABEL: cluster_load_b128
++  // STRICT-NOT: rocdl.cluster.workgroup.id.x
++  // STRICT-NOT: llvm.amdgcn.cluster.load
++  // STRICT: llvm.return
+   tt.func public @cluster_load_b128(%arg0: tensor<32x32x!tt.ptr<f16>, #blocked> {tt.divisibility = dense<[16, 16]> : tensor<2xi32>, tt.contiguity = dense<[16, 16]> : tensor<2xi32>, tt.constancy = dense<[1, 1]> : tensor<2xi32>}) {
+     // CHECK: %[[CTA_ID:.*]] = rocdl.cluster.workgroup.id.x
+     // CHECK: %[[NON_FREE_BITS:.*]] = llvm.mlir.constant(-7 : i32) : i32
+@@ -58,6 +66,9 @@ module attributes {"ttg.num-ctas" = 8 : i32, "ttg.num-warps" = 4 : i32, ttg.shar
+ #blocked = #ttg.blocked<{sizePerThread = [1, 8], threadsPerWarp = [8, 4], warpsPerCTA = [4, 1], order = [1, 0], CGALayout = [[0, 0], [1, 0], [0, 0], [0, 0]]}>
+ module attributes {"ttg.num-ctas" = 16 : i32, "ttg.num-warps" = 4 : i32, ttg.shared = 8192 : i32} {
+   // CHECK-LABEL: cluster_load_split_multicast_mask
++  // STRICT-LABEL: cluster_load_split_multicast_mask
++  // STRICT-NOT: llvm.amdgcn.cluster.load
++  // STRICT: llvm.return
+   tt.func public @cluster_load_split_multicast_mask(%arg0: tensor<32x32x!tt.ptr<f16>, #blocked> {tt.divisibility = dense<[16, 16]> : tensor<2xi32>, tt.contiguity = dense<[16, 16]> : tensor<2xi32>, tt.constancy = dense<[1, 1]> : tensor<2xi32>}) {
+     // CHECK: %[[CTA_ID:.*]] = rocdl.cluster.workgroup.id.x
+     // CHECK: %[[SUBGROUP_SELECTOR:.*]] = llvm.mlir.constant(-6 : i32) : i32
+diff --git a/test/Conversion/amd/tritongpu_tdm_to_llvm.mlir b/test/Conversion/amd/tritongpu_tdm_to_llvm.mlir
+index 6f475789a9..008e5141e3 100644
+--- a/test/Conversion/amd/tritongpu_tdm_to_llvm.mlir
++++ b/test/Conversion/amd/tritongpu_tdm_to_llvm.mlir
+@@ -1,4 +1,5 @@
+ // RUN: triton-opt %s --split-input-file --allocate-shared-memory --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250 --convert-builtin-func-to-llvm | FileCheck %s
++// RUN: triton-opt %s --split-input-file --allocate-shared-memory --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250-strict --convert-builtin-func-to-llvm | FileCheck %s --check-prefix=STRICT
+ 
+ #blocked = #ttg.blocked<{sizePerThread = [1, 8], threadsPerWarp = [4, 8], warpsPerCTA = [4, 1], order = [1, 0]}>
+ #shared = #ttg.padded_shared<[32:+4] {order = [1, 0], shape = [64, 64]}>
+@@ -129,6 +130,9 @@ module attributes {"ttg.num-ctas" = 2 : i32, "ttg.num-warps" = 4 : i32, "ttg.thr
+ #smem = #ttg.shared_memory
+ module attributes {"ttg.num-ctas" = 16 : i32, "ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {
+   // CHECK-LABEL: tdm_load_multicast
++  // STRICT-LABEL: tdm_load_multicast
++  // STRICT-NOT: llvm.mlir.constant(4369 : i32)
++  // STRICT: "llvm.amdgcn.tensor.load.to.lds"
+   tt.func public @tdm_load_multicast(%arg0: !tt.ptr<f16> {tt.divisibility = 16 : i32}) attributes {noinline = false} {
+     %c_shape = arith.constant 128 : i32
+     %c_stride0 = arith.constant 128 : i64
+diff --git a/test/Conversion/amd/tritongpu_to_llvm_gfx1250.mlir b/test/Conversion/amd/tritongpu_to_llvm_gfx1250.mlir
+index 85a3387ba3..6160b5a425 100644
+--- a/test/Conversion/amd/tritongpu_to_llvm_gfx1250.mlir
++++ b/test/Conversion/amd/tritongpu_to_llvm_gfx1250.mlir
+@@ -1,4 +1,5 @@
+ // RUN:  triton-opt %s -split-input-file --allocate-shared-memory --convert-triton-amdgpu-to-llvm=gfx-arch="gfx1250" | FileCheck %s --check-prefix=GFX1250
++// RUN:  triton-opt %s -split-input-file --allocate-shared-memory --convert-triton-amdgpu-to-llvm=gfx-arch="gfx1250-strict" | FileCheck %s --check-prefix=STRICT
+ #linear = #ttg.linear<{register = [[0, 1], [0, 2], [0, 8], [0, 16]], lane = [[1, 0], [2, 0], [4, 0], [8, 0], [0, 4]], warp = [[16, 0]], block = []}>
+ #mma = #ttg.amd_wmma<{version = 3, ctaLayout = {warp = [[1, 0]]}, isTranspose = true, instrShape = [16, 16, 32]}>
+ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 2 : i32, "ttg.threads-per-warp" = 32 : i32} {
+@@ -118,8 +119,11 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 2 : i32, "ttg.thr
+ #blocked = #ttg.blocked<{sizePerThread = [2], threadsPerWarp = [32], warpsPerCTA = [1], order = [0]}>
+ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
+   // GFX1250-LABEL: @bf16_mulf
++  // STRICT-LABEL: @bf16_mulf
+   tt.func @bf16_mulf(%arg0: tensor<64xbf16, #blocked>, %arg1: tensor<64xf8E4M3FN, #blocked>) -> tensor<64xbf16, #blocked> {
+     // GFX1250: rocdl.cvt.scale.pk8.bf16.fp8
++    // STRICT-NOT: cvt.scale.pk8
++    // STRICT: llvm.fmul {{.*}} : vector<2xbf16>
+     // GFX1250: llvm.fmul {{.*}} : vector<2xbf16>
+     %0 = tt.fp_to_fp %arg1 : tensor<64xf8E4M3FN, #blocked> -> tensor<64xbf16, #blocked>
+     %1 = arith.mulf %arg0, %0 : tensor<64xbf16, #blocked>
+diff --git a/test/Conversion/amd/tritongpu_wmma_dot_scaled_to_llvm.mlir b/test/Conversion/amd/tritongpu_wmma_dot_scaled_to_llvm.mlir
+index 81a6d603b6..340a1caf78 100644
+--- a/test/Conversion/amd/tritongpu_wmma_dot_scaled_to_llvm.mlir
++++ b/test/Conversion/amd/tritongpu_wmma_dot_scaled_to_llvm.mlir
+@@ -1,4 +1,5 @@
+ // RUN: triton-opt %s --split-input-file --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250 --convert-builtin-func-to-llvm | FileCheck %s
++// RUN: triton-opt %s --split-input-file --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250-strict --convert-builtin-func-to-llvm --verify-diagnostics
+ 
+ #linear = #ttg.linear<{register = [[0, 1], [0, 2]], lane = [[1, 0], [2, 0], [4, 0], [8, 0], [0, 0]], warp = [[0, 0], [16, 0]], block = []}>
+ #linear1 = #ttg.linear<{register = [[0, 1], [0, 2]], lane = [[1, 0], [2, 0], [4, 0], [8, 0], [0, 0]], warp = [[16, 0], [0, 0]], block = []}>
+@@ -28,6 +29,8 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.targ
+     // CHECK-COUNT-4: llvm.insertelement {{.*}} : vector<4xi8>
+     // CHECK: llvm.bitcast {{.*}} : vector<4xi8> to i32
+     // CHECK: llvm.call_intrinsic "llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4"{{.*}} : (i32, vector<8xi32>, i32, vector<8xi32>, i16, vector<8xf32>, i32, i32, i32, i32, i32, i32, i1, i1) -> vector<8xf32>
++    // expected-error @+2 {{wmma scale intrinsic llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
+     %c = tt.dot_scaled %arg0 scale %arg1, %arg2 scale %arg3, %cst lhs = e2m1 rhs = e2m1 {fastMath = false} : tensor<32x64xi8, #ttg.dot_op<{opIdx = 0, parent = #mma1, kWidth = 16}>>, tensor<32x4xi8, #linear> * tensor<64x32xi8, #ttg.dot_op<{opIdx = 1, parent = #mma1, kWidth = 16}>>, tensor<32x4xi8, #linear1> -> tensor<32x32xf32, #mma>
+     // CHECK-COUNT-8: llvm.extractelement {{.*}} : vector<8xf32>
+     // CHECK-COUNT-8: llvm.insertelement {{.*}} : vector<1xf32>
+@@ -67,6 +70,8 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.targ
+     // CHECK-COUNT-4: llvm.insertelement {{.*}} : vector<4xi8>
+     // CHECK: llvm.bitcast {{.*}} : vector<4xi8> to i32
+     // CHECK: llvm.call_intrinsic "llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4"{{.*}} : (i32, vector<16xi32>, i32, vector<8xi32>, i16, vector<8xf32>, i32, i32, i32, i32, i32, i32, i1, i1) -> vector<8xf32>
++    // expected-error @+2 {{wmma scale intrinsic llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
+     %c = tt.dot_scaled %arg0 scale %arg1, %arg2 scale %arg3, %cst lhs = e2m1 rhs = e4m3 {fastMath = false} : tensor<32x64xi8, #ttg.dot_op<{opIdx = 0, parent = #mma1, kWidth = 16}>>, tensor<32x4xi8, #linear> * tensor<128x32xi8, #ttg.dot_op<{opIdx = 1, parent = #mma, kWidth = 16}>>, tensor<32x4xi8, #linear1> -> tensor<32x32xf32, #mma>
+     // CHECK-COUNT-8: llvm.extractelement {{.*}} : vector<8xf32>
+     // CHECK-COUNT-8: llvm.insertelement {{.*}} : vector<1xf32>
+@@ -105,6 +110,8 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.targ
+     // CHECK-COUNT-4: llvm.insertelement {{.*}} : vector<4xi8>
+     // CHECK: llvm.bitcast {{.*}} : vector<4xi8> to i32
+     // CHECK: llvm.call_intrinsic "llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4"{{.*}} : (i32, vector<16xi32>, i32, vector<16xi32>, i16, vector<8xf32>, i32, i32, i32, i32, i32, i32, i1, i1) -> vector<8xf32>
++    // expected-error @+2 {{wmma scale intrinsic llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
+     %c = tt.dot_scaled %arg0 scale %arg1, %arg2 scale %arg3, %cst lhs = e4m3 rhs = e4m3 {fastMath = false} : tensor<32x128xi8, #ttg.dot_op<{opIdx = 0, parent = #mma, kWidth = 16}>>, tensor<32x4xi8, #linear> * tensor<128x32xi8, #ttg.dot_op<{opIdx = 1, parent = #mma, kWidth = 16}>>, tensor<32x4xi8, #linear1> -> tensor<32x32xf32, #mma>
+     // CHECK-COUNT-8: llvm.extractelement {{.*}} : vector<8xf32>
+     // CHECK-COUNT-8: llvm.insertelement {{.*}} : vector<1xf32>
+@@ -147,6 +154,8 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.targ
+     // CHECK-COUNT-4: llvm.insertelement {{.*}} : vector<4xi8>
+     // CHECK: llvm.bitcast {{.*}} : vector<4xi8> to i32
+     // CHECK: llvm.call_intrinsic "llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4"{{.*}} : (i32, vector<16xi32>, i32, vector<16xi32>, i16, vector<8xf32>, i32, i32, i32, i32, i32, i32, i1, i1) -> vector<8xf32>
++    // expected-error @+2 {{wmma scale intrinsic llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
+     %c = tt.dot_scaled %arg0 scale %arg1, %arg2 scale %arg3, %cst lhs = e4m3 rhs = e4m3 {fastMath = false} : tensor<32x64xi8, #ttg.dot_op<{opIdx = 0, parent = #mma, kWidth = 16}>>, tensor<32x2xi8, #linear> * tensor<64x32xi8, #ttg.dot_op<{opIdx = 1, parent = #mma, kWidth = 16}>>, tensor<32x2xi8, #linear1> -> tensor<32x32xf32, #mma>
+     // CHECK-COUNT-8: llvm.extractelement {{.*}} : vector<8xf32>
+     // CHECK-COUNT-8: llvm.insertelement {{.*}} : vector<1xf32>
+@@ -202,6 +211,8 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.targ
+     // CHECK-COUNT-4: llvm.insertelement {{.*}} : vector<4xi8>
+     // CHECK: llvm.bitcast {{.*}} : vector<4xi8> to i32
+     // CHECK: llvm.call_intrinsic "llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4"{{.*}} : (i32, vector<16xi32>, i32, vector<16xi32>, i16, vector<8xf32>, i32, i32, i32, i32, i32, i32, i1, i1) -> vector<8xf32>
++    // expected-error @+2 {{wmma scale intrinsic llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
+     %c = tt.dot_scaled %arg0 scale %arg1, %arg2 scale %arg3, %cst lhs = e4m3 rhs = e4m3 {fastMath = false} : tensor<32x256xi8, #ttg.dot_op<{opIdx = 0, parent = #mma, kWidth = 16}>>, tensor<32x8xi8, #linear> * tensor<256x32xi8, #ttg.dot_op<{opIdx = 1, parent = #mma, kWidth = 16}>>, tensor<32x8xi8, #linear1> -> tensor<32x32xf32, #mma>
+     // CHECK-COUNT-8: llvm.extractelement {{.*}} : vector<8xf32>
+     // CHECK-COUNT-8: llvm.insertelement {{.*}} : vector<1xf32>
+@@ -224,6 +235,8 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.targ
+     %scale0 = arith.constant dense<127> :  tensor<128x4xi8, #linear>
+     %scale1 = arith.constant dense<127> :  tensor<128x4xi8, #linear1>
+     // CHECK-COUNT-16: llvm.call_intrinsic "llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4"{{.*}} : (i32, vector<16xi32>, i32, vector<16xi32>, i16, vector<8xf32>, i32, i32, i32, i32, i32, i32, i1, i1) -> vector<8xf32>
++    // expected-error @+2 {{wmma scale intrinsic llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
+     %mm0 = tt.dot_scaled %arg0 scale %scale0, %arg2 scale %scale1, %cst lhs = e4m3 rhs = e4m3 {fastMath = false} : tensor<128x128xf8E5M2, #ttg.dot_op<{opIdx = 0, parent = #mma, kWidth = 16}>>, tensor<128x4xi8, #linear> * tensor<128x128xf8E5M2, #ttg.dot_op<{opIdx = 1, parent = #mma, kWidth = 16}>>, tensor<128x4xi8, #linear1> -> tensor<128x128xf32, #mma>
+     // CHECK-NOT: rocdl.ds_swizzle
+     // CHECK-NOT: llvm.call_intrinsic "llvm.amdgcn.permlane16.swap"
+@@ -269,6 +282,8 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.targ
+     // CHECK-COUNT-4: llvm.insertelement {{.*}} : vector<4xi8>
+     // CHECK: llvm.bitcast {{.*}} : vector<4xi8> to i32
+     // CHECK: llvm.call_intrinsic "llvm.amdgcn.wmma.scale.f32.32x16x128.f4"{{.*}} : (vector<16xi32>, vector<8xi32>, i16, vector<16xf32>, i32, i32, i32, i32, i32, i32, i1, i1) -> vector<16xf32>
++    // expected-error @+2 {{wmma scale intrinsic llvm.amdgcn.wmma.scale.f32.32x16x128.f4 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
+     %c = tt.dot_scaled %arg0 scale %arg1, %arg2 scale %arg3, %cst lhs = e2m1 rhs = e2m1 {fastMath = false} : tensor<64x64xi8, #ttg.dot_op<{opIdx = 0, parent = #mma1, kWidth = 16}>>, tensor<64x4xi8, #linear> * tensor<64x32xi8, #ttg.dot_op<{opIdx = 1, parent = #mma1, kWidth = 16}>>, tensor<32x4xi8, #linear1> -> tensor<64x32xf32, #mma>
+     // CHECK-COUNT-16: llvm.extractelement {{.*}} : vector<16xf32>
+     // CHECK-COUNT-16: llvm.insertelement {{.*}} : vector<1xf32>
+@@ -311,6 +326,8 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.targ
+     // CHECK-COUNT-4: llvm.insertelement {{.*}} : vector<4xi8>
+     // CHECK: llvm.bitcast {{.*}} : vector<4xi8> to i32
+     // CHECK: llvm.call_intrinsic "llvm.amdgcn.wmma.scale.f32.32x16x128.f4"{{.*}} : (vector<16xi32>, vector<8xi32>, i16, vector<16xf32>, i32, i32, i32, i32, i32, i32, i1, i1) -> vector<16xf32>
++    // expected-error @+2 {{wmma scale intrinsic llvm.amdgcn.wmma.scale.f32.32x16x128.f4 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
+     %c = tt.dot_scaled %arg0 scale %arg1, %arg2 scale %arg3, %cst lhs = e2m1 rhs = e2m1 {fastMath = false} : tensor<32x64xi8, #ttg.dot_op<{opIdx = 0, parent = #mma1, kWidth = 16}>>, tensor<32x4xi8, #linear> * tensor<64x64xi8, #ttg.dot_op<{opIdx = 1, parent = #mma1, kWidth = 16}>>, tensor<64x4xi8, #linear1> -> tensor<32x64xf32, #mma>
+     // CHECK-COUNT-16: llvm.extractelement {{.*}} : vector<16xf32>
+     // CHECK-COUNT-16: llvm.insertelement {{.*}} : vector<1xf32>
+diff --git a/test/Conversion/amd/tritongpu_wmma_dot_to_llvm.mlir b/test/Conversion/amd/tritongpu_wmma_dot_to_llvm.mlir
+index 22437359e7..53d6d4584d 100644
+--- a/test/Conversion/amd/tritongpu_wmma_dot_to_llvm.mlir
++++ b/test/Conversion/amd/tritongpu_wmma_dot_to_llvm.mlir
+@@ -1,7 +1,8 @@
+ // RUN: triton-opt %s --split-input-file --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1100 --convert-builtin-func-to-llvm | FileCheck %s
+ // RUN: triton-opt %s --split-input-file --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1170 --convert-builtin-func-to-llvm | FileCheck %s
+ // RUN: triton-opt %s --split-input-file --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1200 --convert-builtin-func-to-llvm | FileCheck %s
+-// RUN: triton-opt %s --split-input-file --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250 --convert-builtin-func-to-llvm | FileCheck %s --check-prefixes=GFX1250
++// RUN: triton-opt %s --split-input-file --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250 --convert-builtin-func-to-llvm | FileCheck %s --check-prefixes=GFX1250,GFX1250-NATIVE
++// RUN: triton-opt %s --split-input-file --convert-triton-amdgpu-to-llvm=gfx-arch=gfx1250-strict --convert-builtin-func-to-llvm --verify-diagnostics | FileCheck %s --check-prefixes=GFX1250
+ 
+ #blocked = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [32, 1], warpsPerCTA = [4, 1], order = [0, 1]}>
+ #shared = #ttg.swizzled_shared<{vec = 1, perPhase = 1, maxPhase = 1, order = [1, 0]}>
+@@ -239,48 +240,6 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, "ttg.thr
+     tt.return
+   }
+ 
+-  // GFX1250-LABEL: wmma3_dot_bf16
+-  tt.func @wmma3_dot_bf16(%arg0: tensor<16x32xbf16, #ttg.dot_op<{opIdx = 0, parent = #mma3, kWidth = 8}>>, %arg1: tensor<32x16xbf16, #ttg.dot_op<{opIdx = 1, parent = #mma3, kWidth = 8}>>, %arg2: tensor<16x16xf32, #mma3>, %arg3: !tt.ptr<f32> {tt.divisibility = 16 : i32, tt.pointer_range = 32 : i32}) {
+-    // GFX1250-COUNT-8: llvm.extractvalue %{{.*}} : !llvm.struct<(f32, f32, f32, f32, f32, f32, f32, f32)>
+-    // GFX1250-COUNT-8: llvm.insertelement {{.*}} : vector<8xf32>
+-    // GFX1250-COUNT-16: llvm.insertelement {{.*}} : vector<16xbf16>
+-    // GFX1250-COUNT-16: llvm.insertelement {{.*}} : vector<16xbf16>
+-    // GFX1250: wmma.f32.16x16x32.bf16{{.*}} : (vector<16xbf16>, vector<16xbf16>, i16, vector<8xf32>, i1, i1) -> vector<8xf32>
+-    %0 = tt.dot %arg0, %arg1, %arg2, inputPrecision = ieee : tensor<16x32xbf16, #ttg.dot_op<{opIdx = 0, parent = #mma3, kWidth = 8}>> * tensor<32x16xbf16, #ttg.dot_op<{opIdx = 1, parent = #mma3, kWidth = 8}>> -> tensor<16x16xf32, #mma3>
+-
+-    %ptr0 = tt.splat %arg3 : !tt.ptr<f32> -> tensor<16x16x!tt.ptr<f32>, #mma3>
+-    tt.store %ptr0, %0 : tensor<16x16x!tt.ptr<f32>, #mma3>
+-    tt.return
+-  }
+-
+-  // GFX1250-LABEL: wmma3_transposed_dot_bf16
+-  tt.func @wmma3_transposed_dot_bf16(%arg0: tensor<16x32xbf16, #ttg.dot_op<{opIdx = 0, parent = #mma3_transposed, kWidth = 8}>>, %arg1: tensor<32x16xbf16, #ttg.dot_op<{opIdx = 1, parent = #mma3_transposed, kWidth = 8}>>, %arg2: tensor<16x16xf32, #mma3_transposed>, %arg3: !tt.ptr<f32> {tt.divisibility = 16 : i32, tt.pointer_range = 32 : i32}) {
+-    // GFX1250-COUNT-8: llvm.extractvalue %{{.*}} : !llvm.struct<(f32, f32, f32, f32, f32, f32, f32, f32)>
+-    // GFX1250-COUNT-8: llvm.insertelement {{.*}} : vector<8xf32>
+-    // GFX1250-COUNT-16: llvm.insertelement {{.*}} : vector<16xbf16>
+-    // GFX1250-COUNT-16: llvm.insertelement {{.*}} : vector<16xbf16>
+-    // GFX1250: wmma.f32.16x16x32.bf16{{.*}} : (vector<16xbf16>, vector<16xbf16>, i16, vector<8xf32>, i1, i1) -> vector<8xf32>
+-    %0 = tt.dot %arg0, %arg1, %arg2, inputPrecision = ieee : tensor<16x32xbf16, #ttg.dot_op<{opIdx = 0, parent = #mma3_transposed, kWidth = 8}>> * tensor<32x16xbf16, #ttg.dot_op<{opIdx = 1, parent = #mma3_transposed, kWidth = 8}>> -> tensor<16x16xf32, #mma3_transposed>
+-
+-    %ptr0 = tt.splat %arg3 : !tt.ptr<f32> -> tensor<16x16x!tt.ptr<f32>, #mma3_transposed>
+-    tt.store %ptr0, %0 : tensor<16x16x!tt.ptr<f32>, #mma3_transposed>
+-    tt.return
+-  }
+-
+-  // GFX1250-LABEL: wmma3_dot_bf8
+-  tt.func @wmma3_dot_bf8(%arg0: tensor<16x64xf8E5M2, #ttg.dot_op<{opIdx = 0, parent = #mma3_f8, kWidth = 8}>>, %arg1: tensor<64x16xf8E5M2, #ttg.dot_op<{opIdx = 1, parent = #mma3_f8, kWidth = 8}>>, %arg2: tensor<16x16xf32, #mma3_f8>, %arg3: !tt.ptr<f32> {tt.divisibility = 16 : i32, tt.pointer_range = 32 : i32}) {
+-    // GFX1250-COUNT-8: llvm.extractvalue %{{.*}} : !llvm.struct<(f32, f32, f32, f32, f32, f32, f32, f32)>
+-    // GFX1250-COUNT-8: llvm.insertelement {{.*}} : vector<8xf32>
+-    // GFX1250-COUNT-16: llvm.insertelement {{.*}} : vector<32xi8>
+-    // GFX1250-COUNT-16: llvm.insertelement {{.*}} : vector<32xi8>
+-    // GFX1250: wmma.f32.16x16x64.bf8.bf8{{.*}} : (vector<8xi32>, vector<8xi32>, i16, vector<8xf32>, i1, i1) -> vector<8xf32>
+-    %0 = tt.dot %arg0, %arg1, %arg2, inputPrecision = ieee : tensor<16x64xf8E5M2, #ttg.dot_op<{opIdx = 0, parent = #mma3_f8, kWidth = 8}>> * tensor<64x16xf8E5M2, #ttg.dot_op<{opIdx = 1, parent = #mma3_f8, kWidth = 8}>> -> tensor<16x16xf32, #mma3_f8>
+-
+-    %ptr0 = tt.splat %arg3 : !tt.ptr<f32> -> tensor<16x16x!tt.ptr<f32>, #mma3_f8>
+-    tt.store %ptr0, %0 : tensor<16x16x!tt.ptr<f32>, #mma3_f8>
+-    tt.return
+-  }
+-
+   //  CHECK-LABEL: blocked_to_wmma1
+   tt.func @blocked_to_wmma1(%arg0: tensor<128x16xi32, #blocked>) {
+     // CHECK-COUNT-16: llvm.extractvalue {{.*}} : !llvm.struct<(i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32)>
+@@ -395,3 +354,66 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 8 : i32, "ttg.thr
+     tt.return
+   }
+ }
++
++// -----
++
++#mma3 = #ttg.amd_wmma<{version = 3, ctaLayout = {warp = [[0, 1], [1, 0]]}, instrShape = [16, 16, 32]}>
++module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {
++  // GFX1250-NATIVE-LABEL: wmma3_dot_bf16
++  tt.func @wmma3_dot_bf16(%arg0: tensor<16x32xbf16, #ttg.dot_op<{opIdx = 0, parent = #mma3, kWidth = 8}>>, %arg1: tensor<32x16xbf16, #ttg.dot_op<{opIdx = 1, parent = #mma3, kWidth = 8}>>, %arg2: tensor<16x16xf32, #mma3>, %arg3: !tt.ptr<f32> {tt.divisibility = 16 : i32, tt.pointer_range = 32 : i32}) {
++    // GFX1250-NATIVE-COUNT-8: llvm.extractvalue %{{.*}} : !llvm.struct<(f32, f32, f32, f32, f32, f32, f32, f32)>
++    // GFX1250-NATIVE-COUNT-8: llvm.insertelement {{.*}} : vector<8xf32>
++    // GFX1250-NATIVE-COUNT-16: llvm.insertelement {{.*}} : vector<16xbf16>
++    // GFX1250-NATIVE-COUNT-16: llvm.insertelement {{.*}} : vector<16xbf16>
++    // GFX1250-NATIVE: wmma.f32.16x16x32.bf16{{.*}} : (vector<16xbf16>, vector<16xbf16>, i16, vector<8xf32>, i1, i1) -> vector<8xf32>
++    // expected-error @+2 {{wmma intrinsic llvm.amdgcn.wmma.f32.16x16x32.bf16 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
++    %0 = tt.dot %arg0, %arg1, %arg2, inputPrecision = ieee : tensor<16x32xbf16, #ttg.dot_op<{opIdx = 0, parent = #mma3, kWidth = 8}>> * tensor<32x16xbf16, #ttg.dot_op<{opIdx = 1, parent = #mma3, kWidth = 8}>> -> tensor<16x16xf32, #mma3>
++
++    %ptr0 = tt.splat %arg3 : !tt.ptr<f32> -> tensor<16x16x!tt.ptr<f32>, #mma3>
++    tt.store %ptr0, %0 : tensor<16x16x!tt.ptr<f32>, #mma3>
++    tt.return
++  }
++}
++
++// -----
++
++#mma3_transposed = #ttg.amd_wmma<{version = 3, ctaLayout = {warp = [[0, 1], [1, 0]]}, isTranspose = true, instrShape = [16, 16, 32]}>
++module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {
++  // GFX1250-NATIVE-LABEL: wmma3_transposed_dot_bf16
++  tt.func @wmma3_transposed_dot_bf16(%arg0: tensor<16x32xbf16, #ttg.dot_op<{opIdx = 0, parent = #mma3_transposed, kWidth = 8}>>, %arg1: tensor<32x16xbf16, #ttg.dot_op<{opIdx = 1, parent = #mma3_transposed, kWidth = 8}>>, %arg2: tensor<16x16xf32, #mma3_transposed>, %arg3: !tt.ptr<f32> {tt.divisibility = 16 : i32, tt.pointer_range = 32 : i32}) {
++    // GFX1250-NATIVE-COUNT-8: llvm.extractvalue %{{.*}} : !llvm.struct<(f32, f32, f32, f32, f32, f32, f32, f32)>
++    // GFX1250-NATIVE-COUNT-8: llvm.insertelement {{.*}} : vector<8xf32>
++    // GFX1250-NATIVE-COUNT-16: llvm.insertelement {{.*}} : vector<16xbf16>
++    // GFX1250-NATIVE-COUNT-16: llvm.insertelement {{.*}} : vector<16xbf16>
++    // GFX1250-NATIVE: wmma.f32.16x16x32.bf16{{.*}} : (vector<16xbf16>, vector<16xbf16>, i16, vector<8xf32>, i1, i1) -> vector<8xf32>
++    // expected-error @+2 {{wmma intrinsic llvm.amdgcn.wmma.f32.16x16x32.bf16 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
++    %0 = tt.dot %arg0, %arg1, %arg2, inputPrecision = ieee : tensor<16x32xbf16, #ttg.dot_op<{opIdx = 0, parent = #mma3_transposed, kWidth = 8}>> * tensor<32x16xbf16, #ttg.dot_op<{opIdx = 1, parent = #mma3_transposed, kWidth = 8}>> -> tensor<16x16xf32, #mma3_transposed>
++
++    %ptr0 = tt.splat %arg3 : !tt.ptr<f32> -> tensor<16x16x!tt.ptr<f32>, #mma3_transposed>
++    tt.store %ptr0, %0 : tensor<16x16x!tt.ptr<f32>, #mma3_transposed>
++    tt.return
++  }
++}
++
++// -----
++
++#mma3_f8 = #ttg.amd_wmma<{version = 3, ctaLayout = {warp = [[0, 1], [1, 0]]}, instrShape = [16, 16, 64]}>
++module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {
++  // GFX1250-NATIVE-LABEL: wmma3_dot_bf8
++  tt.func @wmma3_dot_bf8(%arg0: tensor<16x64xf8E5M2, #ttg.dot_op<{opIdx = 0, parent = #mma3_f8, kWidth = 8}>>, %arg1: tensor<64x16xf8E5M2, #ttg.dot_op<{opIdx = 1, parent = #mma3_f8, kWidth = 8}>>, %arg2: tensor<16x16xf32, #mma3_f8>, %arg3: !tt.ptr<f32> {tt.divisibility = 16 : i32, tt.pointer_range = 32 : i32}) {
++    // GFX1250-NATIVE-COUNT-8: llvm.extractvalue %{{.*}} : !llvm.struct<(f32, f32, f32, f32, f32, f32, f32, f32)>
++    // GFX1250-NATIVE-COUNT-8: llvm.insertelement {{.*}} : vector<8xf32>
++    // GFX1250-NATIVE-COUNT-16: llvm.insertelement {{.*}} : vector<32xi8>
++    // GFX1250-NATIVE-COUNT-16: llvm.insertelement {{.*}} : vector<32xi8>
++    // GFX1250-NATIVE: wmma.f32.16x16x64.bf8.bf8{{.*}} : (vector<8xi32>, vector<8xi32>, i16, vector<8xf32>, i1, i1) -> vector<8xf32>
++    // expected-error @+2 {{wmma intrinsic llvm.amdgcn.wmma.f32.16x16x64.bf8.bf8 is not supported on gfx1250-strict}}
++    // expected-error @+1 {{failed to legalize operation}}
++    %0 = tt.dot %arg0, %arg1, %arg2, inputPrecision = ieee : tensor<16x64xf8E5M2, #ttg.dot_op<{opIdx = 0, parent = #mma3_f8, kWidth = 8}>> * tensor<64x16xf8E5M2, #ttg.dot_op<{opIdx = 1, parent = #mma3_f8, kWidth = 8}>> -> tensor<16x16xf32, #mma3_f8>
++
++    %ptr0 = tt.splat %arg3 : !tt.ptr<f32> -> tensor<16x16x!tt.ptr<f32>, #mma3_f8>
++    tt.store %ptr0, %0 : tensor<16x16x!tt.ptr<f32>, #mma3_f8>
++    tt.return
++  }
++}
+diff --git a/test/TritonGPU/amd/accelerate-amd-matmul-wmma-gfx1250.mlir b/test/TritonGPU/amd/accelerate-amd-matmul-wmma-gfx1250.mlir
+index 384dda3f10..42893c8e30 100644
+--- a/test/TritonGPU/amd/accelerate-amd-matmul-wmma-gfx1250.mlir
++++ b/test/TritonGPU/amd/accelerate-amd-matmul-wmma-gfx1250.mlir
+@@ -1,4 +1,14 @@
+-// RUN: triton-opt %s -split-input-file --tritonamdgpu-accelerate-matmul="gfx-arch=gfx1250" | FileCheck %s
++// RUN: triton-opt %s -split-input-file --tritonamdgpu-accelerate-matmul="gfx-arch=gfx1250" | FileCheck %s --check-prefixes=CHECK,GFX1250
++// RUN: triton-opt %s -split-input-file --tritonamdgpu-accelerate-matmul="gfx-arch=gfx1250-strict" | FileCheck %s --check-prefixes=STRICT
++// STRICT-NOT: instrShape = [16, 16, 32]
++// STRICT-NOT: instrShape = [16, 16, 64]
++// STRICT-NOT: instrShape = [16, 16, 128]
++// STRICT-NOT: instrShape = [32, 16,
++// STRICT: instrShape = [16, 16, 4]
++// STRICT-NOT: instrShape = [16, 16, 32]
++// STRICT-NOT: instrShape = [16, 16, 64]
++// STRICT-NOT: instrShape = [16, 16, 128]
++// STRICT-NOT: instrShape = [32, 16,
+ 
+ #blocked = #ttg.blocked<{sizePerThread = [1, 16], threadsPerWarp = [8, 4], warpsPerCTA = [4, 1], order = [1, 0]}>
+ #blocked1 = #ttg.blocked<{sizePerThread = [1, 16], threadsPerWarp = [16, 2], warpsPerCTA = [4, 1], order = [1, 0]}>
+@@ -492,3 +502,44 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.targ
+     tt.return
+   }
+ }
++
++// -----
++
++#blocked = #ttg.blocked<{sizePerThread = [1, 8], threadsPerWarp = [8, 4], warpsPerCTA = [4, 1], order = [1, 0]}>
++// GFX1250{LITERAL}: #mma = #ttg.amd_wmma<{version = 3, isTranspose = true, ctaLayout = {warp = [[0, 1], [1, 0]]}, instrShape = [16, 16, 128]}>
++// CHECK-LABEL: wmma_dot_fp8_k128
++module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.target = "hip:gfx1250", "ttg.threads-per-warp" = 32 : i32} {
++  tt.func public @wmma_dot_fp8_k128(
++      %a: tensor<32x128xf8E4M3FN, #ttg.dot_op<{opIdx = 0, parent = #blocked}>>,
++      %b: tensor<128x32xf8E4M3FN, #ttg.dot_op<{opIdx = 1, parent = #blocked}>>,
++      %out: tensor<32x32x!tt.ptr<f32>, #blocked>) {
++    // CHECK: tt.dot {{.*}} -> tensor<32x32xf32, #mma>
++    %cst = arith.constant dense<0.000000e+00> : tensor<32x32xf32, #blocked>
++    %d = tt.dot %a, %b, %cst : tensor<32x128xf8E4M3FN, #ttg.dot_op<{opIdx = 0, parent = #blocked}>> * tensor<128x32xf8E4M3FN, #ttg.dot_op<{opIdx = 1, parent = #blocked}>> -> tensor<32x32xf32, #blocked>
++    tt.store %out, %d : tensor<32x32x!tt.ptr<f32>, #blocked>
++    tt.return
++  }
++}
++
++// -----
++
++#blocked = #ttg.blocked<{sizePerThread = [2, 2], threadsPerWarp = [2, 16], warpsPerCTA = [4, 1], order = [1, 0] }>
++#op0 = #ttg.dot_op<{opIdx = 0, parent = #blocked}>
++#op1 = #ttg.dot_op<{opIdx = 1, parent = #blocked}>
++
++// CHECK: instrShape = [16, 16, 4]
++// CHECK-LABEL: wmma_dot_f32_16x16x4
++module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.target = "hip:gfx1250", "ttg.threads-per-warp" = 32 : i32} {
++  tt.func public @wmma_dot_f32_16x16x4(
++      %arg0: tensor<32x8x!tt.ptr<f32>, #op0>,
++      %arg1: tensor<8x32x!tt.ptr<f32>, #op1>,
++      %arg2: tensor<32x32x!tt.ptr<f32>, #blocked>
++      ) {
++    %a = tt.load %arg0 : tensor<32x8x!tt.ptr<f32>, #op0>
++    %b = tt.load %arg1 : tensor<8x32x!tt.ptr<f32>, #op1>
++    %c = arith.constant dense<0.000000e+00> : tensor<32x32xf32, #blocked>
++    %res = tt.dot %a, %b, %c : tensor<32x8xf32, #op0> * tensor<8x32xf32, #op1> -> tensor<32x32xf32, #blocked>
++    tt.store %arg2, %res : tensor<32x32x!tt.ptr<f32>, #blocked>
++    tt.return
++  }
++}
+diff --git a/test/TritonGPU/amd/amd-scaled-upcast-gfx1250.mlir b/test/TritonGPU/amd/amd-scaled-upcast-gfx1250.mlir
+index 11448f22ab..421afef718 100644
+--- a/test/TritonGPU/amd/amd-scaled-upcast-gfx1250.mlir
++++ b/test/TritonGPU/amd/amd-scaled-upcast-gfx1250.mlir
+@@ -1,10 +1,15 @@
+ // RUN: triton-opt %s -split-input-file --allocate-amdgpu-shared-memory --convert-triton-amdgpu-to-llvm="gfx-arch=gfx1250" --canonicalize --cse | FileCheck %s
++// RUN: triton-opt %s -split-input-file --allocate-amdgpu-shared-memory --convert-triton-amdgpu-to-llvm="gfx-arch=gfx1250-strict" --canonicalize --cse | FileCheck %s --check-prefix=STRICT
+ 
+ // -----
+ 
+ #blocked = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [1, 32], warpsPerCTA = [1, 4], order = [1, 0]}>
+ #mma = #ttg.amd_wmma<{version = 3, ctaLayout = {warp = [[0, 1], [1, 0]]}, isTranspose = true, instrShape = [16, 16, 32]}>
+ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.target = "hip:gfx1250", "ttg.threads-per-warp" = 32 : i32} {
++  // STRICT-LABEL: llvm.func @wmma_dot_scaled_mxfp8_bf16
++  // STRICT-NOT: cvt.scale.pk8.bf16
++  // STRICT: llvm.fmul
++  // STRICT-NOT: cvt.scale.pk8.bf16
+   tt.func public @wmma_dot_scaled_mxfp8_bf16(%arg0: tensor<32x128xf8E4M3FN, #blocked>, %arg1: tensor<32x128xi8, #blocked>, %arg2: tensor<32x128x!tt.ptr<bf16>, #blocked>) {
+     // Non-broadcast scale layouts use FP8 Block16 mode (opSel=8): byte 0 feeds
+     // lanes 0..15 and byte 1 feeds lanes 16..31. Byte 1 is lane (j^16)'s scale,
+@@ -38,6 +43,12 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.shar
+     // CHECK-COUNT-4: rocdl.permlanex16 {{.*}}, true, false : i32, i32
+     // CHECK-NOT: rocdl.permlanex16
+     // CHECK: rocdl.cvt.scale.pk8.bf16.fp4 {{.*}} : vector<8xbf16>
++    // STRICT-LABEL: llvm.func @cvt_scale_pk8_bf16_fp4(
++    // STRICT-NOT: rocdl.permlanex16
++    // STRICT-NOT: cvt.scale.pk8
++    // STRICT: llvm.fmul
++    // STRICT-NOT: cvt.scale.pk8
++    // STRICT: llvm.return
+ 
+     %28 = amdg.scaled_upcast_fp4 %15 scale %27 {axis = 1 : i32} : tensor<16x32xi8, #ttg.dot_op<{opIdx = 0, parent = #mma, kWidth = 4}>>, tensor<16x64xi8, #ttg.dot_op<{opIdx = 0, parent = #mma, kWidth = 8}>> -> tensor<16x64xbf16, #ttg.dot_op<{opIdx = 0, parent = #mma, kWidth = 8}>>
+     tt.store %output, %28 : tensor<16x64x!tt.ptr<bf16>, #ttg.dot_op<{opIdx = 0, parent = #mma, kWidth = 8}>>
+@@ -52,6 +63,11 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.shar
+ #unpacked = #ttg.blocked<{sizePerThread = [1, 32], threadsPerWarp = [1, 32], warpsPerCTA = [1, 1], order = [1, 0]}>
+ #compact = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [1, 32], warpsPerCTA = [1, 1], order = [1, 0]}>
+ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, ttg.target = "hip:gfx1250", "ttg.threads-per-warp" = 32 : i32} {
++  // STRICT-LABEL: llvm.func @cvt_scale_pk8_bf16_fp4_compact
++  // STRICT-NOT: cvt.scale.pk8
++  // STRICT: llvm.fmul
++  // STRICT-NOT: cvt.scale.pk8
++  // STRICT: llvm.return
+   tt.func public @cvt_scale_pk8_bf16_fp4_compact(%output: tensor<1x1024x!tt.ptr<bf16>, #unpacked>, %x: tensor<1x512xi8, #packed>, %scale: tensor<1x32xi8, #compact>) {
+     // CHECK: rocdl.cvt.scale.pk8.bf16.fp4
+     %up = amdg.scaled_upcast_fp4 %x scale %scale {axis = 1 : i32} : tensor<1x512xi8, #packed>, tensor<1x32xi8, #compact> -> tensor<1x1024xbf16, #unpacked>
+@@ -98,3 +114,19 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, ttg.targ
+     tt.return
+   }
+ }
++
++// -----
++
++#blocked = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [2, 16], warpsPerCTA = [8, 1], order = [1, 0]}>
++module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 8 : i32, ttg.target = "hip:gfx1250-strict", "ttg.threads-per-warp" = 32 : i32} {
++  // STRICT-LABEL: llvm.func @scaled_upcast_fp8_per_element_scale
++  // STRICT-NOT: cvt.scale.pk8
++  // STRICT-COUNT-8: llvm.intr.umax
++  // STRICT-NOT: llvm.intr.umax
++  // STRICT: llvm.return
++  tt.func public @scaled_upcast_fp8_per_element_scale(%arg0: tensor<128x16xf8E5M2, #blocked>, %arg1: tensor<128x16xi8, #blocked>, %arg2: tensor<128x16x!tt.ptr<bf16>, #blocked>) {
++    %0 = amdg.scaled_upcast_fp8 %arg0 scale %arg1 : tensor<128x16xf8E5M2, #blocked>, tensor<128x16xi8, #blocked> -> tensor<128x16xbf16, #blocked>
++    tt.store %arg2, %0 : tensor<128x16x!tt.ptr<bf16>, #blocked>
++    tt.return
++  }
++}
+diff --git a/third_party/amd/backend/compiler.py b/third_party/amd/backend/compiler.py
+index a8086ed65b..1a1bb06c0d 100644
+--- a/third_party/amd/backend/compiler.py
++++ b/third_party/amd/backend/compiler.py
+@@ -103,7 +103,12 @@ class HIPOptions:
+     llvm_fn_attrs: str | Tuple[Tuple[str, str], ...] = ""
+ 
+     def __post_init__(self):
+-        gfx_major = int(self.arch[3:-2])  # Drop "gfx" prefix and minor/patch number
++        # gfx1250-strict is gfx1250 with a reduced instruction set. This tree's
++        # LLVM has no gfx1250-strict processor, so every LLVM CPU query uses
++        # base_arch. MLIR passes still see the full arch, including "-strict".
++        base_arch = self.arch.removesuffix("-strict")
++        object.__setattr__(self, 'base_arch', base_arch)
++        gfx_major = int(base_arch[3:-2])  # Drop "gfx" prefix and minor/patch number
+         warp_size = 32 if gfx_major >= 10 else 64
+         object.__setattr__(self, 'warp_size', warp_size)
+         assert self.num_warps > 0 and (self.num_warps & (self.num_warps - 1)) == 0, \
+@@ -282,7 +287,7 @@ class HIPBackend(BaseBackend):
+         passes.ttir.add_triton_licm(pm)
+         passes.common.add_canonicalizer(pm)
+ 
+-        use_async_copy = is_async_copy_enabled(options.arch)
++        use_async_copy = is_async_copy_enabled(options.base_arch)
+         use_block_pingpong = is_pingpong_schedule_enabled(options.arch, use_async_copy)
+         amd.passes.ttgpuir.add_optimize_descriptor_encoding(pm)
+         amd.passes.ttgpuir.add_schedule_loops(pm, options.num_stages)
+@@ -316,7 +321,7 @@ class HIPBackend(BaseBackend):
+         passes.common.add_canonicalizer(pm)
+         passes.common.add_cse(pm)
+         passes.common.add_symbol_dce(pm)
+-        if options.instrumentation_mode == "fpsan" and is_fpsan_supported(options.arch):
++        if options.instrumentation_mode == "fpsan" and is_fpsan_supported(options.base_arch):
+             amd.passes.ttgpuir.add_fp_sanitizer(pm)
+             passes.ttgpuir.add_fp_sanitizer(pm, options.fpsan_homomorphic_casts)
+         pm.run(mod, 'make_ttgir')
+@@ -339,7 +344,7 @@ class HIPBackend(BaseBackend):
+         amd.passes.ttgpuir.add_warp_pipeline(pm)
+         passes.ttgpuir.add_allocate_warp_groups(pm)
+ 
+-        if options.instrumentation_mode == "fpsan" and is_fpsan_supported(options.arch):
++        if options.instrumentation_mode == "fpsan" and is_fpsan_supported(options.base_arch):
+             amd.passes.ttgpuir.add_fp_sanitizer(pm)
+             passes.ttgpuir.add_fp_sanitizer(pm, options.fpsan_homomorphic_casts)
+ 
+@@ -360,11 +365,11 @@ class HIPBackend(BaseBackend):
+         passes.convert.add_index_to_llvmir(pm)
+ 
+         # Reserve LDS space for ConSan captures before allocation computes offsets.
+-        if "consan" in options.instrumentation_mode and is_consan_supported(options.arch):
++        if "consan" in options.instrumentation_mode and is_consan_supported(options.base_arch):
+             passes.ttgpuir.add_prepare_consan_captures(pm, "amd")
+         amd.passes.ttgpuir.add_allocate_shared_memory(pm, options.arch)
+         # Call ConcurrencySanitizerPass here, before allocating global scratch memory but after shared
+-        if "consan" in options.instrumentation_mode and is_consan_supported(options.arch):
++        if "consan" in options.instrumentation_mode and is_consan_supported(options.base_arch):
+             passes.ttgpuir.add_concurrency_sanitizer(pm)
+             passes.gluon.add_canonicalizer(pm)
+             passes.common.add_cse(pm)
+@@ -430,11 +435,11 @@ class HIPBackend(BaseBackend):
+         target_features = ''
+         if knobs.compilation.enable_asan:
+             target_features = '+xnack'
+-        llvm.attach_datalayout(llvm_mod, amd.TARGET_TRIPLE, options.arch, target_features)
++        llvm.attach_datalayout(llvm_mod, amd.TARGET_TRIPLE, options.base_arch, target_features)
+ 
+         # Set various control constants on the LLVM module so that device
+         # libraries can resolve references to them.
+-        amd.set_isa_version(llvm_mod, options.arch)
++        amd.set_isa_version(llvm_mod, options.base_arch)
+         amd.set_abi_version(llvm_mod, 500)
+         amd.set_bool_control_constant(llvm_mod, "__oclc_finite_only_opt", False)
+         amd.set_bool_control_constant(llvm_mod, "__oclc_correctly_rounded_sqrt32", True)
+@@ -467,7 +472,7 @@ class HIPBackend(BaseBackend):
+         if options.waves_per_eu != 0:
+             kernel_fn.add_fn_attr("amdgpu-waves-per-eu", f"{options.waves_per_eu},{options.waves_per_eu}")
+ 
+-        if is_coexec_scheduler_enabled(options.arch) and options.num_warps <= 4:
++        if is_coexec_scheduler_enabled(options.base_arch) and options.num_warps <= 4:
+             kernel_fn.add_fn_attr("amdgpu-sched-strategy", "coexec")
+ 
+         denormal_mode = "preserve-sign" if options.allow_flush_denorm else "ieee"
+@@ -486,7 +491,7 @@ class HIPBackend(BaseBackend):
+         #
+         # TODO(tyb0807): Disabled when using MIR swap/dump because the value is
+         # not serializable to/from MIR YAML
+-        if options.arch != "gfx1250" and not (knobs.amd.swap_mir or knobs.amd.dump_mir):
++        if options.base_arch != "gfx1250" and not (knobs.amd.swap_mir or knobs.amd.dump_mir):
+             amd.set_all_fn_arg_inreg(kernel_fn)
+ 
+         if knobs.compilation.enable_asan:
+@@ -502,14 +507,14 @@ class HIPBackend(BaseBackend):
+             if len(paths) > 0:
+                 llvm.link_extern_libs(llvm_mod, paths)
+ 
+-        llvm.optimize_module(llvm_mod, llvm.OPTIMIZE_O3, options.arch, '', [], options.enable_fp_fusion,
++        llvm.optimize_module(llvm_mod, llvm.OPTIMIZE_O3, options.base_arch, '', [], options.enable_fp_fusion,
+                              disable_vector_combine=True)
+ 
+         # Architectures with architected SGPRs store the workgroup id in ttmp9 (X) and ttmp7 (Y[15:0], Z[31:16]).
+         # These attributes are used to determine if Z should be masked out when loading Y. They are inferred during
+         # optimize_module from calls to @llvm.amdgcn.workgroup.id.x/y/z(). We cannot rely on this because a
+         # dispatch dimensions might be used even if there is no program_id() call for it.
+-        if amd.has_architected_sgprs(options.arch):
++        if amd.has_architected_sgprs(options.base_arch):
+             kernel_fn.remove_fn_attr("amdgpu-no-workgroup-id-x")
+             kernel_fn.remove_fn_attr("amdgpu-no-workgroup-id-y")
+             kernel_fn.remove_fn_attr("amdgpu-no-workgroup-id-z")
+@@ -546,23 +551,23 @@ class HIPBackend(BaseBackend):
+         flags = []
+         if options.arch in ["gfx942", "gfx950"]:
+             flags.append("amdgpu-use-amdgpu-trackers")
+-        if is_expert_scheduling_enabled(options.arch):
++        if is_expert_scheduling_enabled(options.base_arch):
+             flags.append("amdgpu-expert-scheduling-mode")
+         features = ''
+         ir_hash = hashlib.sha256(src.encode("utf-8")).hexdigest()
+         dump_file_id = names[0] + '_' + ir_hash
+-        _ = llvm.translate_to_mir(src, amd.TARGET_TRIPLE, options.arch, features, flags, options.enable_fp_fusion,
++        _ = llvm.translate_to_mir(src, amd.TARGET_TRIPLE, options.base_arch, features, flags, options.enable_fp_fusion,
+                                   dump_file_id)
+-        llvm.dump_sched_dag(src, amd.TARGET_TRIPLE, options.arch, features, flags, options.enable_fp_fusion,
++        llvm.dump_sched_dag(src, amd.TARGET_TRIPLE, options.base_arch, features, flags, options.enable_fp_fusion,
+                             dump_file_id)
+         if knobs.amd.swap_mir_enable_misched and not knobs.amd.swap_mir:
+             raise ValueError("TRITON_SWAP_MIR_ENABLE_MISCHED requires TRITON_SWAP_MIR to be set")
+         if knobs.amd.swap_mir:
+             amdgcn = llvm.translate_mir_to_asm(os.path.join(knobs.amd.swap_mir, dump_file_id + '.txt'),
+-                                               amd.TARGET_TRIPLE, options.arch, features, flags,
++                                               amd.TARGET_TRIPLE, options.base_arch, features, flags,
+                                                options.enable_fp_fusion, False, knobs.amd.swap_mir_enable_misched)
+         else:
+-            amdgcn = llvm.translate_to_asm(src, amd.TARGET_TRIPLE, options.arch, features, flags,
++            amdgcn = llvm.translate_to_asm(src, amd.TARGET_TRIPLE, options.base_arch, features, flags,
+                                            options.enable_fp_fusion, False, False)
+         if knobs.amd.dump_amdgcn:
+             print("// -----// AMDGCN Dump //----- //")
+@@ -574,7 +579,7 @@ class HIPBackend(BaseBackend):
+         target_features = []
+         if knobs.compilation.enable_asan:
+             target_features.append('+xnack')
+-        hsaco = amd.assemble_amdgcn(src, options.arch, ','.join(target_features))
++        hsaco = amd.assemble_amdgcn(src, options.base_arch, ','.join(target_features))
+         with tempfile.NamedTemporaryFile() as tmp_out:
+             with tempfile.NamedTemporaryFile() as tmp_in:
+                 with open(tmp_in.name, "wb") as fd_in:
+diff --git a/third_party/amd/include/Dialect/TritonAMDGPU/IR/TargetFeatures.h b/third_party/amd/include/Dialect/TritonAMDGPU/IR/TargetFeatures.h
+index e06e5eb35d..a17e2ae7ee 100644
+--- a/third_party/amd/include/Dialect/TritonAMDGPU/IR/TargetFeatures.h
++++ b/third_party/amd/include/Dialect/TritonAMDGPU/IR/TargetFeatures.h
+@@ -9,6 +9,9 @@
+ 
+ namespace mlir::triton::amdgpu {
+ 
++inline constexpr llvm::StringLiteral kWmmaRestrictedInstsFeature =
++    "wmma-restricted-insts";
++
+ enum class ISAFamily {
+   Unknown,
+   GCN5_1,
+@@ -48,6 +51,7 @@ public:
+   static TargetFeatures fromModuleOp(ModuleOp moduleOp);
+ 
+   StringRef getArch() const;
++  StringRef getBaseArch() const;
+ 
+   ISAFamily getISAFamily() const;
+ 
+@@ -56,6 +60,7 @@ public:
+   bool isCDNA3() const;
+   bool isCDNA4() const;
+   bool isGFX1250() const;
++  bool isGFX1250Strict() const;
+ 
+   int getWarpSize() const;
+   bool supportsWaveId() const;
+@@ -74,6 +79,7 @@ public:
+ 
+   bool supportsTDM() const;
+   bool supportsMultiCTALaunch() const;
++  bool supportsMulticast() const;
+   unsigned getMaxMulticastMaskPopcount() const;
+   bool supportsClusterLoadBitWidth(int bitWidth) const;
+ 
+@@ -86,6 +92,9 @@ public:
+   bool supportDppBroadcast() const;
+   bool supportsPermlaneSwap() const;
+   bool supportsCvtPkScalePk8() const;
++  bool supportsCvtPkScalePk8Upcast() const;
++  bool supportsCvtPkScalePk8Block16() const;
++  ArrayRef<StringRef> getUnsupportedWmmaFeatures() const;
+   bool supportsHwScaledUpcast() const;
+   bool supportsHwScaledDowncast() const;
+ 
+@@ -96,6 +105,8 @@ private:
+   static constexpr char kTargetPrefix[] = "hip:";
+ 
+   std::string arch;
++  std::string baseArch;
++  ISAFamily isaFamily;
+ };
+ 
+ bool isCDNA(ISAFamily isaFamily);
+diff --git a/third_party/amd/include/TritonAMDGPUTransforms/WmmaGroup.h b/third_party/amd/include/TritonAMDGPUTransforms/WmmaGroup.h
+index 7782e3bdc0..9493716141 100644
+--- a/third_party/amd/include/TritonAMDGPUTransforms/WmmaGroup.h
++++ b/third_party/amd/include/TritonAMDGPUTransforms/WmmaGroup.h
+@@ -8,20 +8,21 @@
+ namespace mlir {
+ 
+ struct WmmaIntrinsic {
+-  // Chooses a suitable wmma instrinsic for the given input case.
+-  static FailureOr<WmmaIntrinsic> selectFor(int version, unsigned mDim,
+-                                            unsigned nDim, unsigned inputKDim,
+-                                            Type aElemType, Type bElemType,
+-                                            Type dElemType);
++  static FailureOr<WmmaIntrinsic>
++  selectFor(int version, unsigned mDim, unsigned nDim, unsigned inputKDim,
++            Type aElemType, Type bElemType, Type dElemType,
++            ArrayRef<StringRef> unsupportedFeatures = {});
+   // Gets the wmma intrinsic based on exact match of all parameters.
+   static FailureOr<WmmaIntrinsic> get(int version, unsigned mDim, unsigned nDim,
+                                       unsigned kDim, Type aElemType,
+                                       Type bElemType, Type dElemType);
+ 
+   WmmaIntrinsic(StringRef symbol, unsigned m, unsigned n, unsigned k,
+-                unsigned kB, Type aET, Type bET, Type dET)
++                unsigned kB, Type aET, Type bET, Type dET,
++                StringRef requiredFeature = "")
+       : name(symbol), mDim(m), nDim(n), kDim(k), kBase(kB), aElementType(aET),
+-        bElementType(bET), dElementType(dET) {}
++        bElementType(bET), dElementType(dET), requiredFeature(requiredFeature) {
++  }
+   WmmaIntrinsic(const WmmaIntrinsic &other) = default;
+   WmmaIntrinsic(WmmaIntrinsic &&other) = default;
+   WmmaIntrinsic() = default;
+@@ -42,6 +43,8 @@ struct WmmaIntrinsic {
+   Type aElementType;
+   Type bElementType;
+   Type dElementType;
++
++  StringRef requiredFeature;
+ };
+ 
+ struct WmmaScaleIntrinsic {
+@@ -52,9 +55,10 @@ struct WmmaScaleIntrinsic {
+                                            bool isScale16, bool isTransposed);
+ 
+   WmmaScaleIntrinsic(StringRef symbol, unsigned m, unsigned n, unsigned kDim,
+-                     unsigned kBaseAVal, unsigned kBaseBVal, Type dET)
++                     unsigned kBaseAVal, unsigned kBaseBVal, Type dET,
++                     StringRef requiredFeature = "")
+       : name(symbol), mDim(m), nDim(n), kDim(kDim), kBaseA(kBaseAVal),
+-        kBaseB(kBaseBVal), dElemType(dET) {}
++        kBaseB(kBaseBVal), dElemType(dET), requiredFeature(requiredFeature) {}
+   WmmaScaleIntrinsic(const WmmaScaleIntrinsic &other) = default;
+   WmmaScaleIntrinsic(WmmaScaleIntrinsic &&other) = default;
+   WmmaScaleIntrinsic() = default;
+@@ -70,6 +74,8 @@ struct WmmaScaleIntrinsic {
+   unsigned kBaseA;
+   unsigned kBaseB;
+   Type dElemType;
++
++  StringRef requiredFeature;
+ };
+ } // namespace mlir
+ 
+diff --git a/third_party/amd/lib/Dialect/TritonAMDGPU/IR/TargetFeatures.cpp b/third_party/amd/lib/Dialect/TritonAMDGPU/IR/TargetFeatures.cpp
+index cf9771b06d..a142e6eb28 100644
+--- a/third_party/amd/lib/Dialect/TritonAMDGPU/IR/TargetFeatures.cpp
++++ b/third_party/amd/lib/Dialect/TritonAMDGPU/IR/TargetFeatures.cpp
+@@ -1,6 +1,7 @@
+ #include "Dialect/TritonAMDGPU/IR/TargetFeatures.h"
+ 
+ #include "mlir/IR/BuiltinAttributes.h"
++#include "mlir/IR/BuiltinTypes.h"
+ #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+ #include "llvm/ADT/STLExtras.h"
+ #include "llvm/ADT/StringRef.h"
+@@ -18,6 +19,8 @@ std::optional<GfxArch> parseGfxArch(StringRef arch) {
+   if (!arch.consume_front("gfx"))
+     return std::nullopt;
+ 
++  bool strict = arch.consume_back("-strict");
++
+   if (arch.size() < 3)
+     return std::nullopt;
+ 
+@@ -35,14 +38,21 @@ std::optional<GfxArch> parseGfxArch(StringRef arch) {
+   if (arch.getAsInteger(10, major))
+     return std::nullopt;
+ 
++  if (strict && !(major == 12 && minor == 5))
++    return std::nullopt;
++
+   return GfxArch{major, minor, patch};
+ }
++
++ISAFamily computeISAFamily(StringRef arch);
+ } // namespace
+ 
+ TargetFeatures::TargetFeatures(std::optional<StringRef> arch)
+     : TargetFeatures(arch.value_or("")) {}
+ 
+-TargetFeatures::TargetFeatures(StringRef arch) : arch(arch.str()) {}
++TargetFeatures::TargetFeatures(StringRef arch)
++    : arch(arch.str()), baseArch(arch.split("-strict").first),
++      isaFamily(computeISAFamily(arch)) {}
+ 
+ TargetFeatures TargetFeatures::fromModuleOp(ModuleOp moduleOp) {
+   auto targetAttr =
+@@ -59,7 +69,12 @@ TargetFeatures TargetFeatures::fromModuleOp(ModuleOp moduleOp) {
+ 
+ StringRef TargetFeatures::getArch() const { return arch; }
+ 
+-ISAFamily TargetFeatures::getISAFamily() const {
++StringRef TargetFeatures::getBaseArch() const { return baseArch; }
++
++ISAFamily TargetFeatures::getISAFamily() const { return isaFamily; }
++
++namespace {
++ISAFamily computeISAFamily(StringRef arch) {
+   std::optional<GfxArch> gfxArch = parseGfxArch(arch);
+   if (!gfxArch)
+     return ISAFamily::Unknown;
+@@ -99,6 +114,7 @@ ISAFamily TargetFeatures::getISAFamily() const {
+ 
+   return ISAFamily::Unknown;
+ }
++} // namespace
+ 
+ bool TargetFeatures::isCDNA() const {
+   return mlir::triton::amdgpu::isCDNA(getISAFamily());
+@@ -120,6 +136,10 @@ bool TargetFeatures::isGFX1250() const {
+   return getISAFamily() == ISAFamily::GFX1250;
+ }
+ 
++bool TargetFeatures::isGFX1250Strict() const {
++  return isGFX1250() && arch != baseArch;
++}
++
+ int TargetFeatures::getWarpSize() const {
+   switch (getISAFamily()) {
+   case ISAFamily::GCN5_1:
+@@ -239,12 +259,16 @@ bool TargetFeatures::supportsTDM() const { return isGFX1250(); }
+ 
+ bool TargetFeatures::supportsMultiCTALaunch() const { return isGFX1250(); }
+ 
++bool TargetFeatures::supportsMulticast() const {
++  return isGFX1250() && !isGFX1250Strict();
++}
++
+ unsigned TargetFeatures::getMaxMulticastMaskPopcount() const {
+-  return isGFX1250() ? 5 : 1;
++  return supportsMulticast() ? 5 : 1;
+ }
+ 
+ bool TargetFeatures::supportsClusterLoadBitWidth(int bitWidth) const {
+-  if (getISAFamily() == ISAFamily::GFX1250) {
++  if (supportsMulticast()) {
+     return llvm::is_contained({32, 64, 128}, bitWidth);
+   }
+   return false;
+@@ -320,14 +344,31 @@ bool TargetFeatures::supportsPermlaneSwap() const {
+ 
+ bool TargetFeatures::supportsCvtPkScalePk8() const { return isGFX1250(); }
+ 
++bool TargetFeatures::supportsCvtPkScalePk8Upcast() const {
++  // TODO: gfx1250-strict implements the v_cvt_scale_pk8_* upcasts in Block32
++  // mode, but LLVM gates them behind block16-cvt-scale-insts, which it does
++  // not enable for gfx1250-strict. Drop the strict check once LLVM ticket is
++  // merged. May require LLVM bump
++  return supportsCvtPkScalePk8() && !isGFX1250Strict();
++}
++
++bool TargetFeatures::supportsCvtPkScalePk8Block16() const {
++  return supportsCvtPkScalePk8() && !isGFX1250Strict();
++}
++
++ArrayRef<StringRef> TargetFeatures::getUnsupportedWmmaFeatures() const {
++  static const StringRef kGFX1250Strict[] = {kWmmaRestrictedInstsFeature};
++  if (isGFX1250Strict())
++    return kGFX1250Strict;
++  return {};
++}
++
+ bool TargetFeatures::supportsHwScaledUpcast() const {
+-  return getISAFamily() == ISAFamily::CDNA4 ||
+-         getISAFamily() == ISAFamily::GFX1250;
++  return getISAFamily() == ISAFamily::CDNA4 || supportsCvtPkScalePk8Upcast();
+ }
+ 
+ bool TargetFeatures::supportsHwScaledDowncast() const {
+-  return getISAFamily() == ISAFamily::CDNA4 ||
+-         getISAFamily() == ISAFamily::GFX1250;
++  return getISAFamily() == ISAFamily::CDNA4 || supportsCvtPkScalePk8();
+ }
+ 
+ bool TargetFeatures::supportBitwidth16Elementwise() const { return true; }
+diff --git a/third_party/amd/lib/TritonAMDGPUDialectToLLVM/ScaledUpcastToLLVM.cpp b/third_party/amd/lib/TritonAMDGPUDialectToLLVM/ScaledUpcastToLLVM.cpp
+index 7032de9fde..a9de1c1020 100644
+--- a/third_party/amd/lib/TritonAMDGPUDialectToLLVM/ScaledUpcastToLLVM.cpp
++++ b/third_party/amd/lib/TritonAMDGPUDialectToLLVM/ScaledUpcastToLLVM.cpp
+@@ -57,6 +57,27 @@ SmallVector<int> computeFp4GroupScaleRegisters(amdgpu::ScaledUpcastFp4Op op,
+   return groupScaleReg;
+ }
+ 
++bool scaleIsPreShifted(RankedTensorType scaleTy) {
++  return scaleTy.getElementType().isBF16();
++}
++
++// Software multiplication needs the numeric scale. Hardware conversions read
++// only its exponent field. bf16 scales from the CDNA decomposition are already
++// left-shifted; gfx1250 int8 scales are raw E8M0 exponents.
++Value scaleToF32(RewriterBase &rewriter, Location loc, Value scale,
++                 bool preShifted) {
++  auto b = TritonLLVMOpBuilder(loc, rewriter);
++  Value value;
++  if (preShifted) {
++    value = b.bitcast(
++        b.shl(b.zext(i32_ty, b.bitcast(scale, i16_ty)), b.i32_val(16)), f32_ty);
++  } else {
++    Value bits = b.shl(b.zext(i32_ty, scale), b.i32_val(23));
++    value = b.bitcast(b.umax(bits, b.i32_val(0x00400000)), f32_ty);
++  }
++  return b.fma(value, b.f32_val(0.0), value);
++}
++
+ // Returns true if the scale layout gives lane `j` and lane `j^16` the same
+ // scale value (i.e. the lane basis for the value-16 bit is all zeros). In that
+ // case both output-lane halves of a v_cvt_scale_pk8 already share a scale.
+@@ -96,10 +117,11 @@ struct ScaledUpcastFp4OpPattern
+     results.reserve(inputVals.size() * 2);
+ 
+     auto b = TritonLLVMOpBuilder(loc, rewriter);
+-    if (targetInfo.supportsCvtPkScalePk8()) {
+-      auto groupScaleReg =
+-          computeFp4GroupScaleRegisters(upcastOp, inputVals.size());
++    bool preShifted = scaleIsPreShifted(upcastOp.getScale().getType());
++    auto groupScaleReg =
++        computeFp4GroupScaleRegisters(upcastOp, inputVals.size());
+ 
++    if (targetInfo.supportsCvtPkScalePk8Upcast()) {
+       // FP4/FP6 v_cvt_scale_pk8 with opSel=0 sources the scale for output
+       // lanes 16..31 from byte 1 of the *lower* 16 lanes' Vscale while output
+       // lanes 0..15 use byte 0. When the scale layout is not broadcast across
+@@ -157,9 +179,13 @@ struct ScaledUpcastFp4OpPattern
+         }
+       }
+     } else {
+-      assert(scaleVals.size() == 2 * inputVals.size() &&
+-             "compact fp4 scales are only supported on pk scale path");
++      if (preShifted) {
++        assert(scaleVals.size() == 2 * inputVals.size() &&
++               "compact fp4 scales are only supported on pk scale path");
++      }
+       // Software emulation: upcast fp4 via LUT, then multiply by scale.
++      // gfx1250-strict keeps the pk8 scale layout but cannot use the hardware
++      // upcast, so each group reads the layout-mapped scale register.
+       bool toFp16 = elemType.isF16();
+       auto isaFamily = targetInfo.getISAFamily();
+       for (size_t i = 0; i < inputVals.size(); i += 4) {
+@@ -171,12 +197,11 @@ struct ScaledUpcastFp4OpPattern
+         SmallVector<Value> v8vals =
+             upcast8xMxfp4_SW(rewriter, upcastOp, toFp16, packedVec, isaFamily);
+ 
+-        // The bf16 scale was left-shifted by 7 (scaleTo16); shift by 16 more
+-        // to get f32.
+-        Value scaleBf16 = scaleVals[i * 2];
+-        Value scaleF32 = b.bitcast(
+-            b.shl(b.zext(i32_ty, b.bitcast(scaleBf16, i16_ty)), b.i32_val(16)),
+-            f32_ty);
++        Value scaleF32 =
++            preShifted
++                ? scaleToF32(rewriter, loc, scaleVals[i * 2], preShifted)
++                : scaleToF32(rewriter, loc, scaleVals[groupScaleReg[i / 4]],
++                             preShifted);
+ 
+         for (int j : llvm::seq(8)) {
+           Value vF32;
+@@ -229,16 +254,21 @@ struct ScaledUpcastFp8OpPattern
+     auto scaleVals =
+         unpackUniqueTensorElements(loc, adaptor.getScale(), rewriter);
+ 
+-    assert(inputVals.size() % 4 == 0);
++    // The op verifier guarantees whole register-consecutive groups.
++    assert(inputVals.size() %
++               (targetInfo.supportsCvtPkScalePk8Upcast() ? 8 : 4) ==
++           0);
+     assert(inputVals.size() == scaleVals.size());
+ 
+     auto b = TritonLLVMOpBuilder(loc, rewriter);
+     SmallVector<Value> results;
+     results.reserve(inputVals.size());
+-    if (targetInfo.supportsCvtPkScalePk8()) {
+-      // Broadcast layouts can use FP8 Block32 (opSel=0). Otherwise use Block16
+-      // (opSel=8) and pack lane j^16's scale into byte 1.
+-      bool broadcast = isScaleLane16Broadcast(upcastOp.getScale().getType());
++    // Broadcast layouts can use FP8 Block32 (opSel=0). Otherwise use Block16
++    // (opSel=8) and pack lane j^16's scale into byte 1.
++    bool broadcast = isScaleLane16Broadcast(upcastOp.getScale().getType());
++    if (targetInfo.supportsCvtPkScalePk8Upcast() &&
++        (broadcast ||
++         targetInfo.supportsCvtPkScalePk8Block16())) { // b32 vs b16 needed
+       SmallVector<Value> crossScaleVals(scaleVals.size());
+       auto getCrossScale = [&](int scaleIdx) -> Value {
+         if (broadcast)
+@@ -271,7 +301,8 @@ struct ScaledUpcastFp8OpPattern
+ 
+         results.append(converted.begin(), converted.end());
+       }
+-    } else if (targetInfo.supportsHwScaledUpcast()) {
++    } else if (targetInfo.supportsHwScaledUpcast() &&
++               !targetInfo.supportsCvtPkScalePk8()) {
+       for (int i = 0; i < inputVals.size(); i += 4) {
+         SmallVector<Value, 2> v2i32 =
+             elemType.isF16()
+@@ -297,19 +328,32 @@ struct ScaledUpcastFp8OpPattern
+       }
+     } else {
+       // Software emulation: convert fp8 to f32, then multiply by scale.
++      // Preshifted bf16 scales (CDNA) are one value per four elements. gfx1250
++      // int8 scales, including the strict software fallback, are per element.
+       bool isE4M3FN = isa<Float8E4M3FNType>(fp8ElemType);
+       bool toFp16 = elemType.isF16();
+-      for (size_t i = 0; i < inputVals.size(); i += 4) {
+-        // The bf16 scale was left-shifted by 7 (scaleTo16); shift by 16 more
+-        // to get f32.
+-        Value scaleBf16 = scaleVals[i];
+-        Value scaleF32 = b.bitcast(
+-            b.shl(b.zext(i32_ty, b.bitcast(scaleBf16, i16_ty)), b.i32_val(16)),
+-            f32_ty);
+-
+-        for (int j : llvm::seq(4)) {
++      bool preShifted = scaleIsPreShifted(upcastOp.getScale().getType());
++      if (preShifted) {
++        for (size_t i = 0; i < inputVals.size(); i += 4) {
++          Value scaleF32 = scaleToF32(rewriter, loc, scaleVals[i], preShifted);
++          for (int j : llvm::seq(4)) {
++            Value f32Val =
++                convertF8ToF32_SW(rewriter, loc, inputVals[i + j], isE4M3FN);
++            Value mulF32 = b.fmul(f32Val, scaleF32);
++            if (toFp16) {
++              results.push_back(b.fptrunc(f16_ty, mulF32));
++            } else {
++              Value mulI16 = b.trunc(
++                  i16_ty, b.lshr(b.bitcast(mulF32, i32_ty), b.i32_val(16)));
++              results.push_back(b.bitcast(mulI16, bf16_ty));
++            }
++          }
++        }
++      } else {
++        for (size_t i = 0; i < inputVals.size(); ++i) {
++          Value scaleF32 = scaleToF32(rewriter, loc, scaleVals[i], preShifted);
+           Value f32Val =
+-              convertF8ToF32_SW(rewriter, loc, inputVals[i + j], isE4M3FN);
++              convertF8ToF32_SW(rewriter, loc, inputVals[i], isE4M3FN);
+           Value mulF32 = b.fmul(f32Val, scaleF32);
+           if (toFp16) {
+             results.push_back(b.fptrunc(f16_ty, mulF32));
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/ConvertFpCastOpToLLVM.cpp b/third_party/amd/lib/TritonAMDGPUToLLVM/ConvertFpCastOpToLLVM.cpp
+index e6b3391cd6..c09abec119 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/ConvertFpCastOpToLLVM.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/ConvertFpCastOpToLLVM.cpp
+@@ -860,13 +860,15 @@ protected:
+ class CvtFp8E4M3ToFp16 : public ConverterInterface {
+ public:
+   explicit CvtFp8E4M3ToFp16(Type srcTy, ISAFamily isaFamily,
++                            const AMD::TargetInfo &targetInfo,
+                             size_t maxElementsPerThread,
+                             std::optional<RoundingMode> roundingMode)
+-      : srcTy(srcTy),
++      : srcTy(srcTy), targetInfo(targetInfo),
+         ConverterInterface(isaFamily, maxElementsPerThread, roundingMode) {}
+ 
+   size_t getNumElements() override {
+-    return isa<Float8E4M3FNType>(srcTy) && (isaFamily == ISAFamily::GFX1250)
++    return isa<Float8E4M3FNType>(srcTy) &&
++                   targetInfo.supportsCvtPkScalePk8Upcast()
+                ? 8
+                : 4;
+   }
+@@ -885,7 +887,7 @@ public:
+       else
+         return Fp8E4M3fnuzToFp16SW(loc, rewriter, v);
+     } else if (isa<Float8E4M3FNType>(srcTy)) {
+-      if (isaFamily == ISAFamily::GFX1250) {
++      if (targetInfo.supportsCvtPkScalePk8Upcast()) {
+         return scalePk8UpcastFromFp8<ROCDL::CvtPkScalePk8F16Fp8Op>(loc,
+                                                                    rewriter, v);
+       } else if (isaFamily == ISAFamily::CDNA4) {
+@@ -1026,21 +1028,23 @@ public:
+ 
+ private:
+   Type srcTy;
++  const AMD::TargetInfo &targetInfo;
+ };
+ 
+ class CvtFp8E5M2ToFp16 : public ConverterInterface {
+ public:
+   explicit CvtFp8E5M2ToFp16(Type srcTy, ISAFamily isaFamily,
++                            const AMD::TargetInfo &targetInfo,
+                             size_t maxElementsPerThread,
+                             std::optional<RoundingMode> roundingMode)
+-      : srcTy(srcTy),
++      : srcTy(srcTy), targetInfo(targetInfo),
+         ConverterInterface(isaFamily, maxElementsPerThread, roundingMode) {}
+ 
+   size_t getNumElements() override {
+     if (isa<Float8E5M2FNUZType>(srcTy)) {
+       return 4;
+     } else if (isa<Float8E5M2Type>(srcTy)) {
+-      return isaFamily == ISAFamily::GFX1250 ? 8 : 4;
++      return targetInfo.supportsCvtPkScalePk8Upcast() ? 8 : 4;
+     }
+     return 0;
+   }
+@@ -1059,7 +1063,7 @@ public:
+       else
+         return Fp8E5M2fnuzToFp16SW(loc, rewriter, v);
+     } else if (isa<Float8E5M2Type>(srcTy)) {
+-      if (isaFamily == ISAFamily::GFX1250) {
++      if (targetInfo.supportsCvtPkScalePk8Upcast()) {
+         return scalePk8UpcastFromFp8<ROCDL::CvtPkScalePk8F16Bf8Op>(loc,
+                                                                    rewriter, v);
+       } else if (isaFamily == ISAFamily::CDNA4) {
+@@ -1165,21 +1169,23 @@ public:
+ 
+ private:
+   Type srcTy;
++  const AMD::TargetInfo &targetInfo;
+ };
+ 
+ class CvtFp8E4M3ToBf16 : public ConverterInterface {
+ public:
+   explicit CvtFp8E4M3ToBf16(Type srcTy, ISAFamily isaFamily,
++                            const AMD::TargetInfo &targetInfo,
+                             size_t maxElementsPerThread,
+                             std::optional<RoundingMode> roundingMode)
+-      : srcTy(srcTy),
++      : srcTy(srcTy), targetInfo(targetInfo),
+         ConverterInterface(isaFamily, maxElementsPerThread, roundingMode) {}
+ 
+   size_t getNumElements() override {
+     if (isa<Float8E4M3FNUZType>(srcTy)) {
+       return hasFnuzFp8HW(isaFamily) ? 4 : 2;
+     } else if (isa<Float8E4M3FNType>(srcTy)) {
+-      return isaFamily == ISAFamily::GFX1250 ? 8 : 4;
++      return targetInfo.supportsCvtPkScalePk8Upcast() ? 8 : 4;
+     }
+     return 0;
+   }
+@@ -1198,7 +1204,7 @@ public:
+       else
+         return Fp8E4M3fnuzToBf16SW(loc, rewriter, v);
+     } else if (isa<Float8E4M3FNType>(srcTy)) {
+-      if (isaFamily == ISAFamily::GFX1250) {
++      if (targetInfo.supportsCvtPkScalePk8Upcast()) {
+         return scalePk8UpcastFromFp8<ROCDL::CvtPkScalePk8Bf16Fp8Op>(
+             loc, rewriter, v);
+       } else if (isaFamily == ISAFamily::CDNA4) {
+@@ -1281,19 +1287,23 @@ public:
+ 
+ private:
+   Type srcTy;
++  const AMD::TargetInfo &targetInfo;
+ };
+ 
+ class CvtFp8E5M2ToBf16 : public ConverterInterface {
+ public:
+   explicit CvtFp8E5M2ToBf16(Type srcTy, ISAFamily isaFamily,
++                            const AMD::TargetInfo &targetInfo,
+                             size_t maxElementsPerThread,
+                             std::optional<RoundingMode> roundingMode)
+-      : srcTy(srcTy),
++      : srcTy(srcTy), targetInfo(targetInfo),
+         ConverterInterface(isaFamily, maxElementsPerThread, roundingMode) {}
+ 
+   size_t getNumElements() override {
+-    return isa<Float8E5M2Type>(srcTy) && isaFamily == ISAFamily::GFX1250 ? 8
+-                                                                         : 4;
++    return isa<Float8E5M2Type>(srcTy) &&
++                   targetInfo.supportsCvtPkScalePk8Upcast()
++               ? 8
++               : 4;
+   }
+ 
+   std::optional<SmallVector<Value>> convert(Location loc,
+@@ -1310,7 +1320,7 @@ public:
+       else
+         return Fp8E5M2fnuzToBf16SW(loc, rewriter, v);
+     } else if (isa<Float8E5M2Type>(srcTy)) {
+-      if (isaFamily == ISAFamily::GFX1250) {
++      if (targetInfo.supportsCvtPkScalePk8Upcast()) {
+         return scalePk8UpcastFromFp8<ROCDL::CvtPkScalePk8Bf16Bf8Op>(
+             loc, rewriter, v);
+       } else if (isaFamily == ISAFamily::CDNA4) {
+@@ -1336,8 +1346,8 @@ public:
+                                          ConversionPatternRewriter &rewriter,
+                                          const SmallVector<Value> &v) {
+     assert(v.size() == 4);
+-    auto cvt =
+-        CvtFp8E5M2ToFp16(srcTy, isaFamily, maxElementsPerThread, roundingMode);
++    auto cvt = CvtFp8E5M2ToFp16(srcTy, isaFamily, targetInfo,
++                                maxElementsPerThread, roundingMode);
+     SmallVector<Value> fp16Vec = cvt.Fp8E5M2fnuzToFp16SW(loc, rewriter, v);
+     SmallVector<Value> result(4);
+     for (size_t i = 0; i < 4; i++) {
+@@ -1350,19 +1360,23 @@ public:
+ 
+ private:
+   Type srcTy;
++  const AMD::TargetInfo &targetInfo;
+ };
+ 
+ class CvtFp8E4M3ToFp32 : public ConverterInterface {
+ public:
+   explicit CvtFp8E4M3ToFp32(Type srcTy, ISAFamily isaFamily,
++                            const AMD::TargetInfo &targetInfo,
+                             size_t maxElementsPerThread,
+                             std::optional<RoundingMode> roundingMode)
+-      : srcTy(srcTy),
++      : srcTy(srcTy), targetInfo(targetInfo),
+         ConverterInterface(isaFamily, maxElementsPerThread, roundingMode) {}
+ 
+   size_t getNumElements() override {
+-    return isa<Float8E4M3FNType>(srcTy) && isaFamily == ISAFamily::GFX1250 ? 8
+-                                                                           : 4;
++    return isa<Float8E4M3FNType>(srcTy) &&
++                   targetInfo.supportsCvtPkScalePk8Upcast()
++               ? 8
++               : 4;
+   }
+ 
+   std::optional<SmallVector<Value>> convert(Location loc,
+@@ -1380,7 +1394,7 @@ public:
+       else
+         useTwoStepConversion = true;
+     } else if (isa<Float8E4M3FNType>(srcTy)) {
+-      if (isaFamily == ISAFamily::GFX1250)
++      if (targetInfo.supportsCvtPkScalePk8Upcast())
+         return scalePk8UpcastFromFp8<ROCDL::CvtPkScalePk8F32Fp8Op>(loc,
+                                                                    rewriter, v);
+       else if (isaFamily == ISAFamily::CDNA4)
+@@ -1392,8 +1406,8 @@ public:
+ 
+     // FP8 -> FP16 -> FP32
+     if (useTwoStepConversion) {
+-      auto converter = CvtFp8E4M3ToFp16(srcTy, isaFamily, maxElementsPerThread,
+-                                        roundingMode);
++      auto converter = CvtFp8E4M3ToFp16(srcTy, isaFamily, targetInfo,
++                                        maxElementsPerThread, roundingMode);
+       auto result = converter.convert(loc, rewriter, v);
+       assert(result.has_value() && "fp8 to fp16 conversion must be completed");
+       for (Value &v : *result)
+@@ -1406,19 +1420,23 @@ public:
+ 
+ private:
+   Type srcTy;
++  const AMD::TargetInfo &targetInfo;
+ };
+ 
+ class CvtFp8E5M2ToFp32 : public ConverterInterface {
+ public:
+   explicit CvtFp8E5M2ToFp32(Type srcTy, ISAFamily isaFamily,
++                            const AMD::TargetInfo &targetInfo,
+                             size_t maxElementsPerThread,
+                             std::optional<RoundingMode> roundingMode)
+-      : srcTy(srcTy),
++      : srcTy(srcTy), targetInfo(targetInfo),
+         ConverterInterface(isaFamily, maxElementsPerThread, roundingMode) {}
+ 
+   size_t getNumElements() override {
+-    return isa<Float8E5M2Type>(srcTy) && isaFamily == ISAFamily::GFX1250 ? 8
+-                                                                         : 4;
++    return isa<Float8E5M2Type>(srcTy) &&
++                   targetInfo.supportsCvtPkScalePk8Upcast()
++               ? 8
++               : 4;
+   }
+ 
+   std::optional<SmallVector<Value>> convert(Location loc,
+@@ -1436,7 +1454,7 @@ public:
+       else
+         useTwoStepConversion = true;
+     } else if (isa<Float8E5M2Type>(srcTy)) {
+-      if (isaFamily == ISAFamily::GFX1250)
++      if (targetInfo.supportsCvtPkScalePk8Upcast())
+         return scalePk8UpcastFromFp8<ROCDL::CvtPkScalePk8F32Bf8Op>(loc,
+                                                                    rewriter, v);
+       else if (isaFamily == ISAFamily::CDNA4)
+@@ -1448,8 +1466,8 @@ public:
+ 
+     // BF8 -> FP16 -> FP32
+     if (useTwoStepConversion) {
+-      auto converter = CvtFp8E5M2ToFp16(srcTy, isaFamily, maxElementsPerThread,
+-                                        roundingMode);
++      auto converter = CvtFp8E5M2ToFp16(srcTy, isaFamily, targetInfo,
++                                        maxElementsPerThread, roundingMode);
+       auto result = converter.convert(loc, rewriter, v);
+       assert(result.has_value() && "fp8 to fp16 conversion must be completed");
+       for (Value &v : *result)
+@@ -1462,6 +1480,7 @@ public:
+ 
+ private:
+   Type srcTy;
++  const AMD::TargetInfo &targetInfo;
+ };
+ 
+ class CvtFp16ToFp8E4M3 : public ConverterInterface {
+@@ -2318,10 +2337,10 @@ struct FpToFpOpConversion
+     : public ElementwiseOpConversionBase<triton::FpToFpOp, FpToFpOpConversion> {
+   explicit FpToFpOpConversion(LLVMTypeConverter &typeConverter,
+                               ModuleAxisInfoAnalysis &axisAnalysisPass,
+-                              ISAFamily isaFamily,
++                              const AMD::TargetInfo &targetInfo,
+                               PatternBenefit benefit = patternBenefitDefault)
+       : ElementwiseOpConversionBase(typeConverter, axisAnalysisPass, benefit),
+-        isaFamily(isaFamily) {}
++        targetInfo(targetInfo), isaFamily(targetInfo.getISAFamily()) {}
+ 
+   std::unique_ptr<ConverterInterface>
+   getConverter(Type srcTy, Type dstTy, size_t maxElementsPerThread,
+@@ -2329,32 +2348,32 @@ struct FpToFpOpConversion
+     if ((isa<Float8E4M3FNUZType, Float8E4M3FNType>(srcTy)) &&
+         (isa<Float16Type>(dstTy))) {
+       return std::make_unique<CvtFp8E4M3ToFp16>(
+-          srcTy, isaFamily, maxElementsPerThread, roundingMode);
++          srcTy, isaFamily, targetInfo, maxElementsPerThread, roundingMode);
+     }
+     if ((isa<Float8E5M2FNUZType, Float8E5M2Type>(srcTy)) &&
+         (isa<Float16Type>(dstTy))) {
+       return std::make_unique<CvtFp8E5M2ToFp16>(
+-          srcTy, isaFamily, maxElementsPerThread, roundingMode);
++          srcTy, isaFamily, targetInfo, maxElementsPerThread, roundingMode);
+     }
+     if ((isa<Float8E4M3FNUZType, Float8E4M3FNType>(srcTy)) &&
+         (isa<BFloat16Type>(dstTy))) {
+       return std::make_unique<CvtFp8E4M3ToBf16>(
+-          srcTy, isaFamily, maxElementsPerThread, roundingMode);
++          srcTy, isaFamily, targetInfo, maxElementsPerThread, roundingMode);
+     }
+     if ((isa<Float8E5M2FNUZType, Float8E5M2Type>(srcTy)) &&
+         (isa<BFloat16Type>(dstTy))) {
+       return std::make_unique<CvtFp8E5M2ToBf16>(
+-          srcTy, isaFamily, maxElementsPerThread, roundingMode);
++          srcTy, isaFamily, targetInfo, maxElementsPerThread, roundingMode);
+     }
+     if ((isa<Float8E4M3FNUZType, Float8E4M3FNType>(srcTy)) &&
+         (isa<Float32Type>(dstTy))) {
+       return std::make_unique<CvtFp8E4M3ToFp32>(
+-          srcTy, isaFamily, maxElementsPerThread, roundingMode);
++          srcTy, isaFamily, targetInfo, maxElementsPerThread, roundingMode);
+     }
+     if ((isa<Float8E5M2FNUZType, Float8E5M2Type>(srcTy)) &&
+         (isa<Float32Type>(dstTy))) {
+       return std::make_unique<CvtFp8E5M2ToFp32>(
+-          srcTy, isaFamily, maxElementsPerThread, roundingMode);
++          srcTy, isaFamily, targetInfo, maxElementsPerThread, roundingMode);
+     }
+     if ((isa<Float16Type>(srcTy)) &&
+         (isa<Float8E4M3FNUZType, Float8E4M3FNType>(dstTy))) {
+@@ -2488,6 +2507,7 @@ struct FpToFpOpConversion
+   }
+ 
+ private:
++  const AMD::TargetInfo &targetInfo;
+   ISAFamily isaFamily;
+ };
+ } // namespace
+@@ -2500,7 +2520,7 @@ void populateFpCastOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
+                                     const TargetInfo &targetInfo,
+                                     PatternBenefit benefit) {
+ 
+-  patterns.add<FpToFpOpConversion>(typeConverter, axisInfoAnalysis,
+-                                   targetInfo.getISAFamily(), benefit);
++  patterns.add<FpToFpOpConversion>(typeConverter, axisInfoAnalysis, targetInfo,
++                                   benefit);
+ }
+ } // namespace mlir::triton::AMD
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM.cpp b/third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM.cpp
+index d08e6703e0..cf99fafe93 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM.cpp
+@@ -1,3 +1,4 @@
++#include "TargetInfo.h"
+ #include "Utility.h"
+ #include "triton/Conversion/TritonGPUToLLVM/PatternTritonGPUOpToLLVM.h"
+ #include "triton/Dialect/TritonGPU/IR/Attributes.h"
+@@ -24,18 +25,23 @@ LogicalResult convertScaledMFMA(triton::DotScaledOp op,
+                                 ConversionPatternRewriter &rewriter);
+ 
+ LogicalResult convertWMMA(triton::DotOp op, triton::DotOp::Adaptor adaptor,
++                          const TargetInfo &targetInfo,
+                           const LLVMTypeConverter *typeConverter,
+                           ConversionPatternRewriter &rewriter);
+ 
+ LogicalResult convertScaledWMMA(triton::DotScaledOp op,
+                                 triton::DotScaledOp::Adaptor adaptor,
++                                const TargetInfo &targetInfo,
+                                 const LLVMTypeConverter *typeConverter,
+                                 ConversionPatternRewriter &rewriter);
+ } // namespace mlir::triton::AMD
+ 
+ namespace {
+ struct DotOpConversion : public ConvertOpToLLVMPattern<triton::DotOp> {
+-  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
++  DotOpConversion(LLVMTypeConverter &typeConverter,
++                  const AMD::TargetInfo &targetInfo, PatternBenefit benefit)
++      : ConvertOpToLLVMPattern(typeConverter, benefit), targetInfo(targetInfo) {
++  }
+ 
+   LogicalResult
+   matchAndRewrite(triton::DotOp op, OpAdaptor adaptor,
+@@ -48,7 +54,8 @@ struct DotOpConversion : public ConvertOpToLLVMPattern<triton::DotOp> {
+     // (e.g. swizzled-warp) encodings, so handle it up front and then enforce
+     // the permutation-matrix invariant for all other paths.
+     if (isa<AMDWmmaEncodingAttr>(dEncoding))
+-      return AMD::convertWMMA(op, adaptor, getTypeConverter(), rewriter);
++      return AMD::convertWMMA(op, adaptor, targetInfo, getTypeConverter(),
++                              rewriter);
+ 
+     if (!isPermutationMatrixLayout(toLinearLayout(dType.getShape(), dEncoding)))
+       return rewriter.notifyMatchFailure(op,
+@@ -66,11 +73,18 @@ struct DotOpConversion : public ConvertOpToLLVMPattern<triton::DotOp> {
+     llvm::report_fatal_error(
+         "Unsupported DotOp found when converting TritonGPU to LLVM.");
+   }
++
++private:
++  const AMD::TargetInfo &targetInfo;
+ };
+ 
+ struct ScaledDotOpConversion
+     : public ConvertOpToLLVMPattern<triton::DotScaledOp> {
+-  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
++  ScaledDotOpConversion(LLVMTypeConverter &typeConverter,
++                        const AMD::TargetInfo &targetInfo,
++                        PatternBenefit benefit)
++      : ConvertOpToLLVMPattern(typeConverter, benefit), targetInfo(targetInfo) {
++  }
+ 
+   LogicalResult
+   matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
+@@ -79,7 +93,8 @@ struct ScaledDotOpConversion
+     auto dEncoding = dType.getEncoding();
+ 
+     if (isa<AMDWmmaEncodingAttr>(dEncoding))
+-      return AMD::convertScaledWMMA(op, adaptor, getTypeConverter(), rewriter);
++      return AMD::convertScaledWMMA(op, adaptor, targetInfo, getTypeConverter(),
++                                    rewriter);
+ 
+     if (!isPermutationMatrixLayout(toLinearLayout(dType.getShape(), dEncoding)))
+       return rewriter.notifyMatchFailure(
+@@ -92,6 +107,9 @@ struct ScaledDotOpConversion
+     llvm::report_fatal_error(
+         "Unsupported DotScaleOp found when converting TritonGPU to LLVM.");
+   }
++
++private:
++  const AMD::TargetInfo &targetInfo;
+ };
+ } // namespace
+ 
+@@ -99,8 +117,9 @@ namespace mlir::triton::AMD {
+ void populateDotOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
+                                  RewritePatternSet &patterns,
+                                  ModuleAxisInfoAnalysis &axisInfoAnalysis,
++                                 const TargetInfo &targetInfo,
+                                  PatternBenefit benefit) {
+-  patterns.add<DotOpConversion>(typeConverter, benefit);
+-  patterns.add<ScaledDotOpConversion>(typeConverter, benefit);
++  patterns.add<DotOpConversion>(typeConverter, targetInfo, benefit);
++  patterns.add<ScaledDotOpConversion>(typeConverter, targetInfo, benefit);
+ }
+ } // namespace mlir::triton::AMD
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/WMMA.cpp b/third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/WMMA.cpp
+index 6d9d98ece8..87827e73f0 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/WMMA.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/WMMA.cpp
+@@ -24,6 +24,7 @@
+ #include "mlir/Support/LLVM.h"
+ 
+ #include "../PatternTritonGPUOpToLLVM.h"
++#include "Dialect/TritonAMDGPU/IR/TargetFeatures.h"
+ #include "TritonAMDGPUTransforms/WmmaGroup.h"
+ #include "Utility.h"
+ #include "mlir/Dialect/LLVMIR/ROCDLDialect.h"
+@@ -397,6 +398,7 @@ std::optional<int> findNextM(LinearLayout repLayout, int &reg, int elemsPerVec,
+ 
+ // Conduct the Dot conversion.
+ LogicalResult convertDot(DotOp op, DotOpAdaptor adaptor,
++                         const TargetInfo &targetInfo,
+                          ConversionPatternRewriter &rewriter,
+                          const LLVMTypeConverter *typeConverter) {
+   auto wmmaLayout = cast<AMDWmmaEncodingAttr>(
+@@ -434,6 +436,14 @@ LogicalResult convertDot(DotOp op, DotOpAdaptor adaptor,
+            << "are supported on the current AMD GPU architecture.";
+   }
+ 
++  amdgpu::TargetFeatures targetFeatures(targetInfo.getArch());
++  if (llvm::is_contained(targetFeatures.getUnsupportedWmmaFeatures(),
++                         maybeWmmaIntrinsic->requiredFeature)) {
++    return op.emitError("wmma intrinsic ")
++           << maybeWmmaIntrinsic->name << " is not supported on "
++           << targetFeatures.getArch();
++  }
++
+   unsigned kInstrSize = maybeWmmaIntrinsic->kDim;
+ 
+   intrinsicName = maybeWmmaIntrinsic->name;
+@@ -592,6 +602,7 @@ LogicalResult convertDot(DotOp op, DotOpAdaptor adaptor,
+ //  types
+ LogicalResult convertScaledDot(triton::DotScaledOp op,
+                                triton::DotScaledOp::Adaptor adaptor,
++                               const TargetInfo &targetInfo,
+                                ConversionPatternRewriter &rewriter,
+                                const LLVMTypeConverter *typeConverter) {
+   auto ctx = op.getContext();
+@@ -656,6 +667,14 @@ LogicalResult convertScaledDot(triton::DotScaledOp op,
+               "types are supported on the current AMD GPU architecture.";
+   }
+ 
++  amdgpu::TargetFeatures targetFeatures(targetInfo.getArch());
++  if (llvm::is_contained(targetFeatures.getUnsupportedWmmaFeatures(),
++                         maybeWmmaScaleIntrinsic->requiredFeature)) {
++    return op.emitError("wmma scale intrinsic ")
++           << maybeWmmaScaleIntrinsic->name << " is not supported on "
++           << targetFeatures.getArch();
++  }
++
+   auto kBaseA = maybeWmmaScaleIntrinsic->kBaseA;
+   auto kBaseB = maybeWmmaScaleIntrinsic->kBaseB;
+ 
+@@ -782,6 +801,7 @@ LogicalResult convertScaledDot(triton::DotScaledOp op,
+ } // namespace
+ 
+ LogicalResult convertWMMA(triton::DotOp op, triton::DotOp::Adaptor adaptor,
++                          const TargetInfo &targetInfo,
+                           const LLVMTypeConverter *typeConverter,
+                           ConversionPatternRewriter &rewriter) {
+   auto rankedTType = [](Value tensor) {
+@@ -801,11 +821,12 @@ LogicalResult convertWMMA(triton::DotOp op, triton::DotOp::Adaptor adaptor,
+          cTensorTy.getShape()[1] == dTensorTy.getShape()[1] &&
+          "DotOp's $c operand should pass the same number of values as $d");
+ 
+-  return convertDot(op, adaptor, rewriter, typeConverter);
++  return convertDot(op, adaptor, targetInfo, rewriter, typeConverter);
+ }
+ 
+ LogicalResult convertScaledWMMA(triton::DotScaledOp op,
+                                 triton::DotScaledOp::Adaptor adaptor,
++                                const TargetInfo &targetInfo,
+                                 const LLVMTypeConverter *typeConverter,
+                                 ConversionPatternRewriter &rewriter) {
+   assert(isa<mlir::triton::gpu::LinearEncodingTrait>(
+@@ -823,6 +844,6 @@ LogicalResult convertScaledWMMA(triton::DotScaledOp op,
+          cTensorTy.getShape()[1] == dTensorTy.getShape()[1] &&
+          "DotOp's C operand should pass the same number of values as D.");
+ 
+-  return convertScaledDot(op, adaptor, rewriter, typeConverter);
++  return convertScaledDot(op, adaptor, targetInfo, rewriter, typeConverter);
+ }
+ } // namespace mlir::triton::AMD
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp b/third_party/amd/lib/TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp
+index 446decaac5..3b782aec75 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp
+@@ -32,6 +32,18 @@ using triton::amdgpu::ISAFamily;
+ 
+ namespace {
+ 
++Value emitCtaMulticastMaskIfSupported(RewriterBase &rewriter, Location loc,
++                                      const AMD::TargetInfo &targetInfo,
++                                      const LinearLayout &layout,
++                                      Value ctaId = Value()) {
++  if (!targetInfo.supportsMulticast())
++    return Value();
++  if (!ctaId)
++    ctaId = targetInfo.getClusterCTAId(rewriter, loc);
++  return LLVM::AMD::emitCtaMulticastMask(
++      rewriter, loc, ctaId, layout, targetInfo.getMaxMulticastMaskPopcount());
++}
++
+ std::optional<const char *> getAMDGPUMemScopeStr(MemSyncScope scope) {
+   switch (scope) {
+   case MemSyncScope::GPU:
+@@ -466,10 +478,9 @@ struct DirectToLdsLoadConversionBase : public LoadStoreConversionBase {
+ 
+     // Multicast is only supported for loads
+     Value ctaMulticastMask;
+-    if (isLoad && targetInfo.supportsMultiCTALaunch()) {
+-      ctaMulticastMask = LLVM::AMD::emitCtaMulticastMask(
+-          rewriter, loc, targetInfo.getClusterCTAId(rewriter, loc),
+-          globalLayout, targetInfo.getMaxMulticastMaskPopcount());
++    if (isLoad) {
++      ctaMulticastMask = emitCtaMulticastMaskIfSupported(
++          rewriter, loc, targetInfo, globalLayout);
+     }
+ 
+     auto smemObj = LLVM::getSharedMemoryObjectFromStruct(loc, llShared,
+@@ -584,14 +595,9 @@ struct LoadOpConversion : public ConvertOpToLLVMPattern<triton::LoadOp>,
+           unpackTensorElements(loc, llOther, rewriter, other.getType());
+ 
+     Value multicastMask;
+-    if (targetInfo.supportsMultiCTALaunch()) {
+-      if (auto tensorTy = dyn_cast<RankedTensorType>(ptr.getType())) {
+-        Value clusterCTAId = targetInfo.getClusterCTAId(rewriter, loc);
+-        auto regLayout = triton::gpu::toLinearLayout(tensorTy);
+-        multicastMask = LLVM::AMD::emitCtaMulticastMask(
+-            rewriter, loc, clusterCTAId, regLayout,
+-            targetInfo.getMaxMulticastMaskPopcount());
+-      }
++    if (auto tensorTy = dyn_cast<RankedTensorType>(ptr.getType())) {
++      multicastMask = emitCtaMulticastMaskIfSupported(
++          rewriter, loc, targetInfo, triton::gpu::toLinearLayout(tensorTy));
+     }
+ 
+     // vectorized iteration through all the pointer/mask/other elements
+@@ -1269,12 +1275,8 @@ struct AsyncTDMCopyGlobalToLocalOpConversion
+       padAmount = padEnc.getPaddings()[0];
+     }
+ 
+-    Value multicastMask;
+-    if (targetInfo.supportsMultiCTALaunch()) {
+-      multicastMask = LLVM::AMD::emitCtaMulticastMask(
+-          rewriter, loc, targetInfo.getClusterCTAId(rewriter, loc),
+-          sharedLayout, targetInfo.getMaxMulticastMaskPopcount());
+-    }
++    Value multicastMask = emitCtaMulticastMaskIfSupported(
++        rewriter, loc, targetInfo, sharedLayout);
+ 
+     SmallVector<Value> desc =
+         mlir::LLVM::AMD::unpackTDMDescriptor(rewriter, loc, adaptor.getDesc());
+@@ -1367,10 +1369,8 @@ struct AsyncTDMFusedCopyGlobalToLocalOpConversion
+         m.padInterval = padEnc.getIntervals()[0];
+         m.padAmount = padEnc.getPaddings()[0];
+       }
+-      if (targetInfo.supportsMultiCTALaunch())
+-        m.multicastMask = LLVM::AMD::emitCtaMulticastMask(
+-            rewriter, loc, ctaId, m.sharedLayout,
+-            targetInfo.getMaxMulticastMaskPopcount());
++      m.multicastMask = emitCtaMulticastMaskIfSupported(
++          rewriter, loc, targetInfo, m.sharedLayout, ctaId);
+ 
+       m.sharedEncoding = enc;
+       m.shapePerCTA =
+@@ -1651,14 +1651,8 @@ struct AsyncTDMGatherOpConversion
+     auto ctaId = targetInfo.getClusterCTAId(rewriter, loc);
+     int numWarps = triton::gpu::lookupNumWarps(op);
+ 
+-    Value multicastMask;
+-    if (targetInfo.supportsMultiCTALaunch()) {
+-      // Use the sharedLayout to compute the multicast mask because the index
+-      // layout only describes rows and misses information about columns.
+-      multicastMask = LLVM::AMD::emitCtaMulticastMask(
+-          rewriter, loc, ctaId, sharedLayout,
+-          targetInfo.getMaxMulticastMaskPopcount());
+-    }
++    Value multicastMask = emitCtaMulticastMaskIfSupported(
++        rewriter, loc, targetInfo, sharedLayout, ctaId);
+ 
+     if (failed(mlir::LLVM::AMD::emitTDMGatherScatter(
+             rewriter, loc, getTypeConverter(), desc, shapePerCTA, padInterval,
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/PatternTritonGPUOpToLLVM.h b/third_party/amd/lib/TritonAMDGPUToLLVM/PatternTritonGPUOpToLLVM.h
+index 281b6f844a..1643dacf6e 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/PatternTritonGPUOpToLLVM.h
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/PatternTritonGPUOpToLLVM.h
+@@ -20,6 +20,7 @@ void populateMemoryOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
+ void populateDotOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
+                                  RewritePatternSet &patterns,
+                                  ModuleAxisInfoAnalysis &axisInfoAnalysis,
++                                 const TargetInfo &targetInfo,
+                                  PatternBenefit benefit);
+ void populateElementwiseOpToLLVMPatterns(
+     LLVMTypeConverter &typeConverter, RewritePatternSet &patterns, bool ftz,
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.cpp b/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.cpp
+index 102f0fe2f4..34d1bc9a84 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.cpp
+@@ -749,6 +749,10 @@ bool TargetInfo::supportsMultiCTALaunch() const {
+   return targetFeatures.supportsMultiCTALaunch();
+ }
+ 
++bool TargetInfo::supportsMulticast() const {
++  return targetFeatures.supportsMulticast();
++}
++
+ unsigned TargetInfo::getMaxMulticastMaskPopcount() const {
+   return targetFeatures.getMaxMulticastMaskPopcount();
+ }
+@@ -795,6 +799,14 @@ bool TargetInfo::supportsCvtPkScalePk8() const {
+   return targetFeatures.supportsCvtPkScalePk8();
+ }
+ 
++bool TargetInfo::supportsCvtPkScalePk8Upcast() const {
++  return targetFeatures.supportsCvtPkScalePk8Upcast();
++}
++
++bool TargetInfo::supportsCvtPkScalePk8Block16() const {
++  return targetFeatures.supportsCvtPkScalePk8Block16();
++}
++
+ bool TargetInfo::supportsHwScaledUpcast() const {
+   return targetFeatures.supportsHwScaledUpcast();
+ }
+@@ -813,6 +825,10 @@ bool TargetInfo::supportDppBroadcast() const {
+   return targetFeatures.supportDppBroadcast();
+ }
+ 
++bool TargetInfo::isGFX1250Strict() const {
++  return targetFeatures.isGFX1250Strict();
++}
++
+ std::pair<mlir::triton::gpu::LocalMemOpTile, mlir::triton::gpu::LocalMemOpTile>
+ TargetInfo::getSharedLdStTiles(int32_t vecBitwidth) const {
+   switch (getISAFamily()) {
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h b/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h
+index 9e237a7e92..02280c9e13 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h
+@@ -14,6 +14,7 @@ public:
+   llvm::AMDGPU::IsaVersion getIsaVersion() const;
+ 
+   StringRef getArch() const { return targetFeatures.getArch(); }
++  StringRef getBaseArch() const { return targetFeatures.getBaseArch(); }
+   amdgpu::ISAFamily getISAFamily() const {
+     return targetFeatures.getISAFamily();
+   }
+@@ -32,6 +33,8 @@ public:
+ 
+   bool supportDppBroadcast() const;
+ 
++  bool isGFX1250Strict() const;
++
+   Value getClusterCTAId(RewriterBase &rewriter, Location loc) const override;
+ 
+   Value ballot(RewriterBase &rewriter, Location loc, Type type,
+@@ -123,6 +126,7 @@ public:
+   bool useAsyncMarks() const;
+ 
+   bool supportsMultiCTALaunch() const;
++  bool supportsMulticast() const;
+   unsigned getMaxMulticastMaskPopcount() const;
+   bool supportsTDM() const;
+   bool supportsClusterLoadBitWidth(int biwWidth) const;
+@@ -148,6 +152,8 @@ public:
+   bool supportsWaveId() const;
+   bool supportsPermlaneSwap() const;
+   bool supportsCvtPkScalePk8() const;
++  bool supportsCvtPkScalePk8Upcast() const;
++  bool supportsCvtPkScalePk8Block16() const;
+   bool supportsHwScaledUpcast() const;
+   bool supportsHwScaledDowncast() const;
+ 
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/TritonGPUToLLVM.cpp b/third_party/amd/lib/TritonAMDGPUToLLVM/TritonGPUToLLVM.cpp
+index 7c86d003ba..833cbd92ed 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/TritonGPUToLLVM.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/TritonGPUToLLVM.cpp
+@@ -168,7 +168,7 @@ struct ConvertTritonAMDGPUToLLVM
+     mlir::triton::populateConvertLayoutOpToLLVMPatterns(
+         typeConverter, targetInfo, patterns, commonBenefit);
+     AMD::populateDotOpToLLVMPatterns(typeConverter, patterns, axisInfoAnalysis,
+-                                     AMDBenefit);
++                                     targetInfo, AMDBenefit);
+     AMD::populateElementwiseOpToLLVMPatterns(typeConverter, patterns, ftz,
+                                              axisInfoAnalysis, allocation,
+                                              targetInfo, AMDBenefit);
+@@ -223,7 +223,7 @@ struct ConvertTritonAMDGPUToLLVM
+                                                      patterns, commonBenefit);
+ 
+     FailureOr<mlir::amdgpu::Chipset> maybeChipset =
+-        mlir::amdgpu::Chipset::parse(this->gfxArch);
++        mlir::amdgpu::Chipset::parse(targetInfo.getBaseArch());
+     if (failed(maybeChipset)) {
+       emitError(UnknownLoc::get(&getContext()),
+                 "Invalid AMDGPU chipset name: " + this->gfxArch);
+diff --git a/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp b/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp
+index 6b55294eed..a76665d898 100644
+--- a/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp
++++ b/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp
+@@ -28,6 +28,7 @@ namespace mlir {
+ 
+ namespace {
+ using triton::amdgpu::ISAFamily;
++using triton::amdgpu::kWmmaRestrictedInstsFeature;
+ using triton::amdgpu::TargetFeatures;
+ 
+ constexpr char AttrDecomposedDotScaledSource[] =
+@@ -337,8 +338,9 @@ selectMatrixCoreOperandTypes(tt::DotOp dot,
+   return optTypes;
+ }
+ 
+-OperandTypesVector getOperandTypesForWmmaOp(PatternRewriter &rewriter,
+-                                            tt::DotOp dot, int version) {
++OperandTypesVector
++getOperandTypesForWmmaOp(PatternRewriter &rewriter, tt::DotOp dot, int version,
++                         ArrayRef<StringRef> unsupportedFeatures) {
+   Type f16 = rewriter.getF16Type();
+   Type f32 = rewriter.getF32Type();
+   Type bf16 = rewriter.getBF16Type();
+@@ -374,6 +376,13 @@ OperandTypesVector getOperandTypesForWmmaOp(PatternRewriter &rewriter,
+         // clang-format on
+     });
+   }
++  unsigned inputKDim = dot.getA().getType().getShape().back();
++  llvm::erase_if(applicableTypes, [&](const OperandTypesVector &types) {
++    auto intrinsic =
++        WmmaIntrinsic::selectFor(version, 16, 16, inputKDim, types[0], types[1],
++                                 types[2], unsupportedFeatures);
++    return failed(intrinsic);
++  });
+   return selectMatrixCoreOperandTypes(dot, applicableTypes);
+ }
+ 
+@@ -864,9 +873,10 @@ public:
+     RankedTensorType resultType =
+         getScaledUpcastResultType(vType, computeType, kDim, isFp4, loc);
+ 
+-    // Mark scale to simplify pattern matching during deducing TilesPerWarp
+-    scale.getDefiningOp()->setAttr(AttrDecomposedDotScaledSource,
+-                                   BoolAttr::get(rewriter.getContext(), true));
++    if (Operation *scaleOp = scale.getDefiningOp()) {
++      scaleOp->setAttr(AttrDecomposedDotScaledSource,
++                       BoolAttr::get(rewriter.getContext(), true));
++    }
+ 
+     Value reshapeScale;
+     if (targetFeatures.supportsCvtPkScalePk8()) {
+@@ -1127,11 +1137,14 @@ public:
+ class ScaledBlockedToScaledWMMAF8F6F4 final
+     : public OpRewritePattern<triton::DotScaledOp> {
+   int wmmaVersion;
++  SmallVector<StringRef> unsupportedFeatures;
+ 
+ public:
+   ScaledBlockedToScaledWMMAF8F6F4(MLIRContext *context, int wmmaVersion,
++                                  ArrayRef<StringRef> unsupportedFeatures,
+                                   PatternBenefit benefit = 1)
+-      : OpRewritePattern(context, benefit), wmmaVersion(wmmaVersion) {}
++      : OpRewritePattern(context, benefit), wmmaVersion(wmmaVersion),
++        unsupportedFeatures(unsupportedFeatures) {}
+ 
+   LogicalResult matchAndRewrite(triton::DotScaledOp dotOp,
+                                 PatternRewriter &rewriter) const override {
+@@ -1141,6 +1154,11 @@ public:
+       return rewriter.notifyMatchFailure(
+           dotOp, "F8F6F4 scaled dot is only natively supported on gfx1250");
+     }
++    if (llvm::is_contained(unsupportedFeatures, kWmmaRestrictedInstsFeature)) {
++      return rewriter.notifyMatchFailure(
++          dotOp, "scaled wmma instructions are not supported on this "
++                 "architecture");
++    }
+ 
+     RankedTensorType oldRetType = dotOp.getType();
+     if (!isa_and_nonnull<BlockedEncodingAttr>(oldRetType.getEncoding())) {
+@@ -1418,18 +1436,19 @@ static void decomposeMixedModeDotOp(ModuleOp mod) {
+   });
+ }
+ 
+-FailureOr<WmmaIntrinsic> chooseWmmaInstruction(Location loc, int wmmaVersion,
+-                                               RankedTensorType cType,
+-                                               Type aElemType, Type bElemType,
+-                                               Type cElemType, int inputKSize) {
++FailureOr<WmmaIntrinsic>
++chooseWmmaInstruction(Location loc, int wmmaVersion, RankedTensorType cType,
++                      Type aElemType, Type bElemType, Type cElemType,
++                      int inputKSize, ArrayRef<StringRef> unsupportedFeatures) {
+   // number of matrix elements along k dim per one WMMA instruction
+   unsigned kDim = 0;
+ 
+   unsigned mDim = 16;
+   unsigned nDim = 16;
+ 
+-  FailureOr<WmmaIntrinsic> maybeWmmaIntrinsic = WmmaIntrinsic::selectFor(
+-      wmmaVersion, mDim, nDim, inputKSize, aElemType, bElemType, cElemType);
++  FailureOr<WmmaIntrinsic> maybeWmmaIntrinsic =
++      WmmaIntrinsic::selectFor(wmmaVersion, mDim, nDim, inputKSize, aElemType,
++                               bElemType, cElemType, unsupportedFeatures);
+   if (failed(maybeWmmaIntrinsic))
+     return emitError(loc, "no matching matrix core intrinsic ")
+            << "for wmma version " << wmmaVersion << " with instruction shape ["
+@@ -1444,22 +1463,27 @@ FailureOr<WmmaIntrinsic> chooseWmmaInstruction(Location loc, int wmmaVersion,
+   return maybeWmmaIntrinsic;
+ }
+ 
+-FailureOr<WmmaIntrinsic> chooseWmmaInstruction(tt::DotOp dot,
+-                                               OperandTypesVector operandTypes,
+-                                               int wmmaVersion) {
++FailureOr<WmmaIntrinsic>
++chooseWmmaInstruction(tt::DotOp dot, OperandTypesVector operandTypes,
++                      int wmmaVersion,
++                      ArrayRef<StringRef> unsupportedFeatures) {
+ 
+   return chooseWmmaInstruction(
+       dot.getLoc(), wmmaVersion, dot.getC().getType(), operandTypes[0],
+-      operandTypes[1], operandTypes[2], dot.getA().getType().getShape().back());
++      operandTypes[1], operandTypes[2], dot.getA().getType().getShape().back(),
++      unsupportedFeatures);
+ }
+ 
+ class BlockedToWMMA : public OpRewritePattern<tt::DotOp> {
+   int wmmaVersion;
++  SmallVector<StringRef> unsupportedFeatures;
+ 
+ public:
+   BlockedToWMMA(MLIRContext *context, int wmmaVersion, int nonKDim,
++                ArrayRef<StringRef> unsupportedFeatures,
+                 PatternBenefit benefit = 1)
+-      : OpRewritePattern(context, benefit), wmmaVersion(wmmaVersion) {}
++      : OpRewritePattern(context, benefit), wmmaVersion(wmmaVersion),
++        unsupportedFeatures(unsupportedFeatures) {}
+ 
+   LogicalResult matchAndRewrite(tt::DotOp dotOp,
+                                 PatternRewriter &rewriter) const override {
+@@ -1481,7 +1505,8 @@ public:
+     auto bShape = oldBType.getShape();
+ 
+     // get operand types
+-    auto operandTypes = getOperandTypesForWmmaOp(rewriter, dotOp, wmmaVersion);
++    auto operandTypes = getOperandTypesForWmmaOp(rewriter, dotOp, wmmaVersion,
++                                                 unsupportedFeatures);
+     if (operandTypes.empty())
+       return rewriter.notifyMatchFailure(
+           dotOp, "failed to get operands types for wmma op");
+@@ -1492,8 +1517,8 @@ public:
+                                          "Skipping WMMA for dot op with K=1");
+     }
+     // check shape
+-    FailureOr<WmmaIntrinsic> wmmaInstr =
+-        chooseWmmaInstruction(dotOp, operandTypes, wmmaVersion);
++    FailureOr<WmmaIntrinsic> wmmaInstr = chooseWmmaInstruction(
++        dotOp, operandTypes, wmmaVersion, unsupportedFeatures);
+     if (failed(wmmaInstr)) {
+       return rewriter.notifyMatchFailure(
+           dotOp, "Unable to choose WMMA intrinsic for dot operation.");
+@@ -1552,7 +1577,7 @@ public:
+     // kWidth is always equals to kBase for WMMA v1/2
+     auto kWidth = kBase;
+     if (wmmaVersion == 3) {
+-      const bool isF32 = oldAType.getElementType().isF32();
++      const bool isF32 = operandTypes[0].isF32();
+       // kBase always consits of several groups of 8 elments except F32 case
+       kWidth = isF32 ? 2 : 8;
+     }
+@@ -1776,13 +1801,16 @@ struct TritonAMDGPUAccelerateMatmulPass
+     TargetFeatures targetFeatures{llvm::StringRef(gfxArch)};
+     auto isaFamily = targetFeatures.getISAFamily();
+     unsigned wmmaVersion = getWmmaVersion(isaFamily);
++    ArrayRef<StringRef> unsupportedWmmaFeatures =
++        targetFeatures.getUnsupportedWmmaFeatures();
+     switch (isaFamily) {
+     case ISAFamily::GFX1250:
+-      mfmaPatterns.add<ScaledBlockedToScaledWMMAF8F6F4>(context, wmmaVersion,
+-                                                        /*benefit=*/4);
++      mfmaPatterns.add<ScaledBlockedToScaledWMMAF8F6F4>(
++          context, wmmaVersion, unsupportedWmmaFeatures, /*benefit=*/4);
+       mfmaPatterns.add<::DecomposeAMDScaledBlocked>(context, targetFeatures,
+                                                     /*benefit=*/3);
+-      mfmaPatterns.add<BlockedToWMMA>(context, wmmaVersion, 16, /*benefit=*/2);
++      mfmaPatterns.add<BlockedToWMMA>(context, wmmaVersion, 16,
++                                      unsupportedWmmaFeatures, /*benefit=*/2);
+       break;
+     case ISAFamily::CDNA4:
+       mfmaPatterns.add<::ScaledBlockedToScaledMFMAF8F6F4>(
+@@ -1805,6 +1833,7 @@ struct TritonAMDGPUAccelerateMatmulPass
+                                                   /*benefit=*/3);
+       mfmaPatterns.add<::BlockedToWMMA>(context, wmmaVersion,
+                                         matrixInstructionSize,
++                                        unsupportedWmmaFeatures,
+                                         /*benefit=*/2);
+       break;
+     default:
+diff --git a/third_party/amd/lib/TritonAMDGPUTransforms/WmmaGroup.cpp b/third_party/amd/lib/TritonAMDGPUTransforms/WmmaGroup.cpp
+index 40c62d6f96..ceba637135 100644
+--- a/third_party/amd/lib/TritonAMDGPUTransforms/WmmaGroup.cpp
++++ b/third_party/amd/lib/TritonAMDGPUTransforms/WmmaGroup.cpp
+@@ -1,4 +1,5 @@
+ #include "TritonAMDGPUTransforms/WmmaGroup.h"
++#include "Dialect/TritonAMDGPU/IR/TargetFeatures.h"
+ #include "mlir/IR/Builders.h"
+ #include "mlir/IR/BuiltinTypes.h"
+ #include "llvm/ADT/DenseMap.h"
+@@ -6,6 +7,8 @@
+ #include <tuple>
+ 
+ namespace mlir {
++using triton::amdgpu::kWmmaRestrictedInstsFeature;
++
+ namespace {
+ 
+ //===----------------------------------------------------------------------===//
+@@ -27,8 +30,12 @@ using WmmaKey =
+ // WMMA intrinsic map
+ //===----------------------------------------------------------------------===//
+ 
+-using WmmaMapValue =
+-    std::tuple<StringRef /*symbol*/, unsigned /*kDim*/, unsigned /*kBase*/>;
++struct WmmaMapValue {
++  StringRef symbol;
++  unsigned kDim;
++  unsigned kBase;
++  StringRef requiredFeature;
++};
+ using WmmaMap = llvm::DenseMap<WmmaKey, SmallVector<WmmaMapValue, 2>>;
+ 
+ class WmmaDatabase {
+@@ -47,11 +54,15 @@ private:
+ WmmaDatabase::WmmaDatabase(MLIRContext *context) {
+ // Macro for defining WMMA intrinsics at a specific gfx version.
+ #define TRITON_WMMA_v(v, m, n, aET, bET, opW, dET, symbol, k, kBase)           \
++  TRITON_WMMA_v_feature(v, m, n, aET, bET, opW, dET, symbol, k, kBase, "")
++
++#define TRITON_WMMA_v_feature(v, m, n, aET, bET, opW, dET, symbol, k, kBase,   \
++                              feature)                                         \
+   {                                                                            \
+     /*key=*/                                                                   \
+     {v, m, n, aET.getTypeID(), bET.getTypeID(), opW, dET.getTypeID()},         \
+     /*value=*/{                                                                \
+-      {symbol, k, kBase},                                                      \
++      {symbol, k, kBase, feature},                                             \
+     }                                                                          \
+   }
+ 
+@@ -59,11 +70,17 @@ WmmaDatabase::WmmaDatabase(MLIRContext *context) {
+ // different K. Order matters here: case1 will be preferred to case2.
+ #define TRITON_WMMA_v_2case(v, m, n, aET, bET, opW, dET, symbol1, k1, kBase1,  \
+                             symbol2, k2, kBase2)                               \
++  TRITON_WMMA_v_2case_feature(v, m, n, aET, bET, opW, dET, symbol1, k1,        \
++                              kBase1, "", symbol2, k2, kBase2, "")
++
++#define TRITON_WMMA_v_2case_feature(v, m, n, aET, bET, opW, dET, symbol1, k1,  \
++                                    kBase1, feature1, symbol2, k2, kBase2,     \
++                                    feature2)                                  \
+   {                                                                            \
+     /*key=*/                                                                   \
+     {v, m, n, aET.getTypeID(), bET.getTypeID(), opW, dET.getTypeID()},         \
+     /*value=*/{                                                                \
+-      {symbol1, k1, kBase1}, {symbol2, k2, kBase2},                            \
++      {symbol1, k1, kBase1, feature1}, {symbol2, k2, kBase2, feature2},        \
+     }                                                                          \
+   }
+ 
+@@ -96,8 +113,9 @@ WmmaDatabase::WmmaDatabase(MLIRContext *context) {
+       TRITON_WMMA_v(2, 16, 16, f16T, f16T, 16, f32T,
+                     "llvm.amdgcn.wmma.f32.16x16x16.f16", 16, 8),
+       // wmma_f32_16x16x32_f16
+-      TRITON_WMMA_v(3, 16, 16, f16T, f16T, 16, f32T,
+-                    "llvm.amdgcn.wmma.f32.16x16x32.f16", 32, 16),
++      TRITON_WMMA_v_feature(3, 16, 16, f16T, f16T, 16, f32T,
++                            "llvm.amdgcn.wmma.f32.16x16x32.f16", 32, 16,
++                            kWmmaRestrictedInstsFeature),
+       // wmma_f16_16x16x16_f16
+       TRITON_WMMA_v(1, 16, 16, f16T, f16T, 16, f16T,
+                     "llvm.amdgcn.wmma.f16.16x16x16.f16", 16, 16),
+@@ -111,8 +129,9 @@ WmmaDatabase::WmmaDatabase(MLIRContext *context) {
+       TRITON_WMMA_v(2, 16, 16, bf16T, bf16T, 16, f32T,
+                     "llvm.amdgcn.wmma.f32.16x16x16.bf16", 16, 8),
+       // wmma_f32_16x16x32_bf16
+-      TRITON_WMMA_v(3, 16, 16, bf16T, bf16T, 16, f32T,
+-                    "llvm.amdgcn.wmma.f32.16x16x32.bf16", 32, 16),
++      TRITON_WMMA_v_feature(3, 16, 16, bf16T, bf16T, 16, f32T,
++                            "llvm.amdgcn.wmma.f32.16x16x32.bf16", 32, 16,
++                            kWmmaRestrictedInstsFeature),
+       // wmma_bf16_16x16x16_bf16
+       TRITON_WMMA_v(1, 16, 16, bf16T, bf16T, 16, bf16T,
+                     "llvm.amdgcn.wmma.bf16.16x16x16.bf16", 16, 16),
+@@ -124,30 +143,38 @@ WmmaDatabase::WmmaDatabase(MLIRContext *context) {
+       TRITON_WMMA_v(2, 16, 16, ocpFp8T, ocpFp8T, 8, f32T,
+                     "llvm.amdgcn.wmma.f32.16x16x16.fp8.fp8", 16, 8),
+       // wmma_f32_16x16x128_fp8_fp8 & wmma_f32_16x16x64_fp8_fp8
+-      TRITON_WMMA_v_2case(3, 16, 16, ocpFp8T, ocpFp8T, 8, f32T,
+-                          "llvm.amdgcn.wmma.f32.16x16x128.fp8.fp8", 128, 64,
+-                          "llvm.amdgcn.wmma.f32.16x16x64.fp8.fp8", 64, 32),
++      TRITON_WMMA_v_2case_feature(3, 16, 16, ocpFp8T, ocpFp8T, 8, f32T,
++                                  "llvm.amdgcn.wmma.f32.16x16x128.fp8.fp8", 128,
++                                  64, kWmmaRestrictedInstsFeature,
++                                  "llvm.amdgcn.wmma.f32.16x16x64.fp8.fp8", 64,
++                                  32, kWmmaRestrictedInstsFeature),
+       // wmma_f32_16x16x16_fp8_bf8
+       TRITON_WMMA_v(2, 16, 16, ocpFp8T, ocpBf8T, 8, f32T,
+                     "llvm.amdgcn.wmma.f32.16x16x16.fp8.bf8", 16, 8),
+       // wmma_f32_16x16x128_fp8_bf8 & wmma_f32_16x16x64_fp8_bf8
+-      TRITON_WMMA_v_2case(3, 16, 16, ocpFp8T, ocpBf8T, 8, f32T,
+-                          "llvm.amdgcn.wmma.f32.16x16x128.fp8.bf8", 128, 64,
+-                          "llvm.amdgcn.wmma.f32.16x16x64.fp8.bf8", 64, 32),
++      TRITON_WMMA_v_2case_feature(3, 16, 16, ocpFp8T, ocpBf8T, 8, f32T,
++                                  "llvm.amdgcn.wmma.f32.16x16x128.fp8.bf8", 128,
++                                  64, kWmmaRestrictedInstsFeature,
++                                  "llvm.amdgcn.wmma.f32.16x16x64.fp8.bf8", 64,
++                                  32, kWmmaRestrictedInstsFeature),
+       // wmma_f32_16x16x16_bf8_fp8
+       TRITON_WMMA_v(2, 16, 16, ocpBf8T, ocpFp8T, 8, f32T,
+                     "llvm.amdgcn.wmma.f32.16x16x16.bf8.fp8", 16, 8),
+       // wmma_f32_16x16x128_bf8_fp8 & wmma_f32_16x16x64_bf8_fp8
+-      TRITON_WMMA_v_2case(3, 16, 16, ocpBf8T, ocpFp8T, 8, f32T,
+-                          "llvm.amdgcn.wmma.f32.16x16x128.bf8.fp8", 128, 64,
+-                          "llvm.amdgcn.wmma.f32.16x16x64.bf8.fp8", 64, 32),
++      TRITON_WMMA_v_2case_feature(3, 16, 16, ocpBf8T, ocpFp8T, 8, f32T,
++                                  "llvm.amdgcn.wmma.f32.16x16x128.bf8.fp8", 128,
++                                  64, kWmmaRestrictedInstsFeature,
++                                  "llvm.amdgcn.wmma.f32.16x16x64.bf8.fp8", 64,
++                                  32, kWmmaRestrictedInstsFeature),
+       // wmma_f32_16x16x16_bf8_bf8
+       TRITON_WMMA_v(2, 16, 16, ocpBf8T, ocpBf8T, 8, f32T,
+                     "llvm.amdgcn.wmma.f32.16x16x16.bf8.bf8", 16, 8),
+       // wmma_f32_16x16x128_bf8_bf8 & wmma_f32_16x16x64_bf8_bf8
+-      TRITON_WMMA_v_2case(3, 16, 16, ocpBf8T, ocpBf8T, 8, f32T,
+-                          "llvm.amdgcn.wmma.f32.16x16x128.bf8.bf8", 128, 64,
+-                          "llvm.amdgcn.wmma.f32.16x16x64.bf8.bf8", 64, 32),
++      TRITON_WMMA_v_2case_feature(3, 16, 16, ocpBf8T, ocpBf8T, 8, f32T,
++                                  "llvm.amdgcn.wmma.f32.16x16x128.bf8.bf8", 128,
++                                  64, kWmmaRestrictedInstsFeature,
++                                  "llvm.amdgcn.wmma.f32.16x16x64.bf8.bf8", 64,
++                                  32, kWmmaRestrictedInstsFeature),
+ 
+       // iu8 inputs
+       // wmma_i32_16x16x16_iu8
+@@ -155,8 +182,9 @@ WmmaDatabase::WmmaDatabase(MLIRContext *context) {
+                     "llvm.amdgcn.wmma.i32.16x16x16.iu8", 16, 16),
+       TRITON_WMMA_v(2, 16, 16, i8T, i8T, 8, i32T,
+                     "llvm.amdgcn.wmma.i32.16x16x16.iu8", 16, 8),
+-      TRITON_WMMA_v(3, 16, 16, i8T, i8T, 8, i32T,
+-                    "llvm.amdgcn.wmma.i32.16x16x64.iu8", 64, 32),
++      TRITON_WMMA_v_feature(3, 16, 16, i8T, i8T, 8, i32T,
++                            "llvm.amdgcn.wmma.i32.16x16x64.iu8", 64, 32,
++                            kWmmaRestrictedInstsFeature),
+ 
+       // iu4 inputs
+       // wmma_i32_16x16x16_iu4
+@@ -178,7 +206,8 @@ WmmaDatabase::WmmaDatabase(MLIRContext *context) {
+ FailureOr<WmmaIntrinsic>
+ WmmaIntrinsic::selectFor(int version, unsigned mDim, unsigned nDim,
+                          unsigned inputKDim, Type aElemType, Type bElemType,
+-                         Type dElemType) {
++                         Type dElemType,
++                         ArrayRef<StringRef> unsupportedFeatures) {
+ 
+   const WmmaMap &wmmaMap = WmmaDatabase::get(aElemType.getContext());
+   WmmaKey key = {version,
+@@ -193,20 +222,25 @@ WmmaIntrinsic::selectFor(int version, unsigned mDim, unsigned nDim,
+   if (it == wmmaMap.end())
+     return failure();
+ 
+-  const SmallVector<WmmaMapValue, 2> &values = it->second;
++  SmallVector<WmmaMapValue, 2> values(it->second);
++  llvm::erase_if(values, [&](const WmmaMapValue &val) {
++    return llvm::is_contained(unsupportedFeatures, val.requiredFeature);
++  });
++  if (values.empty())
++    return failure();
+ 
+   // If We have more than one instrinsics, prefer those with a larger K.
+-  for (const auto [symbol, k, kBase] : llvm::drop_end(values)) {
++  for (const auto [symbol, k, kBase, feature] : llvm::drop_end(values)) {
+     if (inputKDim >= k)
+       return WmmaIntrinsic(symbol, mDim, nDim, k, kBase, aElemType, bElemType,
+-                           dElemType);
++                           dElemType, feature);
+   }
+ 
+   // We always have one choice--the only / smallest-K intrinsic.
+-  auto [symbol, k, kBase] = values.back();
++  auto [symbol, k, kBase, feature] = values.back();
+ 
+   return WmmaIntrinsic(symbol, mDim, nDim, k, kBase, aElemType, bElemType,
+-                       dElemType);
++                       dElemType, feature);
+ }
+ 
+ FailureOr<WmmaIntrinsic> WmmaIntrinsic::get(int version, unsigned mDim,
+@@ -228,14 +262,14 @@ FailureOr<WmmaIntrinsic> WmmaIntrinsic::get(int version, unsigned mDim,
+ 
+   const SmallVector<WmmaMapValue, 2> &values = it->second;
+   auto match = llvm::find_if(values, [&](const WmmaMapValue &val) {
+-    return std::get<1>(val) == kDim;
++    return val.kDim == kDim;
+   });
+   if (match == values.end())
+     return failure();
+ 
+-  auto [symbol, k, kBase] = *match;
++  auto [symbol, k, kBase, feature] = *match;
+   return WmmaIntrinsic(symbol, mDim, nDim, k, kBase, aElemType, bElemType,
+-                       dElemType);
++                       dElemType, feature);
+ }
+ 
+ //===----------------------------------------------------------------------===//
+@@ -247,7 +281,11 @@ using WmmaScaleKey =
+                TypeID /*dElemType*/, unsigned /*isScale16*/,
+                WmmaScaleIntrinsic::IntrinsicFamily>;
+ 
+-using WmmaScaleMapValue = std::tuple<StringRef /*symbol*/, unsigned /*kDim*/>;
++struct WmmaScaleMapValue {
++  StringRef symbol;
++  unsigned kDim;
++  StringRef requiredFeature;
++};
+ using WmmaScaleMap =
+     llvm::DenseMap<WmmaScaleKey, SmallVector<WmmaScaleMapValue, 4>>;
+ 
+@@ -267,10 +305,15 @@ private:
+ WmmaScaleDatabase::WmmaScaleDatabase(MLIRContext *context) {
+ #define TRITON_WMMA_SCALE_v(v, m, n, dET, isScale16, intrinsicFamily, symbol,  \
+                             kDim)                                              \
++  TRITON_WMMA_SCALE_v_feature(v, m, n, dET, isScale16, intrinsicFamily,        \
++                              symbol, kDim, "")
++
++#define TRITON_WMMA_SCALE_v_feature(v, m, n, dET, isScale16, intrinsicFamily,  \
++                                    symbol, kDim, feature)                     \
+   {                                                                            \
+     /*key=*/{v, m, n, dET.getTypeID(), unsigned(isScale16), intrinsicFamily},  \
+     /*value=*/{                                                                \
+-      {symbol, kDim},                                                          \
++      {symbol, kDim, feature},                                                 \
+     }                                                                          \
+   }
+   Builder b(context);
+@@ -278,18 +321,23 @@ WmmaScaleDatabase::WmmaScaleDatabase(MLIRContext *context) {
+ 
+   // Reference: llvm/include/llvm/IR/IntrinsicsAMDGPU.td
+   wmmaScaleMap = {
+-      TRITON_WMMA_SCALE_v(3, 16, 16, f32T, 0u /*isScale16*/,
+-                          WmmaScaleIntrinsic::IntrinsicFamily::F8F6F4,
+-                          "llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4", 128),
+-      TRITON_WMMA_SCALE_v(3, 16, 16, f32T, 1u /*isScale16*/,
+-                          WmmaScaleIntrinsic::IntrinsicFamily::F8F6F4,
+-                          "llvm.amdgcn.wmma.scale16.f32.16x16x128.f8f6f4", 128),
+-      TRITON_WMMA_SCALE_v(3, 32, 16, f32T, 0u /*isScale16*/,
+-                          WmmaScaleIntrinsic::IntrinsicFamily::F4,
+-                          "llvm.amdgcn.wmma.scale.f32.32x16x128.f4", 128),
+-      TRITON_WMMA_SCALE_v(3, 32, 16, f32T, 1u,
+-                          WmmaScaleIntrinsic::IntrinsicFamily::F4,
+-                          "llvm.amdgcn.wmma.scale16.f32.32x16x128.f4", 128),
++      TRITON_WMMA_SCALE_v_feature(3, 16, 16, f32T, 0u /*isScale16*/,
++                                  WmmaScaleIntrinsic::IntrinsicFamily::F8F6F4,
++                                  "llvm.amdgcn.wmma.scale.f32.16x16x128.f8f6f4",
++                                  128, kWmmaRestrictedInstsFeature),
++      TRITON_WMMA_SCALE_v_feature(
++          3, 16, 16, f32T, 1u /*isScale16*/,
++          WmmaScaleIntrinsic::IntrinsicFamily::F8F6F4,
++          "llvm.amdgcn.wmma.scale16.f32.16x16x128.f8f6f4", 128,
++          kWmmaRestrictedInstsFeature),
++      TRITON_WMMA_SCALE_v_feature(3, 32, 16, f32T, 0u /*isScale16*/,
++                                  WmmaScaleIntrinsic::IntrinsicFamily::F4,
++                                  "llvm.amdgcn.wmma.scale.f32.32x16x128.f4",
++                                  128, kWmmaRestrictedInstsFeature),
++      TRITON_WMMA_SCALE_v_feature(3, 32, 16, f32T, 1u,
++                                  WmmaScaleIntrinsic::IntrinsicFamily::F4,
++                                  "llvm.amdgcn.wmma.scale16.f32.32x16x128.f4",
++                                  128, kWmmaRestrictedInstsFeature),
+   };
+ }
+ 
+@@ -334,13 +382,13 @@ WmmaScaleIntrinsic::get(int version, unsigned mDim, unsigned nDim,
+ 
+   auto &values = it->second;
+   assert(values.size() == 1);
+-  auto [symbol, kDim] = values.back();
++  auto [symbol, kDim, feature] = values.back();
+   auto [kBaseA, kBaseB] =
+       kBaseForWmmaScale(aElemType, bElemType, mDim, nDim, kDim);
+   // On asymmetric and transposed we swap the operands, layouts and kBase.
+   if (isTransposed && mDim != nDim)
+     std::swap(kBaseA, kBaseB);
+-  return WmmaScaleIntrinsic(symbol, mDim, nDim, kDim, kBaseA, kBaseB,
+-                            dElemType);
++  return WmmaScaleIntrinsic(symbol, mDim, nDim, kDim, kBaseA, kBaseB, dElemType,
++                            feature);
+ }
+ } // namespace mlir
+diff --git a/third_party/amd/python/examples/gluon/f16_fa_cdna5.py b/third_party/amd/python/examples/gluon/f16_fa_cdna5.py
+index b935215e17..bebb8c5763 100644
+--- a/third_party/amd/python/examples/gluon/f16_fa_cdna5.py
++++ b/third_party/amd/python/examples/gluon/f16_fa_cdna5.py
+@@ -3,11 +3,17 @@ This file implements a BSHD Flash Attention and tests against torch reference.
+ """
+ 
+ import torch
++import triton
+ from triton.experimental import gluon
+ import triton.experimental.gluon.language as gl
+ import pytest
+ 
+ 
++def skip_if_gfx1250_strict_wmma():
++    if triton.runtime.driver.active.get_current_target().arch == "gfx1250-strict":
++        pytest.skip("gfx1250-strict currently only supports v_wmma_f32_16x16x4_f32")
++
++
+ def compute_split_factor(batch, num_q_heads, seq_len_k):
+     target_total_wrkgrps = 1024
+     tasks = batch * num_q_heads
+@@ -1016,6 +1022,7 @@ def run_attention(config, check=True):
+ 
+ @pytest.mark.parametrize("config", generate_configs())
+ def test_attention(config):
++    skip_if_gfx1250_strict_wmma()
+     run_attention(config)
+ 
+ 
+diff --git a/third_party/amd/python/examples/gluon/f16_gemm_cdna5.py b/third_party/amd/python/examples/gluon/f16_gemm_cdna5.py
+index a599885b7b..d9e556545c 100644
+--- a/third_party/amd/python/examples/gluon/f16_gemm_cdna5.py
++++ b/third_party/amd/python/examples/gluon/f16_gemm_cdna5.py
+@@ -36,6 +36,11 @@ except ImportError:
+     )
+ 
+ 
++def skip_if_gfx1250_strict_wmma():
++    if triton.runtime.driver.active.get_current_target().arch == "gfx1250-strict":
++        pytest.skip("gfx1250-strict currently only supports v_wmma_f32_16x16x4_f32")
++
++
+ @gluon.jit
+ def persistent_gemm_tdm_pipelined_kernel(a_ptr, b_ptr, c_ptr,  #
+                                          M, N, K,  #
+@@ -552,6 +557,7 @@ def _build_multi_cta_gemm_cases():
+ @pytest.mark.parametrize("num_warps", [4, 8])
+ def test_runtime_gemm_tdm_pipelined_single_cta(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFERS, TRANSPOSE_B, PERSISTENT,
+                                                PREFETCH, L2_PREFETCH_DISTANCE, M, N, K, num_warps):
++    skip_if_gfx1250_strict_wmma()
+     _run_runtime_gemm_tdm_pipelined(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFERS, TRANSPOSE_B, PERSISTENT, PREFETCH,
+                                     L2_PREFETCH_DISTANCE, M, N, K, num_warps, [1, 1])
+ 
+@@ -565,6 +571,7 @@ def test_runtime_gemm_tdm_pipelined_single_cta(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BU
+ @pytest.mark.parametrize("M,N,K,BLOCK_M,BLOCK_N,BLOCK_K,ctas_per_cga", _build_multi_cta_gemm_cases())
+ def test_runtime_gemm_tdm_pipelined_multi_cta(M, N, K, BLOCK_M, BLOCK_N, BLOCK_K, ctas_per_cga, NUM_BUFFERS,
+                                               TRANSPOSE_B, PERSISTENT, PREFETCH, L2_PREFETCH_DISTANCE, num_warps):
++    skip_if_gfx1250_strict_wmma()
+     # In the context of multi-cta, the "block" in _run_runtime_gemm_tdm_pipelined()
+     # refers to the chunk of data collectively processed by all CTAs in the cluster.
+     # However, the "block" of the testing parameters refers to the chunk of data
+@@ -586,6 +593,7 @@ def test_runtime_gemm_tdm_pipelined_multi_cta(M, N, K, BLOCK_M, BLOCK_N, BLOCK_K
+ @pytest.mark.parametrize("num_warps", [4, 8])
+ def test_runtime_swiglu_gemm_tdm_pipelined(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFERS, TRANSPOSE_B, PERSISTENT, PREFETCH,
+                                            L2_PREFETCH_DISTANCE, M, N, K, num_warps):
++    skip_if_gfx1250_strict_wmma()
+     _run_runtime_gemm_tdm_pipelined(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFERS, TRANSPOSE_B, PERSISTENT, PREFETCH,
+                                     L2_PREFETCH_DISTANCE, M, N, K, num_warps, [1, 1], ACTIVATION="swiglu")
+ 
+@@ -598,6 +606,7 @@ def test_runtime_swiglu_gemm_tdm_pipelined(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFER
+ @pytest.mark.parametrize("ctas_per_cga", [[1, 1]])
+ def test_runtime_gemm_tdm_pipelined_single_warp_per_simd_schedule(BLOCK_M, BLOCK_N, NUM_BUFFERS, TRANSPOSE_B,
+                                                                   L2_PREFETCH_DISTANCE, M, N, K, ctas_per_cga):
++    skip_if_gfx1250_strict_wmma()
+     num_warps = 4
+     BLOCK_K = 128  # 4 subtiles * 32 (wmma kdim)
+ 
+@@ -942,6 +951,7 @@ def gemm_tdm_warp_specialized_kernel(a_ptr, b_ptr, c_ptr,  #
+ def test_runtime_gemm_tdm_warp_specialized(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFERS, TRANSPOSE_B, PERSISTENT, M, N, K,
+                                            NUM_TOTAL_WARPS):
+     """Test warp specialized GEMM kernel."""
++    skip_if_gfx1250_strict_wmma()
+     if PERSISTENT and NUM_TOTAL_WARPS != 12:
+         pytest.skip("Persistent WS kernel uses 12 total warps")
+     if not PERSISTENT and NUM_TOTAL_WARPS == 12:
+@@ -1024,6 +1034,7 @@ def test_runtime_gemm_tdm_warp_specialized(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFER
+ def test_runtime_gemm_tdm_warp_specialized_subtiled(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFERS, TRANSPOSE_B, PERSISTENT, M,
+                                                     N, K, NUM_TOTAL_WARPS):
+     """Test warp specialized GEMM kernel (subtiled variant for large blocks)."""
++    skip_if_gfx1250_strict_wmma()
+     if triton.cdiv(K, BLOCK_K) < NUM_BUFFERS:
+         pytest.skip("Skip tests where K/BLOCK_K < NUM_BUFFERS")
+ 
+diff --git a/third_party/amd/python/examples/gluon/mxfp_fa_cdna5.py b/third_party/amd/python/examples/gluon/mxfp_fa_cdna5.py
+index 8f6ec3ca08..3e700defd2 100644
+--- a/third_party/amd/python/examples/gluon/mxfp_fa_cdna5.py
++++ b/third_party/amd/python/examples/gluon/mxfp_fa_cdna5.py
+@@ -26,6 +26,12 @@ from triton.experimental.gluon.language.amd.cdna5 import buffer_load, buffer_sto
+ from triton.experimental.gluon.language.amd.cdna5 import get_wmma_scale_layout
+ from triton.experimental.gluon.language.amd.cdna5 import cluster
+ 
++
++def skip_if_gfx1250_strict_wmma():
++    if triton.runtime.driver.active.get_current_target().arch == "gfx1250-strict":
++        pytest.skip("gfx1250-strict only supports v_wmma_f32_16x16x4_f32")
++
++
+ # ===-----------------------------------------------------------------------===#
+ # Kernel Utilities
+ # ===-----------------------------------------------------------------------===#
+@@ -3163,6 +3169,7 @@ def get_fwd_test_cases(block_scaling: bool):
+                          get_fwd_test_cases(True))
+ def test_block_scaled_attn_fwd(q_type, kv_type, batch, seqlen_q, seqlen_k, num_q_heads, num_k_heads, head_sz,  #
+                                pipelined, pingpong):
++    skip_if_gfx1250_strict_wmma()
+     torch.manual_seed(0)
+ 
+     q, q_ref = create_operand(q_type, batch, seqlen_q, num_q_heads, head_sz)
+@@ -3241,6 +3248,7 @@ def test_block_scaled_attn_fwd(q_type, kv_type, batch, seqlen_q, seqlen_k, num_q
+                          get_fwd_test_cases(False))
+ def test_global_scaled_attn_fwd(q_type, kv_type, batch, seqlen_q, seqlen_k, num_q_heads, num_k_heads, head_sz,  #
+                                 pipelined, pingpong):
++    skip_if_gfx1250_strict_wmma()
+     torch.manual_seed(0)
+ 
+     q, q_ref = create_operand(q_type, batch, seqlen_q, num_q_heads, head_sz)
+diff --git a/third_party/amd/python/test/test_gluon_cdna5.py b/third_party/amd/python/test/test_gluon_cdna5.py
+index 188279b295..2ba681791b 100644
+--- a/third_party/amd/python/test/test_gluon_cdna5.py
++++ b/third_party/amd/python/test/test_gluon_cdna5.py
+@@ -1,5 +1,6 @@
+ import re
+ import math
++import contextlib
+ import itertools
+ import pytest
+ import torch
+@@ -8,7 +9,7 @@ from itertools import product
+ import triton
+ import triton.language as tl
+ from triton.backends.compiler import GPUTarget
+-from triton._internal_testing import is_hip_gfx1250, str_to_triton_dtype, numpy_random, to_triton, unwrap_tensor, float_dtypes, int_dtypes, uint_dtypes
++from triton._internal_testing import get_current_target, is_hip_gfx1250, str_to_triton_dtype, numpy_random, to_triton, unwrap_tensor, float_dtypes, int_dtypes, uint_dtypes
+ from triton.tools.mxfp import MXFP4Tensor, MXScaleTensor
+ from triton.experimental import gluon
+ import triton.experimental.gluon.language as ttgl
+@@ -16,6 +17,11 @@ from triton.experimental.gluon.language.amd.cdna5 import get_wmma_scale_layout,
+ from triton._C.libtriton.gluon_ir import make_cga_layout
+ 
+ 
++def skip_if_gfx1250_strict_wmma():
++    if get_current_target().arch == "gfx1250-strict":
++        pytest.skip("gfx1250-strict only supports v_wmma_f32_16x16x4_f32")
++
++
+ @gluon.jit
+ def gemm_kernel(a_ptr, b_ptr, c_ptr,  #
+                 M, N, K,  #
+@@ -95,6 +101,8 @@ def get_test_gemm_shapes():
+ def test_compile_gemm(a_dtype, b_dtype, k_dim, BLOCK_M, BLOCK_N, BLOCK_K):
+     if BLOCK_K < k_dim:
+         pytest.skip("Skip tests where BLOCK_K < k_dim")
++    if get_current_target().arch == "gfx1250-strict" and not (a_dtype == "float32" and k_dim == 4):
++        pytest.skip("gfx1250-strict only supports v_wmma_f32_16x16x4_f32")
+ 
+     a_dtype = str_to_triton_dtype(a_dtype).name
+     b_dtype = str_to_triton_dtype(b_dtype).name
+@@ -185,7 +193,10 @@ def test_runtime_scaled_upcast_fp4(compact_scale, BLOCK_K):
+     pgm = scaled_upcast_fp4_kernel[(1, )](x.cuda(), scale.cuda(), y, BLOCK_M, BLOCK_K, SCALE_FACTOR, compact_scale,
+                                           num_warps=4)
+ 
+-    assert pgm.asm["amdgcn"].count("v_cvt_scale_pk8_bf16_fp4") == BLOCK_K // 32
++    if pgm.metadata.arch == "gfx1250-strict":
++        assert "v_pk_mul_f32" in pgm.asm["amdgcn"]
++    else:
++        assert pgm.asm["amdgcn"].count("v_cvt_scale_pk8_bf16_fp4") == BLOCK_K // 32
+     y_ref = (x_ref * scale_ref).to(torch.bfloat16)
+     torch.testing.assert_close(y.cpu(), y_ref, atol=0, rtol=0)
+ 
+@@ -243,7 +254,10 @@ def test_runtime_scaled_upcast_fp4_bf16_gemm_layouts():
+     pgm = scaled_upcast_fp4_bf16_gemm_kernel[(1, )](x.cuda(), scale.cuda(), y, BLOCK_N, BLOCK_K, SCALE_FACTOR,
+                                                     num_warps=4)
+ 
+-    assert "v_cvt_scale_pk8_bf16_fp4" in pgm.asm["amdgcn"]
++    if pgm.metadata.arch == "gfx1250-strict":
++        assert "v_pk_mul_f32" in pgm.asm["amdgcn"]
++    else:
++        assert "v_cvt_scale_pk8_bf16_fp4" in pgm.asm["amdgcn"]
+     y_ref = (x_ref * scale_ref).to(torch.bfloat16)
+     torch.testing.assert_close(y.cpu(), y_ref, atol=0, rtol=0)
+ 
+@@ -295,7 +309,10 @@ def test_runtime_scaled_upcast_fp8(fp8_dtype, out_dtype):
+ 
+     pgm = scaled_upcast_fp8_kernel[(1, )](x.cuda(), scale.cuda(), y, BLOCK_M, BLOCK_K, ttgl_out, num_warps=1)
+ 
+-    assert f"v_cvt_scale_pk8_{out_dtype}_{in_mnemonic}" in pgm.asm["amdgcn"]
++    if pgm.metadata.arch == "gfx1250-strict":
++        assert ("v_pk_mul_f32" if out_dtype == "bf16" else "v_cvt_pk_f16_f32") in pgm.asm["amdgcn"]
++    else:
++        assert f"v_cvt_scale_pk8_{out_dtype}_{in_mnemonic}" in pgm.asm["amdgcn"]
+     y_ref = (x_ref * scale_ref).to(torch_out)
+     torch.testing.assert_close(y.cpu(), y_ref, atol=0, rtol=0)
+ 
+@@ -338,7 +355,10 @@ def test_runtime_scaled_upcast_fp8_non_broadcast_block16():
+ 
+     pgm = scaled_upcast_fp8_kernel[(1, )](x.cuda(), scale.cuda(), y, BLOCK_M, BLOCK_K, num_warps=1)
+ 
+-    assert "v_cvt_scale_pk8_bf16_fp8" in pgm.asm["amdgcn"]
++    if pgm.metadata.arch == "gfx1250-strict":
++        assert "v_pk_mul_f32" in pgm.asm["amdgcn"]
++    else:
++        assert "v_cvt_scale_pk8_bf16_fp8" in pgm.asm["amdgcn"]
+     y_ref = (x_ref * scale_ref).to(torch.bfloat16)
+     torch.testing.assert_close(y.cpu(), y_ref, atol=0, rtol=0)
+ 
+@@ -452,6 +472,8 @@ def test_runtime_scaled_downcast_fp8(fp8_dtype, dtype, ttgl_dtype, in_suffix):
+ def test_runtime_gemm(a_dtype, b_dtype, k_dim, BLOCK_M, BLOCK_N, BLOCK_K, M, N, K):
+     if BLOCK_K < k_dim:
+         pytest.skip("Skip tests where BLOCK_K < k_dim")
++    if get_current_target().arch == "gfx1250-strict" and not (a_dtype == "float32" and k_dim == 4):
++        pytest.skip("gfx1250-strict only supports v_wmma_f32_16x16x4_f32")
+ 
+     torch.manual_seed(42)
+ 
+@@ -560,6 +582,7 @@ def gemm_3d_kernel(a_ptr, b_ptr, c_ptr,  #
+ ])
+ @pytest.mark.parametrize("BLOCK_B,BLOCK_M,BLOCK_N,BLOCK_K", [(4, 32, 32, 32)])
+ def test_compile_gemm_3d(a_dtype, b_dtype, k_dim, BLOCK_B, BLOCK_M, BLOCK_N, BLOCK_K):
++    skip_if_gfx1250_strict_wmma()
+     if BLOCK_K < k_dim:
+         pytest.skip("Skip tests where BLOCK_K < k_dim")
+ 
+@@ -593,6 +616,8 @@ def test_compile_gemm_3d(a_dtype, b_dtype, k_dim, BLOCK_B, BLOCK_M, BLOCK_N, BLO
+ @pytest.mark.parametrize("BLOCK_B,BLOCK_M,BLOCK_N,BLOCK_K", [(4, 32, 32, 32)])
+ @pytest.mark.parametrize("B,M,N,K", [(16, 256, 256, 256), (16, 250, 250, 250)])
+ def test_runtime_gemm_3d(k_dim, BLOCK_B, BLOCK_M, BLOCK_N, BLOCK_K, B, M, N, K):
++    if get_current_target().arch == "gfx1250-strict":
++        pytest.skip("gfx1250-strict only supports v_wmma_f32_16x16x4_f32")
+     assert BLOCK_K >= k_dim
+     assert B % BLOCK_B == 0
+ 
+@@ -809,6 +834,7 @@ def gemm_async_pipelined_kernel(a_ptr, b_ptr, c_ptr,  #
+ @pytest.mark.parametrize("RESOLVE_PARTITION_CONFLICTS", [True, False])
+ def test_compile_gemm_async_pipelined(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFERS, ASYNC_LOAD_TYPE, B_K_CONTIG,
+                                       RESOLVE_PARTITION_CONFLICTS):
++    skip_if_gfx1250_strict_wmma()
+     if RESOLVE_PARTITION_CONFLICTS:
+         if ASYNC_LOAD_TYPE == "ASYNC_COPY":
+             pytest.skip("AsyncCopy is not supported with partition shared layouts")
+@@ -885,6 +911,7 @@ def test_compile_gemm_async_pipelined(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFERS, AS
+ @pytest.mark.parametrize("RESOLVE_PARTITION_CONFLICTS", [True, False])
+ def test_runtime_gemm_async_pipelined(BLOCK_M, BLOCK_N, BLOCK_K, NUM_BUFFERS, M, N, K, ASYNC_LOAD_TYPE, B_K_CONTIG,
+                                       RESOLVE_PARTITION_CONFLICTS):
++    skip_if_gfx1250_strict_wmma()
+     if triton.cdiv(K, BLOCK_K) < NUM_BUFFERS:
+         pytest.skip("Skip tests where K/BLOCK_K < NUM_BUFFERS")
+ 
+@@ -1015,6 +1042,7 @@ def gemm_async_kernel(a_ptr, b_ptr, c_ptr,  #
+ ])
+ @pytest.mark.parametrize("ASYNC_LOAD_TYPE", ["ASYNC_COPY", "TDM"])
+ def test_compile_gemm_async(BLOCK_M, BLOCK_N, BLOCK_K, a_dtype, b_dtype, k_dim, ASYNC_LOAD_TYPE):
++    skip_if_gfx1250_strict_wmma()
+     if BLOCK_K < k_dim:
+         pytest.skip("Skip tests where BLOCK_K < k_dim")
+ 
+@@ -1060,6 +1088,7 @@ def test_compile_gemm_async(BLOCK_M, BLOCK_N, BLOCK_K, a_dtype, b_dtype, k_dim,
+ ])
+ @pytest.mark.parametrize("ASYNC_LOAD_TYPE", ["ASYNC_COPY", "TDM"])
+ def test_runtime_gemm_async(M, N, K, BLOCK_M, BLOCK_N, BLOCK_K, a_dtype, b_dtype, k_dim, ASYNC_LOAD_TYPE):
++    skip_if_gfx1250_strict_wmma()
+     if BLOCK_K < k_dim:
+         pytest.skip("Skip tests where BLOCK_K < k_dim")
+     if ASYNC_LOAD_TYPE == "ASYNC_COPY" and any([x % 16 != 0 for x in [M, N, K]]):
+@@ -1248,8 +1277,12 @@ def test_amd_wmma_scaled(wmma_shape, transposed, M, N, K, a_type, b_type, a_scal
+         b_scale_ref = 1.0
+ 
+     c = torch.zeros((M, N), dtype=torch.float32).cuda()
+-    pgm = kernel[(1, )](c, a, a_scale, b, b_scale, a_type, b_type, M, N, K, scale_factor, instr_m, instr_n, transposed,
+-                        num_warps=4)
++    is_restricted = get_current_target().arch == "gfx1250-strict"
++    with pytest.raises(RuntimeError, match="PassManager::run failed") if is_restricted else contextlib.nullcontext():
++        pgm = kernel[(1, )](c, a, a_scale, b, b_scale, a_type, b_type, M, N, K, scale_factor, instr_m, instr_n,
++                            transposed, num_warps=4)
++    if is_restricted:
++        return
+ 
+     no_scales = not with_a_scale and not with_b_scale
+ 
+@@ -1274,6 +1307,7 @@ def test_amd_wmma_scaled(wmma_shape, transposed, M, N, K, a_type, b_type, a_scal
+ @pytest.mark.parametrize("a_scale_type, b_scale_type", itertools.product(["e8m0", "e4m3"], repeat=2))
+ @pytest.mark.parametrize("scale_factor", [16, 32])
+ def test_amd_wmma_scaled_multi_cta(M, N, K, a_type, b_type, a_scale_type, b_scale_type, scale_factor):
++    skip_if_gfx1250_strict_wmma()
+ 
+     @gluon.constexpr_function
+     def _get_wmma_layout(cga_layout=[[0, 1], [1, 0]], packed=False):
+@@ -1368,6 +1402,7 @@ def test_amd_wmma_scaled_multi_cta(M, N, K, a_type, b_type, a_scale_type, b_scal
+ @pytest.mark.parametrize("a_scale_type, b_scale_type", itertools.product(["e8m0", "e4m3"], repeat=2))
+ @pytest.mark.parametrize("scale_factor", [16, 32])
+ def test_amd_wmma_scaled_batched(B, M, N, K, a_type, b_type, a_scale_type, b_scale_type, scale_factor):
++    skip_if_gfx1250_strict_wmma()
+ 
+     @gluon.constexpr_function
+     def _slice_layout(layout, indices):
+@@ -1457,6 +1492,7 @@ def test_amd_wmma_scaled_batched(B, M, N, K, a_type, b_type, a_scale_type, b_sca
+ @pytest.mark.parametrize("hasScale", [True, False])
+ @pytest.mark.parametrize("scale_dtype, scale_factor", [("e8m0", 32), ("e4m3", 16)])
+ def test_amd_wmma_scaled_tdm(M, N, K, mxfp_type, hasScale, scale_dtype, scale_factor):
++    skip_if_gfx1250_strict_wmma()
+ 
+     @triton.jit
+     def scaled_wmma_tdm_triton_kernel(a_base, stride_am, stride_ak, a_scale, b_base, stride_bk, stride_bn, b_scale, out,
+@@ -2657,6 +2693,7 @@ def mxgemm_kernel(a_ptr, b_ptr, c_ptr, a_scale, b_scale, M, N, K, stride_am, str
+ @pytest.mark.parametrize("DTYPE_A", ["float8_e5m2", "float8_e4m3", "float4"])
+ @pytest.mark.parametrize("DTYPE_B", ["float8_e5m2", "float8_e4m3", "float4"])
+ def test_compile_mxgemm(BLOCK_M, BLOCK_N, BLOCK_K, DTYPE_A, DTYPE_B):
++    skip_if_gfx1250_strict_wmma()
+     scale_block = 32
+ 
+     triton_dtype_converter = {'float8_e5m2': "fp8e5", "float8_e4m3": "fp8e4nv", "float4": "u8"}
+@@ -2697,6 +2734,7 @@ def init_mxfp_data(dtype, d0: int, d1: int):
+ @pytest.mark.parametrize("DTYPE_A", ["e5m2", "e4m3", "e2m1"])
+ @pytest.mark.parametrize("DTYPE_B", ["e5m2", "e4m3", "e2m1"])
+ def test_runtime_mxgemm(M, N, K, BLOCK_M, BLOCK_N, BLOCK_K, DTYPE_A, DTYPE_B):
++    skip_if_gfx1250_strict_wmma()
+     scale_block = 32
+ 
+     torch.manual_seed(0)
+@@ -3010,6 +3048,7 @@ def scaled_wmma_scale_preshuffle(a_base, stride_am, stride_ak, a_scale, b_base,
+ @pytest.mark.parametrize("type_b", ["e5m2", "e2m1", "e4m3"])
+ @pytest.mark.parametrize("TRANSPOSED_WMMA", [True, False])
+ def test_compile_wmma_scale_preshuffle(M, N, K, type_a, type_b, TRANSPOSED_WMMA):
++    skip_if_gfx1250_strict_wmma()
+     dtype_converter = {'e5m2': "fp8e5", "e4m3": "fp8e4nv", "e2m1": "u8"}
+ 
+     signature = {
+@@ -3041,6 +3080,7 @@ def test_compile_wmma_scale_preshuffle(M, N, K, type_a, type_b, TRANSPOSED_WMMA)
+ @pytest.mark.parametrize("type_b", ["e5m2", "e2m1", "e4m3"])
+ @pytest.mark.parametrize("TRANSPOSED_WMMA", [True, False])
+ def test_runtime_wmma_scale_preshuffle(M, N, K, type_a, type_b, TRANSPOSED_WMMA):
++    skip_if_gfx1250_strict_wmma()
+ 
+     def pack_scale(x):
+         PRESHUFFLE_FACTOR = 64
+@@ -5081,6 +5121,7 @@ def gemm_3d_cga_split_kernel(a_ptr, b_ptr, c_ptr, M, N, K,  #
+ @pytest.mark.skipif(not is_hip_gfx1250(), reason="Requires CDNA5")
+ @pytest.mark.parametrize("num_ctas", [2, 4])
+ def test_runtime_gemm_3d_multi_cta(num_ctas):
++    skip_if_gfx1250_strict_wmma()
+     BLOCK_M = BLOCK_N = 32
+     BLOCK_K = 64
+     num_warps = 4
+diff --git a/third_party/amd/python/test/test_warp_pipeline_gfx9.py b/third_party/amd/python/test/test_warp_pipeline_gfx9.py
+index 700c746e83..3a11c1c81e 100644
+--- a/third_party/amd/python/test/test_warp_pipeline_gfx9.py
++++ b/third_party/amd/python/test/test_warp_pipeline_gfx9.py
+@@ -2,6 +2,7 @@ import re
+ 
+ import triton
+ import triton.language as tl
++from triton import knobs
+ from triton.backends.compiler import GPUTarget
+ from triton.experimental import gluon
+ import triton.experimental.gluon.language as gl
+@@ -13,8 +14,11 @@ BLOCK = 128
+ 
+ def _compile_gluon(fn, signature, constexprs, arch="gfx950"):
+     """Compile a Gluon kernel for gfx950 and return the compiled object."""
+-    return triton.compile(src=gluon._runtime.GluonASTSource(fn, signature, constexprs),
+-                          target=GPUTarget("hip", arch, 64), options={"num_warps": NUM_WARPS})
++    # TRITON_OVERRIDE_ARCH would replace gfx950 for any arch
++    with knobs.runtime.scope():
++        knobs.runtime.override_arch = None
++        return triton.compile(src=gluon._runtime.GluonASTSource(fn, signature, constexprs),
++                              target=GPUTarget("hip", arch, 64), options={"num_warps": NUM_WARPS})
+ 
+ 
+ @gluon.jit
+diff --git a/third_party/proton/Dialect/lib/ProtonGPUToLLVM/ProtonAMDGPUToLLVM/TargetInfo.cpp b/third_party/proton/Dialect/lib/ProtonGPUToLLVM/ProtonAMDGPUToLLVM/TargetInfo.cpp
+index 2a448c4057..245f8e2092 100644
+--- a/third_party/proton/Dialect/lib/ProtonGPUToLLVM/ProtonAMDGPUToLLVM/TargetInfo.cpp
++++ b/third_party/proton/Dialect/lib/ProtonGPUToLLVM/ProtonAMDGPUToLLVM/TargetInfo.cpp
+@@ -33,10 +33,9 @@ Value TargetInfo::clock(ConversionPatternRewriter &rewriter, Location loc,
+ Value TargetInfo::globalTime(ConversionPatternRewriter &rewriter,
+                              Location loc) const {
+   auto b = TritonLLVMOpBuilder(loc, rewriter);
+-  llvm::AMDGPU::GPUKind GPUKind = getTritonTargetInfo().getGPUKind();
+-
+   Value globalTimeVal;
+-  if (GPUKind == llvm::AMDGPU::GK_GFX1250) {
++  if (getTritonTargetInfo().getISAFamily() ==
++      triton::amdgpu::ISAFamily::GFX1250) {
+     Value msg = b.i32_val(/*MSG_RTN_GET_REALTIME=*/131);
+     globalTimeVal =
+         LLVM::createLLVMIntrinsicCallOp(
+@@ -148,7 +147,8 @@ Value TargetInfo::processorId(ConversionPatternRewriter &rewriter,
+   // Granularity is per-WGP, not per-CU: the CU-within-WGP bit
+   // (HW_ID1.SIMD_ID[0]) is intentionally omitted; add it if sub-WGP resolution
+   // is ever needed.
+-  if (GPUKind == llvm::AMDGPU::GK_GFX1250) {
++  if (getTritonTargetInfo().getISAFamily() ==
++      triton::amdgpu::ISAFamily::GFX1250) {
+     Value msg = b.i32_val(/*MSG_RTN_GET_SE_AID_ID=*/135);
+     Value seAid =
+         LLVM::createLLVMIntrinsicCallOp(
+-- 
+2.43.0
+

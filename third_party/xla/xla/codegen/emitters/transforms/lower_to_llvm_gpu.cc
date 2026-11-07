@@ -19,6 +19,8 @@ limitations under the License.
 #include <memory>
 #include <string>
 
+#include "absl/strings/str_replace.h"
+
 #include "llvm/Support/LogicalResult.h"
 #include "mlir/Conversion/AMDGPUToROCDL/AMDGPUToROCDL.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
@@ -218,8 +220,9 @@ class LowerToLLVMGPUPass
             mlir::RewritePatternSet& patterns,
             mlir::ConversionTarget& target) -> mlir::LogicalResult {
       if (device_spec_.IsAmdGpu()) {
-        std::string chipset =
-            device_spec_.gpu().rocm_compute_capability().gfx_version();
+        std::string chipset = absl::StrReplaceAll(
+            device_spec_.gpu().rocm_compute_capability().gfx_version(),
+            {{"gfx1250-strict", "gfx1250"}});
         llvm::FailureOr<mlir::amdgpu::Chipset> maybeChipset =
             mlir::amdgpu::Chipset::parse(chipset);
         if (mlir::failed(maybeChipset)) {

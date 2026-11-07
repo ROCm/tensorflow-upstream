@@ -141,6 +141,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/strings",
         "@com_google_protobuf//:protobuf",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AMDGPUDialect",
