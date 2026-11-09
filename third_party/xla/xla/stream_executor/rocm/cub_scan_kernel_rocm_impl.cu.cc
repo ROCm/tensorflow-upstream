@@ -27,7 +27,6 @@ limitations under the License.
 #include "rocm/include/rocprim/iterator/transform_iterator.hpp"
 #include "xla/stream_executor/rocm/cub_scan_kernel_rocm.h"
 #include "xla/stream_executor/rocm/rocm_status.h"
-#include "xla/stream_executor/rocm/rocprim_target_guard.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/xla_data.pb.h"
 
@@ -127,9 +126,6 @@ absl::Status CubScanLaunchKernel(xla::PrimitiveType type, void* d_temp_storage,
                                  int64_t row_length, int64_t column_length,
                                  CubScanKind kind, bool is_reverse,
                                  hipStream_t stream) {
-  // This entry point always launches; `CubScanGetScratchSize` is the query
-  // path. See rocprim_target_guard.h for why this check is needed.
-  ABSL_RETURN_IF_ERROR(EnsureRocprimTargetResolved(stream));
   return CubScanDispatch(type, d_temp_storage, &temp_bytes, d_in, d_out,
                          vector_length, row_length, column_length, kind,
                          is_reverse, stream);

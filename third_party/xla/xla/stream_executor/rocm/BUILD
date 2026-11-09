@@ -1271,10 +1271,7 @@ cc_library(
 # CUB sort kernel implementation (hipCUB/rocPRIM) - compiled with hipcc
 [rocm_library(
     name = "cub_sort_kernel_rocm_type_{}".format(typename),
-    srcs = [
-        "cub_sort_kernel_rocm_impl.cu.cc",
-        "rocprim_target_guard.h",
-    ],
+    srcs = ["cub_sort_kernel_rocm_impl.cu.cc"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     local_defines = ["CUB_TYPE_" + typename.upper()],
     tags = [
@@ -1327,7 +1324,6 @@ rocm_library(
     srcs = [
         "cub_scan_kernel_rocm.h",
         "cub_scan_kernel_rocm_impl.cu.cc",
-        "rocprim_target_guard.h",
     ],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
