@@ -114,53 +114,8 @@ absl::Status createOutlinedAtomProgramsToCompiledPipeline(
     std::shared_ptr<AtomExecutableFutureMap> atom_executable_future_map,
     std::shared_ptr<AtomExecutableMap> bound_executable_map);
 
-<<<<<<< HEAD:third_party/xla/xla/python/ifrt/ir/transforms/passes.h
-struct OutlinedAtomProgramsToCompiledPipelineOptions
-    : mlir::PassPipelineOptions<OutlinedAtomProgramsToCompiledPipelineOptions> {
-  ListOption<std::string> platform_names{
-      *this, "platform_names",
-      llvm::cl::desc("A list to represent a mapping from logical device IDs to "
-                     "platform name (e.g., tpu, cuda).")};
-
-  Option<bool> propagate_shardings{
-      *this, "propagate_shardings",
-      llvm::cl::desc("Whether to propagate shardings from executables for "
-                     "unspecified shardings.")};
-};
-
-// Creates pipeline of all the IFRT IR passes that require compilation-time
-// information (e.g., device assignments).
-absl::Status createOutlinedAtomProgramsToCompiledPipeline(
-    mlir::OpPassManager& pm, std::shared_ptr<AtomProgramCompiler> compiler,
-    const OutlinedAtomProgramsToCompiledPipelineOptions& options,
-    std::shared_ptr<xla::ifrt::IfrtIRCompileOptions> compile_options,
-    std::shared_ptr<AtomExecutableMap> atom_executable_map,
-    std::shared_ptr<AtomExecutableMap> bound_executable_map);
-
-// Creates a pipeline that converts an IFRT IR program to a versioned IFRT IR
-// program, and a versioned VHLO programs populated within `IfrtIrProgramProto`.
-void createIfrtToVersionedPipeline(mlir::OpPassManager& pm,
-                                   std::string ifrt_target_version,
-                                   std::string vhlo_target_version,
-                                   std::string sdy_target_version,
-                                   IfrtIrProgramProto& ifrt_ir_program);
-
-// Creates a pipeline that converts a versioned IFRT IR program to an IFRT IR
-// program.
-// The pipeline runs over a versioned IFRT IR module without any atom programs
-// present inside the module. The atom programs are expected to be present and
-// versioned in the given `ifrt_ir_program`. The pipeline will convert these
-// atom programs (i.e., from VHLO to StableHLO) and add them to the IFRT IR
-// program.
-void createIfrtFromVersionedPipeline(mlir::OpPassManager& pm,
-                                     const IfrtIrProgramProto& ifrt_ir_program);
-
-// Registers passes and pipelines to ifrt-opt.
-void registerIfrtPassesAndPipelines(
-=======
 // Registers compilation passes and pipelines to ifrt-opt.
 void registerIfrtCompilationPassesAndPipelines(
->>>>>>> upstream/master:third_party/xla/xla/python/ifrt/ir/compilation/passes.h
     std::shared_ptr<AtomProgramCompiler> compiler,
     std::shared_ptr<IfrtIRCompileOptions> compile_options,
     std::shared_ptr<AtomExecutableFutureMap> atom_executable_future_map,

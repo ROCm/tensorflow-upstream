@@ -167,11 +167,8 @@ API docstring: tensorflow.nn
 
 import functools
 import numbers
-<<<<<<< HEAD
 import os
-=======
 import sys
->>>>>>> upstream/master
 
 import numpy as np
 

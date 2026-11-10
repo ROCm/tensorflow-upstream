@@ -321,16 +321,9 @@ tf_kernel_library(
     features = ["-layering_check"],
     gpu_copts = if_not_windows(["-Wno-pass-failed"]),
     gpu_srcs = ["generate_box_proposals_op.cu.cc"],
-<<<<<<< HEAD
     deps = ["//tensorflow/core/kernels:gpu_prim_hdrs",
             "//tensorflow/core/framework:types_proto_cc",
             "@com_google_absl//absl/log",] + if_cuda_or_rocm([
-=======
-    deps = [
-        "//tensorflow/core/framework:types_proto_cc",
-        "//tensorflow/core/kernels:gpu_prim_hdrs",
-    ] + if_cuda_or_rocm([
->>>>>>> upstream/master
         ":non_max_suppression_op_gpu",
     ]),
 )

@@ -52,7 +52,7 @@ auto OpGradientInfoInit(const T &a) {
 
 absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedInputIndices(
     const tensorflow::string &op_name) {
-  static std::array<OpIndexInfo, 368> a = {{
+  static std::array<OpIndexInfo, 365> a = {{
       {"Acosh"},
       {"AllToAll", 1, {0}},
       {"ApproximateEqual"},
@@ -112,9 +112,7 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedInputIndices(
       {"Diag"},
       {"DiagPart"},
       {"DrawBoundingBoxes"},
-      {"Dropout", 4, {0, 2, 3, 4}},
       {"EditDistance"},
-      {"Elu"},
       {"EncodeBase64"},
       {"EnsureShape"},
       {"Enter"},
@@ -297,7 +295,6 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedInputIndices(
       {"SdcaFprint"},
       {"SegmentSum", 1, {0}},
       {"Select", 1, {2}},
-      {"Selu"},
       {"SerializeTensor"},
       {"SetSize"},
       {"Shape"},
@@ -433,11 +430,7 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedInputIndices(
 
 absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
     const tensorflow::string &op_name) {
-<<<<<<< HEAD
-  static std::array<OpIndexInfo, 493> a = {{
-=======
   static std::array<OpIndexInfo, 491> a = {{
->>>>>>> upstream/master
       {"Abs"},
       {"AccumulateNV2"},
       {"Acos"},
@@ -533,10 +526,10 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
       {"Div"},
       {"DivNoNan"},
       {"DrawBoundingBoxes"},
-      {"Dropout", 1, {0}},
       {"DynamicPartition"},
       {"EditDistance"},
       {"Einsum"},
+      {"Elu"},
       {"EluGrad"},
       {"EncodeBase64"},
       {"EncodeProto"},
@@ -576,7 +569,6 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
       {"Gather"},
       {"GatherNd"},
       {"GatherV2"},
-      {"Gelu"},
       {"GenerateBoundingBoxProposals"},
       {"GenerateVocabRemapping"},
       {"GetSessionHandle"},
@@ -769,6 +761,7 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
       {"SegmentMean"},
       {"SegmentSum"},
       {"Select"},
+      {"Selu"},
       {"SeluGrad"},
       {"SerializeTensor"},
       {"SetSize"},
@@ -782,6 +775,7 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
       {"Softplus"},
       {"SoftplusGrad"},
       {"Softsign"},
+      {"SoftsignGrad"},
       {"SpaceToBatch"},
       {"SpaceToBatchND"},
       {"SpaceToDepth"},
@@ -926,11 +920,6 @@ absl::optional<tensorflow::gtl::FlatSet<int>> OpGradientUnusedOutputIndices(
       {"ZerosLike"},
       {"Zeta"},
       {"_EagerConst"},
-      {"_FusedMulAdd"},
-      {"_FusedMulAdd2"},
-      {"_FusedMulSub"},
-      {"_FusedMulSub2"},
-      {"_FusedMulSubRev"},
       {"VarHandleOp"},
   }};
   static const auto &m = *OpGradientInfoInit(a);

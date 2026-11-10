@@ -386,14 +386,11 @@ tf_cuda_cc_test(
     ],
     extra_copts = ["-DXLA_TEST_BACKEND_GPU=1"], # This is a mess
     features = ["-layering_check"],
-<<<<<<< HEAD
-    tags = ["cuda-only"] + tf_cuda_tests_tags(),
-=======
     tags = [
+        "cuda-only",
         "multi_and_single_gpu",
         "no_cuda_on_cpu_tap",
-    ],
->>>>>>> upstream/master
+    ] + tf_cuda_tests_tags(),
     deps = [
         ":gpu_id",
         ":gpu_runtime",

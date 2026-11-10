@@ -39,12 +39,8 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 
 #ifdef TF_GPU_USE_PJRT
-<<<<<<< HEAD
-=======
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
-#include "xla/pjrt/pjrt_client.h"
->>>>>>> upstream/master
 #include "tensorflow/core/tfrt/common/pjrt_util.h"
 #include "xla/pjrt/pjrt_client.h"
 #endif  // TF_GPU_USE_PJRT

@@ -71,11 +71,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-<<<<<<< HEAD
-#include "xla/hlo/ir/hlo_sharding_metadata.h"
-#include "xla/hlo/translate/attributes.h"
-=======
->>>>>>> upstream/master
 #include "xla/hlo/translate/hlo_to_mhlo/async_importer.h"
 #include "xla/hlo/translate/hlo_to_mhlo/attribute_importer.h"
 #include "xla/hlo/translate/hlo_to_mhlo/custom_call_importer.h"
@@ -774,13 +769,6 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
     attributes.push_back(builder_->getNamedAttr(
         kMhloOriginalValueAttr,
         ConvertOriginalValue(*instruction->original_value(), builder_)));
-  }
-
-  if (instruction->original_value()) {
-    attributes.push_back(builder_->getNamedAttr(
-        kOriginalValueAttr,
-        builder_->getStringAttr(
-            "{" + instruction->original_value()->ToString() + "}")));
   }
 
   llvm::SmallVector<NamedAttribute, 4> frontend_attributes;

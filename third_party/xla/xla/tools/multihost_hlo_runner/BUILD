@@ -85,13 +85,8 @@ cc_library(
         "//xla/service:gpu_plugin",
         "//xla/backends/profiler/gpu:device_tracer",
     ]) + if_cuda([
-<<<<<<< HEAD
-        "//xla/backends/profiler/gpu:cupti_tracer",
-        "//xla/stream_executor:cuda_platform",
-=======
         "//xla/stream_executor:cuda_platform",  # buildcleaner: keep
         "//xla/backends/profiler/gpu:cupti_tracer",  # buildcleaner: keep
->>>>>>> upstream/master
     ] + if_google(
         [
             "//third_party/py/jax/jaxlib/cuda:cuda_gpu_kernels",  # fixdeps: keep

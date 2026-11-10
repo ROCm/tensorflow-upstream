@@ -44,13 +44,9 @@ TEST(EmbeddedTargetConfigTest, DeviceInfoMatches) {
         "v100", "mi200", "rtx6000pro", "gb200", "gb300", "vr_nvl72"}) {
     GpuTargetConfigProto proto;
     std::string spec_string;
-<<<<<<< HEAD
     auto path = tsl::testing::XlaSrcRoot();
     path = path.erase(path.length() - 4);
-    TF_ASSERT_OK(tsl::ReadFileToString(
-=======
     ASSERT_OK(tsl::ReadFileToString(
->>>>>>> upstream/master
         tsl::Env::Default(),
         tsl::io::JoinPath(path, "external/xla/xla",
                           "backends/gpu/target_config/specs",

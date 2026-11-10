@@ -224,12 +224,8 @@ py_test(
     tags = [
         "gpu",
         "no_pip",
-<<<<<<< HEAD
 	    "cuda-only",  # Disabling due to excessive test length
-        "requires-gpu-nvidia",
-=======
         "requires-gpu-sm90",
->>>>>>> upstream/master
     ],
     deps = [
         ":config",

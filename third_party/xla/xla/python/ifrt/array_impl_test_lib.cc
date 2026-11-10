@@ -2021,9 +2021,6 @@ TEST(ArrayImplTest, CopyMixedSourceDevices) {
                   ->CopyArrays(absl::MakeSpan(arrays), std::move(device_list),
                                MemoryKind(), ArrayCopySemantics::kAlwaysCopy)
                   .status(),
-<<<<<<< HEAD
-              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
-=======
               StatusIs(absl::StatusCode::kInvalidArgument));
 
   absl::StatusOr<std::vector<ArrayRef>> empty_copied =
@@ -2147,7 +2144,6 @@ TEST(ArrayImplTest, CopyArraysDifferentDeviceLists) {
     ASSERT_OK(future.Await());
     EXPECT_THAT(out_data, ElementsAreArray(expected_data[i]));
   }
->>>>>>> upstream/master
 }
 
 TEST(ArrayImplTest, CopyMixedSourceMemoryKind) {

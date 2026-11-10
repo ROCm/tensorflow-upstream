@@ -78,8 +78,4 @@ if ! docker container inspect tf >/dev/null 2>&1 ; then
   fi
 
 fi
-<<<<<<< HEAD
-tfrun() { docker exec tf-$TFCI_PYTHON_VERSION-$TFCI_DOCKER_CONTAINER_POSTFIX "$@"; }
-=======
-_tfrun_exec() { docker exec tf "$@"; }
->>>>>>> upstream/master
+_tfrun_exec() { docker exec tf-$TFCI_PYTHON_VERSION-$TFCI_DOCKER_CONTAINER_POSTFIX "$@"; }

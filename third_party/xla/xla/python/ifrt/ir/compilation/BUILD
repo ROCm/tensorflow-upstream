@@ -99,11 +99,6 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-<<<<<<< HEAD:third_party/xla/xla/python/ifrt/ir/transforms/BUILD
-        "@llvm-project//mlir:RegisterAllDialects",
-        "@llvm-project//mlir:Rewrite",
-=======
->>>>>>> upstream/master:third_party/xla/xla/python/ifrt/ir/compilation/BUILD
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
         "@shardy//shardy/dialect/sdy/ir:dialect",
