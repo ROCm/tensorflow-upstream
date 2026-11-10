@@ -159,7 +159,7 @@ namespace gpuprim = ::hipcub;
 // * CountingInputIterator
 // * TransformInputIterator
 // * LaneId
-// From the hipcub namesapce. The intermediate solution here is to utilize the 
+// From the hipcub namesapce. The intermediate solution here is to utilize the
 // thrust variants of these iterators, until they are available via libhipcxx.
 #if HIPCUB_CCCL_VERSION >= 300000
 #include "rocm/include/thrust/iterator/counting_iterator.h"
@@ -176,7 +176,7 @@ namespace hipcub {
     using TransformInputIterator =
         thrust::transform_iterator<ConversionOp, InputIteratorT, ValueType>;
 
-    _CCCL_DEVICE _CCCL_FORCEINLINE unsigned int LaneId() {
+    HIPCUB_DEVICE HIPCUB_FORCEINLINE unsigned int LaneId() {
         return ::rocprim::lane_id();
     }
 }
