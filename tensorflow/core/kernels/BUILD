@@ -5099,12 +5099,14 @@ tf_kernel_library(
         "@com_google_absl//absl/status",
         "@eigen_archive//:eigen3",
     ],
+    alwayslink = True,
 )
 
 tf_cuda_only_cc_test(
     name = "depth_space_ops_gpu_test",
     size = "small",
     srcs = ["depth_space_ops_gpu_test.cu.cc"],
+    tags = ["cuda-only"],
     deps = [
         ":depth_space_ops",
         "//tensorflow/core:framework",
@@ -5114,7 +5116,6 @@ tf_cuda_only_cc_test(
         "@com_google_absl//absl/status",
         "@eigen_archive//:eigen3",
     ],
-    alwayslink = True,
 )
 
 cc_library(
