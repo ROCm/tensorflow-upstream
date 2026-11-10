@@ -16,11 +16,15 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@config_rocm_hipcc//rocm:build_defs.bzl", "hipcc_config")
-load("@local_config_rocm//rocm:build_defs.bzl", "rocm_gpu_architectures", "rocm_lib_import", "rocm_version_number")
+load("@local_config_rocm//rocm:build_defs.bzl", "rocm_gpu_architectures", "rocm_info", "rocm_lib_import", "rocm_path")
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 
 package(default_visibility = ["//visibility:private"])
+
+_ROCM = rocm_info()
 
 string_flag(
     name = "rocm_path_type",
@@ -100,10 +104,9 @@ cc_library(
 cc_library(
     name = "rocm_headers_includes",
     hdrs = glob([
-        "%{rocm_root}/include/**",
+        rocm_path("include/**"),
     ]),
-    defines = {"__HIP_DISABLE_CPP_FUNCTIONS__": "1"},
-    strip_include_prefix = "%{rocm_root}/include",
+    strip_include_prefix = rocm_path("include"),
     deps = [
         "@xla//third_party/libdrm:drm_headers",
     ],
@@ -112,12 +115,12 @@ cc_library(
 cc_library(
     name = "rocm_headers",
     hdrs = glob([
-        "%{rocm_root}/include/**",
-        "%{rocm_root}/lib/llvm/lib/**/*.h",
+        rocm_path("include/**"),
+        rocm_path("lib/llvm/lib/**/*.h"),
     ]),
     defines = ["MIOPEN_BETA_API=1"],
     include_prefix = "rocm",
-    strip_include_prefix = "%{rocm_root}",
+    strip_include_prefix = rocm_path(),
     visibility = ["//visibility:public"],
     deps = [
         ":rocm_config",
@@ -126,16 +129,22 @@ cc_library(
 )
 
 _ROCM_STAGED_RPATHS = [
-    "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
-    "-Wl,-rpath,%{rocm_execroot_path}/rocm/%{rocm_root}/lib",
+    "-Wl,-rpath,{}/lib".format(_ROCM.rocm_runfiles_path),
+    "-Wl,-rpath,{}/lib".format(_ROCM.rocm_execroot_path),
 ]
+
+# The original installations behind TF_ROCM_MULTIPLE_PATHS, which the staged
+# tree only symlinks to. Empty unless that variable was set.
+_ROCM_HOST_LIB_RPATHS = [
+    "-Wl,-rpath={}".format(_ROCM.rocm_lib_paths),
+] if _ROCM.rocm_lib_paths else []
 
 cc_library(
     name = "rocm_rpath",
     linkopts = select({
         ":build_hermetic": _ROCM_STAGED_RPATHS,
         ":link_only": [],
-        ":multiple_rocm_paths": _ROCM_STAGED_RPATHS + ["-Wl,-rpath=%{rocm_lib_paths}"],
+        ":multiple_rocm_paths": _ROCM_STAGED_RPATHS + _ROCM_HOST_LIB_RPATHS,
         "//conditions:default": _ROCM_STAGED_RPATHS + ["-Wl,-rpath,/opt/rocm/lib"],
     }),
     visibility = ["//visibility:public"],
@@ -151,11 +160,11 @@ rocm_lib_import(
     name = "hip_runtime",
     data = glob(
         [
-            "%{rocm_root}/lib/libamdhip64.so*",
-            "%{rocm_root}/lib/librocm_kpack.so*",
+            rocm_path("lib/libamdhip64.so*"),
+            rocm_path("lib/librocm_kpack.so*"),
         ],
     ),
-    interface_library = "%{rocm_root}/lib/libamdhip64.so",
+    interface_library = rocm_path("lib/libamdhip64.so"),
     deps = [
         ":amd_comgr_libs",
         ":hiprtc_libs",
@@ -167,7 +176,7 @@ rocm_lib_import(
 
 filegroup(
     name = "hsa_rocr_libs_data",
-    srcs = glob(["%{rocm_root}/lib/libhsa-runtime64.so*"]),
+    srcs = glob([rocm_path("lib/libhsa-runtime64.so*")]),
 )
 
 cc_library(
@@ -183,8 +192,8 @@ cc_library(
     name = "hiprtc_libs",
     data = glob(
         [
-            "%{rocm_root}/lib/libhiprtc.so*",
-            "%{rocm_root}/lib/libhiprtc-builtins.so*",
+            rocm_path("lib/libhiprtc.so*"),
+            rocm_path("lib/libhiprtc-builtins.so*"),
         ],
     ),
     deps = [
@@ -197,10 +206,10 @@ cc_library(
     name = "amd_comgr_libs",
     data = glob(
         [
-            "%{rocm_root}/lib/libamd_comgr_loader.so*",
-            "%{rocm_root}/lib/libamd_comgr.so*",
-            "%{rocm_root}/lib/llvm/lib/libLLVM.so*",
-            "%{rocm_root}/lib/llvm/lib/libclang-cpp.so*",
+            rocm_path("lib/libamd_comgr_loader.so*"),
+            rocm_path("lib/libamd_comgr.so*"),
+            rocm_path("lib/llvm/lib/libLLVM.so*"),
+            rocm_path("lib/llvm/lib/libclang-cpp.so*"),
         ],
     ),
     deps = [
@@ -212,7 +221,7 @@ filegroup(
     name = "rocprofiler_register_libs_data",
     srcs = glob(
         [
-            "%{rocm_root}/lib/librocprofiler-register.so*",
+            rocm_path("lib/librocprofiler-register.so*"),
         ],
     ),
 )
@@ -225,18 +234,18 @@ cc_library(
 rocm_lib_import(
     name = "rocblas",
     data = glob([
-        "%{rocm_root}/lib/librocblas.so*",
-        "%{rocm_root}/lib/rocblas/library/*fallback.dat",
+        rocm_path("lib/librocblas.so*"),
+        rocm_path("lib/rocblas/library/*fallback.dat"),
     ]) + glob([
         pattern
         for arch in rocm_gpu_architectures()
         for pattern in [
-            "%{rocm_root}/lib/rocblas/library/*" + arch + "*",
-            "%{rocm_root}/lib/rocblas/library/" + arch + "/**/*",
-            "%{rocm_root}/.kpack/blas_lib_" + arch + ".kpack",
+            rocm_path("lib/rocblas/library/*{}*".format(arch)),
+            rocm_path("lib/rocblas/library/{}/**/*".format(arch)),
+            rocm_path(".kpack/blas_lib_{}.kpack".format(arch)),
         ]
     ]),
-    interface_library = "%{rocm_root}/lib/librocblas.so",
+    interface_library = rocm_path("lib/librocblas.so"),
     deps = [
         ":hip_runtime_libs",
         ":hipblaslt_libs",
@@ -246,8 +255,8 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "hipfft",
-    data = glob(["%{rocm_root}/lib/libhipfft.so*"]),
-    interface_library = "%{rocm_root}/lib/libhipfft.so",
+    data = glob([rocm_path("lib/libhipfft.so*")]),
+    interface_library = rocm_path("lib/libhipfft.so"),
     deps = [
         ":hip_runtime_libs",
         ":rocfft_libs",
@@ -256,8 +265,8 @@ rocm_lib_import(
 
 cc_library(
     name = "rocfft_libs",
-    data = glob(["%{rocm_root}/lib/librocfft.so*"]) + glob([
-        "%{rocm_root}/.kpack/fft_lib_" + arch + ".kpack"
+    data = glob([rocm_path("lib/librocfft.so*")]) + glob([
+        rocm_path(".kpack/fft_lib_{}.kpack".format(arch))
         for arch in rocm_gpu_architectures()
     ]),
     deps = [
@@ -268,8 +277,8 @@ cc_library(
 
 rocm_lib_import(
     name = "hiprand",
-    data = glob(["%{rocm_root}/lib/libhiprand.so*"]),
-    interface_library = "%{rocm_root}/lib/libhiprand.so",
+    data = glob([rocm_path("lib/libhiprand.so*")]),
+    interface_library = rocm_path("lib/libhiprand.so"),
     deps = [
         ":hip_runtime_libs",
         ":rocrand_libs",
@@ -278,8 +287,8 @@ rocm_lib_import(
 
 cc_library(
     name = "rocrand_libs",
-    data = glob(["%{rocm_root}/lib/librocrand.so*"]) + glob([
-        "%{rocm_root}/.kpack/rand_lib_" + arch + ".kpack"
+    data = glob([rocm_path("lib/librocrand.so*")]) + glob([
+        rocm_path(".kpack/rand_lib_{}.kpack".format(arch))
         for arch in rocm_gpu_architectures()
     ]),
     deps = [
@@ -289,24 +298,27 @@ cc_library(
 
 cc_library(
     name = "rocm_core_libs",
-    data = glob(["%{rocm_root}/lib/librocm-core.so*"]),
+    data = glob([rocm_path("lib/librocm-core.so*")]),
 )
 
 rocm_lib_import(
     name = "miopen",
     data = glob([
-        "%{rocm_root}/lib/libMIOpen.so*",
+        rocm_path("lib/libMIOpen.so*"),
     ]) + glob([
-        "%{rocm_root}/share/miopen/db/" + arch + "*"
+        rocm_path("share/miopen/db/{}*".format(arch))
         for arch in rocm_gpu_architectures()
     ]) + glob([
-        "%{rocm_root}/lib/libMIOpenCKGroupedConv_" + arch + ".so"
+        rocm_path("lib/libMIOpenCKGroupedConv_{}.so".format(arch))
+        for arch in rocm_gpu_architectures()
+    ]) + glob([
+        rocm_path(".kpack/miopen_lib_{}.kpack".format(arch))
         for arch in rocm_gpu_architectures()
     ]) + glob([
         "%{rocm_root}/.kpack/miopen_lib_" + arch + ".kpack"
         for arch in rocm_gpu_architectures()
     ]),
-    interface_library = "%{rocm_root}/lib/libMIOpen.so",
+    interface_library = rocm_path("lib/libMIOpen.so"),
     deps = [
         ":amd_comgr_libs",
         ":hip_runtime_libs",
@@ -321,11 +333,11 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "rccl",
-    data = glob(["%{rocm_root}/lib/librccl.so*"]) + glob([
-        "%{rocm_root}/.kpack/rccl_lib_" + arch + ".kpack"
+    data = glob([rocm_path("lib/librccl.so*")]) + glob([
+        rocm_path(".kpack/rccl_lib_{}.kpack".format(arch))
         for arch in rocm_gpu_architectures()
     ]),
-    interface_library = "%{rocm_root}/lib/librccl.so",
+    interface_library = rocm_path("lib/librccl.so"),
     deps = [
         ":amdsmi_libs",
         ":hip_runtime_libs",
@@ -341,8 +353,8 @@ rocm_lib_import(
 # xla/stream_executor/rocm/BUILD.
 rocm_lib_import(
     name = "amdsmi",
-    data = glob(["%{rocm_root}/lib/libamd_smi.so*"]),
-    interface_library = "%{rocm_root}/lib/libamd_smi.so",
+    data = glob([rocm_path("lib/libamd_smi.so*")]),
+    interface_library = rocm_path("lib/libamd_smi.so"),
     deps = [
         ":system_libs",
     ],
@@ -350,21 +362,21 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "rocm_smi",
-    data = glob(["%{rocm_root}/lib/librocm_smi64.so*"]),
-    interface_library = "%{rocm_root}/lib/librocm_smi64.so",
+    data = glob([rocm_path("lib/librocm_smi64.so*")]),
+    interface_library = rocm_path("lib/librocm_smi64.so"),
     deps = [],
 )
 
 cc_import(
     name = "hsakmt",
-    static_library = "%{rocm_root}/lib/libhsakmt.a",
+    static_library = rocm_path("lib/libhsakmt.a"),
     visibility = ["//visibility:public"],
 )
 
 rocm_lib_import(
     name = "hsa_runtime",
     data = [":hsa_rocr_libs_data"],
-    interface_library = "%{rocm_root}/lib/libhsa-runtime64.so",
+    interface_library = rocm_path("lib/libhsa-runtime64.so"),
     deps = [],
 )
 
@@ -384,8 +396,8 @@ cc_library(
 
 rocm_lib_import(
     name = "hipsparse",
-    data = glob(["%{rocm_root}/lib/libhipsparse.so*"]),
-    interface_library = "%{rocm_root}/lib/libhipsparse.so",
+    data = glob([rocm_path("lib/libhipsparse.so*")]),
+    interface_library = rocm_path("lib/libhipsparse.so"),
     deps = [
         ":hip_runtime_libs",
         ":rocsparse_libs",
@@ -394,12 +406,12 @@ rocm_lib_import(
 
 cc_library(
     name = "rocsparse_libs",
-    data = glob(["%{rocm_root}/lib/librocsparse.so*"]) + glob([
+    data = glob([rocm_path("lib/librocsparse.so*")]) + glob([
         pattern
         for arch in rocm_gpu_architectures()
         for pattern in (
-            "%{rocm_root}/.kpack/blas_lib_" + arch + ".kpack",
-            "%{rocm_root}/.kpack/sparse_lib_" + arch + ".kpack",
+            rocm_path(".kpack/blas_lib_{}.kpack".format(arch)),
+            rocm_path(".kpack/sparse_lib_{}.kpack".format(arch)),
         )
     ]),
     deps = [
@@ -412,16 +424,16 @@ cc_library(
 cc_library(
     name = "roctx_libs",
     data = glob([
-        "%{rocm_root}/lib/libroctx64.so*",
+        rocm_path("lib/libroctx64.so*"),
     ]),
 )
 
 rocm_lib_import(
     name = "roctracer",
     data = glob([
-        "%{rocm_root}/lib/libroctracer64.so*",
+        rocm_path("lib/libroctracer64.so*"),
     ]),
-    interface_library = "%{rocm_root}/lib/libroctracer64.so",
+    interface_library = rocm_path("lib/libroctracer64.so"),
     deps = [
         ":hsa_rocr_libs",
     ],
@@ -430,10 +442,10 @@ rocm_lib_import(
 rocm_lib_import(
     name = "rocprofiler_sdk",
     data = glob([
-        "%{rocm_root}/lib/librocprofiler-sdk*.so*",
-        "%{rocm_root}/lib/libhsa-amd-aqlprofile64.so*",
+        rocm_path("lib/librocprofiler-sdk*.so*"),
+        rocm_path("lib/libhsa-amd-aqlprofile64.so*"),
     ]),
-    interface_library = "%{rocm_root}/lib/librocprofiler-sdk.so",
+    interface_library = rocm_path("lib/librocprofiler-sdk.so"),
     deps = [
         ":amd_comgr_libs",
         ":system_libs",
@@ -442,8 +454,8 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "rocprofiler_sdk_roctx",
-    data = glob(["%{rocm_root}/lib/librocprofiler-sdk-roctx.so*"]),
-    interface_library = "%{rocm_root}/lib/librocprofiler-sdk-roctx.so",
+    data = glob([rocm_path("lib/librocprofiler-sdk-roctx.so*")]),
+    interface_library = rocm_path("lib/librocprofiler-sdk-roctx.so"),
     # NEEDED librocprofiler-register.so, which the glob above does not match.
     # Without this a hermetic build stages the shim without it and fails at load.
     deps = [":rocprofiler_register_libs"],
@@ -452,17 +464,17 @@ rocm_lib_import(
 rocm_lib_import(
     name = "rocsolver",
     data = glob([
-        "%{rocm_root}/lib/librocsolver.so*",
-        "%{rocm_root}/lib/host-math/lib/*.so*",
+        rocm_path("lib/librocsolver.so*"),
+        rocm_path("lib/host-math/lib/*.so*"),
     ]) + glob([
         pattern
         for arch in rocm_gpu_architectures()
         for pattern in (
-            "%{rocm_root}/.kpack/blas_lib_" + arch + ".kpack",
-            "%{rocm_root}/.kpack/solver_lib_" + arch + ".kpack",
+            rocm_path(".kpack/blas_lib_{}.kpack".format(arch)),
+            rocm_path(".kpack/solver_lib_{}.kpack".format(arch)),
         )
     ]),
-    interface_library = "%{rocm_root}/lib/librocsolver.so",
+    interface_library = rocm_path("lib/librocsolver.so"),
     deps = [
         ":hip_runtime_libs",
         ":rocblas_libs",
@@ -471,8 +483,8 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "hipsolver",
-    data = glob(["%{rocm_root}/lib/libhipsolver.so*"]),
-    interface_library = "%{rocm_root}/lib/libhipsolver.so",
+    data = glob([rocm_path("lib/libhipsolver.so*")]),
+    interface_library = rocm_path("lib/libhipsolver.so"),
     deps = [
         ":hip_runtime_libs",
         ":rocblas_libs",
@@ -483,8 +495,8 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "hipblas",
-    data = glob(["%{rocm_root}/lib/libhipblas.so*"]),
-    interface_library = "%{rocm_root}/lib/libhipblas.so",
+    data = glob([rocm_path("lib/libhipblas.so*")]),
+    interface_library = rocm_path("lib/libhipblas.so"),
     deps = [
         ":rocblas_libs",
         ":rocsolver_libs",
@@ -495,25 +507,25 @@ rocm_lib_import(
     name = "hipblaslt",
     data = glob(
         [
-            "%{rocm_root}/lib/libhipblaslt.so*",
-            "%{rocm_root}/lib/librocroller.so*",
-            "%{rocm_root}/lib/liborigami.so*",
-            "%{rocm_root}/lib/libtensilelite-host.so*",
+            rocm_path("lib/libhipblaslt.so*"),
+            rocm_path("lib/librocroller.so*"),
+            rocm_path("lib/liborigami.so*"),
+            rocm_path("lib/libtensilelite-host.so*"),
         ],
     ) + glob([
         pattern
         for arch in rocm_gpu_architectures()
         for pattern in [
-            "%{rocm_root}/lib/hipblaslt/library/*" + arch + "*",
-            "%{rocm_root}/lib/hipblaslt/library/" + arch + "/**/*",
+            rocm_path("lib/hipblaslt/library/*{}*".format(arch)),
+            rocm_path("lib/hipblaslt/library/{}/**/*".format(arch)),
         ]
     ]) + glob(
-        ["%{rocm_root}/lib/hipblaslt/library/*"],
+        [rocm_path("lib/hipblaslt/library/*")],
         exclude = [
-            "%{rocm_root}/lib/hipblaslt/library/*gfx*",
+            rocm_path("lib/hipblaslt/library/*gfx*"),
         ],
     ),
-    interface_library = "%{rocm_root}/lib/libhipblaslt.so",
+    interface_library = rocm_path("lib/libhipblaslt.so"),
     deps = [
         ":hip_runtime_libs",
         ":roctx_libs",
@@ -524,32 +536,91 @@ filegroup(
     name = "system_libs_data",
     srcs = glob(
         [
-            "%{rocm_root}/lib/rocm_sysdeps/lib/*.so*",
-            "%{rocm_root}/lib/rocm_sysdeps/share/**",
+            rocm_path("lib/rocm_sysdeps/lib/*.so*"),
+            rocm_path("lib/rocm_sysdeps/share/**"),
         ],
+        allow_empty = True,
         exclude = [
-            "%{rocm_root}/lib/rocm_sysdeps/share/terminfo/**",
+            rocm_path("lib/rocm_sysdeps/share/terminfo/**"),
         ],
     ),
 )
 
+# rocm_sysdeps only exists in TheRock-based ROCm distributions. ROCm's own
+# libraries find it via their embedded RUNPATH; the rpath here is for binaries
+# that link a sysdeps library directly (see :drm, :drm_amdgpu, :numa). As with
+# /opt/rocm/lib in :rocm_rpath, the /opt/rocm entry lets binaries run outside
+# runfiles against a local TheRock install; it is skipped on classic ROCm.
 cc_library(
     name = "system_libs",
     data = [":system_libs_data"],
+    linkopts = select({
+        ":link_only": [],
+        ":build_hermetic": [
+            "-Wl,-rpath,{}/lib/rocm_sysdeps/lib".format(_ROCM.rocm_runfiles_path),
+        ],
+        "//conditions:default": [
+            "-Wl,-rpath,{}/lib/rocm_sysdeps/lib".format(_ROCM.rocm_runfiles_path),
+            "-Wl,-rpath,/opt/rocm/lib/rocm_sysdeps/lib",
+        ],
+    }),
+)
+
+# System libraries needed by consumers like MORI's libhsakmt.a (drm/numa
+# symbols), exposed as real link targets (not just runtime data). On TheRock
+# 7.10+ they resolve to the copies bundled under lib/rocm_sysdeps/lib. Classic
+# ROCm 7.2.x does not ship rocm_sysdeps, so those installs also pass -ldrm etc.
+# to the host linker.
+_USE_HOST_SYSDEPS = _ROCM.rocm_version < 71000
+
+cc_library(
+    name = "drm",
+    srcs = glob(
+        [rocm_path("lib/rocm_sysdeps/lib/libdrm.so")],
+        allow_empty = True,
+    ),
+    data = [":system_libs_data"],
+    linkopts = ["-ldrm"] if _USE_HOST_SYSDEPS else [],
+    visibility = ["//visibility:public"],
+    deps = [":system_libs"],
+)
+
+cc_library(
+    name = "drm_amdgpu",
+    srcs = glob(
+        [rocm_path("lib/rocm_sysdeps/lib/libdrm_amdgpu.so")],
+        allow_empty = True,
+    ),
+    data = [":system_libs_data"],
+    linkopts = ["-ldrm_amdgpu"] if _USE_HOST_SYSDEPS else [],
+    visibility = ["//visibility:public"],
+    deps = [":system_libs"],
+)
+
+cc_library(
+    name = "numa",
+    srcs = glob(
+        [rocm_path("lib/rocm_sysdeps/lib/libnuma.so")],
+        allow_empty = True,
+    ),
+    data = [":system_libs_data"],
+    linkopts = ["-lnuma"] if _USE_HOST_SYSDEPS else [],
+    visibility = ["//visibility:public"],
+    deps = [":system_libs"],
 )
 
 filegroup(
     name = "toolchain_data",
     srcs = glob(
         include = [
-            "%{rocm_root}/bin/hipcc",
-            "%{rocm_root}/lib/llvm/bin/*",
-            "%{rocm_root}/lib/llvm/lib/clang/*/include/**",
-            "%{rocm_root}/lib/llvm/lib/clang/*/lib/**/*.bc",
-            "%{rocm_root}/lib/llvm/lib/clang/*/lib/**/*.a",
-            "%{rocm_root}/lib/llvm/lib/*.so*",
-            "%{rocm_root}/share/hip/version",
-            "%{rocm_root}/amdgcn/**",
+            rocm_path("bin/hipcc"),
+            rocm_path("lib/llvm/bin/*"),
+            rocm_path("lib/llvm/lib/clang/*/include/**"),
+            rocm_path("lib/llvm/lib/clang/*/lib/**/*.bc"),
+            rocm_path("lib/llvm/lib/clang/*/lib/**/*.a"),
+            rocm_path("lib/llvm/lib/*.so*"),
+            rocm_path("share/hip/version"),
+            rocm_path("amdgcn/**"),
         ],
         allow_empty = True,
     ) + [":system_libs_data"],
@@ -559,7 +630,7 @@ filegroup(
 filegroup(
     name = "rocminfo",
     srcs = [
-        "%{rocm_root}/bin/rocminfo",
+        rocm_path("bin/rocminfo"),
     ] + [
         ":hsa_rocr_libs_data",
         ":rocprofiler_register_libs_data",
@@ -576,8 +647,21 @@ platform(
         "@bazel_tools//tools/cpp:clang",
     ],
     exec_properties = {
-        "container-image": "docker://%{rocm_rbe_docker_image}",
-        "Pool": "%{rocm_rbe_pool}",
+        "container-image": "docker://{}".format(_ROCM.rocm_rbe_docker_image),
+        "Pool": _ROCM.rocm_rbe_pool,
+        "OSFamily": "Linux",
+    },
+)
+
+platform(
+    name = "linux_x64_bb",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        "@bazel_tools//tools/cpp:clang",
+    ],
+    exec_properties = {
+        "Pool": _ROCM.rocm_rbe_pool,
         "OSFamily": "Linux",
     },
 )
