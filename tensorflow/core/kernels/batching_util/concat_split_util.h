@@ -79,7 +79,7 @@ absl::Status Concat(OpKernelContext* context,
     auto output_flat = output->shaped<T, 2>({1, output->NumElements()});
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
     (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
-    if (std::is_same<Device, GPUDevice>::value) {
+    if (std::is_same_v<Device, GPUDevice>) {
       ConcatGPU<T>(context, inputs_flat, output, &output_flat);
       return absl::OkStatus();
     }
@@ -126,11 +126,15 @@ absl::Status SplitEasyCases(OpKernelContext* context, const Tensor& input,
 
   int64_t total_size = 0;
   for (const int64_t size : sizes) {
+    if (size < 0) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Split size must be non-negative, got ", size));
+    }
+    if (size > input.shape().dim_size(0) - total_size) {
+      return absl::InvalidArgumentError(
+          "Sum of split sizes must not exceed dim0-size of input tensor");
+    }
     total_size += size;
-  }
-  if (total_size > input.shape().dim_size(0)) {
-    return absl::InvalidArgumentError(
-        "Sum of split sizes must not exceed dim0-size of input tensor");
   }
 
   // Special case 0: trivial 1-way split.

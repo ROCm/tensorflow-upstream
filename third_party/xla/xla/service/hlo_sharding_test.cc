@@ -632,6 +632,21 @@ INSTANTIATE_TEST_SUITE_P(HloShardingRepresentationTest,
                          HloShardingRepresentationTest,
                          ::testing::Values(false, true));
 
+// Tests that an empty tuple without sharding has no sharding properties.
+TEST_F(HloShardingTest, EmptyTupleWithoutShardingProperties) {
+  HloSharding sharding = HloSharding::Tuple(ShapeUtil::MakeTupleShape({}), {});
+
+  EXPECT_TRUE(sharding.IsTuple());
+  EXPECT_TRUE(sharding.tuple_elements().empty());
+  EXPECT_FALSE(sharding.IsSingleDevice());
+  EXPECT_FALSE(sharding.IsManual());
+  EXPECT_FALSE(sharding.IsUnknown());
+  EXPECT_FALSE(sharding.IsUnreduced());
+  EXPECT_FALSE(sharding.IsManualSubgroup());
+  EXPECT_FALSE(sharding.IsUnreducedSubgroup());
+  EXPECT_FALSE(sharding.UniqueDevice().has_value());
+}
+
 TEST_F(HloShardingTest, NestedTuple) {
   // nested_tuple_shape = (f32[], (f32[3]), f32[4, 6])
   Shape nested_tuple_shape = ShapeUtil::MakeTupleShape({
@@ -1493,6 +1508,49 @@ TEST_F(HloShardingTest, V3ToV2ToV3RoundTripSubAxes) {
   HloSharding hlo_sharding_restored =
       HloSharding::V3ToV2Sharding(named_sharding_restored);
   EXPECT_EQ(hlo_sharding, hlo_sharding_restored);
+}
+
+TEST_F(HloShardingTest, CopyAndMoveWithNamedSharding) {
+  EXPECT_EQ(sizeof(NamedSharding), 232);
+  EXPECT_EQ(sizeof(HloSharding), 168);
+
+  Mesh mesh({4}, {"axis_0"});
+  NamedSharding named_sharding =
+      test_utils::FromAxisNames(mesh, {{"axis_0:(1)2"}});
+  HloSharding sharding(named_sharding);
+  EXPECT_TRUE(sharding.UseNamedShardingLeaf());
+  EXPECT_EQ(sharding.named_sharding(), named_sharding);
+
+  // Test copy constructor
+  HloSharding copy_sharding = sharding;
+  EXPECT_TRUE(copy_sharding.UseNamedShardingLeaf());
+  EXPECT_EQ(copy_sharding.named_sharding(), named_sharding);
+  EXPECT_EQ(copy_sharding, sharding);
+
+  // Test copy assignment
+  HloSharding assign_sharding = HloSharding::Replicate();
+  EXPECT_FALSE(assign_sharding.UseNamedShardingLeaf());
+  assign_sharding = sharding;
+  EXPECT_TRUE(assign_sharding.UseNamedShardingLeaf());
+  EXPECT_EQ(assign_sharding.named_sharding(), named_sharding);
+  EXPECT_EQ(assign_sharding, sharding);
+
+  // Test self-assignment
+  HloSharding& sharding_ref = sharding;
+  sharding = sharding_ref;
+  EXPECT_TRUE(sharding.UseNamedShardingLeaf());
+  EXPECT_EQ(sharding.named_sharding(), named_sharding);
+
+  // Test move constructor
+  HloSharding move_sharding = std::move(copy_sharding);
+  EXPECT_TRUE(move_sharding.UseNamedShardingLeaf());
+  EXPECT_EQ(move_sharding.named_sharding(), named_sharding);
+
+  // Test move assignment
+  HloSharding move_assign_sharding = HloSharding::Replicate();
+  move_assign_sharding = std::move(assign_sharding);
+  EXPECT_TRUE(move_assign_sharding.UseNamedShardingLeaf());
+  EXPECT_EQ(move_assign_sharding.named_sharding(), named_sharding);
 }
 
 }  // namespace

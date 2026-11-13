@@ -23,6 +23,7 @@ import sys
 from absl.testing import parameterized
 import numpy as np
 
+from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.framework import constant_op
@@ -315,6 +316,62 @@ class L2NormalizeTest(test_lib.TestCase):
         x_tf = constant_op.constant(x_np, name="x")
         y_tf = nn_impl.l2_normalize(x_tf, dim)
         self.assertAllClose(y_np, self.evaluate(y_tf))
+
+  def testL2NormalizeHalfPrecision(self):
+    x_np = np.array([[300.0, 400.0], [0.0, 0.0], [1e-4, 0.0]], np.float32)
+    expected = [[0.6, 0.8], [0.0, 0.0], [1.0, 0.0]]
+    for dtype in [dtypes.float16, dtypes.bfloat16]:
+      x_tf = constant_op.constant(x_np, dtype=dtype)
+      y_tf = nn_impl.l2_normalize(x_tf, 1)
+      self.assertEqual(dtype, y_tf.dtype)
+      y = self.evaluate(y_tf).astype(np.float32)
+      self.assertAllClose(expected, y, atol=1e-2)
+
+  def testL2NormalizeHalfPrecisionNegativeValues(self):
+    x_np = np.array([[-300.0, 400.0], [300.0, -400.0]], np.float32)
+    expected = [[-0.6, 0.8], [0.6, -0.8]]
+    for dtype in [dtypes.float16, dtypes.bfloat16]:
+      y_tf = nn_impl.l2_normalize(constant_op.constant(x_np, dtype=dtype), 1)
+      self.assertEqual(dtype, y_tf.dtype)
+      self.assertAllClose(
+          expected, self.evaluate(y_tf).astype(np.float32), atol=1e-2
+      )
+
+  def testL2NormalizeHalfPrecisionTensorEpsilon(self):
+    x_np = np.array([[3.0, 4.0]], np.float32)
+    # The sum of squares (25) is below `epsilon` (100), so the output is
+    # scaled by `rsqrt(epsilon)` = 0.1.
+    expected = [[0.3, 0.4]]
+    for dtype in [dtypes.float16, dtypes.bfloat16]:
+      epsilon = constant_op.constant(100.0, dtype=dtype)
+      y_tf = nn_impl.l2_normalize(
+          constant_op.constant(x_np, dtype=dtype), 1, epsilon=epsilon
+      )
+      self.assertEqual(dtype, y_tf.dtype)
+      self.assertAllClose(
+          expected, self.evaluate(y_tf).astype(np.float32), atol=1e-2
+      )
+
+  def testL2NormalizeHalfPrecisionGradient(self):
+    x_np = np.array([[300.0, 400.0], [-300.0, 400.0]], np.float32)
+    weights = np.array([[1.0, 0.0], [1.0, 1.0]], np.float32)
+    # Reference gradient computed in float32.
+    x32 = constant_op.constant(x_np)
+    with backprop.GradientTape() as tape:
+      tape.watch(x32)
+      loss = math_ops.reduce_sum(nn_impl.l2_normalize(x32, 1) * weights)
+    expected = self.evaluate(tape.gradient(loss, x32))
+    for dtype in [dtypes.float16, dtypes.bfloat16]:
+      x = constant_op.constant(x_np, dtype=dtype)
+      with backprop.GradientTape() as tape:
+        tape.watch(x)
+        y = nn_impl.l2_normalize(x, 1)
+        loss = math_ops.reduce_sum(y * math_ops.cast(weights, dtype))
+      grad = tape.gradient(loss, x)
+      self.assertEqual(dtype, grad.dtype)
+      grad = self.evaluate(grad).astype(np.float32)
+      self.assertFalse(np.any(np.isnan(grad)))
+      self.assertAllClose(expected, grad, atol=1e-3)
 
 
 DROPOUT_FNS = [
@@ -878,7 +935,7 @@ class ComputeSampledLogitsTest(test_lib.TestCase):
       stable_exp_logits = np.exp(logits -
                                  np.amax(logits, axis=1, keepdims=True))
       pred = stable_exp_logits / np.sum(stable_exp_logits, 1, keepdims=True)
-      return -np.sum(targets * np.log(pred + 1.0e-20), axis=1)
+      return np.negative(np.sum(targets * np.log(pred + 1.0e-20), axis=1))
 
     np.random.seed(0)
     num_classes = 5
@@ -935,7 +992,7 @@ class ComputeSampledLogitsTest(test_lib.TestCase):
       stable_exp_logits = np.exp(logits -
                                  np.amax(logits, axis=1, keepdims=True))
       pred = stable_exp_logits / np.sum(stable_exp_logits, 1, keepdims=True)
-      return -np.sum(targets * np.log(pred + 1.0e-20), axis=1)
+      return np.negative(np.sum(targets * np.log(pred + 1.0e-20), axis=1))
 
     np.random.seed(0)
     num_classes = 5
@@ -1082,7 +1139,7 @@ class GeluTest(test_lib.TestCase):
 
 
 @test_util.run_all_in_graph_and_eager_modes
-class SwishTest(test_lib.TestCase):
+class SwishTest(test_lib.TestCase, parameterized.TestCase):
 
   def testValues(self):
     np_values = np.array(
@@ -1137,6 +1194,57 @@ class SwishTest(test_lib.TestCase):
       theoretical, numerical = gradient_checker_v2.compute_gradient(
           f, [x_tf])
       self.assertAllClose(theoretical, numerical)
+
+  @parameterized.product(
+      shapes=[
+          ((2, 3), ()),  # Scalar beta.
+          ((2, 3), (3,)),  # Vector beta.
+          ((2, 3), (1, 3)),  # Singleton dimension in beta.
+          ((2, 3), (2, 3)),  # Matching shapes.
+          ((3,), (2, 3)),  # Broadcast features.
+          ((2, 1), (1, 3)),  # Broadcast both inputs.
+          ((), (3,)),  # Scalar features.
+          ((0, 3), (3,)),  # Empty output.
+      ],
+      dtype=[dtypes.float32, dtypes.float64],
+      dynamic_shapes=[False, True],
+  )
+  def testBroadcastGradients(self, shapes, dtype, dynamic_shapes):
+    features_shape, beta_shape = shapes
+    features = constant_op.constant(
+        np.linspace(-1.0, 1.0, int(np.prod(features_shape))).reshape(
+            features_shape
+        ),
+        dtype=dtype,
+    )
+    beta = constant_op.constant(
+        np.linspace(0.5, 1.5, int(np.prod(beta_shape))).reshape(beta_shape),
+        dtype=dtype,
+    )
+    swish = nn_impl.swish
+    if dynamic_shapes:
+      swish = def_function.function(
+          swish, input_signature=[tensor_spec.TensorSpec(None, dtype)] * 2
+      )
+    theoretical, numerical = gradient_checker_v2.compute_gradient(
+        swish, [features, beta]
+    )
+    self.assertAllClose(theoretical[0], numerical[0], atol=1e-4)
+    self.assertAllClose(theoretical[1], numerical[1], atol=1e-4)
+
+  def testFloat16AndBfloat16Gradients(self):
+    for dtype in [dtypes.float16, dtypes.bfloat16]:
+      features = constant_op.constant([[1.0, 2.0], [3.0, 4.0]], dtype=dtype)
+      beta = constant_op.constant([0.5, 1.5], dtype=dtype)
+      with backprop.GradientTape() as tape:
+        tape.watch([features, beta])
+        y = nn_impl.swish(features, beta)
+      g_features, g_beta = tape.gradient(y, [features, beta])
+      self.assertEqual(g_features.dtype, dtype)
+      self.assertEqual(g_beta.dtype, dtype)
+      self.assertEqual(g_features.shape.as_list(), [2, 2])
+      self.assertEqual(g_beta.shape.as_list(), [2])
+      self.evaluate([g_features, g_beta])
 
 
 class MomentsTest(test_lib.TestCase):
@@ -1224,7 +1332,8 @@ class MomentsTest(test_lib.TestCase):
             t = constant_op.constant([[val, val, val]], dtype=dtype)
             _, var_eager = nn_impl.moments(t, axes=[1], keepdims=keepdims)
             expected = [[0.0]] if keepdims else [0.0]
-            self.assertAllClose(var_eager, expected, atol=1e-5)
+            atol = 2.5 if dtype == dtypes.float32 else 1e-5
+            self.assertAllClose(var_eager, expected, atol=atol)
             try:
               _, var_jit = def_function.function(
                   lambda x, kd=keepdims: nn_impl.moments(
@@ -1232,7 +1341,7 @@ class MomentsTest(test_lib.TestCase):
                   ),
                   jit_compile=True,
               )(t)
-              self.assertAllClose(var_jit, expected, atol=1e-5)
+              self.assertAllClose(var_jit, expected, atol=atol)
             except (errors.UnimplementedError, errors.InvalidArgumentError):
               pass
 
@@ -2111,6 +2220,77 @@ class IsotonicTest(parameterized.TestCase, test_lib.TestCase):
             [2.5, 1, 4.5, 3, 6.5]
         ])
     self.assertAllClose(segments, [[0, 0, 0, 0, 0], [0, 1, 0, 1, 0]])
+
+  @parameterized.product(
+      shape=[(3,), (2, 3), (2, 2, 3)],
+      axis=[0, -1],
+      decreasing=[True, False],
+      dtype=[np.float32, np.float64],
+  )
+  @test_util.run_in_graph_and_eager_modes
+  def test_pooled_gradient(self, shape, axis, decreasing, dtype):
+    # Each row has one singleton and a stable block pooling its last two values.
+    values = np.broadcast_to([4.0, 0.7, 2.0], shape).astype(dtype)
+    weights = np.arange(1, np.prod(shape) + 1, dtype=dtype).reshape(shape)
+    expected = weights.copy()
+    expected[..., 1:] = weights[..., 1:].mean(axis=-1, keepdims=True)
+    if not decreasing:
+      values = -values
+    x = constant_op.constant(np.moveaxis(values, -1, axis))
+    weights = constant_op.constant(np.moveaxis(weights, -1, axis))
+    with backprop.GradientTape() as tape:
+      tape.watch(x)
+      y, _ = nn_ops.isotonic_regression(x, decreasing=decreasing, axis=axis)
+    gradient = tape.gradient(y, x, output_gradients=weights)
+    self.assertAllClose(
+        np.moveaxis(expected, -1, axis), self.evaluate(gradient)
+    )
+
+  @parameterized.parameters((0,), (0, 3), (2, 0), (2, 0, 3))
+  @test_util.run_in_graph_and_eager_modes
+  def test_empty_gradient(self, *shape):
+    x = array_ops.zeros(shape, dtype=dtypes.float64)
+    with backprop.GradientTape() as tape:
+      tape.watch(x)
+      y, _ = nn_ops.isotonic_regression(x)
+    self.assertAllEqual(np.zeros(shape), self.evaluate(tape.gradient(y, x)))
+
+  @test_util.run_v2_only
+  def test_gradient_unknown_shape(self):
+    @def_function.function(
+        input_signature=[tensor_spec.TensorSpec(None, dtypes.float64)]
+    )
+    def ComputeGradient(x):
+      with backprop.GradientTape() as tape:
+        tape.watch(x)
+        y, _ = nn_ops.isotonic_regression(x)
+        selected = y[..., 1]
+      return tape.gradient(selected, x)
+
+    for shape in [(3,), (2, 3), (2, 2, 3)]:
+      x = constant_op.constant(np.broadcast_to([4.0, 0.7, 2.0], shape))
+      expected = np.broadcast_to([0.0, 0.5, 0.5], shape)
+      self.assertAllClose(expected, self.evaluate(ComputeGradient(x)))
+
+  @test_util.run_v2_only
+  def testGradient1D(self):
+    """Checks the gradient for a 1-D input, which has no batch dimension.
+
+    Pooling happens along the last axis, so a 1-D input has to be treated as
+    a single row rather than as one row per element.
+    """
+
+    @def_function.function
+    def ComputeIsotonicFn(x):
+      y, _ = nn_ops.isotonic_regression(x, decreasing=True)
+      return y
+
+    np.random.seed(0)
+    x_init = np.random.randn(50).astype(np.float64)
+    grad_theoretical, grad_numerical = gradient_checker_v2.compute_gradient(
+        ComputeIsotonicFn, [x_init], delta=1e-5
+    )
+    self.assertAllClose(grad_theoretical, grad_numerical)
 
   @test_util.run_v2_only
   def testGradientV2(self, dtype=np.float64, batch_size=30, dimensions=50):

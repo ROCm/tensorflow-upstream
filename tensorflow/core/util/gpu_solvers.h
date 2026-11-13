@@ -624,7 +624,7 @@ class ScratchSpace {
                                        &scratch_tensor_, alloc_attr));
   }
 
-  virtual ~ScratchSpace() {}
+  virtual ~ScratchSpace() = default;
 
   Scalar* mutable_data() {
     return scratch_tensor_.template flat<Scalar>().data();

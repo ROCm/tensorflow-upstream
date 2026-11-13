@@ -20,6 +20,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 #include "absl/base/attributes.h"
@@ -50,11 +51,13 @@ limitations under the License.
 #include "tensorflow/core/kernels/batching_util/periodic_function.h"
 #include "tensorflow/core/kernels/batching_util/warmup.h"
 #include "tensorflow/core/kernels/ops_util.h"
+#include "tensorflow/core/lib/gtl/cleanup.h"
 #include "tensorflow/core/lib/monitoring/gauge.h"
 #include "tensorflow/core/lib/random/random.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/numbers.h"
+#include "tensorflow/core/platform/refcount.h"
 #include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/platform/threadpool.h"
 
@@ -907,7 +910,19 @@ class UnbatchResource : public ResourceBase {
       auto batch_indices =
           batch_index_t.shaped<int64_t, 2>({batch_index_t.dim_size(0), 3});
       for (int i = 0; i < batch_index_t.dim_size(0); ++i) {
-        sizes.push_back(batch_indices(i, 2) - batch_indices(i, 1));
+        const int64_t start = batch_indices(i, 1);
+        const int64_t end = batch_indices(i, 2);
+        if (start < 0 || end < start) {
+          return absl::InvalidArgumentError(absl::StrCat(
+              "Invalid start/end indices in batch_index at row ", i, ": start=",
+              start, ", end=", end, ". Expected 0 <= start <= end."));
+        }
+        if (end > data_t.shape().dim_size(0)) {
+          return absl::InvalidArgumentError(absl::StrCat(
+              "Invalid end index in batch_index at row ", i, ": end=", end,
+              " exceeds dimension 0 size ", data_t.shape().dim_size(0), "."));
+        }
+        sizes.push_back(end - start);
         batch_keys.push_back(batch_indices(i, 0));
       }
 
@@ -931,14 +946,25 @@ class UnbatchResource : public ResourceBase {
       const uint64_t deadline_micros =
           Env::Default()->NowMicros() + timeout_micros_;
 
-      // Add ourselves to the waitlist for tensors.
-      if (!waiting_callbacks_
-               .emplace(batch_key,
-                        WaitingCallback{deadline_micros, context, done})
-               .second) {
+      if (waiting_callbacks_.find(batch_key) != waiting_callbacks_.end()) {
         return absl::AlreadyExistsError(
             "Multiple session runs with the same batch key.");
       }
+
+      if (nonempty_input) {
+        std::unordered_set<int64_t> seen_keys;
+        for (const int64_t key : batch_keys) {
+          if (!seen_keys.insert(key).second ||
+              waiting_tensors_.find(key) != waiting_tensors_.end()) {
+            return absl::AlreadyExistsError(
+                "Multiple tensors returned for same batch key.");
+          }
+        }
+      }
+
+      // Add ourselves to the waitlist for tensors.
+      waiting_callbacks_.emplace(
+          batch_key, WaitingCallback{deadline_micros, context, done});
 
       // If we have a non-empty tensor, finish the waitlisted runs,
       // and store any remaining pieces.
@@ -953,13 +979,8 @@ class UnbatchResource : public ResourceBase {
             // Note: the deadline here is in case we are arriving late and the
             // kernel that should rendezvous with this tensor has already waited
             // and timed out.
-            if (!waiting_tensors_
-                     .emplace(batch_keys[i],
-                              WaitingTensor{deadline_micros, split_inputs[i]})
-                     .second) {
-              return absl::AlreadyExistsError(
-                  "Multiple tensors returned for same batch key.");
-            }
+            waiting_tensors_.emplace(
+                batch_keys[i], WaitingTensor{deadline_micros, split_inputs[i]});
           }
         }
       }
@@ -1054,6 +1075,7 @@ class UnbatchKernel : public AsyncOpKernel {
   }
 
   void ComputeAsync(OpKernelContext* c, DoneCallback done) final {
+    auto cleanup = gtl::MakeCleanup([&done]() { done(); });
     UnbatchResource* ubr;
     std::function<absl::Status(UnbatchResource**)> creator =
         [this](UnbatchResource** r) {
@@ -1063,11 +1085,10 @@ class UnbatchKernel : public AsyncOpKernel {
     OP_REQUIRES_OK_ASYNC(c,
                          c->resource_manager()->LookupOrCreate(
                              container_, shared_name_, &ubr, creator),
-                         done);
-    auto status = ubr->Compute(c, done);
-    ubr->Unref();
-    OP_REQUIRES_OK_ASYNC(c, status, done);
-    // Assume ubr calls done, so nothing to do here.
+                         []() {});
+    core::ScopedUnref unref_ubr(ubr);
+    OP_REQUIRES_OK_ASYNC(c, ubr->Compute(c, done), []() {});
+    cleanup.release();
   }
 
  private:
@@ -1081,7 +1102,7 @@ REGISTER_KERNEL_BUILDER(Name("Unbatch").Device(DEVICE_CPU), UnbatchKernel);
 // deterministically for the gradient of unbatch.
 class UnbatchGradResource : public ResourceBase {
  public:
-  UnbatchGradResource() {}
+  UnbatchGradResource() = default;
 
   std::string DebugString() const final { return "UnbatchGradResource"; }
 
@@ -1129,13 +1150,34 @@ class UnbatchGradResource : public ResourceBase {
     const Tensor& grad_t = context->input(2);
     const Tensor& batch_key_t = context->input(3);
 
-    mutex_lock ml(mu_);
     if (!TensorShapeUtils::IsScalar(batch_key_t.shape())) {
       return absl::InvalidArgumentError(absl::StrCat(
           "Expected `id` to be scalar. Received ", batch_key_t.DebugString()));
     }
+    if (!TensorShapeUtils::IsVectorOrHigher(grad_t.shape())) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Expected `grad` to have rank at least 1. Received ",
+                       grad_t.shape().DebugString()));
+    }
+    if (!TensorShapeUtils::IsMatrix(batch_index_t.shape())) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Wrong shape for index tensor. Expected a matrix of "
+                       "shape [batch_size, 3]; Got: ",
+                       batch_index_t.shape().DebugString(), "."));
+    }
+    if (batch_index_t.dim_size(1) != 3) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Wrong shape for index tensor. Expected 1st dimension size to be 3; "
+          "Got: ",
+          batch_index_t.dim_size(1), "."));
+    }
+    if (data_t.NumElements() > 0 && batch_index_t.NumElements() == 0) {
+      return absl::InvalidArgumentError(
+          "batch_index is empty while the tensor isn't.");
+    }
 
     const int64_t batch_key = context->input(3).scalar<int64_t>()();
+    mutex_lock ml(mu_);
     // Mark our tensor as available.
     if (!available_tensors_.emplace(batch_key, grad_t).second) {
       return absl::InvalidArgumentError("Two runs with the same batch key.");
@@ -1144,24 +1186,7 @@ class UnbatchGradResource : public ResourceBase {
     // Check whether we have a valid input tensor and, if so, create its
     // dispatch logic.
     if (data_t.NumElements() > 0) {
-      if (batch_index_t.NumElements() == 0) {
-        return absl::InvalidArgumentError(
-            "batch_index is empty while the tensor isn't.");
-      }
       std::unordered_set<int64_t> missing_tensors;
-      // The rank must be validated before any dim_size access, which has
-      // undefined behavior for out-of-range dimension indices.
-      if (!TensorShapeUtils::IsMatrix(batch_index_t.shape())) {
-        return absl::InvalidArgumentError(
-            absl::StrCat("Wrong shape for index tensor. Expected a matrix of "
-                         "shape [batch_size, 3]; Got: ",
-                         batch_index_t.shape().DebugString(), "."));
-      }
-      if (batch_index_t.NumElements() != batch_index_t.dim_size(0) * 3) {
-        return absl::InvalidArgumentError(absl::StrCat(
-            "batch_index should contain ", batch_index_t.dim_size(0) * 3,
-            " elements. Received ", batch_index_t.NumElements()));
-      }
       const auto batch_index =
           batch_index_t.shaped<int64_t, 2>({batch_index_t.dim_size(0), 3});
       for (int i = 0; i < batch_index_t.dim_size(0); ++i) {
@@ -1173,26 +1198,36 @@ class UnbatchGradResource : public ResourceBase {
       if (missing_tensors.empty()) {
         return OutputBatch(context, done);
       }
-      if (!available_batches_
-               .emplace(batch_key, Batch{missing_tensors, context, done})
-               .second) {
+      if (available_batches_.find(batch_key) != available_batches_.end()) {
         return absl::InvalidArgumentError(
             "Batch key with valid batch used twice.");
       }
       for (const int64_t i : missing_tensors) {
-        if (!desired_tensor_to_batch_map_.emplace(i, batch_key).second) {
+        if (desired_tensor_to_batch_map_.find(i) !=
+            desired_tensor_to_batch_map_.end()) {
           return absl::InvalidArgumentError(
               "Missing tensor wanted by more than one batch.");
         }
       }
+      auto desire_it = desired_tensor_to_batch_map_.find(batch_key);
+      if (desire_it != desired_tensor_to_batch_map_.end() &&
+          available_batches_.find(desire_it->second) ==
+              available_batches_.end()) {
+        desired_tensor_to_batch_map_.erase(desire_it);
+        return absl::InvalidArgumentError("Batch no longer exists.");
+      }
+      available_batches_.emplace(batch_key,
+                                 Batch{missing_tensors, context, done});
+      for (const int64_t i : missing_tensors) {
+        desired_tensor_to_batch_map_.emplace(i, batch_key);
+      }
     } else {
       // If we don't have a valid input tensor we can output an empty tensor and
-      // call our done closure.
+      // call our done closure once all bookkeeping succeeds.
       TensorShape output_shape(grad_t.shape());
       output_shape.set_dim(0, 0);
       Tensor* output = nullptr;
       TF_RETURN_IF_ERROR(context->allocate_output(0, output_shape, &output));
-      done();
     }
 
     // Search to see whether our tensor is desired by any existing batch.
@@ -1208,10 +1243,18 @@ class UnbatchGradResource : public ResourceBase {
       // If all tensors are available we should concatenate them and dispatch
       // the batch.
       if (batch_it->second.missing_tensors.empty()) {
-        TF_RETURN_IF_ERROR(
-            OutputBatch(batch_it->second.context, batch_it->second.done));
+        OpKernelContext* batch_context = batch_it->second.context;
+        AsyncOpKernel::DoneCallback batch_done = batch_it->second.done;
         available_batches_.erase(batch_it);
+        absl::Status batch_status = OutputBatch(batch_context, batch_done);
+        if (!batch_status.ok()) {
+          batch_context->CtxFailureWithWarning(batch_status);
+          batch_done();
+        }
       }
+    }
+    if (data_t.NumElements() == 0) {
+      done();
     }
     return absl::OkStatus();
   }
@@ -1259,6 +1302,7 @@ class UnbatchGradKernel : public AsyncOpKernel {
   }
 
   void ComputeAsync(OpKernelContext* c, DoneCallback done) final {
+    auto cleanup = gtl::MakeCleanup([&done]() { done(); });
     UnbatchGradResource* ubr;
     std::function<absl::Status(UnbatchGradResource**)> creator =
         [](UnbatchGradResource** r) {
@@ -1268,11 +1312,10 @@ class UnbatchGradKernel : public AsyncOpKernel {
     OP_REQUIRES_OK_ASYNC(c,
                          c->resource_manager()->LookupOrCreate(
                              container_, shared_name_, &ubr, creator),
-                         done);
-    absl::Status status = ubr->Compute(c, done);
-    ubr->Unref();
-    OP_REQUIRES_OK_ASYNC(c, status, done);
-    // Assume ubr calls done, so nothing to do here.
+                         []() {});
+    core::ScopedUnref unref_ubr(ubr);
+    OP_REQUIRES_OK_ASYNC(c, ubr->Compute(c, done), []() {});
+    cleanup.release();
   }
 
  private:

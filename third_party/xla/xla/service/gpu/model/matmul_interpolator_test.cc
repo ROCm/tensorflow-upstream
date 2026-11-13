@@ -67,7 +67,7 @@ struct DotSpec {
   int64_t clock_cycles;
 };
 
-absl::StatusOr<DotContext> Dot(int b, int m, int n, int k,
+absl::StatusOr<DotContext> Dot(int64_t b, int64_t m, int64_t n, int64_t k,
                                absl::string_view lhs_type,
                                absl::string_view rhs_type,
                                absl::string_view result_type) {
@@ -337,6 +337,10 @@ class MatmulInterpolatorDefaultTableTest
     return GetMatmulInterpolator(TestGpuDeviceInfo::AMDMI300DeviceInfo());
   }
 
+  std::unique_ptr<MatmulInterpolator> GetMatmulInterpolatorSm107() {
+    return GetMatmulInterpolator(TestGpuDeviceInfo::VRNVL72DeviceInfo());
+  }
+
   std::unique_ptr<MatmulInterpolator> GetMatmulInterpolatorGfx950() {
     return GetMatmulInterpolator(TestGpuDeviceInfo::AMDMI350DeviceInfo());
   }
@@ -463,6 +467,47 @@ INSTANTIATE_TEST_SUITE_P(
              /*result_type=*/"bf16",
              /*clock_cycles=*/0},
             /*expected_duration=*/absl::Microseconds(6),
+        },
+    }),
+    [](const TestParamInfo<MatmulInterpolatorDefaultTableTest::ParamType>&
+           info) { return info.param.test_name; });
+
+using Sm107DefaultTableTest = MatmulInterpolatorDefaultTableTest;
+
+TEST_P(Sm107DefaultTableTest, EstimatesExactRuntime) {
+  const auto& [_, spec, expected_duration] = GetParam();
+  ASSERT_OK_AND_ASSIGN(DotContext context,
+                       Dot(spec.b, spec.m, spec.n, spec.k, spec.lhs_type,
+                           spec.rhs_type, spec.result_type));
+  std::optional<absl::Duration> runtime =
+      GetMatmulInterpolatorSm107()->EstimatedRuntime(*context.dot);
+  ASSERT_TRUE(runtime.has_value());
+  EXPECT_NEAR(absl::ToDoubleNanoseconds(*runtime),
+              absl::ToDoubleNanoseconds(expected_duration), 1.0);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MatmulInterpolatorDefaultTableTestInstantiationSm107, Sm107DefaultTableTest,
+    ValuesIn<ParametrizedTestCase>({
+        {
+            /*test_name=*/"bf16_bf16_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"bf16",
+             /*rhs_type=*/"bf16",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(153664),
+        },
+        {
+            /*test_name=*/"f32_f32_f32",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f32",
+             /*rhs_type=*/"f32",
+             /*result_type=*/"f32",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(292353),
         },
     }),
     [](const TestParamInfo<MatmulInterpolatorDefaultTableTest::ParamType>&
@@ -1006,6 +1051,56 @@ TEST_F(MatmulInterpolatorTest, SupportsDotTritonNestedGemmFusion) {
   const HloInstruction& custom_call =
       *module->entry_computation()->root_instruction();
   EXPECT_EQ(*interpolator().EstimatedRuntime(custom_call), absl::Seconds(1));
+}
+
+TEST(DefaultMatmulPerfTableTest, EstimatesRuntimeForLargeDimensions) {
+  se::DeviceDescription device_info =
+      TestGpuDeviceInfo::RTXA6000DeviceInfo(se::CudaComputeCapability(9, 0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<MatmulInterpolator> interpolator,
+                       MatmulInterpolator::Create(device_info));
+
+  // m * sizeof(f32) == 2^32, which previously overflowed 32-bit signed int to
+  // 0.
+  ASSERT_OK_AND_ASSIGN(
+      DotContext f32_ctx,
+      Dot(/*b=*/1, /*m=*/int64_t{1} << 30, /*n=*/1024, /*k=*/512,
+          /*lhs_type=*/"f32", /*rhs_type=*/"f32", /*result_type=*/"f32"));
+  std::optional<absl::Duration> f32_runtime =
+      interpolator->EstimatedRuntime(*f32_ctx.dot);
+  ASSERT_TRUE(f32_runtime.has_value());
+  EXPECT_GT(*f32_runtime, absl::ZeroDuration());
+
+  // Dimension > INT32_MAX (and byte-scaled m > UINT32_MAX) exercises >32-bit
+  // spec extraction while keeping int64_t Norm2 and FLOP arithmetic in range.
+  ASSERT_OK_AND_ASSIGN(
+      DotContext bf16_ctx,
+      Dot(/*b=*/1, /*m=*/(int64_t{1} << 31) + 1024, /*n=*/1024, /*k=*/512,
+          /*lhs_type=*/"bf16", /*rhs_type=*/"bf16", /*result_type=*/"bf16"));
+  std::optional<absl::Duration> bf16_runtime =
+      interpolator->EstimatedRuntime(*bf16_ctx.dot);
+  ASSERT_TRUE(bf16_runtime.has_value());
+  EXPECT_GT(*bf16_runtime, absl::Seconds(1));
+
+  // Unlisted dtype exercises fallback_interpolator_ path in EstimatedRuntime.
+  ASSERT_OK_AND_ASSIGN(
+      DotContext s8_ctx,
+      Dot(/*b=*/1, /*m=*/(int64_t{1} << 31) + 1024, /*n=*/1024, /*k=*/512,
+          /*lhs_type=*/"s8", /*rhs_type=*/"s8", /*result_type=*/"s8"));
+  std::optional<absl::Duration> s8_runtime =
+      interpolator->EstimatedRuntime(*s8_ctx.dot);
+  ASSERT_TRUE(s8_runtime.has_value());
+  EXPECT_GT(*s8_runtime, absl::Seconds(1));
+}
+
+TEST_F(MatmulInterpolatorTest, EstimatesRuntimeForLargeDimensions) {
+  ASSERT_OK_AND_ASSIGN(
+      DotContext ctx,
+      Dot(/*b=*/1, /*m=*/(int64_t{1} << 30) + 512, /*n=*/1024, /*k=*/512,
+          /*lhs_type=*/"bf16", /*rhs_type=*/"bf16", /*result_type=*/"bf16"));
+  std::optional<absl::Duration> runtime =
+      interpolator().EstimatedRuntime(*ctx.dot);
+  ASSERT_TRUE(runtime.has_value());
+  EXPECT_GT(*runtime, absl::Seconds(1000));
 }
 
 }  // namespace

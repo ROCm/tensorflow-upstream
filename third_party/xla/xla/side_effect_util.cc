@@ -94,7 +94,19 @@ const char kFuseLimitAttr[] = "FUSE_LIMIT";
 
 const char kMaximalFuseAttr[] = "MAXIMAL_FUSE";
 
+const char kBufferingLevelAttr[] = "buffering_level";
+
+const char kOutputWindowBoundsAttr[] = "output_window_bounds";
+
+const char kKernelWindowBoundsAttr[] = "kernel_window_bounds";
+
+const char kScopedVmemLimitKibAttr[] = "scoped_vmem_limit_kib";
+
+const char kIntegerAttr[] = "integer";
+
 const char kXlaCseSafeZeroOperandAttr[] = "_xla_cse_safe_zero_operand";
+
+const char kXlaTpuNativeBf16Attr[] = "_xla_tpu_native_bf16";
 
 const char kCollectiveGroupKeyAttr[] = "collective_group_key";
 

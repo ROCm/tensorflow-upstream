@@ -61,7 +61,7 @@ void TosaLegalizeTFLStateful::runOnOperation() {
   DenseMap<StringRef, mlir::tosa::VariableOp> symbolRefMap;
 
   for (auto it : symNameToFunction) {
-    auto func = std::get<1>(it);
+    auto func = it.second;
     // We also want to grab the list of operations to replace.
     for (auto& op : func.getOps()) {
       if (auto handle = dyn_cast<mlir::TFL::VarHandleOp>(op))
@@ -88,7 +88,7 @@ void TosaLegalizeTFLStateful::runOnOperation() {
       init.emitError("unable to find initialization function: ");
       continue;
     }
-    func::FuncOp initFunc = std::get<1>(*findInitFunc);
+    func::FuncOp initFunc = findInitFunc->second;
     for (auto assign : initFunc.getOps<mlir::TFL::AssignVariableOp>()) {
       // 1. var_handle part
       auto handle = dyn_cast<mlir::TFL::VarHandleOp>(
@@ -130,7 +130,7 @@ void TosaLegalizeTFLStateful::runOnOperation() {
           "unable to find corresponding TosaOp for op's VarHandle");
       continue;
     }
-    auto globalOp = std::get<1>(*globalOpIt);
+    auto globalOp = globalOpIt->second;
 
     builder.setInsertionPoint(assign);
     auto variableType = mlir::tosa::getVariableType(globalOp);
@@ -153,7 +153,7 @@ void TosaLegalizeTFLStateful::runOnOperation() {
 
     auto globalOpIt = symbolRefMap.find(handle.getSharedName());
     if (globalOpIt == symbolRefMap.end()) continue;
-    auto globalOp = std::get<1>(*globalOpIt);
+    auto globalOp = globalOpIt->second;
 
     builder.setInsertionPoint(read);
 

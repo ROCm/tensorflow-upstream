@@ -26,7 +26,6 @@ limitations under the License.
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/literal_util.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -36,47 +35,47 @@ namespace m = ::xla::match;
 using SanitizeConstantNamesTest = HloHardwareIndependentTestBase;
 
 TEST_F(SanitizeConstantNamesTest, InstructionNameWithHyphenSanitized) {
-  const char *const kHloString = R"(
+  const char* const kHloString = R"(
     HloModule HyphenInInstructionName
       ENTRY kernelEntry {
         ROOT equal-to = s32[2]{0} constant({42, 73})
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   EXPECT_TRUE(SanitizeConstantNames().Run(module.get()).value());
-  HloInstruction *root = module->entry_computation()->root_instruction();
+  HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_EQ(root->name(), "equal_to");
 }
 
 TEST_F(SanitizeConstantNamesTest, InstructionNameWithDotSanitized) {
-  const char *const kHloString = R"(
+  const char* const kHloString = R"(
     HloModule HyphenInInstructionName
       ENTRY kernelEntry {
         ROOT equal.to = s32[2]{0} constant({42, 73})
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   EXPECT_TRUE(SanitizeConstantNames().Run(module.get()).value());
-  HloInstruction *root = module->entry_computation()->root_instruction();
+  HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_EQ(root->name(), "equal_to");
 }
 
 TEST_F(SanitizeConstantNamesTest, NewInstructionNameRegisteredWithModule) {
-  const char *const kHloString = R"(
+  const char* const kHloString = R"(
     HloModule HyphenInInstructionName
       ENTRY kernelEntry {
         ROOT equal.to = s32[2]{0} constant({42, 73})
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   EXPECT_TRUE(SanitizeConstantNames().Run(module.get()).value());
-  HloInstruction *root = module->entry_computation()->root_instruction();
+  HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_EQ(root->name(), "equal_to");
 
   auto constant_instr =
@@ -89,7 +88,7 @@ TEST_F(SanitizeConstantNamesTest, NewInstructionNameRegisteredWithModule) {
 }
 
 TEST_F(SanitizeConstantNamesTest, BufferSanitizedNameCollisionResolved) {
-  const char *const kHloString = R"(
+  const char* const kHloString = R"(
     HloModule BufferSanitizedName
       ENTRY kernelEntry {
       equal.to = s32[2]{0} constant({42, 73})
@@ -97,14 +96,43 @@ TEST_F(SanitizeConstantNamesTest, BufferSanitizedNameCollisionResolved) {
       ROOT equal_to = s32[2]{0} add(equal.to, equal-to)
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   EXPECT_TRUE(SanitizeConstantNames().Run(module.get()).value());
   EXPECT_THAT(FindInstruction(module.get(), "equal_to_1"),
               GmockMatch(m::Constant()));
   EXPECT_THAT(FindInstruction(module.get(), "equal_to_2"),
               GmockMatch(m::Constant()));
+}
+
+TEST_F(SanitizeConstantNamesTest, IgnoresExecutionThreadFilter) {
+  constexpr absl::string_view kHloText = R"(
+    HloModule m
+
+      parallel {
+        ROOT c.1 = f32[] constant(41)
+      }
+
+      ENTRY main {
+        ROOT c = f32[] constant(42)
+      }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+
+  HloComputation* parallel = module->GetComputationWithName("parallel");
+  ASSERT_NE(parallel, nullptr);
+  parallel->SetExecutionThread(HloInstruction::kParallelExecutionThread);
+
+  SanitizeConstantNames pass;
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      pass.Run(module.get(), {HloInstruction::kMainExecutionThread}));
+
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(parallel->root_instruction()->name(), "c_1");
 }
 
 }  // namespace

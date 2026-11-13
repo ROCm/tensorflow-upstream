@@ -63,6 +63,7 @@ namespace proxy {
 
 namespace {
 
+using ::testing::HasSubstr;
 using ::testing::Not;
 
 // Sufficient time for all processing (that are not explicitly waiting for
@@ -122,14 +123,16 @@ using OnReqReceived =
 class SimpleIfrtService : public grpc::GrpcIfrtService::Service {
  public:
   SimpleIfrtService(OnReqReceived on_req_received,
-                    OnSessionStart on_session_start)
+                    OnSessionStart on_session_start,
+                    ::grpc::Status session_finish_status = ::grpc::Status::OK)
       : on_req_received_(std::move(on_req_received)),
-        on_session_start_(std::move(on_session_start)) {}
+        on_session_start_(std::move(on_session_start)),
+        session_finish_status_(std::move(session_finish_status)) {}
 
   ::grpc::Status IfrtSession(::grpc::ServerContext* context,
                              ServerStream* stream) override {
     if (on_session_start_ && on_session_start_() == kStopSession) {
-      return ::grpc::Status::OK;
+      return session_finish_status_;
     }
 
     {
@@ -160,7 +163,7 @@ class SimpleIfrtService : public grpc::GrpcIfrtService::Service {
     }
 
     LOG(INFO) << "Finishing IFRT session";
-    return ::grpc::Status::OK;
+    return session_finish_status_;
   }
 
   void CancelAllServerSessions() {
@@ -173,6 +176,7 @@ class SimpleIfrtService : public grpc::GrpcIfrtService::Service {
  private:
   const OnReqReceived on_req_received_;
   const OnSessionStart on_session_start_;
+  const ::grpc::Status session_finish_status_;
 
   // Keeps track of `::grpc::ServerContext` for all ongoing sessions.
   absl::Mutex mu_;
@@ -183,14 +187,16 @@ class SimpleIfrtService : public grpc::GrpcIfrtService::Service {
 // `grpc::GrpcIfrtService`.
 class ClientAndServer {
  public:
-  explicit ClientAndServer(OnReqReceived on_req_received = nullptr,
-                           OnSessionStart on_session_start = nullptr) {
+  explicit ClientAndServer(
+      OnReqReceived on_req_received = nullptr,
+      OnSessionStart on_session_start = nullptr,
+      ::grpc::Status session_finish_status = ::grpc::Status::OK) {
     std::string address =
         absl::StrCat("localhost:", tsl::testing::PickUnusedPortOrDie());
     ::grpc::ServerBuilder builder;
     builder.AddListeningPort(address, GetServerCredentials());
-    ifrt_service_ =
-        std::make_unique<SimpleIfrtService>(on_req_received, on_session_start);
+    ifrt_service_ = std::make_unique<SimpleIfrtService>(
+        on_req_received, on_session_start, std::move(session_finish_status));
     builder.RegisterService(ifrt_service_.get());
     server_ = builder.BuildAndStart();
 
@@ -281,7 +287,9 @@ TEST(GrpcClientSessionTest, HappyCaseTwoRequestsWithClientFinish) {
   EXPECT_EQ(cs.client_finished_q()->PopOrTimeout(), std::nullopt);
 
   cs.client_session()->Finish(TestError());
-  EXPECT_THAT(cs.client_finished_q()->Pop(), Not(absl_testing::IsOk()));
+  EXPECT_THAT(cs.client_finished_q()->Pop(),
+              absl_testing::StatusIs(TestError().code(),
+                                     HasSubstr(TestError().message())));
 }
 
 TEST(GrpcClientSessionTest, ServerFinishesDuringFirstRead) {
@@ -313,6 +321,82 @@ TEST(GrpcClientSessionTest, ServerFinishesDuringConstruction) {
   EXPECT_THAT(cs.client_finished_q()->Pop(), Not(absl_testing::IsOk()));
 }
 
+TEST(GrpcClientSessionTest, ServerFailsWithResourceExhaustedDuringFirstRead) {
+  ClientAndServer cs(
+      /*on_req_received=*/[](auto, auto) { return kStopSession; },
+      /*on_session_start=*/nullptr,
+      ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
+                     "Only one client can connect via the proxy server at a "
+                     "time."));
+
+  ASSERT_OK_AND_ASSIGN(Queue * response_q_1, cs.SendSimpleRequest());
+  EXPECT_THAT(
+      response_q_1->Pop(),
+      absl_testing::StatusIs(
+          absl::StatusCode::kResourceExhausted,
+          HasSubstr(
+              "Only one client can connect via the proxy server at a time.")));
+
+  absl::StatusOr<Queue*> response_q_2 = cs.SendSimpleRequest();
+  EXPECT_THAT(
+      response_q_2.status(),
+      absl_testing::StatusIs(
+          absl::StatusCode::kResourceExhausted,
+          HasSubstr(
+              "Only one client can connect via the proxy server at a time.")));
+
+  EXPECT_THAT(
+      cs.client_finished_q()->Pop(),
+      absl_testing::StatusIs(
+          absl::StatusCode::kResourceExhausted,
+          HasSubstr(
+              "Only one client can connect via the proxy server at a time.")));
+}
+
+TEST(GrpcClientSessionTest,
+     ServerFailsWithResourceExhaustedDuringConstruction) {
+  ClientAndServer cs(
+      /*on_req_received=*/nullptr,
+      /*on_session_start=*/[]() { return kStopSession; },
+      ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
+                     "Only one client can connect via the proxy server at a "
+                     "time."));
+
+  absl::StatusOr<Queue*> response_q_1 = cs.SendSimpleRequest();
+  absl::StatusOr<Queue*> response_q_2 = cs.SendSimpleRequest();
+
+  ExpectHeadAndTail({response_q_1, response_q_2});
+  if (response_q_1.ok()) {
+    EXPECT_THAT(
+        response_q_1.value()->Pop(),
+        absl_testing::StatusIs(
+            absl::StatusCode::kResourceExhausted,
+            HasSubstr("Only one client can connect via the proxy server at a "
+                      "time.")));
+  }
+  if (response_q_2.ok()) {
+    EXPECT_THAT(
+        response_q_2.value()->Pop(),
+        absl_testing::StatusIs(
+            absl::StatusCode::kResourceExhausted,
+            HasSubstr("Only one client can connect via the proxy server at a "
+                      "time.")));
+  }
+
+  EXPECT_THAT(
+      cs.client_finished_q()->Pop(),
+      absl_testing::StatusIs(
+          absl::StatusCode::kResourceExhausted,
+          HasSubstr(
+              "Only one client can connect via the proxy server at a time.")));
+  EXPECT_THAT(
+      cs.SendSimpleRequest(),
+      absl_testing::StatusIs(
+          absl::StatusCode::kResourceExhausted,
+          HasSubstr(
+              "Only one client can connect via the proxy server at a time.")));
+}
+
 TEST(GrpcClientSessionTest, ClientFinishesAfterServerConsumesFirstRequest) {
   std::atomic<GrpcClientSession*> session_ptr;
   ClientAndServer cs(
@@ -323,12 +407,16 @@ TEST(GrpcClientSessionTest, ClientFinishesAfterServerConsumesFirstRequest) {
   session_ptr.store(cs.client_session());
 
   TF_ASSERT_OK_AND_ASSIGN(Queue * response_q_1, cs.SendSimpleRequest());
-  EXPECT_THAT(response_q_1->Pop(), Not(absl_testing::IsOk()));
+  EXPECT_THAT(response_q_1->Pop(),
+              absl_testing::StatusIs(TestError().code(),
+                                     HasSubstr(TestError().message())));
 
   absl::StatusOr<Queue*> response_q_2 = cs.SendSimpleRequest();
   EXPECT_THAT(response_q_2.status(), Not(absl_testing::IsOk()));
 
-  EXPECT_THAT(cs.client_finished_q()->Pop(), Not(absl_testing::IsOk()));
+  EXPECT_THAT(cs.client_finished_q()->Pop(),
+              absl_testing::StatusIs(TestError().code(),
+                                     HasSubstr(TestError().message())));
 }
 
 TEST(GrpcClientSessionTest, ClientFinishesAfterServerWritesFirstResponse) {
@@ -355,10 +443,14 @@ TEST(GrpcClientSessionTest, ClientFinishesAfterServerWritesFirstResponse) {
   // enqueued. If it could be enqueued, the client will die without the server
   // sending the corresponding response.
   if (response_q_2.ok()) {
-    EXPECT_THAT(response_q_2.value()->Pop(), Not(absl_testing::IsOk()));
+    EXPECT_THAT(response_q_2.value()->Pop(),
+                absl_testing::StatusIs(TestError().code(),
+                                       HasSubstr(TestError().message())));
   }
 
-  EXPECT_THAT(cs.client_finished_q()->Pop(), Not(absl_testing::IsOk()));
+  EXPECT_THAT(cs.client_finished_q()->Pop(),
+              absl_testing::StatusIs(TestError().code(),
+                                     HasSubstr(TestError().message())));
 }
 
 TEST(GrpcClientSessionTest, ClientFinishesDuringServerConstruction) {
@@ -386,7 +478,9 @@ TEST(GrpcClientSessionTest, ClientFinishesDuringServerConstruction) {
 
   ExpectHeadAndTail({response_q_1, response_q_2});
 
-  EXPECT_THAT(cs.client_finished_q()->Pop(), Not(absl_testing::IsOk()));
+  EXPECT_THAT(cs.client_finished_q()->Pop(),
+              absl_testing::StatusIs(TestError().code(),
+                                     HasSubstr(TestError().message())));
 }
 
 TEST(GrpcClientSessionTest, MethodsAfterFinishReturnError) {

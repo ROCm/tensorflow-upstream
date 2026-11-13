@@ -127,6 +127,9 @@ class LowerStableHloOpToArith : public mlir::OpRewritePattern<StableHloOp> {
         new_op = UnsignedIntArithOp::create(rewriter, op.getLoc(),
                                             signless_operands.front().getType(),
                                             signless_operands);
+        if constexpr (std::is_same_v<UnsignedIntArithOp, mlir::math::IPowIOp>) {
+          new_op->setAttr("xla.is_unsigned", rewriter.getUnitAttr());
+        }
 
         rewriter.replaceOpWithNewOp<mlir::UnrealizedConversionCastOp>(
             op, op.getResult().getType(), new_op->getResult(0));
@@ -522,6 +525,20 @@ class LowerCompareOp
   }
 };
 
+class LowerFmaOp : public mlir::OpRewritePattern<mlir::stablehlo::FmaOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+ private:
+  mlir::LogicalResult matchAndRewrite(
+      mlir::stablehlo::FmaOp op,
+      mlir::PatternRewriter& rewriter) const override {
+    rewriter.replaceOpWithNewOp<mlir::math::FmaOp>(op, op.getA(), op.getB(),
+                                                   op.getC());
+    return mlir::success();
+  }
+};
+
 struct StablehloLowerToArithPass
     : public impl::StablehloLowerToArithPassBase<StablehloLowerToArithPass> {
   using StablehloLowerToArithPassBase::StablehloLowerToArithPassBase;
@@ -557,7 +574,7 @@ struct StablehloLowerToArithPass
         LowerStableHloNegOpToArith,
         LowerStableHloUnaryOpToMath<mlir::stablehlo::RoundNearestEvenOp,
                                     mlir::math::RoundEvenOp>,
-        LowerConvertOp, LowerCompareOp>(mlir_context);
+        LowerConvertOp, LowerCompareOp, LowerFmaOp>(mlir_context);
 
     if (mlir::failed(
             mlir::applyPatternsGreedily(getOperation(), std::move(patterns)))) {

@@ -19,9 +19,6 @@ cc_library(
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:types",
         "//xla/tsl/profiler/utils:traceme_global_flags",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:thread_annotations",
     ] + if_static([
         ":traceme_recorder_impl",
     ]),
@@ -83,12 +80,11 @@ cc_library(
     hdrs = ["annotation_stack.h"],
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
+        "//xla:__subpackages__",
         "//xla/tsl/profiler:internal",
     ]),
     deps = [
-        "//xla/tsl/platform:macros",
         "//xla/tsl/platform:types",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
     ] + if_static([
@@ -176,6 +172,25 @@ cc_library(
         "@tsl//tsl/platform:__subpackages__",
         "//xla/tsl/platform:__subpackages__",
     ]),
+)
+
+tsl_cc_test(
+    name = "threadpool_listener_test",
+    srcs = ["threadpool_listener_test.cc"],
+    deps = [
+        ":threadpool_listener",
+        ":traceme_recorder_impl",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:env_impl",  # buildcleaner: keep
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+        "//xla/tsl/profiler/utils:time_utils",
+        "//xla/tsl/profiler/utils:time_utils_impl",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:tracing",
+    ],
 )
 
 cc_library(

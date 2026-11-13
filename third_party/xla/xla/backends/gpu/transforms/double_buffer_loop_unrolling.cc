@@ -61,15 +61,56 @@ DynamicSliceConfig DoubleBufferLoopUnrolling::MakeConfigForLoopIteration(
   }
   DynamicSliceConfig new_config = config;
   if (const auto* dyn = std::get_if<DynamicLoopIteration>(&loop_iteration)) {
-    new_config.set_byte_offset(config.byte_offset() +
-                               dyn->start_iteration * config.byte_stride());
-    new_config.set_byte_stride(config.byte_stride() * dyn->iteration_stride);
+    if (config.has_linear()) {
+      auto* linear = new_config.mutable_linear();
+      linear->set_byte_offset(config.linear().byte_offset() +
+                              dyn->start_iteration *
+                                  config.linear().byte_stride());
+      linear->set_byte_stride(config.linear().byte_stride() *
+                              dyn->iteration_stride);
+      return new_config;
+    }
+
+    auto* offsets = new_config.mutable_table()->mutable_offsets();
+    offsets->Clear();
+    for (int64_t i = dyn->start_iteration; i < config.table().offsets_size();
+         i += dyn->iteration_stride) {
+      offsets->Add(config.table().offsets(i));
+    }
+
+    // Unrolling can turn a non-linear table into a linear subsequence.
+    CHECK_GT(offsets->size(), 0);
+    int64_t stride = offsets->size() > 1 ? (*offsets)[1] - (*offsets)[0] : 0;
+    for (int64_t i = 2; i < offsets->size(); ++i) {
+      if ((*offsets)[i] - (*offsets)[i - 1] != stride) {
+        return new_config;
+      }
+    }
+
+    int64_t byte_offset = (*offsets)[0];
+    auto* linear = new_config.mutable_linear();
+    linear->set_byte_offset(byte_offset);
+    linear->set_byte_stride(stride);
+    // A zero stride is a loop-invariant offset and must not reference the loop.
+    if (stride == 0) {
+      new_config.clear_loop_index();
+    }
     return new_config;
   }
+
   const auto& stat = std::get<StaticLoopIteration>(loop_iteration);
-  new_config.set_byte_offset(config.byte_offset() +
-                             stat.iteration * config.byte_stride());
-  new_config.set_byte_stride(0);
+  int64_t byte_offset;
+  if (config.has_table()) {
+    CHECK_GE(stat.iteration, 0);
+    CHECK_LT(stat.iteration, config.table().offsets_size());
+    byte_offset = config.table().offsets(stat.iteration);
+  } else {
+    byte_offset = config.linear().byte_offset() +
+                  stat.iteration * config.linear().byte_stride();
+  }
+  auto* linear = new_config.mutable_linear();
+  linear->set_byte_offset(byte_offset);
+  linear->set_byte_stride(0);
   new_config.clear_loop_index();
   return new_config;
 }
@@ -592,24 +633,30 @@ absl::StatusOr<bool> DoubleBufferLoopUnrolling::RunImpl(
                    << ", " << kManualUnrollFull;
       }
     }
+    // Accumulate across loops. A later loop that is not unrolled must not hide
+    // an earlier change, or the FlattenCallGraph cleanup below is skipped.
+    bool loop_changed = false;
     if (unroll_strategy_ == UnrollStrategy::kFullUnroll) {
-      ABSL_ASSIGN_OR_RETURN(changed, FullyUnroll(while_instr, module));
+      ABSL_ASSIGN_OR_RETURN(loop_changed, FullyUnroll(while_instr, module));
     } else if (unroll_strategy_ == UnrollStrategy::kDoubleBuffer) {
-      ABSL_ASSIGN_OR_RETURN(changed, DoubleBufferingUnroll(while_instr, module));
+      ABSL_ASSIGN_OR_RETURN(loop_changed,
+                       DoubleBufferingUnroll(while_instr, module));
     } else if (unroll_strategy_ == UnrollStrategy::kAuto) {
-      ABSL_ASSIGN_OR_RETURN(changed, AutoUnroll(while_instr, module));
+      ABSL_ASSIGN_OR_RETURN(loop_changed, AutoUnroll(while_instr, module));
     } else if (unroll_strategy_ == UnrollStrategy::kManual) {
       if (absl::EqualsIgnoreCase(manual_unroll_attr_val, kManualUnrollFull)) {
-        ABSL_ASSIGN_OR_RETURN(changed, FullyUnroll(while_instr, module));
+        ABSL_ASSIGN_OR_RETURN(loop_changed, FullyUnroll(while_instr, module));
       }
       if (absl::EqualsIgnoreCase(manual_unroll_attr_val,
                                  kManualUnrollDoubleBuffer)) {
-        ABSL_ASSIGN_OR_RETURN(changed, DoubleBufferingUnroll(while_instr, module));
+        ABSL_ASSIGN_OR_RETURN(loop_changed,
+                         DoubleBufferingUnroll(while_instr, module));
       }
     } else {
       LOG(FATAL) << absl::StrCat("Unhandled unrolling strategy: ",
                                  unroll_strategy_);
     }
+    changed |= loop_changed;
   }
 
   VLOG(2) << "LoopDoubleBufferTransformer output: " << module->ToString();

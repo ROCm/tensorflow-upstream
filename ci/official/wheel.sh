@@ -41,12 +41,6 @@ if [[ "$TFCI_NIGHTLY_UPDATE_VERSION_ENABLE" == 1 ]]; then
   export TFCI_BUILD_PIP_PACKAGE_ADDITIONAL_WHEEL_NAMES="$(echo $TFCI_BUILD_PIP_PACKAGE_ADDITIONAL_WHEEL_NAMES | sed 's/tensorflow/tf_nightly/g')"
 fi
 
-# TODO(b/361369076) Remove the following block after TF NumPy 1 is dropped
-# Move hermetic requirement lock files for NumPy 1 to the root
-if [[ "$TFCI_WHL_NUMPY_VERSION" == 1 ]]; then
-  cp ./ci/official/requirements_updater/numpy1_requirements/*.txt .
-fi
-
 tfrun bazel $TFCI_BAZEL_BAZELRC_ARGS build  $TFCI_BAZEL_COMMON_ARGS --config=$TFCI_BAZEL_CONFIG  --config=rocm_cache --dynamic_mode=off --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" --repo_env=ROCM_PATH="" //tensorflow/tools/pip_package:wheel $TFCI_BUILD_PIP_PACKAGE_BASE_ARGS $TFCI_BUILD_PIP_PACKAGE_WHEEL_NAME_ARG --verbose_failures
 
 ROCM_DIST="$(bazel info output_base)/external/local_config_rocm/rocm/rocm_dist"
@@ -65,8 +59,9 @@ if [[ -n "$TFCI_BUILD_PIP_PACKAGE_ADDITIONAL_WHEEL_NAMES" ]]; then
     echo "Building for additional WHEEL_NAME: ${wheel_name}"
     CURRENT_WHEEL_NAME_ARG="--repo_env=WHEEL_NAME=${wheel_name}"
     tfrun bazel $TFCI_BAZEL_BAZELRC_ARGS build $TFCI_BAZEL_COMMON_ARGS --config=$TFCI_BAZEL_CONFIG //tensorflow/tools/pip_package:wheel $TFCI_BUILD_PIP_PACKAGE_BASE_ARGS $CURRENT_WHEEL_NAME_ARG
-    # Copy the wheel that was just created
-    tfrun bash -c "$TFCI_FIND_BIN ./bazel-bin/tensorflow/tools/pip_package -iname "${wheel_name}*.whl" -printf '%T+ %p\n' | sort | tail -n 1 | awk '{print \$2}' | xargs -I {} cp {} $TFCI_OUTPUT_DIR"
+    # Copy the wheel that was just created, and platform-tag it to match the
+    # primary wheel.
+    tfrun bash ./ci/official/utilities/collect_additional_wheel.sh "${wheel_name}"
   done
 fi
 

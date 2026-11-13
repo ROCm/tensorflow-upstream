@@ -17,26 +17,29 @@ limitations under the License.
 
 #include <cmath>
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define EIGEN_USE_GPU
+#include <cstdint>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/fill_functor.h"
 #include "tensorflow/core/kernels/linalg/determinant_op.h"
+#include "tensorflow/core/util/gpu_solvers.h"
 #endif
 
+#include "Eigen/Core"  // from @eigen_archive
 #include "Eigen/LU"  // from @eigen_archive
-#include "tensorflow/core/framework/kernel_def_builder.h"
 #include "tensorflow/core/framework/numeric_types.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/kernels/linalg/linalg_ops_common.h"
-#include "tensorflow/core/lib/core/errors.h"
-#include "tensorflow/core/platform/logging.h"
-#include "tensorflow/core/platform/types.h"
-
-#if GOOGLE_CUDA
-#include "tensorflow/core/kernels/fill_functor.h"
-#include "tensorflow/core/util/gpu_solvers.h"
-#endif
 
 namespace tensorflow {
 
@@ -115,7 +118,7 @@ class DeterminantOp : public LinearAlgebraOp<Scalar> {
   }
 };
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 typedef Eigen::GpuDevice GPUDevice;
 
@@ -128,15 +131,15 @@ class DeterminantOpGpu : public AsyncOpKernel {
   void ComputeAsync(OpKernelContext* context, DoneCallback done) final {
     const Tensor& input = context->input(0);
     const int ndims = input.dims();
-    const int64_t n = input.dim_size(ndims - 1);
     // Validate inputs.
     OP_REQUIRES_ASYNC(context, ndims >= 2,
                       absl::InvalidArgumentError(absl::StrCat(
                           "Input must have rank >= 2, got ", ndims)),
                       done);
+    const int64_t n = input.dim_size(ndims - 1);
     OP_REQUIRES_ASYNC(context, input.dim_size(ndims - 2) == n,
                       absl::InvalidArgumentError(
-                          absl::StrCat("Input matrices must be square, got",
+                          absl::StrCat("Input matrices must be square, got ",
                                        input.dim_size(ndims - 2), " != ", n)),
                       done);
 
@@ -195,6 +198,7 @@ class DeterminantOpGpu : public AsyncOpKernel {
 
     // Compute the partially pivoted LU factorization(s) of the matrix/matrices.
     std::vector<DeviceLapackInfo> dev_info;
+#if GOOGLE_CUDA
     if (n / batch_size <= 128) {
       // For small matrices or large batch sizes, we use the batched interface
       // from cuBlas.
@@ -211,6 +215,7 @@ class DeterminantOpGpu : public AsyncOpKernel {
                                &dev_info.back(), batch_size),
           done);
     } else {
+#endif
       // For small batch sizes we use the non-batched interface from cuSolver,
       // which is much faster for large matrices.
       dev_info.push_back(solver->GetDeviceLapackInfo(batch_size, "getrf"));
@@ -221,7 +226,9 @@ class DeterminantOpGpu : public AsyncOpKernel {
                           &pivots_mat(batch, 0), &dev_info.back()(batch)),
             done);
       }
+#if GOOGLE_CUDA
     }
+#endif
 
     // Compute the determinant for each batch as (-1)^s * prod(diag(U)),
     // where s is the order of the permutation encoded in pivots and U is the
@@ -237,18 +244,21 @@ class DeterminantOpGpu : public AsyncOpKernel {
     auto info_checker = [context, done](
                             const absl::Status& status,
                             const std::vector<HostLapackInfo>& host_infos) {
-      if (!status.ok() && absl::IsInvalidArgument(status) &&
-          !host_infos.empty()) {
-        for (int i = 0; i < host_infos[0].size(); ++i) {
-          // It is OK for a matrix to be singular (signaled by info > 0),
-          // corresponding to determinant of zero, but we do want to catch
-          // invalid arguments to Getrf{Batched}.
-          OP_REQUIRES_ASYNC(
-              context, host_infos[0](i) >= 0,
-              absl::InvalidArgumentError(absl::StrCat(
-                  "Invalid input argument no. ", host_infos[0].data()[i],
-                  " for batch index ", i, ".")),
-              done);
+      if (!status.ok()) {
+        if (absl::IsInvalidArgument(status) && !host_infos.empty()) {
+          for (int i = 0; i < host_infos[0].size(); ++i) {
+            // It is OK for a matrix to be singular (signaled by info > 0),
+            // corresponding to determinant of zero, but we do want to catch
+            // invalid arguments to Getrf{Batched}.
+            OP_REQUIRES_ASYNC(
+                context, host_infos[0](i) >= 0,
+                absl::InvalidArgumentError(absl::StrCat(
+                    "Invalid input argument no. ", host_infos[0].data()[i],
+                    " for batch index ", i, ".")),
+                done);
+          }
+        } else {
+          OP_REQUIRES_OK_ASYNC(context, status, done);
         }
       }
       done();
@@ -267,15 +277,15 @@ class LogDeterminantOpGpu : public AsyncOpKernel {
   void ComputeAsync(OpKernelContext* context, DoneCallback done) final {
     const Tensor& input = context->input(0);
     const int ndims = input.dims();
-    const int64_t n = input.dim_size(ndims - 1);
     // Validate inputs.
     OP_REQUIRES_ASYNC(context, ndims >= 2,
                       absl::InvalidArgumentError(absl::StrCat(
                           "Input must have rank >= 2, got ", ndims)),
                       done);
+    const int64_t n = input.dim_size(ndims - 1);
     OP_REQUIRES_ASYNC(context, input.dim_size(ndims - 2) == n,
                       absl::InvalidArgumentError(
-                          absl::StrCat("Input matrices must be square, got",
+                          absl::StrCat("Input matrices must be square, got ",
                                        input.dim_size(ndims - 2), " != ", n)),
                       done);
 
@@ -338,6 +348,7 @@ class LogDeterminantOpGpu : public AsyncOpKernel {
 
     // Compute the partially pivoted LU factorization(s) of the matrix/matrices.
     std::vector<DeviceLapackInfo> dev_info;
+#if GOOGLE_CUDA
     if (n / batch_size <= 128) {
       // For small matrices or large batch sizes, we use the batched interface
       // from cuBlas.
@@ -354,6 +365,7 @@ class LogDeterminantOpGpu : public AsyncOpKernel {
                                &dev_info.back(), batch_size),
           done);
     } else {
+#endif
       // For large matrices or small batch sizes we use the non-batched
       // interface from cuSolver, which is much faster for large matrices.
       dev_info.push_back(solver->GetDeviceLapackInfo(batch_size, "getrf"));
@@ -364,7 +376,9 @@ class LogDeterminantOpGpu : public AsyncOpKernel {
                           &pivots_mat(batch, 0), &dev_info.back()(batch)),
             done);
       }
+#if GOOGLE_CUDA
     }
+#endif
 
     auto input_copy_reshaped_const =
         const_cast<const Tensor*>(&input_copy)
@@ -383,18 +397,21 @@ class LogDeterminantOpGpu : public AsyncOpKernel {
     auto info_checker = [context, done](
                             const absl::Status& status,
                             const std::vector<HostLapackInfo>& host_infos) {
-      if (!status.ok() && absl::IsInvalidArgument(status) &&
-          !host_infos.empty()) {
-        for (int i = 0; i < host_infos[0].size(); ++i) {
-          // It is OK for a matrix to be singular (signaled by info > 0),
-          // corresponding to determinant of zero, but we do want to catch
-          // invalid arguments to Getrf{Batched}.
-          OP_REQUIRES_ASYNC(
-              context, host_infos[0](i) >= 0,
-              absl::InvalidArgumentError(absl::StrCat(
-                  "Invalid input argument no. ", host_infos[0].data()[i],
-                  " for batch index ", i, ".")),
-              done);
+      if (!status.ok()) {
+        if (absl::IsInvalidArgument(status) && !host_infos.empty()) {
+          for (int i = 0; i < host_infos[0].size(); ++i) {
+            // It is OK for a matrix to be singular (signaled by info > 0),
+            // corresponding to determinant of zero, but we do want to catch
+            // invalid arguments to Getrf{Batched}.
+            OP_REQUIRES_ASYNC(
+                context, host_infos[0](i) >= 0,
+                absl::InvalidArgumentError(absl::StrCat(
+                    "Invalid input argument no. ", host_infos[0].data()[i],
+                    " for batch index ", i, ".")),
+                done);
+          }
+        } else {
+          OP_REQUIRES_OK_ASYNC(context, status, done);
         }
       }
       done();
@@ -420,7 +437,7 @@ REGISTER_LINALG_OP_GPU("LogMatrixDeterminant", (LogDeterminantOpGpu<complex64>),
                        complex64);
 REGISTER_LINALG_OP_GPU("LogMatrixDeterminant",
                        (LogDeterminantOpGpu<complex128>), complex128);
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 REGISTER_LINALG_OP("MatrixDeterminant", (DeterminantOp<float>), float);
 REGISTER_LINALG_OP("MatrixDeterminant", (DeterminantOp<double>), double);

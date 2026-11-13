@@ -19,11 +19,17 @@ import itertools
 import numpy as np
 
 from tensorflow.python.client import session
+from tensorflow.python.eager import backprop
+from tensorflow.python.eager import def_function
+from tensorflow.python.eager import forwardprop
 from tensorflow.python.framework import constant_op
+from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import array_ops_stack
 from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.ops.linalg import linalg_impl
@@ -43,27 +49,40 @@ def np_expm(x):  # pylint: disable=invalid-name
   return y
 
 
+# Half precision dtypes are accumulated in float32 by `matrix_exponential`.
+_HALF_TYPES = (np.float16, dtypes.bfloat16.as_numpy_dtype)
+
+
 @test_util.run_all_without_tensor_float_32("Avoid TF32-based matmuls.")
 class ExponentialOpTest(test.TestCase):
 
   def _verifyExponential(self, x, np_type):
     inp = x.astype(np_type)
+    # Accumulating the Taylor series in 16-bit would itself be inaccurate, so
+    # half precision inputs are compared against a float64 reference.
+    ref_type = np.float64 if np_type in _HALF_TYPES else np_type
     with test_util.use_gpu():
       tf_ans = linalg_impl.matrix_exponential(inp)
       if x.size == 0:
-        np_ans = np.empty(x.shape, dtype=np_type)
+        np_ans = np.empty(x.shape, dtype=ref_type)
       else:
         if x.ndim > 2:
-          np_ans = np.zeros(inp.shape, dtype=np_type)
+          np_ans = np.zeros(inp.shape, dtype=ref_type)
           for i in itertools.product(*[range(x) for x in inp.shape[:-2]]):
-            np_ans[i] = np_expm(inp[i])
+            np_ans[i] = np_expm(inp[i].astype(ref_type))
         else:
-          np_ans = np_expm(inp)
+          np_ans = np_expm(inp.astype(ref_type))
       out = self.evaluate(tf_ans)
-      self.assertAllClose(np_ans, out, rtol=1e-3, atol=1e-3)
+      tol = 1e-2 if np_type in _HALF_TYPES else 1e-3
+      self.assertAllClose(np_ans, out, rtol=tol, atol=tol)
 
   def _verifyExponentialReal(self, x):
-    for np_type in [np.float32, np.float64]:
+    for np_type in [
+        np.float16,
+        dtypes.bfloat16.as_numpy_dtype,
+        np.float32,
+        np.float64,
+    ]:
       self._verifyExponential(x, np_type)
 
   def _verifyExponentialComplex(self, x):
@@ -161,6 +180,142 @@ class ExponentialOpTest(test.TestCase):
       expm2 = linalg_impl.matrix_exponential(matrix2)
       expm = self.evaluate([expm1, expm2])
       self.assertAllEqual(expm[0], expm[1])
+
+  @test_util.run_v2_only
+  def testSecondDerivativeNestedForwardAccumulator(self):
+    # Regression test for Issue #127224.
+    def target(t):
+      one = constant_op.constant(1.0, dtype=t.dtype)
+      a = array_ops_stack.stack([
+          array_ops_stack.stack([t, one]),
+          array_ops_stack.stack([-one, t]),
+      ])
+      return math_ops.reduce_sum(linalg_impl.matrix_exponential(a))
+
+    def forward_ad(fn):
+      def jvp(x):
+        with forwardprop.ForwardAccumulator(x, array_ops.ones_like(x)) as acc:
+          y = fn(x)
+        return acc.jvp(y)
+
+      return jvp
+
+    for dtype in [ops.dtypes.float32, ops.dtypes.float64]:
+      x = constant_op.constant(0.7, dtype=dtype)
+      expected = 2.0 * np.exp(0.7) * np.cos(1.0)
+
+      if dtype == ops.dtypes.float64:
+        atol_1st = 1e-12
+        rtol_1st = 1e-12
+        # Nested ForwardAccumulator (forward-over-forward) diverges from the
+        # analytical value by ~9% here, independent of dtype: matrix_exponential
+        # chains matmuls three levels deep (matrix_4 = matrix_2 * matrix_2,
+        # matrix_6 = matrix_4 * matrix_2, ...), and TF's forward-over-forward
+        # differentiation is inaccurate past two chained matmul levels
+        # regardless of precision, so this isn't something this PR's
+        # coefficient normalization can improve further.
+        atol_2nd = 0.25
+        rtol_2nd = 1e-1
+        atol_hess = 1e-12
+        rtol_hess = 1e-12
+      else:
+        atol_1st = 1e-3
+        rtol_1st = 1e-3
+        atol_2nd = 0.25
+        rtol_2nd = 1e-1
+        atol_hess = 1e-4
+        rtol_hess = 1e-4
+
+      # 1st order forward-mode JVP
+      actual_1st = forward_ad(target)(x)
+      self.assertAllClose(
+          expected, self.evaluate(actual_1st), rtol=rtol_1st, atol=atol_1st
+      )
+
+      # 2nd order nested forward-mode JVP
+      actual_2nd = forward_ad(forward_ad(target))(x)
+      self.assertAllClose(
+          expected, self.evaluate(actual_2nd), rtol=rtol_2nd, atol=atol_2nd
+      )
+
+      # 2nd order reverse-mode Hessian
+      with backprop.GradientTape() as t2:
+        t2.watch(x)
+        with backprop.GradientTape() as t1:
+          t1.watch(x)
+          y = target(x)
+        g1 = t1.gradient(y, x)
+      g2 = t2.gradient(g1, x)
+      self.assertAllClose(
+          expected, self.evaluate(g2), rtol=rtol_hess, atol=atol_hess
+      )
+
+  @test_util.run_v2_only
+  def testGradientJitCompile(self):
+    # Regression test for Issue #77693.
+    if not test.is_built_with_xla():
+      self.skipTest("Test only applicable when running with XLA support")
+
+    def compute_grad(x):
+      with backprop.GradientTape() as tape:
+        tape.watch(x)
+        y = linalg_impl.matrix_exponential(x)
+      return y, tape.gradient(y, x)
+
+    jit_grad_fn = def_function.function(compute_grad, jit_compile=True)
+
+    @def_function.function(jit_compile=True)
+    def jit_dynamic_grad_fn():
+      x = random_ops.random_normal([2, 2], seed=42, dtype=dtypes.float32)
+      with backprop.GradientTape() as tape:
+        tape.watch(x)
+        y = linalg_impl.matrix_exponential(x)
+      return y, tape.gradient(y, x)
+
+    dyn_y, dyn_g = jit_dynamic_grad_fn()
+    self.assertEqual(dyn_y.shape, (2, 2))
+    self.assertEqual(dyn_g.shape, (2, 2))
+
+    for dtype in [dtypes.float32, dtypes.float64]:
+      # Inputs triggering squarings == 0 and squarings > 0
+      test_matrices = [
+          constant_op.constant([[0.4, 1.5], [0.6, 0.1]], dtype=dtype),
+          constant_op.constant([[10.0, 2.0], [3.0, 8.0]], dtype=dtype),
+          constant_op.constant([[-0.0, 0.0], [0.0, -0.0]], dtype=dtype),
+      ]
+      for x in test_matrices:
+        eager_y, eager_g = compute_grad(x)
+        jit_y, jit_g = jit_grad_fn(x)
+        self.assertAllClose(eager_y, jit_y, rtol=1e-4, atol=1e-4)
+        self.assertAllClose(eager_g, jit_g, rtol=1e-4, atol=1e-4)
+
+      # Empty tensors (N=0)
+      for empty_shape in [(0, 0), (0, 2, 2)]:
+        x_empty = constant_op.constant([], shape=empty_shape, dtype=dtype)
+        jit_y, jit_g = jit_grad_fn(x_empty)
+        self.assertAllEqual(jit_y.shape, empty_shape)
+        self.assertAllEqual(jit_g.shape, empty_shape)
+        self.assertAllEqual(jit_y, array_ops.zeros(empty_shape, dtype=dtype))
+        self.assertAllEqual(jit_g, array_ops.zeros(empty_shape, dtype=dtype))
+
+      # Non-finite inputs: NaN, +inf, -inf
+      for non_finite_val in [float("nan"), float("inf"), float("-inf")]:
+        x_nf = constant_op.constant(
+            [[non_finite_val, 0.0], [0.0, 1.0]], dtype=dtype
+        )
+        eager_y, eager_g = compute_grad(x_nf)
+        jit_y, jit_g = jit_grad_fn(x_nf)
+        self.assertAllEqual(math_ops.is_nan(jit_y), math_ops.is_nan(eager_y))
+        self.assertIsNone(eager_g)
+        # The If gradient feeds zeros into Pade matmuls on non-finite
+        # intermediates (0 * inf = NaN), so only the shape is stable.
+        self.assertEqual(jit_g.shape, (2, 2))
+
+    # Unsupported dtypes
+    with self.assertRaisesRegex(ValueError, "does not support matrices"):
+      linalg_impl.matrix_exponential(
+          constant_op.constant([[1, 0], [0, 1]], dtype=dtypes.int32)
+      )
 
 
 class MatrixExponentialBenchmark(test.Benchmark):

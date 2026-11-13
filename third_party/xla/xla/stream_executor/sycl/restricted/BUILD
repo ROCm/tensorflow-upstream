@@ -42,10 +42,12 @@ xla_test(
     ],
     use_legacy_runtime = True,
     deps = [
+        "//xla:xla_proto_cc",
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/stream_executor/sycl:sycl_blas_lt_plugin",
         "//xla/tests:xla_internal_test_main",
         "//xla/tests/restricted:hlo_test_base_legacy",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -72,6 +74,7 @@ xla_test(
         "//xla/stream_executor/sycl:sycl_platform_id",
         "//xla/tests/restricted:llvm_irgen_test_base",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
     ],
 )

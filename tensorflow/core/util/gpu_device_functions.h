@@ -110,10 +110,11 @@ namespace detail {
 template <typename T>
 class GpuGridRange {
   struct Iterator {
-    __device__ Iterator(T index, T delta) : index_(index), delta_(delta) {}
+    __device__ Iterator(T index, T delta, T end)
+        : index_(index), delta_(delta), end_(end) {}
     __device__ T operator*() const { return index_; }
     __device__ Iterator& operator++() {
-      index_ += delta_;
+      index_ += (delta_ < end_ - index_) ? delta_ : (end_ - index_);
       return *this;
     }
     __device__ bool operator!=(const Iterator& other) const {
@@ -133,14 +134,15 @@ class GpuGridRange {
    private:
     T index_;
     const T delta_;
+    const T end_;
   };
 
  public:
   __device__ GpuGridRange(T begin, T delta, T end)
       : begin_(begin), delta_(delta), end_(end) {}
 
-  __device__ Iterator begin() const { return Iterator{begin_, delta_}; }
-  __device__ Iterator end() const { return Iterator{end_, 0}; }
+  __device__ Iterator begin() const { return Iterator{begin_, delta_, end_}; }
+  __device__ Iterator end() const { return Iterator{end_, 0, end_}; }
 
  private:
   T begin_;
@@ -570,8 +572,8 @@ __device__ double GpuAtomicCasHelper(double* ptr, F accumulate) {
 // switching to fp16 as late as you can in the calculations.
 //
 // Note: Assumes little endian.
-template <typename F>
-__device__ Eigen::half GpuAtomicCasHelper(Eigen::half* ptr, F accumulate) {
+template <typename T, typename F>
+__device__ T GpuAtomicCasHelper16(T* ptr, F accumulate) {
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__)
   static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "Not little endian");
 #endif
@@ -584,26 +586,23 @@ __device__ Eigen::half GpuAtomicCasHelper(Eigen::half* ptr, F accumulate) {
   uint32_t result =
       GpuAtomicCasHelper(address, [accumulate, shift, mask](uint32_t arg) {
         uint16_t high = static_cast<uint16_t>(arg >> shift);
-        Eigen::half acc =
-            accumulate(Eigen::numext::bit_cast<Eigen::half>(high));
+        T acc = accumulate(Eigen::numext::bit_cast<T>(high));
         return (static_cast<uint32_t>(Eigen::numext::bit_cast<uint16_t>(acc))
                 << shift) |
                (arg & mask);
       });
-  return Eigen::numext::bit_cast<Eigen::half>(
-      static_cast<uint16_t>(result >> shift));
+  return Eigen::numext::bit_cast<T>(static_cast<uint16_t>(result >> shift));
+}
+
+template <typename F>
+__device__ Eigen::half GpuAtomicCasHelper(Eigen::half* ptr, F accumulate) {
+  return GpuAtomicCasHelper16(ptr, accumulate);
 }
 
 template <typename F>
 __device__ Eigen::bfloat16 GpuAtomicCasHelper(Eigen::bfloat16* ptr,
                                               F accumulate) {
-  Eigen::half ret = detail::GpuAtomicCasHelper(
-      reinterpret_cast<Eigen::half*>(ptr), [accumulate](Eigen::half a) {
-        Eigen::bfloat16 acc =
-            accumulate(Eigen::numext::bit_cast<Eigen::bfloat16>(a));
-        return Eigen::numext::bit_cast<Eigen::half>(acc);
-      });
-  return Eigen::numext::bit_cast<Eigen::bfloat16>(ret);
+  return GpuAtomicCasHelper16(ptr, accumulate);
 }
 
 template <typename F>
@@ -618,7 +617,7 @@ __device__ long long GpuAtomicCasHelper(long long* ptr, F accumulate) {
 
 template <typename From, typename To>
 using ToTypeIfConvertible =
-    typename std::enable_if<std::is_convertible<From, To>::value, To>::type;
+    std::enable_if_t<std::is_convertible_v<From, To>, To>;
 
 template <typename T>
 struct CudaSupportedTypeImpl {
@@ -632,9 +631,8 @@ struct CudaSupportedTypeImpl<long long> {
 
 template <>
 struct CudaSupportedTypeImpl<unsigned long> {
-  using type =
-      typename std::conditional<sizeof(unsigned long) == sizeof(unsigned int),
-                                unsigned int, unsigned long long>::type;
+  using type = std::conditional_t<sizeof(unsigned long) == sizeof(unsigned int),
+                                  unsigned int, unsigned long long>;
 };
 
 template <>

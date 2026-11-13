@@ -20,9 +20,9 @@
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/side_effect_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -48,8 +48,8 @@ absl::StatusOr<absl::string_view> GetCustomCallTarget(
   if (external_annotation == memory_annotations::kMemoryTargetPinnedDevice) {
     return memory_annotations::kPinToDeviceCustomCallTarget;
   }
-  return absl::InvalidArgumentError(
-      absl::StrCat("Invalid external annotation: ", external_annotation));
+  return InvalidArgumentStrCat("Invalid external annotation: ",
+                               external_annotation);
 }
 
 absl::StatusOr<bool>
@@ -110,6 +110,12 @@ ConvertCustomCallWithExternalAnnotationToInternalAnnotation(
   }
   return false;
 }
+
+const HloPassFactory* const
+    kConvertMemoryPlacementToInternalAnnotationsRegistration =
+        RegisterHloPassFactory<
+            DefaultHloPassFactory<ConvertMemoryPlacementToInternalAnnotations>>(
+            "convert-memory-placement-to-internal-annotations");
 
 }  // namespace
 
