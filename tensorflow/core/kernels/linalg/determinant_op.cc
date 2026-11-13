@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <cmath>
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #define EIGEN_USE_GPU
 #include <cstdint>
 #include <memory>
@@ -118,7 +118,7 @@ class DeterminantOp : public LinearAlgebraOp<Scalar> {
   }
 };
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 typedef Eigen::GpuDevice GPUDevice;
 
@@ -198,6 +198,7 @@ class DeterminantOpGpu : public AsyncOpKernel {
 
     // Compute the partially pivoted LU factorization(s) of the matrix/matrices.
     std::vector<DeviceLapackInfo> dev_info;
+#if GOOGLE_CUDA
     if (n / batch_size <= 128) {
       // For small matrices or large batch sizes, we use the batched interface
       // from cuBlas.
@@ -214,6 +215,7 @@ class DeterminantOpGpu : public AsyncOpKernel {
                                &dev_info.back(), batch_size),
           done);
     } else {
+#endif
       // For small batch sizes we use the non-batched interface from cuSolver,
       // which is much faster for large matrices.
       dev_info.push_back(solver->GetDeviceLapackInfo(batch_size, "getrf"));
@@ -224,7 +226,9 @@ class DeterminantOpGpu : public AsyncOpKernel {
                           &pivots_mat(batch, 0), &dev_info.back()(batch)),
             done);
       }
+#if GOOGLE_CUDA
     }
+#endif
 
     // Compute the determinant for each batch as (-1)^s * prod(diag(U)),
     // where s is the order of the permutation encoded in pivots and U is the
@@ -344,6 +348,7 @@ class LogDeterminantOpGpu : public AsyncOpKernel {
 
     // Compute the partially pivoted LU factorization(s) of the matrix/matrices.
     std::vector<DeviceLapackInfo> dev_info;
+#if GOOGLE_CUDA
     if (n / batch_size <= 128) {
       // For small matrices or large batch sizes, we use the batched interface
       // from cuBlas.
@@ -360,6 +365,7 @@ class LogDeterminantOpGpu : public AsyncOpKernel {
                                &dev_info.back(), batch_size),
           done);
     } else {
+#endif
       // For large matrices or small batch sizes we use the non-batched
       // interface from cuSolver, which is much faster for large matrices.
       dev_info.push_back(solver->GetDeviceLapackInfo(batch_size, "getrf"));
@@ -370,7 +376,9 @@ class LogDeterminantOpGpu : public AsyncOpKernel {
                           &pivots_mat(batch, 0), &dev_info.back()(batch)),
             done);
       }
+#if GOOGLE_CUDA
     }
+#endif
 
     auto input_copy_reshaped_const =
         const_cast<const Tensor*>(&input_copy)
@@ -429,7 +437,7 @@ REGISTER_LINALG_OP_GPU("LogMatrixDeterminant", (LogDeterminantOpGpu<complex64>),
                        complex64);
 REGISTER_LINALG_OP_GPU("LogMatrixDeterminant",
                        (LogDeterminantOpGpu<complex128>), complex128);
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 REGISTER_LINALG_OP("MatrixDeterminant", (DeterminantOp<float>), float);
 REGISTER_LINALG_OP("MatrixDeterminant", (DeterminantOp<double>), double);
