@@ -411,7 +411,9 @@ def _tf_repositories():
         #
         # The patch path is relative to third_party/tensorflow.
         patch_file = [
-            "@xla//third_party/googletest:googletest.patch"],
+            "@xla//third_party/googletest:googletest.patch",
+            "@xla//third_party/googletest:0001-Add-ASSERT_OK-EXPECT_OK-ASSERT_OK_AND_ASSIGN-macros.patch",
+        ],
         urls = tf_mirror_urls("https://github.com/google/googletest/archive/d72f9c8aea6817cdf1ca0ac10887f328de7f3da29.zip"),
         repo_mapping = {
             "@abseil-cpp": "@com_google_absl",
