@@ -289,9 +289,11 @@ absl::StatusOr<std::string> GetHloText(absl::string_view module_name) {
   for (const auto& [name, path] : kHloFileModules) {
     if (name == module_name) {
       std::string hlo;
+      std::string src_root = tsl::testing::XlaSrcRoot();
+      src_root = src_root.erase(src_root.length() - 4);
       ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(
           tsl::Env::Default(),
-          tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), path), &hlo));
+          tsl::io::JoinPath(src_root, "external/xla/xla", path), &hlo));
       return hlo;
     }
   }
