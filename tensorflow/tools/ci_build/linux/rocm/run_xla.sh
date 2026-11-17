@@ -39,7 +39,9 @@ EXCLUDED_TESTS=(
     CublasFissionBackendTest.CublasFallbackForBf16Bf16F32Algorithm
 
     # @xla//xla/backends/gpu/autotuner:triton_test_amdgpu_any
-    TritonBackendTestSuite/TritonBackendTest.CostModelOptions_*
+    TritonBackendTest.CostModelOptions_Combination
+    TritonBackendTest.CostModelOptions_Filter
+    TritonBackendTest.CostModelOptions_TopFromDefault
 
     # @xla//xla/backends/gpu/transforms:gemm_rewriter_test_amdgpu_any
     GemmRewriteTest.CheckCustomCallHipblasLtBF16
@@ -65,6 +67,9 @@ EXCLUDED_TESTS=(
     KernelNameTracerTest.Create
     KernelNameTracerTest.CaptureKernelNames
     KernelNameTracerTest.CaptureKernelNamesFromCommandBufferThunk
+
+    # @xla//xla/service/gpu:gpu_compiler_test_amdgpu_any
+    GpuCompilerTest.MixedPrecisionMultiDimDotDoesNotUpcastOperands      # per gemm_rewriter extended_type_combinations are not supported on mi200
 )
 
 bazel --bazelrc=tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools/rocm.bazelrc test \
