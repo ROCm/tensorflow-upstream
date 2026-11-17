@@ -1,0 +1,167 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+#
+# Weekly TF ROCm CI across the theRock release channels.
+#
+# Runs the exact same pipeline as .github/workflows/rocm-ci.yml (both call
+# .github/workflows/rocm-ci-reusable.yml), but against a matrix of theRock
+# distributions instead of the single pinned stable one:
+#
+#   therock_lts_7.14         LTS release  repo.amd.com         (7.14.x)
+#   therock_prerelease_10.2  pre-release  rc.repo.amd.com      (10.2.x)
+#   therock_nightly_10.3     nightly      nightly.repo.amd.com (10.3.x)
+#
+# Versions are resolved at run time by
+# tensorflow/tools/ci_build/linux/rocm/detect-therock-version.sh (the same
+# script ROCm/xla's rocm_xla_ci_nightly.yml uses), so no version bump is
+# needed when a new 7.14.x / 10.2.x / 10.3.x drops.
+#
+name: TF theRock CI Weekly
+run-name: >-
+  TF theRock CI Weekly #${{ github.run_number }}: ${{ github.event_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: 'Runner label for GPU jobs'
+        required: false
+        default: 'linux-tensorflow-mi250-4'
+        type: string
+  schedule:
+    # Friday 20:00 US/Pacific -> Saturday 04:00 UTC (21:00 PDT in summer).
+    # Off the hour on purpose: :00 crons queue behind the GitHub-wide stampede.
+    - cron: "47 4 * * 6"
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-rocm-modes:
+    name: Resolve theRock versions
+    runs-on: ubuntu-latest
+    outputs:
+      modes: ${{ steps.resolve.outputs.modes }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: tensorflow/tools/ci_build/linux/rocm
+          persist-credentials: false
+
+      - name: Resolve newest theRock build per channel
+        id: resolve
+        env:
+          DETECT: tensorflow/tools/ci_build/linux/rocm/detect-therock-version.sh
+        run: |
+          set -euo pipefail
+
+          # mode name | pip index to detect from | version filter | tarball base
+          #
+          # detect-therock-version.sh reads the pip index and returns the newest
+          # rocm-sdk-devel version matching the filter; the tarball for that
+          # version lives under a sibling path on the same host.
+          MODES_SPEC=$(cat <<'EOF'
+          therock_lts_7.14|https://repo.amd.com/rocm/whl-multi-arch/|7.14|https://repo.amd.com/rocm/tarball-multi-arch/
+          therock_prerelease_10.2|https://rc.repo.amd.com/rocm/whl-next/|10.2|https://rc.repo.amd.com/rocm/core/tarball/
+          therock_nightly_10.3|https://nightly.repo.amd.com/rocm/whl-next/|10.3|https://nightly.repo.amd.com/rocm/core/tarball/
+          EOF
+          )
+
+          echo "### theRock distributions selected" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Mode | Version | Tarball |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+
+          modes_json='[]'
+          while IFS='|' read -r name index filter tarball_base; do
+            [ -n "$name" ] && [ -n "$index" ] || continue
+            echo "::group::Resolving ${name}"
+
+            # GITHUB_OUTPUT is unset for the call: the script appends its
+            # key=value pairs there, which would collide across modes. Its
+            # stdout carries the same values, and stderr stays in this log.
+            # THEROCK_INDEX_URL overrides the channel map outright, so
+            # ROCM_PIP_SOURCE is left at its default and unused.
+            version="$(env -u GITHUB_OUTPUT \
+              GPU_TARGET=device-all \
+              ROCM_SDK_VERSION="$filter" \
+              PIP_INDEX_PATH="" \
+              THEROCK_INDEX_URL="$index" \
+              bash "$DETECT" | sed -n 's/^therock_version=//p' || true)"
+
+            if [ -z "$version" ]; then
+              echo "::endgroup::"
+              echo "::warning title=theRock mode skipped::No ${filter} build published at ${index}; skipping ${name}."
+              echo "| \`${name}\` | :warning: nothing published | ${index} |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            # The pip index and the tarball mirror can drift apart for a few
+            # hours after a build lands. Confirm the tarball is really there
+            # rather than failing hours later inside Bazel's fetch.
+            url="${tarball_base%/}/therock-dist-linux-multiarch-${version}.tar.gz"
+            if ! curl -fsSL --retry 3 --retry-delay 5 -o /dev/null -I "$url"; then
+              echo "::endgroup::"
+              echo "::warning title=theRock mode skipped::Detected ${name} ${version} but ${url} is not downloadable; skipping."
+              echo "| \`${name}\` | \`${version}\` | :warning: tarball missing |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            echo "Resolved ${name} -> ${url}"
+            echo "::endgroup::"
+            echo "| \`${name}\` | \`${version}\` | ${url} |" >> "$GITHUB_STEP_SUMMARY"
+            modes_json="$(jq -c --arg name "$name" --arg url "$url" \
+              '. + [{name: $name, tarball: $url}]' <<<"$modes_json")"
+          done <<< "$MODES_SPEC"
+
+          if [ "$(jq -r 'length' <<<"$modes_json")" -eq 0 ]; then
+            echo "::error title=No theRock distributions::Every mode failed to resolve a build."
+            exit 1
+          fi
+
+          echo "modes=${modes_json}" >> "$GITHUB_OUTPUT"
+
+  build-and-test:
+    needs: resolve-rocm-modes
+    name: ${{ matrix.mode.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJSON(needs.resolve-rocm-modes.outputs.modes) }}
+    uses: ./.github/workflows/rocm-ci-reusable.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      mode_name: ${{ matrix.mode.name }}
+      runner_label: ${{ inputs.runner_label || 'linux-tensorflow-mi250-4' }}
+      rocm_tarball: ${{ matrix.mode.tarball }}
+      # Resolved at run time, so there is no stable sha256 to pin against.
+      rocm_tarball_hash: 'no_hash'
+      # A weekly sweep is for finding out how much works on each ROCm stack,
+      # so push through every stage rather than stopping at the first failure.
+      # Combined with fail-fast: false above, nothing short-circuits: all
+      # stages run on all modes, and the run still goes red if anything broke.
+      continue_on_error: true
