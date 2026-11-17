@@ -210,6 +210,7 @@ void DefineMetricsModule(py::module main_module) {
         if (!path_and_singleprint.ok()) {
           throw MetricException(path_and_singleprint.status().message().data());
         }
+        py::gil_scoped_release release;
         metrics::SavedModelReadPathAndSingleprint().Set(
             path_and_singleprint.value());
         // Placeholder for lineage logging dedup setup.
@@ -247,6 +248,7 @@ void DefineMetricsModule(py::module main_module) {
         if (!path_and_singleprint.ok()) {
           throw MetricException(path_and_singleprint.status().message().data());
         }
+        py::gil_scoped_release release;
         metrics::SavedModelWritePathAndSingleprint().Set(
             path_and_singleprint.value());
         // Placeholder for lineage logging dedup setup.
@@ -391,6 +393,7 @@ void DefineMetricsModule(py::module main_module) {
   m.def(
       "CalculateFileSize",
       [](const char* filename) {
+        py::gil_scoped_release release;
         Env* env = Env::Default();
         uint64_t filesize = 0;
         if (!env->GetFileSize(filename, &filesize).ok()) {

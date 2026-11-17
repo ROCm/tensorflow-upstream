@@ -66,7 +66,7 @@ namespace tensorflow {
 struct NcclManager::NcclStream : public core::RefCounted {
  public:
   NcclStream() = default;
-  ~NcclStream() = default;
+  ~NcclStream() override = default;
 
   se::StreamExecutor* executor = nullptr;
 
@@ -766,7 +766,7 @@ void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
       case kBroadcast: {
         const void* sendbuff = nullptr;
         void* recvbuff = nullptr;
-        int num_elements = -1;
+        int64_t num_elements = -1;
         if (p->input) {
           sendbuff = p->input->tensor_data().data();
           num_elements = p->input->NumElements();

@@ -80,7 +80,8 @@ DotKernelEmitter::EmitKernelDefinition() {
       KernelApiIrBuilder::Options::FromHloModuleConfig(hlo_module->config()));
 
   std::unique_ptr<llvm::Module> llvm_module = KernelApiIrBuilder::CreateModule(
-      absl::StrCat(instr_->name(), "_elemental_kernel_module"), *ctx);
+      absl::StrCat(instr_->name(), "_elemental_kernel_module"), *ctx,
+      target_machine_);
 
   ABSL_ASSIGN_OR_RETURN(
       KernelApiIrBuilder::KernelPrototype kernel_prototype,
@@ -100,9 +101,7 @@ DotKernelEmitter::EmitKernelDefinition() {
                                     /*addend_array=*/nullptr,
                                     {kernel_prototype.workgroup_id.x,
                                      kernel_prototype.workgroup_id.y},
-                                    /*executable_run_options_value=*/nullptr,
-                                    &builder, config, *target_machine_,
-                                    /*allow_runtime_calls=*/false));
+                                    &builder, config, *target_machine_));
 
   LlvmKernelSource source(std::move(ctx), std::move(llvm_module));
 

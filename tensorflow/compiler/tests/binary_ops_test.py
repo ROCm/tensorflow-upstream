@@ -264,6 +264,29 @@ class BinaryOpsTest(xla_test.XLATestCase):
             rtol=1e-4,
             atol=1e-6)
 
+  def testUnaryGradOpsWithZeroUpstreamGradient(self):
+    for dtype in self.float_types | self.complex_types:
+      y = np.array([0, np.inf, np.nan, 4], dtype=dtype)
+      dy = np.array([0, 0, 0, 5], dtype=dtype)
+      self._testBinary(
+          gen_math_ops.reciprocal_grad,
+          y,
+          dy,
+          expected=np.array([0, 0, 0, -80], dtype=dtype),
+      )
+      self._testBinary(
+          gen_math_ops.rsqrt_grad,
+          y,
+          dy,
+          expected=np.array([0, 0, 0, -160], dtype=dtype),
+      )
+      self._testBinary(
+          gen_math_ops.sqrt_grad,
+          y,
+          dy,
+          expected=np.array([0, 0, 0, 0.625], dtype=dtype),
+      )
+
   def testIntOps(self):
     for dtype in self.signed_int_types:
       self._testBinary(
@@ -390,6 +413,68 @@ class BinaryOpsTest(xla_test.XLATestCase):
           dtype(4),
           expected=np.array([[16], [81]], dtype=dtype),
           rtol=rtol)
+
+  def testIntegerPowWithConstantExponent(self):
+    for dtype in self.signed_int_types:
+
+      def run_pow(x, exponent, shape=None, dtype=dtype):
+
+        @def_function.function(jit_compile=True)
+        def pow_with_exponent(x):
+          return math_ops.pow(x, constant_op.constant(exponent, dtype=dtype))
+
+        with self.session() as sess:
+          with self.device_scope():
+            px = array_ops.placeholder(
+                dtype, shape=np.shape(x) if shape is None else shape
+            )
+            output = pow_with_exponent(px)
+          return sess.run(output, {px: np.array(x, dtype=dtype)})
+
+      with self.subTest(dtype=dtype):
+        x = [-2, 3, 1, -1]
+        for base in (x, 2):
+          for exponent in (-1, -3, [2, -1, 2, 2]):
+            with self.assertRaisesRegex(
+                errors.InvalidArgumentError,
+                "Integers to negative integer powers are not allowed",
+            ):
+              run_pow(base, exponent)
+
+        with self.assertRaisesRegex(
+            errors.InvalidArgumentError,
+            r"Incompatible shapes: \[2\] vs\. \[3\]",
+        ):
+          run_pow([2, 3], [-1, -1, -1], shape=[None])
+
+        self.assertAllEqual(run_pow(x, [0, 1, 2, 3]), [1, 3, 1, -1])
+        self.assertAllEqual(run_pow(x, 2), [4, 9, 1, 1])
+        # Like the TF kernels, an empty result doesn't check the exponent.
+        self.assertAllEqual(run_pow(np.zeros([0]), -1), np.zeros([0]))
+        self.assertAllEqual(run_pow(np.zeros([3, 0]), [[-1]]), np.zeros([3, 0]))
+
+        if "GPU" not in self.device and "TPU" not in self.device:
+
+          @def_function.function(jit_compile=True)
+          def pow_dynamic_empty(a, mask):
+            empty = array_ops.boolean_mask(a, mask)
+            return math_ops.pow(empty, constant_op.constant(-1, dtype=dtype))
+
+          with self.session() as sess:
+            with self.device_scope():
+              pa = array_ops.placeholder(dtype, shape=[2])
+              pmask = array_ops.placeholder(dtypes.bool, shape=[2])
+              dyn_out = pow_dynamic_empty(pa, pmask)
+            self.assertAllEqual(
+                sess.run(
+                    dyn_out,
+                    {
+                        pa: np.array([2, 3], dtype=dtype),
+                        pmask: np.array([False, False]),
+                    },
+                ),
+                np.zeros([0], dtype=dtype),
+            )
 
   def testNumericOps(self):
     for dtype in self.numeric_types:
@@ -1236,6 +1321,109 @@ class BinaryOpsTest(xla_test.XLATestCase):
         np.full([1, 1, 3, 5], 3., dtype=np.float32),
         expected=np.full([4, 5, 1, 2, 5], 18., dtype=np.float32))
 
+  def testBatchMatMulRejectsMismatchedInnerDimensions(self):
+    # xla::BatchDot broadcasts an inner dimension of size 1, but TensorFlow's
+    # BatchMatMul requires the inner dimensions to match. With unknown shapes,
+    # shape inference doesn't reject them first, and matmul emits
+    # BatchMatMulV2.
+    for x_shape, y_shape, adjoint_a, adjoint_b in (
+        ([1, 4], [1, 1], False, False),
+        ([2, 3, 4], [2, 1, 5], False, False),
+        ([4, 1], [1, 1], True, False),
+        ([1, 4], [4, 1], False, True),
+        ([4, 1], [4, 1], True, True),
+    ):
+      with self.subTest(
+          x_shape=x_shape,
+          y_shape=y_shape,
+          adjoint_a=adjoint_a,
+          adjoint_b=adjoint_b,
+      ), self.session():
+        with self.test_scope():
+          x = array_ops.placeholder(dtypes.float32)
+          y = array_ops.placeholder(dtypes.float32)
+          output = math_ops.matmul(
+              x, y, adjoint_a=adjoint_a, adjoint_b=adjoint_b
+          )
+        with self.assertRaisesRegex(
+            errors.InvalidArgumentError, "Matrix size-incompatible"
+        ):
+          output.eval({
+              x: np.ones(x_shape, dtype=np.float32),
+              y: np.ones(y_shape, dtype=np.float32),
+          })
+
+  def testBatchMatMulAcceptsMatchingInnerDimensions(self):
+    # The checks must let valid operands of unknown shape through, including
+    # ones whose batch dimensions broadcast.
+    for x_shape, y_shape, adjoint_a, adjoint_b, out_shape in (
+        ([2, 3, 4], [4, 5], False, False, [2, 3, 5]),
+        ([2, 4, 3], [4, 5], True, False, [2, 3, 5]),
+        ([2, 3, 4], [5, 4], False, True, [2, 3, 5]),
+        ([2, 4, 3], [5, 4], True, True, [2, 3, 5]),
+    ):
+      with self.subTest(
+          x_shape=x_shape,
+          y_shape=y_shape,
+          adjoint_a=adjoint_a,
+          adjoint_b=adjoint_b,
+      ), self.session() as sess:
+        with self.test_scope():
+          x = array_ops.placeholder(dtypes.float32)
+          y = array_ops.placeholder(dtypes.float32)
+          output = math_ops.matmul(
+              x, y, adjoint_a=adjoint_a, adjoint_b=adjoint_b
+          )
+        result = sess.run(
+            output,
+            {
+                x: np.ones(x_shape, dtype=np.float32),
+                y: np.ones(y_shape, dtype=np.float32),
+            },
+        )
+        self.assertAllEqual(np.full(out_shape, 4.0, dtype=np.float32), result)
+
+  def testBatchMatMulV1AndV3RejectMismatchedInnerDimensions(self):
+    # BatchMatMul and BatchMatMulV3 share the XLA kernel with BatchMatMulV2.
+    for name, op in (
+        ("BatchMatMul", gen_math_ops.batch_mat_mul),
+        (
+            "BatchMatMulV3",
+            lambda x, y: gen_math_ops.batch_mat_mul_v3(
+                x, y, Tout=dtypes.float32
+            ),
+        ),
+    ):
+      with self.subTest(op=name), self.session():
+        with self.test_scope():
+          x = array_ops.placeholder(dtypes.float32)
+          y = array_ops.placeholder(dtypes.float32)
+          output = op(x, y)
+        with self.assertRaisesRegex(
+            errors.InvalidArgumentError, "Matrix size-incompatible"
+        ):
+          output.eval({
+              x: np.ones([1, 4], dtype=np.float32),
+              y: np.ones([1, 1], dtype=np.float32),
+          })
+
+  def testBatchMatMulRejectsRankBelowTwo(self):
+    # With unknown shapes, shape inference can't reject rank-1 operands, so
+    # the XLA kernel has to.
+    for x_shape, y_shape in (([4], [4, 1]), ([1, 4], [4])):
+      with self.subTest(x_shape=x_shape, y_shape=y_shape), self.session():
+        with self.test_scope():
+          x = array_ops.placeholder(dtypes.float32)
+          y = array_ops.placeholder(dtypes.float32)
+          output = math_ops.matmul(x, y)
+        with self.assertRaisesRegex(
+            errors.InvalidArgumentError, "ndims must be >= 2"
+        ):
+          output.eval({
+              x: np.ones(x_shape, dtype=np.float32),
+              y: np.ones(y_shape, dtype=np.float32),
+          })
+
   def testPad(self):
     for dtype, pad_type in itertools.product(self.numeric_types,
                                              [np.int32, np.int64]):
@@ -1761,6 +1949,120 @@ class BinaryOpsTest(xla_test.XLATestCase):
           np.array((3, 7, 8, 9), dtype=np.int32),
           expected=np.tile(x, (1, 7, 8, 9)))
 
+  def testBroadcastToRejectsIncompatibleShapes(self):
+    # xla::BroadcastTo tiles an input dimension into an output dimension that
+    # is a multiple of it, but TensorFlow only broadcasts dimensions of size 1.
+    for shape in ([2, 6], [2, 4]):
+      with self.subTest(shape=shape):
+        with self.assertRaisesRegex(
+            errors.InvalidArgumentError,
+            r"Incompatible shapes: \[1,2\] vs\. \[%d,%d\]" % tuple(shape),
+        ):
+          self._testBinary(
+              array_ops.broadcast_to,
+              np.array([[1, 2]], dtype=np.float32),
+              np.array(shape, dtype=np.int32),
+              expected=None,
+          )
+    # A shape of unknown length keeps graph shape inference from checking the
+    # ranks first.
+    with self.session() as session:
+      with self.test_scope():
+        x = array_ops.placeholder(dtypes.float32, [2, 2, 3])
+        shape = array_ops.placeholder(dtypes.int32, [None])
+        output = array_ops.broadcast_to(x, shape)
+      with self.assertRaisesRegex(
+          errors.InvalidArgumentError,
+          r"Rank of input \(3\) must be no greater than rank of output "
+          r"shape \(2\)",
+      ):
+        session.run(
+            output,
+            {
+                x: np.ones([2, 2, 3], dtype=np.float32),
+                shape: np.array([2, 3], dtype=np.int32),
+            },
+        )
+
+  def testBroadcastToEmptyOutput(self):
+    # Only a dimension of size 1 can be broadcast to size 0.
+    with self.assertRaisesRegex(
+        errors.InvalidArgumentError, r"Incompatible shapes: \[2\] vs\. \[0\]"
+    ):
+      self._testBinary(
+          array_ops.broadcast_to,
+          np.array([1, 2], dtype=np.float32),
+          np.array([0], dtype=np.int32),
+          expected=None,
+      )
+    self._testBinary(
+        array_ops.broadcast_to,
+        np.array([7], dtype=np.float32),
+        np.array([0], dtype=np.int32),
+        expected=np.zeros([0], dtype=np.float32),
+    )
+    self._testBinary(
+        array_ops.broadcast_to,
+        np.zeros([0], dtype=np.float32),
+        np.array([2, 0], dtype=np.int32),
+        expected=np.zeros([2, 0], dtype=np.float32),
+    )
+
+  def testBroadcastToDynamicOutputDimension(self):
+    if "GPU" in self.device:
+      self.skipTest(
+          "XLA:GPU's dynamic padder doesn't support the dynamic "
+          "select that boolean_mask produces."
+      )
+
+    # n is only known at run time, where it equals the input dimension 2, but
+    # its bound is 4, so comparing bounds would wrongly reject this broadcast.
+    # Taking n from a shape keeps XLA from compiling mask as a constant.
+    @def_function.function(jit_compile=True)
+    def f(x, mask):
+      n = array_ops.shape(array_ops.boolean_mask(mask, mask))[0]
+      return array_ops.broadcast_to(
+          x, array_ops.concat([[3], array_ops.reshape(n, [1])], 0)
+      )
+
+    with self.session() as session:
+      with self.test_scope():
+        x = array_ops.placeholder(dtypes.float32, shape=[2])
+        mask = array_ops.placeholder(dtypes.bool, shape=[4])
+        output = f(x, mask)
+      result = session.run(
+          output, {x: [1.0, 2.0], mask: [True, False, True, False]}
+      )
+    self.assertAllClose(result, [[1.0, 2.0]] * 3)
+
+  def testDynamicDimensionLongerThanStaticOne(self):
+    # TensorFlow rejects these shapes, but XLA can't check them at run time,
+    # so the dynamic dimension is cut to the static size of the other operand.
+    @def_function.function(jit_compile=True)
+    def f(x, y):
+      y = array_ops.boolean_mask(y, y > 0)
+      return math_ops.subtract(x, y), math_ops.subtract(y, x)
+
+    with self.session() as session:
+      with self.device_scope():
+        x = array_ops.placeholder(dtypes.float32, shape=[4])
+        y = array_ops.placeholder(dtypes.float32, shape=[4096])
+        output = f(x, y)
+      # Run it several times, since writing past an output's buffer may only
+      # corrupt later allocations.
+      for _ in range(10):
+        result = session.run(
+            output,
+            {
+                x: [10.0, 20.0, 30.0, 40.0],
+                y: np.arange(1, 4097, dtype=np.float32),
+            },
+        )
+        self.assertAllClose(
+            result,
+            ([9.0, 18.0, 27.0, 36.0], [-9.0, -18.0, -27.0, -36.0]),
+        )
+
   def testMulGradientOnBoundedDynamicDimension(self):
     # tf.slice(x, [0], [n]), where n is itself only known at runtime, has an
     # output size that's bounded by x's static shape but not statically
@@ -1786,6 +2088,45 @@ class BinaryOpsTest(xla_test.XLATestCase):
           },
       )
     self.assertAllClose(result, [1.0, -2.0, 0.0, 0.0, 0.0])
+
+  def testRealDivRejectsIntTypes(self):
+    jit_real_div = def_function.function(
+        gen_math_ops.real_div, jit_compile=True
+    )
+
+    for dtype in self.int_types:
+      with self.subTest(dtype=dtype):
+        with self.session() as sess, self.device_scope():
+          x = array_ops.placeholder(dtype, shape=[2])
+          y = array_ops.placeholder(dtype, shape=[2])
+          out = gen_math_ops.real_div(x, y)
+          with self.assertRaisesRegex(
+              errors.InvalidArgumentError,
+              "No OpKernel was registered to support Op 'RealDiv'",
+          ):
+            sess.run(
+                out,
+                feed_dict={
+                    x: np.array([3, 5], dtype=dtype),
+                    y: np.array([2, 2], dtype=dtype),
+                },
+            )
+
+        with self.session() as sess, self.device_scope():
+          x = array_ops.placeholder(dtype, shape=[2])
+          y = array_ops.placeholder(dtype, shape=[2])
+          out = jit_real_div(x, y)
+          with self.assertRaisesRegex(
+              errors.InvalidArgumentError,
+              r"No registered 'RealDiv' OpKernel",
+          ):
+            sess.run(
+                out,
+                feed_dict={
+                    x: np.array([3, 5], dtype=dtype),
+                    y: np.array([2, 2], dtype=dtype),
+                },
+            )
 
 
 if __name__ == "__main__":

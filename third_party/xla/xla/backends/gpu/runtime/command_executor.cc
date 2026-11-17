@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/runtime/execution_graph.h"
 #include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/stream_executor/gpu/scoped_command_buffer_annotation.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -137,98 +138,6 @@ std::vector<CommandOperation> CreateCommandOperationsWithConcurrentMode(
   return operations;
 }
 
-// Helper: Check if a command is an Async Start
-bool IsAsyncStart(const Command* cmd) {
-  const auto* async = dynamic_cast<const AsyncStartCommand*>(cmd);
-  return async && async->IsAsync();
-}
-
-// Helper: Check if a command is an Async Done
-bool IsAsyncDone(const Command* cmd) {
-  const auto* async = dynamic_cast<const AsyncDoneCommand*>(cmd);
-  return async && async->IsAsync();
-}
-
-// Helper: Find the corresponding Start command for a given Done command
-int64_t FindMatchingStartId(const CommandSequence& commands, int64_t done_idx) {
-  const auto* done_cmd =
-      dynamic_cast<const AsyncDoneCommand*>(commands[done_idx]);
-  CHECK(done_cmd);
-
-  for (int64_t j = done_idx - 1; j >= 0; --j) {
-    if (!IsAsyncStart(commands[j])) {
-      continue;
-    }
-
-    const auto* start_cmd = dynamic_cast<const AsyncStartCommand*>(commands[j]);
-    CHECK(start_cmd);
-
-    if (start_cmd->IsAsync() && done_cmd->async_start() == start_cmd) {
-      return j;
-    }
-  }
-  return -1;
-}
-
-// Helper: Add dependency on the nearest previous command that is NOT an Async
-// Start, by pushing into `extras`.
-void AddDependencyOnPrevNonStart(const CommandSequence& commands,
-                                 int64_t current_idx,
-                                 Command::ResourceUses& extras) {
-  for (int64_t j = current_idx - 1; j >= 0; --j) {
-    if (IsAsyncStart(commands[j])) {
-      // Skip other starts
-      continue;
-    }
-
-    extras.push_back(ResourceUse::Read(commands[j]->token()));
-    break;  // Found the dependency, stop scanning
-  }
-}
-
-std::vector<CommandOperation> CreateCommandOperationsWithLHSMode(
-    const CommandSequence& commands,
-    absl::Span<const Command::ResourceUses> extra_resources) {
-  VLOG(3) << "CreateCommandOperations with synchronization mode: LHS";
-
-  // 1. Dependency Analysis Phase: pre-compute LHS resource uses per command.
-  std::vector<Command::ResourceUses> lhs_extras(commands.size());
-  for (int64_t i = 0; i < static_cast<int64_t>(commands.size()); ++i) {
-    if (IsAsyncDone(commands[i])) {
-      // CASE A: Async Done — depends on its matching Start command
-      int64_t start_id = FindMatchingStartId(commands, i);
-      CHECK_NE(start_id, -1);
-      lhs_extras[i].push_back(ResourceUse::Read(commands[start_id]->token()));
-
-      // Also depends on immediate predecessor (if it's not the start itself)
-      CHECK_GT(i, 0);
-      if ((i - 1) != start_id) {
-        lhs_extras[i].push_back(ResourceUse::Read(commands[i - 1]->token()));
-      }
-    } else {
-      // CASE B: Standard Command OR Async Start
-      // Both share the same logic: depend on the previous non-async-start
-      AddDependencyOnPrevNonStart(commands, i, lhs_extras[i]);
-    }
-  }
-
-  // 2. Construction Phase: build operations with merged extra resources.
-  std::vector<CommandOperation> operations;
-  operations.reserve(commands.size());
-  for (size_t i = 0; i < commands.size(); ++i) {
-    Command::ResourceUses merged;
-    if (!extra_resources.empty()) {
-      merged.insert(merged.end(), extra_resources[i].begin(),
-                    extra_resources[i].end());
-    }
-    merged.insert(merged.end(), lhs_extras[i].begin(), lhs_extras[i].end());
-    operations.emplace_back(commands[i], merged);
-  }
-
-  VlogOperations(operations);
-  return operations;
-}
-
 }  // namespace
 
 static absl::StatusOr<std::vector<CommandOperation>> CreateCommandOperations(
@@ -237,16 +146,15 @@ static absl::StatusOr<std::vector<CommandOperation>> CreateCommandOperations(
     absl::Span<const Command::ResourceUses> extra_resources) {
   using Mode = CommandExecutor::SynchronizationMode;
   switch (synchronization_mode) {
-    // Building an execution graph works the same for kConcurrent and
-    // kConcurrentRegions.
+    // Building an execution graph works the same for kConcurrent,
+    // kConcurrentRegions and kLHS: dependencies are inferred from buffer
+    // conflicts and from the resources in `extra_resources`. In kLHS mode the
+    // thunk schedule order is expressed by the emitter as token resources.
     case Mode::kConcurrent:
-    case Mode::kConcurrentRegions: {
+    case Mode::kConcurrentRegions:
+    case Mode::kLHS: {
       return CreateCommandOperationsWithConcurrentMode(commands,
                                                        extra_resources);
-    }
-
-    case Mode::kLHS: {
-      return CreateCommandOperationsWithLHSMode(commands, extra_resources);
     }
 
     case Mode::kSerialize:
@@ -293,6 +201,7 @@ CommandExecutor::CommandExecutor(
     Command::BufferUses buffer_uses = command->buffer_uses();
     buffer_uses_.insert(buffer_uses.begin(), buffer_uses.end());
     requires_update_on_initialize_ |= command->requires_update_on_initialize();
+    requires_warmup_ |= command->requires_warmup();
     requires_update_on_execute_ |= command->requires_update_on_execute();
   });
 
@@ -496,12 +405,18 @@ CommandExecutor::RecordCreate(
     Command* command = commands_[id];
 
     std::optional<tsl::profiler::ScopedAnnotation> annotation =
-        GetKernelAnnotation(command->profile_annotation());
+        GetInstructionAnnotation(command->profile_annotation());
 
     // Skip recording collective commands if mock collectives are enabled.
     if (execute_params.mock_collectives && command->IsCollective()) {
       continue;
     }
+
+    // Builds the annotation only while telemetry recording is on: this runs
+    // for every command on every record.
+    stream_executor::ScopedCommandBufferAnnotation cb_annotation([&] {
+      return GetInstructionAnnotationString(command->profile_annotation());
+    });
 
     std::vector<const se::CommandBuffer::Command*> command_dependencies =
         Dependencies(record_params, command_buffer, id, record_id);
@@ -656,9 +571,19 @@ absl::Status CommandExecutor::RecordUpdate(
       continue;
     }
 
-    std::optional<tsl::profiler::ScopedAnnotation> annotation =
-        GetKernelAnnotation(command->profile_annotation());
-
+    // Do not push a per-command ScopedAnnotation during in-place parameter
+    // updates: unchanged-buffer commands are skipped above (leaving update-time
+    // NVTX attribution incomplete even when CUPTI tracks
+    // cuGraphExec*NodeSetParams), while full node attribution uses RecordCreate
+    // (or --cuda-graph-trace=node:nvtx-precapture for cudaProfilerStart).
+    // Commands that rebuild a child graph on RecordUpdate (TracedCommand cache
+    // misses, direct TraceCommandBufferFactory::Create callers, and
+    // HostExecuteStartThunk::Record) still push their annotation locally.
+    // Builds the annotation only while telemetry recording is on: this runs
+    // for every command on every record.
+    stream_executor::ScopedCommandBufferAnnotation cb_annotation([&] {
+      return GetInstructionAnnotationString(command->profile_annotation());
+    });
     Command::RecordUpdate record_action{recorded_commands[id]};
     ABSL_ASSIGN_OR_RETURN(recorded_commands[id],
                      command->Record(execute_params, record_params,

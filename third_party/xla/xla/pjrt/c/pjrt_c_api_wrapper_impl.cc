@@ -47,10 +47,12 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "xla/custom_options.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
@@ -1329,7 +1331,8 @@ PJRT_Error* PJRT_Client_CreateErrorBuffer(
     PJRT_Client_CreateErrorBuffer_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_CreateErrorBuffer_Args",
-      PJRT_Client_CreateErrorBuffer_Args_STRUCT_SIZE, args->struct_size));
+      PJRT_STRUCT_SIZE(PJRT_Client_CreateErrorBuffer_Args, num_payload),
+      args->struct_size));
 
   absl::Status error = absl::Status(
       pjrt::PjrtErrorCodeToStatusCode(args->error_code),
@@ -1352,12 +1355,41 @@ PJRT_Error* PJRT_Client_CreateErrorBuffer(
   PJRT_ASSIGN_OR_RETURN(
       xla::Shape shape,
       pjrt::BuildXlaShapeFromC(args->shape_element_type, args->shape_dims,
-                               args->shape_num_dims, args->shape_layout));
+                               args->shape_num_dims, /*layout=*/nullptr));
+  xla::LayoutUtil::SetToDefaultLayout(&shape);
+
+  std::optional<xla::Layout> cpp_layout;
+  const xla::Layout* device_layout = nullptr;
+  if (args->struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_Client_CreateErrorBuffer_Args, device_layout) &&
+      args->device_layout != nullptr) {
+    switch (args->device_layout->type) {
+      case PJRT_Buffer_MemoryLayout_Type::PJRT_Buffer_MemoryLayout_Type_Tiled: {
+        PJRT_ASSIGN_OR_RETURN(cpp_layout,
+                              ConvertToLayout(args->device_layout->tiled));
+        break;
+      }
+      case PJRT_Buffer_MemoryLayout_Type::
+          PJRT_Buffer_MemoryLayout_Type_Strides: {
+        PJRT_RETURN_IF_ERROR(absl::InvalidArgumentError(
+            "PJRT_Buffer_MemoryLayout_Type_Strides is not supported to be "
+            "converted to a xla::Layout."));
+        break;
+      }
+      default: {
+        PJRT_RETURN_IF_ERROR(absl::InvalidArgumentError(
+            absl::StrCat("Unexpected PJRT_Buffer_MemoryLayout_Type type: ",
+                         args->device_layout->type)));
+      }
+    }
+    device_layout = &*cpp_layout;
+  }
 
   PJRT_ASSIGN_OR_RETURN(
       auto error_buffer,
       args->client->client->CreateErrorBuffer(
-          error, shape, xla::PjRtMemorySpace::FromC(args->memory)));
+          error, shape, xla::PjRtMemorySpace::FromC(args->memory),
+          device_layout));
 
   args->buffer = new PJRT_Buffer{std::move(error_buffer), args->client};
   return nullptr;
@@ -1918,10 +1950,12 @@ PJRT_Error* PJRT_LoadedExecutable_AddressableDeviceLogicalIds(
       PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args_STRUCT_SIZE,
       args->struct_size));
 
+  PJRT_RETURN_IF_ERROR(
+      args->executable->addressable_device_logical_ids.status());
   args->num_addressable_device_logical_ids =
-      args->executable->addressable_device_logical_ids.size();
+      args->executable->addressable_device_logical_ids->size();
   args->addressable_device_logical_ids =
-      args->executable->addressable_device_logical_ids.data();
+      args->executable->addressable_device_logical_ids->data();
   return nullptr;
 }
 
@@ -2337,9 +2371,21 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     execute_context = args->options->context->execute_context;
   }
   options.context = execute_context.get();
+
+  // Custom options are owned by the caller only for the duration of the C API
+  // call, so we copy them.
+  if (args->options->struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_ExecuteOptions, num_custom_options) &&
+      args->options->num_custom_options > 0) {
+    options.custom_options = std::make_shared<const xla::CustomOptions>(
+        ConvertFromPjRtNamedValueList(args->options->custom_options,
+                                      args->options->num_custom_options));
+  }
+
   options.multi_slice_config = nullptr;
   // TODO(b/485591964): Remove this check after 12week compatibility window.
-  if (args->options->struct_size >= PJRT_ExecuteOptions_STRUCT_SIZE &&
+  if (args->options->struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_ExecuteOptions, multi_slice_config) &&
       args->options->multi_slice_config != nullptr) {
     options.multi_slice_config =
         args->options->multi_slice_config->config.get();
@@ -2975,6 +3021,7 @@ PJRT_Error* PJRT_Buffer_IncreaseExternalReferenceCount(
   PJRT_ASSIGN_OR_RETURN(
       std::unique_ptr<xla::PjRtBuffer::ExternalReference> external_reference,
       args->buffer->buffer->AcquireExternalReference());
+  absl::MutexLock lock(args->buffer->mu);
   args->buffer->external_references.push_back(std::move(external_reference));
   return nullptr;
 }
@@ -2986,14 +3033,21 @@ PJRT_Error* PJRT_Buffer_DecreaseExternalReferenceCount(
       PJRT_Buffer_DecreaseExternalReferenceCount_Args_STRUCT_SIZE,
       args->struct_size));
 
-  if (!args->buffer->external_references.empty()) {
+  // Destroy external_reference outside args->buffer->mu to avoid holding it
+  // while acquiring the underlying buffer lock.
+  std::unique_ptr<xla::PjRtBuffer::ExternalReference> external_reference;
+  {
+    absl::MutexLock lock(args->buffer->mu);
+    if (args->buffer->external_references.empty()) {
+      absl::Status status = xla::InvalidArgument(
+          "Attempting to decrease reference on a buffer with zero reference "
+          "count.");
+      return StatusToPjRtError(std::move(status));
+    }
+    external_reference = std::move(args->buffer->external_references.back());
     args->buffer->external_references.pop_back();
-    return nullptr;
   }
-  absl::Status status = xla::InvalidArgument(
-      "Attempting to decrease reference on a buffer with zero reference "
-      "count.");
-  return StatusToPjRtError(std::move(status));
+  return nullptr;
 }
 
 PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
@@ -3274,10 +3328,10 @@ PJRT_Error* PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace(
       PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args_STRUCT_SIZE,  // NOLINT (whitespace/line_length)
       args->struct_size));
 
-  xla::PrimitiveType element_type =
-      pjrt::ConvertFromPjRtBufferType(args->element_type);
-  xla::Shape input_shape =
-      xla::ShapeUtil::MakeShape(element_type, {args->dims, args->num_dims});
+  PJRT_ASSIGN_OR_RETURN(
+      xla::Shape input_shape,
+      pjrt::BuildXlaShapeFromC(args->element_type, args->dims, args->num_dims,
+                               /*layout=*/nullptr));
 
   const xla::Layout* layout_ptr = nullptr;
   xla::Layout layout;
@@ -3740,15 +3794,19 @@ PJRT_Executable::PJRT_Executable(xla::PjRtExecutable* unowned_executable)
 static void PopulatePjrtExecutableAddressableDeviceLogicalIds(
     PJRT_LoadedExecutable* executable) {
   CHECK(executable->client != nullptr) << ": client was null";
-  absl::Span<const xla::PjRtLoadedExecutable::LogicalDeviceIds> cpp_ids =
-      executable->get()->addressable_device_logical_ids();
+  absl::StatusOr<absl::Span<const xla::PjRtLoadedExecutable::LogicalDeviceIds>>
+      cpp_ids = executable->get()->addressable_device_logical_ids();
+  if (!cpp_ids.ok()) {
+    executable->addressable_device_logical_ids = cpp_ids.status();
+    return;
+  }
 
-  std::vector<PJRT_LogicalDeviceIds>& exec_ids =
-      executable->addressable_device_logical_ids;
-  exec_ids.reserve(cpp_ids.size());
-  for (const auto& id : cpp_ids) {
+  std::vector<PJRT_LogicalDeviceIds> exec_ids;
+  exec_ids.reserve(cpp_ids->size());
+  for (const auto& id : *cpp_ids) {
     exec_ids.push_back(PJRT_LogicalDeviceIds{id.replica, id.partition});
   }
+  executable->addressable_device_logical_ids = std::move(exec_ids);
 }
 
 PJRT_LoadedExecutable::PJRT_LoadedExecutable(

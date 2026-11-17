@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"
+#include "mlir/Dialect/Func/IR/FuncDialect.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -75,14 +77,7 @@ mlir::LogicalResult rewriteShardingCustomCall(
   }
   TensorShardingAttr sharding = mlir::sdy::getSharding(op->getResult(0));
   if (!sharding) {
-    op.emitError()
-        << "expected CustomCallOp with a sharding attribute. "
-        // TODO: b/432201708 - Remove this once Shardy is stable in JAX.
-        << "If you are a JAX user hitting this, please file a bug against the "
-        << "OpenXLA Shardy team. This shouldn't happen to you. One of the "
-        << "possible bugs is the model has been lowered targeting GSPMD, but "
-        << "Shardy was then enabled in XLA.";
-
+    op.emitError() << "expected CustomCallOp with a sharding attribute";
     return mlir::failure();
   }
 
@@ -136,6 +131,28 @@ mlir::LogicalResult rewriteShardingGroupCustomCall(
   return mlir::success();
 }
 
+mlir::LogicalResult rewriteComputeOnStartCustomCall(
+    CustomCallOp op, CustomCallOpAdaptor adaptor,
+    mlir::ConversionPatternRewriter& rewriter) {
+  mlir::ArrayAttr calledComputations = op.getCalledComputations();
+  if (!calledComputations || calledComputations.size() != 1) {
+    return op.emitError()
+           << "expected compute-on-start CustomCallOp with exactly one "
+              "called_computation.";
+  }
+  auto callee = mlir::dyn_cast<mlir::FlatSymbolRefAttr>(calledComputations[0]);
+  if (!callee) {
+    return op.emitError()
+           << "expected FlatSymbolRefAttr in called_computations.";
+  }
+  auto callOp = rewriter.replaceOpWithNewOp<mlir::func::CallOp>(
+      op, op.getResultTypes(), callee.getValue(), adaptor.getInputs());
+  callOp->setDiscardableAttrs(op->getDiscardableAttrDictionary());
+  setFrontendAttribute(callOp, kIsComputeOnStartAttr,
+                       mlir::StringAttr::get(rewriter.getContext(), "true"));
+  return mlir::success();
+}
+
 class SdyCustomCallPattern : public mlir::OpConversionPattern<CustomCallOp> {
   using OpConversionPattern::OpConversionPattern;
 
@@ -151,6 +168,9 @@ class SdyCustomCallPattern : public mlir::OpConversionPattern<CustomCallOp> {
     }
     if (op.getCallTargetName() == kPropagationBarrierCustomCallTargetName) {
       return rewritePropagationBarrierCustomCall(op, adaptor, rewriter);
+    }
+    if (op.getCallTargetName() == kComputeOnStartTargetName) {
+      return rewriteComputeOnStartCustomCall(op, adaptor, rewriter);
     }
 
     return rewriter.notifyMatchFailure(
@@ -171,10 +191,13 @@ class ImportSdyCustomCallsPass
     mlir::MLIRContext& context = getContext();
     mlir::ConversionTarget target(context);
     target.addLegalDialect<mlir::sdy::SdyDialect>();
+    target.addLegalOp<mlir::func::CallOp>();
     target.addDynamicallyLegalOp<CustomCallOp>([](CustomCallOp op) {
       return op.getCallTargetName() != kShardingCustomCallTargetName &&
              op.getCallTargetName() != kShardingGroupCustomCallTargetName &&
-             op.getCallTargetName() != kPropagationBarrierCustomCallTargetName;
+             op.getCallTargetName() !=
+                 kPropagationBarrierCustomCallTargetName &&
+             op.getCallTargetName() != kComputeOnStartTargetName;
     });
     mlir::RewritePatternSet patterns(&context);
     patterns.add<SdyCustomCallPattern>(&context);
@@ -195,7 +218,7 @@ class ImportSdyCustomCallsPass
   }
 
   void getDependentDialects(mlir::DialectRegistry& registry) const final {
-    registry.insert<mlir::sdy::SdyDialect>();
+    registry.insert<mlir::sdy::SdyDialect, mlir::func::FuncDialect>();
   }
 };
 

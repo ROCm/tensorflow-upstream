@@ -32,9 +32,12 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
+#include "xla/autotune_results.pb.h"
+#include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/autotune_fingerprint.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
 #include "xla/backends/autotuner/autotuning.pb.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 #include "xla/backends/autotuner/config_runner.h"
 #include "xla/backends/autotuner/config_selector.h"
@@ -239,7 +242,8 @@ tsl::Future<Autotuner::Config> Autotuner::GetTunedConfig(
         ABSL_ASSIGN_OR_RETURN(
             ConfigRunner::ConfigProfile best_profile,
             PickBestConfig(profiles, options_.scratch_bytes_window_size_us,
-                           options_.excluded_backends));
+                           options_.excluded_backends,
+                           options_.preferred_backend));
 
         return std::move(best_profile.config);
       });

@@ -39,6 +39,7 @@ from tensorflow.python.framework import tensor_util
 from tensorflow.python.framework.constant_op import constant
 from tensorflow.python.ops import array_ops_stack
 from tensorflow.python.ops import gen_array_ops
+from tensorflow.python.ops import gen_logging_ops
 from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import shape_util
 from tensorflow.python.ops import tensor_getitem_override  # pylint: disable=unused-import
@@ -1503,7 +1504,8 @@ def boolean_mask(tensor, mask, name="boolean_mask", axis=None):
     name:  A name for this operation (optional).
     axis:  A 0-D int Tensor representing the axis in `tensor` to mask from. By
       default, axis is 0 which will mask from the first dimension. Otherwise K +
-      axis <= N.
+      axis <= N, where a negative axis counts from the end of `tensor`, i.e. it
+      is treated as `axis + N`.
 
   Returns:
     (N-K+1)-dimensional tensor populated by entries in `tensor` corresponding
@@ -1533,6 +1535,40 @@ def boolean_mask(tensor, mask, name="boolean_mask", axis=None):
           " are None.  E.g. shape=[None] is ok, but shape=None is not.")
     axis = 0 if axis is None else axis
     axis_value = tensor_util.constant_value(axis)
+    # Count a negative axis from the end of `tensor`. Used as is, it slices the
+    # wrong dimensions of the shapes, e.g. [-1:0] for axis=-1 and a 1-D mask.
+    if (
+        axis_value is not None
+        and axis_value < 0
+        and shape_tensor.ndims is not None
+    ):
+      axis_value = get_positive_axis(int(axis_value), shape_tensor.ndims)
+    elif axis_value is None or axis_value < 0:
+      # The axis or the rank is only known at runtime.
+      # Check both bounds here: an out-of-range axis can still give a valid
+      # reshape below and silently return the wrong elements.
+      axis = ops.convert_to_tensor(axis, name="axis")
+      ndims = (
+          shape_tensor.ndims
+          if shape_tensor.ndims is not None
+          else gen_math_ops.cast(rank(tensor), axis.dtype)
+      )
+      given_axis = axis
+      axis = where_v2(axis < 0, axis + ndims, axis)
+      in_range = gen_logging_ops._assert(  # pylint: disable=protected-access
+          gen_math_ops.logical_and(axis >= 0, axis + ndims_mask <= ndims),
+          [
+              "axis is out of range for the rank of tensor and mask. axis =",
+              given_axis,
+              "rank of tensor =",
+              ndims,
+              "rank of mask =",
+              ndims_mask,
+          ],
+      )
+      with ops.control_dependencies([in_range]):
+        axis = identity(axis)
+      axis_value = None
     flattened_shape = None
     if axis_value is not None:
       axis = axis_value
@@ -1611,7 +1647,8 @@ def boolean_mask_v2(tensor, mask, axis=None, name="boolean_mask"):
       in a future release.
     axis:  A 0-D int Tensor representing the axis in `tensor` to mask from. By
       default, axis is 0 which will mask from the first dimension. Otherwise K +
-      axis <= N.
+      axis <= N, where a negative axis counts from the end of `tensor`, i.e. it
+      is treated as `axis + N`.
     name:  A name for this operation (optional).
 
   Returns:
@@ -4005,11 +4042,11 @@ def one_hot(indices,
   `on_value` and `off_value` must have matching data types. If `dtype` is also
   provided, they must be the same data type as specified by `dtype`.
 
-  If `on_value` is not provided, it will default to the value `1` with type
-  `dtype`
+  If `on_value` is not provided, it will default to the value `1` (`True` for
+  boolean) with type `dtype`
 
-  If `off_value` is not provided, it will default to the value `0` with type
-  `dtype`
+  If `off_value` is not provided, it will default to the value `0` (`False` for
+  boolean) with type `dtype`
 
   If the input `indices` is rank `N`, the output will have rank `N+1`. The
   new axis is created at dimension `axis` (default: the new axis is appended
@@ -4043,8 +4080,9 @@ def one_hot(indices,
   `on_value`, `off_value`, or `dtype` are provided, `dtype` will default to the
   value `tf.float32`.
 
-  Note: If a non-numeric data type output is desired (`tf.string`, `tf.bool`,
-  etc.), both `on_value` and `off_value` _must_ be provided to `one_hot`.
+  Note: If a non-numeric data type output other than `tf.bool` is desired
+  (e.g. `tf.string`), both `on_value` and `off_value` _must_ be provided to
+  `one_hot`.
 
   For example:
 
@@ -4087,10 +4125,10 @@ def one_hot(indices,
   Args:
     indices: A `Tensor` of indices.
     depth: A scalar defining the depth of the one hot dimension.
-    on_value: A scalar defining the value to fill in output when `indices[j]
-      = i`. (default: 1)
-    off_value: A scalar defining the value to fill in output when `indices[j]
-      != i`. (default: 0)
+    on_value: A scalar defining the value to fill in output when `indices[j] =
+      i`. (default: 1)
+    off_value: A scalar defining the value to fill in output when `indices[j] !=
+      i`. (default: 0)
     axis: The axis to fill (default: -1, a new inner-most axis).
     dtype: The data type of the output tensor.
     name: A name for the operation (optional).
@@ -4133,12 +4171,16 @@ def one_hot(indices,
       dtype = dtypes.float32
 
     if not on_exists:
-      # on_value not provided: assign to value 1 of type dtype
-      on_value = ops.convert_to_tensor(1, dtype, name="on_value")
+      # on_value not provided: assign to value 1 (True for bool) of type dtype
+      on_value = ops.convert_to_tensor(
+          True if dtype == dtypes.bool else 1, dtype, name="on_value"
+      )
       on_dtype = dtype
     if not off_exists:
-      # off_value not provided: assign to value 0 of type dtype
-      off_value = ops.convert_to_tensor(0, dtype, name="off_value")
+      # off_value not provided: assign to value 0 (False for bool) of type dtype
+      off_value = ops.convert_to_tensor(
+          False if dtype == dtypes.bool else 0, dtype, name="off_value"
+      )
       off_dtype = dtype
 
     if on_dtype != off_dtype:
@@ -6131,6 +6173,12 @@ def searchsorted(sorted_sequence,
                 If the first `N-1` dimensions of the two tensors don't match.
   """
   sequence_size = shape_internal(sorted_sequence)[-1]
+  values = ops.convert_to_tensor(values, name="values")
+  values_shape = shape_internal(values)
+
+  if values.shape.rank == 0:
+    values = expand_dims(values, 0)
+
   values_size = shape_internal(values)[-1]
   sorted_sequence_2d = reshape(sorted_sequence, [-1, sequence_size])
   values_2d = reshape(values, [-1, values_size])
@@ -6143,7 +6191,7 @@ def searchsorted(sorted_sequence,
   else:
     raise ValueError("Argument `side` must be either 'right' or 'left'. "
                      f"Received: `side` = '{side}'.")
-  return reshape(output, shape_internal(values))
+  return reshape(output, values_shape)
 
 
 quantize.__doc__ = gen_array_ops.quantize_v2.__doc__
@@ -6365,6 +6413,310 @@ def extract_image_patches(  # pylint: disable=missing-docstring
 
 
 extract_image_patches.__doc__ = gen_array_ops.extract_image_patches.__doc__
+
+
+@tf_export("experimental.fold")
+def fold(
+    patches,
+    output_size,
+    sizes,
+    strides,
+    padding="VALID",
+    rates=1,
+    reduction="sum",
+):
+  """Reconstructs an image from a tensor of extracted patches.
+
+  This op acts as an inverse of `tf.image.extract_patches`.It takes a
+  tensor of patches and folds them back into an image. When patches overlap
+  (i.e., when strides are smaller than the patch sizes), the `reduction`
+  argument determines whether the overlapping pixel values are
+  accumulated(summed) or averaged.
+
+  Note: For overlapping patches with floating-point data, the output may be
+  nondeterministic due to the order of accumulation in `scatter_nd`. To ensure
+  deterministic behavior, enable op determinism before calling this function:
+
+    `tf.config.experimental.enable_op_determinism()`
+
+  When op determinism is enabled, TensorFlow ops will be deterministic.
+  This means that if an op is run multiple times with
+  the same inputs on the same hardware,
+  it will have the exact same outputs each time.
+  See `tf.config.experimental.enable_op_determinism` for details.
+
+  Args:
+    patches: A 4D `Tensor` of shape `(batch, out_h, out_w, patch_dim)`, where
+      `patch_dim = kernel_h * kernel_w * channels`. This matches the standard
+      output format of `tf.image.extract_patches`.
+    output_size: A tuple of integers `(height, width)` specifying the spatial
+      dimensions of the reconstructed image (before removing padding if
+      `padding="VALID"`).
+    sizes: An `int` or tuple `(kernel_h, kernel_w)` specifying the size of each
+      patch.
+    strides: An `int` or tuple `(stride_h, stride_w)` specifying the step size
+      between patches. A single value `int` specifies the same stride for both
+      height and width.
+    padding: A `str` ("VALID", "SAME") or an `int`. - "VALID": No padding is
+      applied (default). - "SAME": Matches the padding behavior of
+      `tf.image.extract_patches`. - `int`: Applies symmetric padding of this
+      exact value to all sides.
+    rates: An `int` or tuple `(dilation_h, dilation_w)` specifying the dilation
+      rate (spacing between kernel elements). Must be `>= 1`. Defaults to 1.
+    reduction: A `str`, either `"sum"` or `"mean"`. Specifies how to aggregate
+      pixel values from overlapping patches. Defaults to `"sum"`.
+
+  Returns:
+    A 4D `Tensor` of shape `(batch, height, width, channels)`.
+
+  Example:
+    **Eg.1 : Basic non-overlapping patches:**
+    >>> # Create a simple 4x4 image (batch=1, h=4, w=4, channels=1)
+    >>> x = tf.reshape(tf.range(16, dtype=tf.float32), (1, 4, 4, 1))
+
+    >>> # Extract non-overlapping 2x2 patches
+    >>> patches = tf.image.extract_patches(
+    ...     images=x,
+    ...     sizes=[1, 2, 2, 1],
+    ...     strides=[1, 2, 2, 1],
+    ...     rates=[1, 1, 1, 1],
+    ...     padding="VALID"
+    ... )
+
+    >>> # Reconstruct the original image
+    >>> out = tf.experimental.fold(
+    ...     patches=patches,
+    ...     output_size=(4, 4),
+    ...     sizes=(2, 2),
+    ...     strides=(2, 2)
+    ... )
+
+    **Eg.2: Overlapping patches: (stride is smaller than sizes(kernel))**
+    >>> # It's important to enable_op_determinism before
+    >>> # using fold() in this case
+    >>> tf.config.experimental.enable_op_determinism()
+    >>> # Extract overlapping 2x2 patches
+    >>> overlapping_patches = tf.image.extract_patches(
+    ...     images=x,
+    ...     sizes=[1, 2, 2, 1],
+    ...     strides=[1, 1, 1, 1],
+    ...     rates=[1, 1, 1, 1],
+    ...     padding="VALID"
+    ... )
+
+    >>> # Reconstruct the image using mean reduction to average the
+    >>> # overlapping pixel values and restore the original image.
+    >>> out_overlapping = tf.experimental.fold(
+    ...     patches=overlapping_patches,
+    ...     output_size=(4, 4),
+    ...     sizes=(2, 2),
+    ...     strides=(1, 1),
+    ...     reduction="mean"
+    ... )
+  """
+
+  kernel_size = sizes
+  stride = strides
+  dilation = rates
+  # Handling inputs
+  patches = ops.convert_to_tensor(patches)
+  if patches.shape.ndims != 4 and patches.shape.ndims is not None:
+    raise ValueError(
+        "patches(input must be 4D (batch, height, width, patch_dim), "
+        f"got {patches.shape.ndims}D tensor with shape {patches.shape}"
+    )
+
+  if isinstance(reduction, str):
+    if reduction not in ("sum", "mean"):
+      raise ValueError(f"reduction must be 'sum' or 'mean', got {reduction}")
+  else:
+    raise ValueError(f"reduction must be 'sum' or 'mean', got {reduction}")
+
+  if isinstance(kernel_size, int):
+    kernel_h = kernel_w = kernel_size
+    if kernel_size < 1:
+      raise ValueError(f"kernel_size must be >= 1, got {kernel_size}")
+  else:
+    kernel_h, kernel_w = kernel_size
+    if kernel_h < 1 or kernel_w < 1:
+      raise ValueError(f"kernel_size must be >= 1, got {kernel_size}")
+
+  if isinstance(stride, int):
+    stride_h = stride_w = stride
+    if stride < 1:
+      raise ValueError(f"stride must be >= 1, got {stride}")
+  else:
+    stride_h, stride_w = stride
+    if stride_h < 1 or stride_w < 1:
+      raise ValueError(f"stride must be >= 1, got {stride}")
+
+  if isinstance(dilation, int):
+    if dilation < 1:
+      raise ValueError(f"dilation must be >= 1, got {dilation}")
+    dilation_h = dilation_w = dilation
+  else:
+    dilation_h, dilation_w = dilation
+    if dilation_h < 1 or dilation_w < 1:
+      raise ValueError(f"dilation must be >= 1, got {dilation}")
+
+  if len(output_size) != 2 or output_size[0] <= 0 or output_size[1] <= 0:
+    raise ValueError(
+        "output_size must be a tuple of 2 positive integers (height, width), "
+        f"got {output_size}"
+    )
+
+  # Handling inputs for padding argument
+  k_eff_h = (kernel_h - 1) * dilation_h + 1
+  k_eff_w = (kernel_w - 1) * dilation_w + 1
+
+  if stride_h < k_eff_h or stride_w < k_eff_w:
+    # Local imports - to avoid circular imports
+    # pylint: disable=g-import-not-at-top
+    from tensorflow.python.framework import config
+    from tensorflow.python.platform import tf_logging
+    # pylint: enable=g-import-not-at-top
+    if not config.is_op_determinism_enabled():
+      tf_logging.warning(
+          msg=(
+              "The fold operation may produce non-deterministic results "
+              " for floating-point data types "
+              "when patches are overlapping (stride < kernel_size). "
+              "This is because the order in which the updates are applied is "
+              "non-deterministic and when floating-point numbers are added in"
+              " different orders the resulting numerical approximation error "
+              "can be slightly different. To ensure reproducible results, "
+              " enable op determinism using "
+              "`tf.config.experimental.enable_op_determinism()`"
+          )
+      )
+
+  # Get dimensions - extract dynamic shapes for the graph logic
+  dynamic_shape = shape_internal(patches)
+  batch_size = dynamic_shape[0]
+  out_h = dynamic_shape[1]
+  out_w = dynamic_shape[2]
+  patch_dim = dynamic_shape[3]
+  kernel_area = kernel_h * kernel_w
+
+  if patches.shape.rank is not None and patches.shape[3] is not None:
+    if patches.shape[3] % kernel_area != 0:
+      raise ValueError(
+          "Expected size of input's dimension 3 should be divisble by"
+          " the product of kernel_size, but input's dim 3 is"
+          f" {patches.shape[3]} and kernel_size is {kernel_size}"
+      )
+
+  channels = patch_dim // kernel_area
+
+  height, width = output_size
+
+  if isinstance(padding, str):
+    if padding == "VALID":
+      pad_top = pad_bottom = pad_left = pad_right = 0
+      static_patches_shape = patches.shape
+      if static_patches_shape.ndims == 4:
+        static_out_h = static_patches_shape[1]
+        static_out_w = static_patches_shape[2]
+        if static_out_h is not None and static_out_w is not None:
+          if (static_out_h - 1) * stride_h + k_eff_h > height or (
+              static_out_w - 1
+          ) * stride_w + k_eff_w > width:
+            raise ValueError(
+                f"output_size {output_size} is too small for extracted patches"
+                f" with sizes={kernel_size}, strides={stride},"
+                f" rates={dilation}"
+                f" and spatial patch shape ({static_out_h}, {static_out_w})"
+            )
+    elif padding == "SAME":
+      # Calculate total padding required
+      val_h = (out_h - 1) * stride_h + k_eff_h - height
+      val_w = (out_w - 1) * stride_w + k_eff_w - width
+      pad_total_h = gen_math_ops.maximum(
+          constant_op.constant(0, dtype=val_h.dtype), val_h
+      )
+      pad_total_w = gen_math_ops.maximum(
+          constant_op.constant(0, dtype=val_w.dtype), val_w
+      )
+      # For odd values of total padding,
+      # add more padding at the 'right' side of the given dimension.
+      pad_top = pad_total_h // 2
+      pad_bottom = pad_total_h - pad_top
+      pad_left = pad_total_w // 2
+      pad_right = pad_total_w - pad_left
+    else:
+      raise ValueError(f"padding must be 'VALID' , 'SAME' or int got {padding}")
+  elif isinstance(padding, int):
+    if padding < 0:
+      raise ValueError("padding must be >= 0")
+    pad_top = pad_bottom = pad_left = pad_right = padding
+  else:
+    raise ValueError(f"padding must be 'VALID', 'SAME' or int, got {padding}")
+
+  # Padded output size
+  padded_height = height + pad_top + pad_bottom
+  padded_width = width + pad_left + pad_right
+
+  # Reshape patches
+  patches_reshaped = reshape(
+      patches, [batch_size, out_h, out_w, kernel_h, kernel_w, channels]
+  )
+
+  # Create coordinate grids
+  batch_range = gen_math_ops._range(0, batch_size, 1)
+  h_range = gen_math_ops._range(0, out_h, 1)
+  w_range = gen_math_ops._range(0, out_w, 1)
+  kh_range = gen_math_ops._range(0, kernel_h, 1)
+  kw_range = gen_math_ops._range(0, kernel_w, 1)
+
+  b_grid, h_grid, w_grid, kh_grid, kw_grid = meshgrid(
+      batch_range, h_range, w_range, kh_range, kw_range, indexing="ij"
+  )
+
+  # Calculate output coordinates with dilation
+  # fold formula:
+  # output[i*stride + kh*dilation, j*stride + kw*dilation] = patch_pixel
+  out_h_coords = h_grid * stride_h + kh_grid * dilation_h
+  out_w_coords = w_grid * stride_w + kw_grid * dilation_w
+
+  # Build scatter indices
+  indices = array_ops_stack.stack(
+      [
+          reshape(b_grid, [-1]),
+          reshape(out_h_coords, [-1]),
+          reshape(out_w_coords, [-1]),
+      ],
+      axis=1,
+  )
+
+  updates = reshape(patches_reshaped, [-1, channels])
+
+  # Scatter into output tensor
+  output = gen_array_ops.scatter_nd(
+      indices=indices,
+      updates=updates,
+      shape=[batch_size, padded_height, padded_width, channels],
+  )
+  if reduction == "mean":
+    ones_updates = ones(shape=shape_internal(updates), dtype=updates.dtype)
+    divisor_matrix = gen_array_ops.scatter_nd(  # calc overlapping count
+        indices=indices,
+        updates=ones_updates,
+        shape=[batch_size, padded_height, padded_width, channels],
+    )
+    safe_divisor = gen_math_ops.maximum(  # To avoid zero division errors
+        divisor_matrix, constant_op.constant(1, dtype=divisor_matrix.dtype)
+    )
+    output = gen_math_ops.div(output, safe_divisor)  # element-wise division
+
+  # Crop to desired output_size by removing the calculated padding
+  # No-op if padding='VALID' or 0
+  # Safer check for Graph mode
+  if padding == "SAME" or (isinstance(padding, int) and padding > 0):
+    output = output[
+        :, pad_top : pad_top + height, pad_left : pad_left + width, :
+    ]
+
+  return output
 
 
 @tf_export("fingerprint")

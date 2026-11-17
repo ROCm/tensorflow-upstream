@@ -41,7 +41,6 @@ tf_python_pybind_extension(
         "_pywrap_file_io.pyi",
     ],
     deps = [
-        "//tensorflow/core:framework_headers_lib",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_proto_parsing",
         "//tensorflow/core:portable_gif_internal",
@@ -85,7 +84,6 @@ py_library(
     strict_deps = True,
     # copybara:uncomment_begin(google-only)
     # visibility = [
-    # "//learning/serving/servables/wiz/lora:__subpackages__",
     # "//third_party/cloud_tpu/convergence_tools:__subpackages__",
     # "//third_party/py/tf_slim:__subpackages__",
     # "//tensorflow:__subpackages__",

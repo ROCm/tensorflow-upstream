@@ -88,11 +88,15 @@ TEST(DebugOptions, CommandBufferUpdateModeDefaultsToAlwaysUpdate) {
       DebugOptions::ALWAYS_UPDATE);
 }
 
-TEST(DebugOptions, SchedulerMemoryFencingDefaultsToDisabled) {
+TEST(DebugOptions,
+     SchedulerMemoryFencingDefaultsToAutomaticWithOneSlackWindow) {
   EXPECT_EQ(
       DefaultDebugOptionsIgnoringFlags()
           .xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(),
-      -1);
+      0);
+  EXPECT_EQ(DefaultDebugOptionsIgnoringFlags()
+                .xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
+            1);
 }
 
 TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
@@ -244,6 +248,12 @@ TEST(DebugOptions, CollectiveKernelsFlagUnderscoreAllGather) {
               ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER));
 }
 
+TEST(DebugOptions, CollectiveKernelsFlagAllToAll) {
+  DebugOptions opts = ParseCollectiveKernelsFlag("ALL_TO_ALL");
+  EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_TO_ALL));
+}
+
 TEST(DebugOptions, CollectiveKernelsFlagBothHyphenated) {
   DebugOptions opts = ParseCollectiveKernelsFlag("ALL_REDUCE,ALL_GATHER");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
@@ -262,6 +272,25 @@ TEST(DebugOptions, CollectiveKernelsFlagShortEnumNameUppercase) {
   DebugOptions opts = ParseCollectiveKernelsFlag("ALL_REDUCE");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
               ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE));
+}
+
+TEST(DebugOptions, CollectiveKernelsFlagAllCollectives) {
+  DebugOptions opts = ParseCollectiveKernelsFlag("ALL_COLLECTIVES");
+  EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_COLLECTIVES));
+}
+
+TEST(DebugOptions, CollectiveKernelsFlagLowercaseAllCollectives) {
+  DebugOptions opts = ParseCollectiveKernelsFlag("all_collectives");
+  EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_COLLECTIVES));
+}
+
+TEST(DebugOptions, CollectiveKernelsFlagFullEnumNameAllCollectives) {
+  DebugOptions opts =
+      ParseCollectiveKernelsFlag("COLLECTIVE_KERNEL_ALL_COLLECTIVES");
+  EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_COLLECTIVES));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagEmptyDisablesAll) {
@@ -480,5 +509,60 @@ TEST(DebugOptions, DeduplicateBackendConfigsMinSizeFlagsParsing) {
   EXPECT_EQ(opts.xla_deduplicate_backend_configs_min_size(), 128);
 }
 
+TEST(DebugOptions, DeterministicOpsTriton) {
+  DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_EQ(opts.xla_gpu_experimental_deterministic_ops_triton(),
+            DebugOptions::DETERMINISTIC_OPS_TRITON_MODE_OFF);
+
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &opts);
+  auto parse = [&](std::string value) {
+    std::vector<std::string> args = {
+        "--xla_gpu_experimental_deterministic_ops_triton=" + value};
+    return tsl::Flags::Parse(args, flags);
+  };
+
+  EXPECT_TRUE(parse("unchecked"));
+  EXPECT_EQ(opts.xla_gpu_experimental_deterministic_ops_triton(),
+            DebugOptions::DETERMINISTIC_OPS_TRITON_MODE_UNCHECKED);
+
+  EXPECT_TRUE(parse("off"));
+  EXPECT_EQ(opts.xla_gpu_experimental_deterministic_ops_triton(),
+            DebugOptions::DETERMINISTIC_OPS_TRITON_MODE_OFF);
+
+  EXPECT_FALSE(parse("unset"));
+  EXPECT_FALSE(parse("invalid"));
+}
+
+TEST(DebugOptions, AutotuneCacheRequireStrictCodegenMatchDefaultIsFalse) {
+  DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_FALSE(opts.xla_autotune_cache_require_strict_codegen_match());
+}
+
+TEST(DebugOptions, AutotuneCacheRequireStrictCodegenMatchFlagsParsing) {
+  DebugOptions opts;
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &opts);
+  std::vector<std::string> flag_args = {
+      "--xla_autotune_cache_require_strict_codegen_match=true"};
+  EXPECT_TRUE(tsl::Flags::Parse(flag_args, flags));
+  EXPECT_TRUE(opts.xla_autotune_cache_require_strict_codegen_match());
+}
+
+TEST(DebugOptions, ResetFlagValuesPreservesCudaDataDirFromEnv) {
+  // Allocates the process-wide flags before the reset under test.
+  (void)GetDebugOptionsFromFlags();
+  tsl::setenv("XLA_FLAGS", "--xla_gpu_cuda_data_dir=/custom/cuda/dir", 1);
+
+  ResetFlagValues();
+  ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
+
+  EXPECT_EQ(GetDebugOptionsFromFlags().xla_gpu_cuda_data_dir(),
+            "/custom/cuda/dir");
+
+  tsl::unsetenv("XLA_FLAGS");
+  ResetFlagValues();
+  ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
+}
 }  // namespace
 }  // namespace xla

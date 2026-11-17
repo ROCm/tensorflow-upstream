@@ -1049,6 +1049,18 @@ class AdjustSaturationTest(test_util.TensorFlowTestCase):
           y_fused = self.evaluate(image_ops.adjust_saturation(x_np, scale))
           self.assertAllClose(y_fused, y_baseline, rtol=2e-5, atol=1e-5)
 
+  def testHueJustBelowZero(self):
+    # Blue is a few ulps above green, so the hue is a tiny negative number that
+    # wraps around to exactly 1.0 in float32. The red channel must survive.
+    x_np = np.array(
+        [[[0.8, 0.1, 0.10000001], [1.0, 0.0, 1e-7]]], dtype=np.float32
+    )
+    with self.cached_session():
+      for scale in [0.5, 2.0]:
+        y_baseline = self._adjustSaturationNp(x_np, scale)
+        y_fused = self.evaluate(image_ops.adjust_saturation(x_np, scale))
+        self.assertAllClose(y_fused, y_baseline, rtol=2e-5, atol=1e-5)
+
 
 class FlipTransposeRotateTest(test_util.TensorFlowTestCase,
                               parameterized.TestCase):
@@ -3983,6 +3995,54 @@ class ResizeImagesTest(test_util.TensorFlowTestCase,
     self._assertResizeCheckShape(x, x_shape, [320, 320], [320, 320, 3])
 
 
+def _assertNoExtraPaddingFromRounding(test, resize_image_with_pad):
+  """Checks resized size and centering when float32 rounding used to be off.
+
+  For these sizes float32 used to land slightly below a whole number for the
+  scaled size or padding offset, either dropping an image row/column and
+  replacing it with zeros (e.g. 512x512 -> 224x224) or shifting the image
+  one pixel off center (e.g. 39x65 -> 100x100 or 78x65 -> 300x300).
+
+  Args:
+    test: The test case.
+    resize_image_with_pad: Called as `resize_image_with_pad(image,
+      target_height, target_width, use_tensor_inputs)`.
+  """
+  # (height, width, target_height, target_width, pad_top, pad_bottom,
+  #  pad_left, pad_right)
+  for (
+      height,
+      width,
+      target_height,
+      target_width,
+      pad_top,
+      pad_bottom,
+      pad_left,
+      pad_right,
+  ) in [
+      (512, 512, 224, 224, 0, 0, 0, 0),
+      (480, 640, 300, 300, 37, 38, 0, 0),
+      (640, 480, 300, 300, 0, 0, 37, 38),
+      (720, 1280, 600, 600, 131, 132, 0, 0),
+      (39, 65, 100, 100, 20, 20, 0, 0),
+      (78, 65, 300, 300, 0, 0, 25, 25),
+  ]:
+    x = np.ones([height, width, 1], dtype=np.float32)
+    expected = np.pad(
+        np.ones([
+            target_height - pad_top - pad_bottom,
+            target_width - pad_left - pad_right,
+            1,
+        ]),
+        [[pad_top, pad_bottom], [pad_left, pad_right], [0, 0]],
+    )
+    for use_tensor_inputs in [False, True]:
+      y = resize_image_with_pad(
+          x, target_height, target_width, use_tensor_inputs
+      )
+      test.assertAllClose(expected, y)
+
+
 class ResizeImageWithPadV1Test(test_util.TensorFlowTestCase):
 
   def _ResizeImageWithPad(self, x, target_height, target_width,
@@ -4099,6 +4159,9 @@ class ResizeImageWithPadV1Test(test_util.TensorFlowTestCase):
     y_shape = [1, 2, 1]
 
     self._assertReturns(x, x_shape, y, y_shape)
+
+  def testNoExtraPaddingFromRounding(self):
+    _assertNoExtraPaddingFromRounding(self, self._ResizeImageWithPad)
 
   def testImageResizeAntialiasWithInvalidInput(self):
     with self.session():
@@ -4228,6 +4291,9 @@ class ResizeImageWithPadV2Test(test_util.TensorFlowTestCase):
     y_shape = [1, 2, 1]
 
     self._assertReturns(x, x_shape, y, y_shape)
+
+  def testNoExtraPaddingFromRounding(self):
+    _assertNoExtraPaddingFromRounding(self, self._ResizeImageWithPad)
 
 
 class ResizeNearestNeighborGrad(test_util.TensorFlowTestCase):
@@ -5035,6 +5101,11 @@ class WebpTest(test_util.TensorFlowTestCase, parameterized.TestCase):
 
 class JxlTest(test_util.TensorFlowTestCase, parameterized.TestCase):
 
+  def setUp(self):
+    super().setUp()
+    if test_util.is_xla_enabled():
+      self.skipTest("JXL ops do not have XLA JIT kernels")
+
   def _path(self, name):
     base = "tensorflow/core/lib/jxl/testdata/"
     return os.path.join(base, name)
@@ -5099,12 +5170,204 @@ class JxlTest(test_util.TensorFlowTestCase, parameterized.TestCase):
   def testUnsupportedDtypeArgument(self, dtype):
     with self.cached_session():
       jxl_file = io_ops.read_file(self._path("random_128x96_rbga_q50.jxl"))
-      message = "JXL only supports uint8 for dtype"
-      with self.assertRaisesRegex(
-          (errors.InvalidArgumentError, ValueError), message
+      with self.assertRaises(
+          (errors.InvalidArgumentError, TypeError, ValueError)
       ):
-        # decode_jxl statically does not support anything other than uint8.
-        self.evaluate(image_ops.decode_image(jxl_file, dtype=dtype))
+        self.evaluate(image_ops.decode_jxl(jxl_file, dtype=dtype))
+
+  def testDecodeUint16(self):
+    with self.cached_session():
+      jxl_file = io_ops.read_file(self._path("random_128x96_rbg_q100.jxl"))
+      jxl_image_u16 = self.evaluate(
+          image_ops.decode_image(jxl_file, dtype=dtypes.uint16)
+      )
+      self.assertEqual(jxl_image_u16.dtype, np.uint16)
+      self.assertEqual(jxl_image_u16.shape, (96, 128, 3))
+
+      jxl_op_u16 = self.evaluate(
+          image_ops.decode_jxl(jxl_file, dtype=dtypes.uint16)
+      )
+      self.assertEqual(jxl_op_u16.dtype, np.uint16)
+      self.assertAllEqual(jxl_image_u16, jxl_op_u16)
+
+  def testEncodeDecodeLosslessRoundtripUint8(self):
+    np.random.seed(42)
+    img_np = np.random.randint(0, 256, size=(32, 48, 3), dtype=np.uint8)
+    with self.cached_session():
+      encoded = image_ops.encode_jxl(img_np, quality=100.0)
+      decoded = image_ops.decode_jxl(encoded, dtype=dtypes.uint8)
+      self.assertAllEqual(self.evaluate(decoded), img_np)
+
+  @parameterized.named_parameters([
+      ("_rgb", 3),
+      ("_rgba", 4),
+      ("_gray", 1),
+  ])
+  def testEncodeDecodeLosslessRoundtripUint16(self, channels):
+    np.random.seed(42)
+    img_np = np.random.randint(
+        0, 65536, size=(16, 24, channels), dtype=np.uint16
+    )
+    # Set explicit edge-case values to verify no 8-bit truncation or clamping:
+    edge_values = [0, 1, 255, 256, 1000, 32768, 65534, 65535]
+    for idx, val in enumerate(edge_values):
+      r, c = divmod(idx, 24)
+      img_np[r, c, :] = val
+
+    with self.cached_session():
+      encoded = image_ops.encode_jxl(img_np, quality=100.0)
+      decoded_jxl = self.evaluate(
+          image_ops.decode_jxl(encoded, dtype=dtypes.uint16)
+      )
+      self.assertEqual(decoded_jxl.dtype, np.uint16)
+      self.assertAllEqual(decoded_jxl, img_np)
+
+      decoded_image = self.evaluate(
+          image_ops.decode_image(encoded, dtype=dtypes.uint16)
+      )
+      self.assertEqual(decoded_image.dtype, np.uint16)
+      self.assertAllEqual(decoded_image, img_np)
+
+      # Requesting the channel count explicitly must work too.
+      decoded_explicit = self.evaluate(
+          image_ops.decode_jxl(encoded, channels=channels, dtype=dtypes.uint16)
+      )
+      self.assertAllEqual(decoded_explicit, img_np)
+      decoded_image_explicit = self.evaluate(
+          image_ops.decode_image(
+              encoded, channels=channels, dtype=dtypes.uint16
+          )
+      )
+      self.assertAllEqual(decoded_image_explicit, img_np)
+
+  def testDecodeChannelsMismatch(self):
+    np.random.seed(42)
+    img_np = np.random.randint(0, 256, size=(8, 8, 3), dtype=np.uint8)
+    with self.cached_session():
+      encoded = self.evaluate(image_ops.encode_jxl(img_np))
+      with self.assertRaisesRegex(
+          errors.InvalidArgumentError, "does not match input"
+      ):
+        self.evaluate(image_ops.decode_jxl(encoded, channels=1))
+
+  def testDecodeUint8ToFloat(self):
+    img_np = np.array([[[0, 128, 255]]], dtype=np.uint8)
+    with self.cached_session():
+      encoded = image_ops.encode_jxl(img_np, quality=100.0)
+      decoded_float = self.evaluate(
+          image_ops.decode_image(encoded, dtype=dtypes.float32)
+      )
+      self.assertEqual(decoded_float.dtype, np.float32)
+      expected = np.array([[[0.0, 128.0 / 255.0, 1.0]]], dtype=np.float32)
+      self.assertAllClose(decoded_float, expected, atol=1e-2)
+
+  def testDecodeUint16ToFloat(self):
+    img_np = np.array([[[0, 32767, 65535]]], dtype=np.uint16)
+    with self.cached_session():
+      encoded = image_ops.encode_jxl(img_np, quality=100.0)
+      decoded_float = self.evaluate(
+          image_ops.decode_image(encoded, dtype=dtypes.float32)
+      )
+      self.assertEqual(decoded_float.dtype, np.float32)
+      expected = np.array([[[0.0, 32767.0 / 65535.0, 1.0]]], dtype=np.float32)
+      self.assertAllClose(decoded_float, expected, atol=1e-4)
+
+  def testEncodeLossy(self):
+    x = np.linspace(10, 240, 48, dtype=np.uint8)
+    y = np.linspace(10, 240, 32, dtype=np.uint8)
+    xx, yy = np.meshgrid(x, y)
+    img_np = np.stack([xx, yy, (xx // 2 + yy // 2)], axis=-1).astype(np.uint8)
+    with self.cached_session():
+      encoded = image_ops.encode_jxl(img_np, quality=90.0)
+      decoded = image_ops.decode_jxl(encoded, dtype=dtypes.uint8)
+      decoded_val = self.evaluate(decoded)
+      self.assertEqual(decoded_val.shape, img_np.shape)
+      self.assertLess(
+          np.mean(np.abs(decoded_val.astype(float) - img_np.astype(float))), 2.0
+      )
+
+  def testEncodeDefaultQualityIsLossy(self):
+    x = np.linspace(10, 240, 48, dtype=np.uint8)
+    y = np.linspace(10, 240, 32, dtype=np.uint8)
+    xx, yy = np.meshgrid(x, y)
+    img_np = np.stack([xx, yy, (xx // 2 + yy // 2)], axis=-1).astype(np.uint8)
+    with self.cached_session():
+      # The default `quality` of 95.0 selects high-quality lossy compression,
+      # matching the default in `encode_jpeg`.
+      encoded_default = image_ops.encode_jxl(img_np)
+      decoded_default = image_ops.decode_jxl(
+          encoded_default, dtype=dtypes.uint8
+      )
+      decoded_default_val = self.evaluate(decoded_default)
+      self.assertEqual(decoded_default_val.shape, img_np.shape)
+      diff = np.abs(decoded_default_val.astype(float) - img_np.astype(float))
+      self.assertLess(np.mean(diff), 2.0)
+
+      # Explicit quality=95.0 produces the same output as default quality.
+      encoded_95 = image_ops.encode_jxl(img_np, quality=95.0)
+      self.assertEqual(
+          self.evaluate(encoded_default), self.evaluate(encoded_95)
+      )
+
+      # Explicit quality=100.0 selects lossless compression.
+      encoded_100 = image_ops.encode_jxl(img_np, quality=100.0)
+      decoded_100 = image_ops.decode_jxl(encoded_100, dtype=dtypes.uint8)
+      self.assertAllEqual(self.evaluate(decoded_100), img_np)
+
+  def testEncodeQualityControlsSize(self):
+    # Noise is used rather than a smooth gradient: gradients compress better in
+    # lossless modular mode than in lossy VarDCT mode, which inverts the
+    # expected size ordering.
+    np.random.seed(42)
+    img_np = np.random.randint(0, 256, size=(64, 64, 3), dtype=np.uint8)
+    with self.cached_session():
+      sizes = [
+          len(self.evaluate(image_ops.encode_jxl(img_np, quality=quality)))
+          for quality in (100.0, 90.0, 50.0)
+      ]
+    # Lower quality means a larger butteraugli distance, hence a smaller file.
+    self.assertGreater(sizes[0], sizes[1])
+    self.assertGreater(sizes[1], sizes[2])
+
+  def testEncodeQualityOutOfRange(self):
+    img_np = np.zeros((8, 8, 3), dtype=np.uint8)
+    with self.cached_session():
+      with self.assertRaisesRegex(
+          errors.InvalidArgumentError, "quality should be in .0.0, 100.0."
+      ):
+        self.evaluate(image_ops.encode_jxl(img_np, quality=101.0))
+      with self.assertRaisesRegex(
+          errors.InvalidArgumentError, "quality should be in .0.0, 100.0."
+      ):
+        self.evaluate(image_ops.encode_jxl(img_np, quality=-1.0))
+
+  def testEncodeBatched(self):
+    np.random.seed(42)
+    img_np = np.random.randint(0, 256, size=(2, 32, 48, 3), dtype=np.uint8)
+    with self.cached_session():
+      encoded = image_ops.encode_jxl(img_np, quality=100.0)
+      encoded_val = self.evaluate(encoded)
+      self.assertEqual(encoded_val.shape, (2,))
+      decoded0 = self.evaluate(image_ops.decode_jxl(encoded_val[0]))
+      decoded1 = self.evaluate(image_ops.decode_jxl(encoded_val[1]))
+      self.assertAllEqual(decoded0, img_np[0])
+      self.assertAllEqual(decoded1, img_np[1])
+
+  def testEncodeBatchedUint16(self):
+    np.random.seed(42)
+    img_np = np.random.randint(0, 65536, size=(2, 16, 24, 3), dtype=np.uint16)
+    with self.cached_session():
+      encoded = image_ops.encode_jxl(img_np, quality=100.0)
+      encoded_val = self.evaluate(encoded)
+      self.assertEqual(encoded_val.shape, (2,))
+      decoded0 = self.evaluate(
+          image_ops.decode_jxl(encoded_val[0], dtype=dtypes.uint16)
+      )
+      decoded1 = self.evaluate(
+          image_ops.decode_jxl(encoded_val[1], dtype=dtypes.uint16)
+      )
+      self.assertAllEqual(decoded0, img_np[0])
+      self.assertAllEqual(decoded1, img_np[1])
 
 
 class ConvertImageTest(test_util.TensorFlowTestCase):
@@ -5161,6 +5424,63 @@ class ConvertImageTest(test_util.TensorFlowTestCase):
       self._convert([0, 1.1 / 255.0, 1], dtypes.float32, dtypes.uint8,
                     [0, 1, 255])
 
+  def testConvertHalfAndBfloat16ToInteger(self):
+    # dtype.max + 0.5 rounds up to dtype.max + 1 in half and bfloat16 (e.g. 256
+    # in bfloat16 for uint8), which used to wrap 1.0 around in the cast.
+    for float_dtype in [dtypes.float16, dtypes.bfloat16]:
+      image = constant_op.constant([0.0, 0.5, 1.0], float_dtype)
+      for int_dtype, expected in [
+          (dtypes.uint8, [0, 127, 255]),
+          (dtypes.int16, [0, 16383, 32767]),
+          (dtypes.uint16, [0, 32767, 65535]),
+      ]:
+        for saturate in [False, True]:
+          y = image_ops.convert_image_dtype(image, int_dtype, saturate)
+          self.assertAllEqual(self.evaluate(y), expected)
+
+  def testConvertFloatToWideIntegerStaysInRange(self):
+    # dtype.max + 0.5 rounds up to 2**31 in float32 and to 2**63 in float64, so
+    # 1.0 used to overflow the cast. It now maps to the largest float below.
+    for float_dtype, int_dtype, expected in [
+        (dtypes.float16, dtypes.int32, [0, -2147483520, 2147483520]),
+        (dtypes.bfloat16, dtypes.int32, [0, -2147483520, 2147483520]),
+        (dtypes.float32, dtypes.int32, [0, -2147483520, 2147483520]),
+        (
+            dtypes.float64,
+            dtypes.int64,
+            [0, -9223372036854774784, 9223372036854774784],
+        ),
+    ]:
+      image = constant_op.constant([0.0, -1.0, 1.0], float_dtype)
+      for saturate in [False, True]:
+        y = image_ops.convert_image_dtype(image, int_dtype, saturate)
+        self.assertAllEqual(self.evaluate(y), expected)
+    for float_dtype, int_dtype, expected in [
+        (dtypes.float32, dtypes.uint32, 4294967040),
+        (dtypes.float32, dtypes.uint64, 18446742974197923840),
+        (dtypes.float64, dtypes.uint64, 18446744073709549568),
+    ]:
+      image = constant_op.constant([0.0, 1.0], float_dtype)
+      for saturate in [False, True]:
+        y = image_ops.convert_image_dtype(image, int_dtype, saturate)
+        self.assertAllEqual(self.evaluate(y), [0, expected])
+
+  def testConvertWideIntegerToHalf(self):
+    # uint16 and wider integers used to overflow half in the cast, turning the
+    # max value into inf (or nan once scaled).
+    for int_dtype in [
+        dtypes.uint16,
+        dtypes.int32,
+        dtypes.uint32,
+        dtypes.int64,
+        dtypes.uint64,
+    ]:
+      image = constant_op.constant(
+          [0, int_dtype.max // 2, int_dtype.max], int_dtype
+      )
+      y = image_ops.convert_image_dtype(image, dtypes.float16)
+      self.assertAllClose(self.evaluate(y), [0.0, 0.5, 1.0])
+
   def testConvertBetweenInt16AndInt8(self):
     with self.cached_session():
       # uint8, uint16
@@ -5206,6 +5526,19 @@ class TotalVariationTest(test_util.TensorFlowTestCase):
       # Assert that the results are as expected within
       # some small error-bound in case they are float-values.
       self.assertAllClose(y_tf, y_np)
+
+  @test_util.run_in_graph_and_eager_modes
+  def testTotalVariationArrayLikeInput(self):
+    image = np.array(
+        [
+            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+        ],
+        dtype=np.float32,
+    )
+    expected = self._total_variation_np(image)
+    for x in (image, image.tolist(), tuple(image.tolist())):
+      self.assertAllClose(self.evaluate(image_ops.total_variation(x)), expected)
 
   def _total_variation_np(self, x_np):
     """Calculate the total variation of x_np using numpy.
@@ -5940,6 +6273,52 @@ class PSNRTest(test_util.TensorFlowTestCase):
       tf_psnr = self.evaluate(image_ops.psnr(tf_image1, tf_image2, 1.0, "psnr"))
       self.assertAllClose(psnr, tf_psnr, atol=0.001)
 
+  def testPSNRArrayLikeInput(self):
+    # max_val is cast to the dtype of the first argument, so an unconverted
+    # value used to fail with AttributeError before it was converted.
+    image1 = self._RandomImage((8, 8, 1), 1)
+    image2 = self._RandomImage((8, 8, 1), 1)
+    expected = self._PSNR_NumPy(image1, image2, 1)
+
+    with self.cached_session():
+      tf_image2 = constant_op.constant(image2, dtype=dtypes.float32)
+      for a, b in (
+          (image1.tolist(), image2.tolist()),
+          (tuple(image1.tolist()), tuple(image2.tolist())),
+          (image1.tolist(), image2.astype(np.float32)),
+          (image1.tolist(), tf_image2),
+          (image1.astype(np.float32), image2.tolist()),
+          (image1.astype(np.float32), image2.astype(np.float32)),
+      ):
+        tf_psnr = self.evaluate(image_ops.psnr(a, b, 1.0, "psnr"))
+        self.assertAllClose(expected, tf_psnr, atol=0.001)
+
+      # An integer list converts to int32 rather than uint8, so it is scaled
+      # by a different range than the uint8 array. PSNR is invariant under
+      # that, since max_val is scaled the same way, and both must still match
+      # the value computed from the integers directly.
+      image1_int = (image1 * 255).astype(np.uint8)
+      image2_int = (image2 * 255).astype(np.uint8)
+      expected_int = self._PSNR_NumPy(
+          image1_int.astype(np.float32), image2_int.astype(np.float32), 255
+      )
+      for a, b in (
+          (image1_int.tolist(), image2_int.tolist()),
+          (tuple(image1_int.tolist()), tuple(image2_int.tolist())),
+          (image1_int, image2_int),
+      ):
+        tf_psnr_int = self.evaluate(image_ops.psnr(a, b, 255, "psnr_int"))
+        self.assertAllClose(expected_int, tf_psnr_int, atol=0.001)
+
+  def testPSNRRankBelowThreeRaises(self):
+    # The shape check runs before the reduction, so a rank below 3 is
+    # reported as a rank problem rather than surfacing from reduce_mean.
+    for bad in ([1.0, 2.0], [[1.0, 2.0], [3.0, 4.0]]):
+      with self.assertRaisesRegex(
+          ValueError, "rank at least 3|at least rank 3"
+      ):
+        image_ops.psnr(bad, bad, 1.0)
+
   def testPSNRMultiImage(self):
     image1 = self._RandomImage((10, 8, 8, 1), 1)
     image2 = self._RandomImage((10, 8, 8, 1), 1)
@@ -6353,6 +6732,26 @@ class ImageGradientsTest(test_util.TensorFlowTestCase):
       self.assertAllClose(expected_dy, actual_dy)
       self.assertAllClose(expected_dx, actual_dx)
 
+  @test_util.run_in_graph_and_eager_modes
+  def testImageGradientsArrayLikeInput(self):
+    shape = [1, 2, 4, 1]
+    img = np.reshape(
+        np.array(
+            [[1.0, 3.0, 4.0, 2.0], [8.0, 7.0, 5.0, 6.0]], dtype=np.float32
+        ),
+        shape,
+    )
+    expected_dy = np.reshape(
+        [[7.0, 4.0, 1.0, 4.0], [0.0, 0.0, 0.0, 0.0]], shape
+    )
+    expected_dx = np.reshape(
+        [[2.0, 1.0, -2.0, 0.0], [-1.0, -2.0, 1.0, 0.0]], shape
+    )
+    for x in (img, img.tolist(), tuple(img.tolist())):
+      dy, dx = image_ops.image_gradients(x)
+      self.assertAllClose(expected_dy, self.evaluate(dy))
+      self.assertAllClose(expected_dx, self.evaluate(dx))
+
   def testImageGradientsMultiChannelBatch(self):
     batch = [[[[1, 2], [2, 5], [3, 3]],
               [[8, 4], [5, 1], [9, 8]]],
@@ -6396,6 +6795,27 @@ class SobelEdgesTest(test_util.TensorFlowTestCase):
     with self.cached_session():
       actual_sobel = self.evaluate(sobel)
       self.assertAllClose(expected, actual_sobel)
+
+  @test_util.run_in_graph_and_eager_modes
+  def testSobelEdgesArrayLikeInput(self):
+    plane = np.reshape(
+        np.array(
+            [[1.0, 3.0, 6.0, 2.0], [4.0, 1.0, 5.0, 7.0], [2.0, 5.0, 1.0, 4.0]],
+            dtype=np.float32,
+        ),
+        [1, 3, 4, 1],
+    )
+    expected = np.reshape(
+        [
+            [[0.0, 0.0], [0.0, 12.0], [0.0, 10.0], [0.0, 0.0]],
+            [[6.0, 0.0], [0.0, 6.0], [-6.0, 10.0], [-6.0, 0.0]],
+            [[0.0, 0.0], [0.0, 0.0], [0.0, 10.0], [0.0, 0.0]],
+        ],
+        [1, 3, 4, 1, 2],
+    )
+    for x in (plane, plane.tolist(), tuple(plane.tolist())):
+      sobel = image_ops.sobel_edges(x)
+      self.assertAllClose(expected, self.evaluate(sobel))
 
   def testSobelEdges5x3x4x2(self):
     batch_size = 5

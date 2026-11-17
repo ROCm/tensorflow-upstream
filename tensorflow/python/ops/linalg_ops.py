@@ -353,17 +353,60 @@ def matrix_solve_ls(matrix, rhs, l2_regularizer=0.0, fast=True, name=None):
       matrix_shape = matrix.get_shape()[-2:]
       if matrix_shape.is_fully_defined():
         if matrix_shape[-2] >= matrix_shape[-1]:
-          return _overdetermined(matrix, rhs, l2_regularizer)
+          solution = _overdetermined(matrix, rhs, l2_regularizer)
         else:
-          return _underdetermined(matrix, rhs, l2_regularizer)
+          solution = _underdetermined(matrix, rhs, l2_regularizer)
       else:
         # We have to defer determining the shape to runtime and use
         # conditional execution of the appropriate graph.
         matrix_shape = array_ops.shape(matrix)[-2:]
-        return cond.cond(
+        solution = cond.cond(
             matrix_shape[-2] >= matrix_shape[-1],
             lambda: _overdetermined(matrix, rhs, l2_regularizer),
-            lambda: _underdetermined(matrix, rhs, l2_regularizer))
+            lambda: _underdetermined(matrix, rhs, l2_regularizer),
+        )
+      # The composite implementation is built on a Cholesky factorization of
+      # the Gramian, which does not exist for singular matrices; the
+      # factorization then fails and its output is filled with NaN. The QR
+      # based kernel does handle those systems, so fall back to it when the
+      # factorization failed. Inputs that already contain NaN also produce NaN
+      # here, and the fallback returns NaN for them as well, so there is no
+      # need to inspect the inputs.
+      # `is_nan` is not defined for complex types, so check the real and
+      # imaginary parts separately in that case.
+      if solution.dtype.is_complex:
+        factorization_failed = math_ops.reduce_any(
+            math_ops.logical_or(
+                math_ops.is_nan(math_ops.real(solution)),
+                math_ops.is_nan(math_ops.imag(solution)),
+            )
+        )
+      else:
+        factorization_failed = math_ops.reduce_any(math_ops.is_nan(solution))
+
+      def fallback_fn():
+        # The QR-based fallback kernel (fast=False) has no custom backward
+        # pass, so stop gradients from propagating up this path to avoid
+        # breaking tf.GradientTape on graph control flow.
+        return array_ops.stop_gradient(
+            gen_linalg_ops.matrix_solve_ls(
+                matrix, rhs, l2_regularizer, fast=False
+            )
+        )
+
+      from tensorflow.python.eager import context
+
+      if context.executing_eagerly():
+        if factorization_failed.numpy():
+          return fallback_fn()
+        else:
+          return solution
+
+      from tensorflow.python.ops import cond_v2
+
+      return cond_v2.cond_v2(
+          factorization_failed, fallback_fn, lambda: solution
+      )
 
   matrix = ops.convert_to_tensor(matrix, name='matrix')
   if matrix.dtype == dtypes.complex128 and l2_regularizer != 0:
@@ -403,17 +446,23 @@ def eig(tensor, name=None):
     v: Eigenvectors. Shape is `[..., N, N]`. The columns of the inner most
       matrices contain eigenvectors of the corresponding matrices in `tensor`
   """
-  if tensor.dtype == dtypes.float32 or tensor.dtype == dtypes.complex64:
-    out_dtype = dtypes.complex64
-  elif tensor.dtype == dtypes.float64 or tensor.dtype == dtypes.complex128:
-    out_dtype = dtypes.complex128
-  else:
-    raise ValueError(
-        "'tensor' must have dtype float32, float64, complex64, or "
-        f'complex128, got {tensor.dtype}'
-    )
-  e, v = gen_linalg_ops.eig(tensor, Tout=out_dtype, compute_v=True, name=name)
-  return e, v
+  with ops.name_scope(name, 'eig', [tensor]) as name:
+    # Convert first: the dtype check below reads `tensor.dtype`, which a
+    # list or any other unconverted value does not have. linalg.eigh and
+    # the rest of this module accept those, since they hand the argument
+    # straight to the generated op, which converts it.
+    tensor = ops.convert_to_tensor(tensor, name='tensor')
+    if tensor.dtype == dtypes.float32 or tensor.dtype == dtypes.complex64:
+      out_dtype = dtypes.complex64
+    elif tensor.dtype == dtypes.float64 or tensor.dtype == dtypes.complex128:
+      out_dtype = dtypes.complex128
+    else:
+      raise ValueError(
+          "'tensor' must have dtype float32, float64, complex64, or "
+          f'complex128, got {tensor.dtype}'
+      )
+    e, v = gen_linalg_ops.eig(tensor, Tout=out_dtype, compute_v=True, name=name)
+    return e, v
 
 
 @tf_export('linalg.eigvals', 'eigvals', v1=[])
@@ -435,17 +484,25 @@ def eigvals(tensor, name=None):
     e: Eigenvalues. Shape is `[..., N]`. The vector `e[..., :]` contains the `N`
       eigenvalues of `tensor[..., :, :]`.
   """
-  if tensor.dtype == dtypes.float32 or tensor.dtype == dtypes.complex64:
-    out_dtype = dtypes.complex64
-  elif tensor.dtype == dtypes.float64 or tensor.dtype == dtypes.complex128:
-    out_dtype = dtypes.complex128
-  else:
-    raise ValueError(
-        "'tensor' must have dtype float32, float64, complex64, or "
-        f'complex128, got {tensor.dtype}'
+  with ops.name_scope(name, 'eigvals', [tensor]) as name:
+    # Convert first: the dtype check below reads `tensor.dtype`, which a
+    # list or any other unconverted value does not have. linalg.eigh and
+    # the rest of this module accept those, since they hand the argument
+    # straight to the generated op, which converts it.
+    tensor = ops.convert_to_tensor(tensor, name='tensor')
+    if tensor.dtype == dtypes.float32 or tensor.dtype == dtypes.complex64:
+      out_dtype = dtypes.complex64
+    elif tensor.dtype == dtypes.float64 or tensor.dtype == dtypes.complex128:
+      out_dtype = dtypes.complex128
+    else:
+      raise ValueError(
+          "'tensor' must have dtype float32, float64, complex64, or "
+          f'complex128, got {tensor.dtype}'
+      )
+    e, _ = gen_linalg_ops.eig(
+        tensor, Tout=out_dtype, compute_v=False, name=name
     )
-  e, _ = gen_linalg_ops.eig(tensor, Tout=out_dtype, compute_v=False, name=name)
-  return e
+    return e
 
 
 @tf_export('linalg.eigh', v1=['linalg.eigh', 'self_adjoint_eig'])
@@ -582,31 +639,28 @@ def norm_v2(tensor,
   matrix norms (Frobenius, 1-norm, 2-norm and inf-norm).
 
   Args:
-    tensor: `Tensor` of types `float32`, `float64`, `complex64`, `complex128`
-    ord: Order of the norm. Supported values are `'fro'`, `'euclidean'`,
-      `1`, `2`, `np.inf` and any positive real number yielding the corresponding
+    tensor: `Tensor` of types `float16`, `bfloat16`, `float32`, `float64`,
+      `complex64`, `complex128`
+    ord: Order of the norm. Supported values are `'fro'`, `'euclidean'`, `1`,
+      `2`, `np.inf` and any positive real number yielding the corresponding
       p-norm. Default is `'euclidean'` which is equivalent to Frobenius norm if
-      `tensor` is a matrix and equivalent to 2-norm for vectors.
-      Some restrictions apply:
-        a) The Frobenius norm `'fro'` is not defined for vectors,
-        b) If axis is a 2-tuple (matrix norm), only `'euclidean'`, '`fro'`, `1`,
-           `2`, `np.inf` are supported.
-      See the description of `axis` on how to compute norms for a batch of
-      vectors or matrices stored in a tensor.
+      `tensor` is a matrix and equivalent to 2-norm for vectors. Some
+      restrictions apply: a) The Frobenius norm `'fro'` is not defined for
+      vectors, b) If axis is a 2-tuple (matrix norm), only `'euclidean'`,
+      '`fro'`, `1`, `2`, `np.inf` are supported. See the description of `axis`
+      on how to compute norms for a batch of vectors or matrices stored in a
+      tensor.
     axis: If `axis` is `None` (the default), the input is considered a vector
       and a single vector norm is computed over the entire set of values in the
       tensor, i.e. `norm(tensor, ord=ord)` is equivalent to
-      `norm(reshape(tensor, [-1]), ord=ord)`.
-      If `axis` is a Python integer, the input is considered a batch of vectors,
-      and `axis` determines the axis in `tensor` over which to compute vector
-      norms.
-      If `axis` is a 2-tuple of Python integers it is considered a batch of
-      matrices and `axis` determines the axes in `tensor` over which to compute
-      a matrix norm.
-      Negative indices are supported. Example: If you are passing a tensor that
-      can be either a matrix or a batch of matrices at runtime, pass
-      `axis=[-2,-1]` instead of `axis=None` to make sure that matrix norms are
-      computed.
+      `norm(reshape(tensor, [-1]), ord=ord)`. If `axis` is a Python integer, the
+      input is considered a batch of vectors, and `axis` determines the axis in
+      `tensor` over which to compute vector norms. If `axis` is a 2-tuple of
+      Python integers it is considered a batch of matrices and `axis` determines
+      the axes in `tensor` over which to compute a matrix norm. Negative indices
+      are supported. Example: If you are passing a tensor that can be either a
+      matrix or a batch of matrices at runtime, pass `axis=[-2,-1]` instead of
+      `axis=None` to make sure that matrix norms are computed.
     keepdims: If True, the axis indicated in `axis` are kept with size 1.
       Otherwise, the dimensions in `axis` are removed from the output shape.
     name: The name of the op.
@@ -657,31 +711,27 @@ def norm(tensor,
   matrix norms (Frobenius, 1-norm, 2-norm and inf-norm).
 
   Args:
-    tensor: `Tensor` of types `float32`, `float64`, `complex64`, `complex128`
-    ord: Order of the norm. Supported values are 'fro', 'euclidean',
-      `1`, `2`, `np.inf` and any positive real number yielding the corresponding
-      p-norm. Default is 'euclidean' which is equivalent to Frobenius norm if
-      `tensor` is a matrix and equivalent to 2-norm for vectors.
-      Some restrictions apply:
-        a) The Frobenius norm `fro` is not defined for vectors,
-        b) If axis is a 2-tuple (matrix norm), only 'euclidean', 'fro', `1`,
-           `2`, `np.inf` are supported.
-      See the description of `axis` on how to compute norms for a batch of
-      vectors or matrices stored in a tensor.
+    tensor: `Tensor` of types `float16`, `bfloat16`, `float32`, `float64`,
+      `complex64`, `complex128`
+    ord: Order of the norm. Supported values are 'fro', 'euclidean', `1`, `2`,
+      `np.inf` and any positive real number yielding the corresponding p-norm.
+      Default is 'euclidean' which is equivalent to Frobenius norm if `tensor`
+      is a matrix and equivalent to 2-norm for vectors. Some restrictions apply:
+      a) The Frobenius norm `fro` is not defined for vectors, b) If axis is a
+      2-tuple (matrix norm), only 'euclidean', 'fro', `1`, `2`, `np.inf` are
+      supported. See the description of `axis` on how to compute norms for a
+      batch of vectors or matrices stored in a tensor.
     axis: If `axis` is `None` (the default), the input is considered a vector
       and a single vector norm is computed over the entire set of values in the
       tensor, i.e. `norm(tensor, ord=ord)` is equivalent to
-      `norm(reshape(tensor, [-1]), ord=ord)`.
-      If `axis` is a Python integer, the input is considered a batch of vectors,
-      and `axis` determines the axis in `tensor` over which to compute vector
-      norms.
-      If `axis` is a 2-tuple of Python integers it is considered a batch of
-      matrices and `axis` determines the axes in `tensor` over which to compute
-      a matrix norm.
-      Negative indices are supported. Example: If you are passing a tensor that
-      can be either a matrix or a batch of matrices at runtime, pass
-      `axis=[-2,-1]` instead of `axis=None` to make sure that matrix norms are
-      computed.
+      `norm(reshape(tensor, [-1]), ord=ord)`. If `axis` is a Python integer, the
+      input is considered a batch of vectors, and `axis` determines the axis in
+      `tensor` over which to compute vector norms. If `axis` is a 2-tuple of
+      Python integers it is considered a batch of matrices and `axis` determines
+      the axes in `tensor` over which to compute a matrix norm. Negative indices
+      are supported. Example: If you are passing a tensor that can be either a
+      matrix or a batch of matrices at runtime, pass `axis=[-2,-1]` instead of
+      `axis=None` to make sure that matrix norms are computed.
     keepdims: If True, the axis indicated in `axis` are kept with size 1.
       Otherwise, the dimensions in `axis` are removed from the output shape.
     name: The name of the op.
@@ -741,33 +791,69 @@ def norm(tensor,
   with ops.name_scope(name, 'norm', [tensor]):
     tensor = ops.convert_to_tensor(tensor)
 
+    # Match np.linalg.norm: out-of-bounds axes raise a clear AxisError
+    # (a ValueError) instead of an opaque backend kernel failure.
+    if axis is not None and tensor.shape.rank is not None:
+      for ax in axis:
+        normalized = ax + tensor.shape.rank if ax < 0 else ax
+        if normalized < 0 or normalized >= tensor.shape.rank:
+          raise ValueError(
+              f'axis {ax} is out of bounds for tensor of rank '
+              f'{tensor.shape.rank}'
+          )
+
+    is_float16 = tensor.dtype == dtypes.float16
+    if is_float16:
+      # Intermediate sums of squares / powers overflow `float16` long before
+      # the norm itself does, so compute in `float32`.
+      tensor = math_ops.cast(tensor, dtypes.float32)
+
     if ord in ['fro', 'euclidean', 2, 2.0]:
       if is_matrix_norm and ord in [2, 2.0]:
-        rank = array_ops.rank(tensor)
-        positive_axis = map_fn.map_fn(
-            lambda i: cond.cond(
-                i >= 0,
-                lambda: i,
-                lambda: i + rank),
-            ops.convert_to_tensor(axis))
-        axes = math_ops.range(rank)
-        perm_before = array_ops.concat([
-            gen_array_ops.list_diff(axes, positive_axis, dtypes.int32)[0],
-            positive_axis
-        ],
-                                       axis=0)
-        perm_after = map_fn.map_fn(
-            lambda i: math_ops.cast(
-                array_ops.squeeze(
-                    array_ops.where_v2(math_ops.equal(perm_before, i))),
-                dtype=dtypes.int32), axes)
+        static_rank = tensor.shape.rank
+        if static_rank is not None:
+          # axis is already validated to contain Python ints. Compute static
+          # permutations in Python so XLA need not compile a dynamic ListDiff.
+          positive_axis = tuple(a + static_rank if a < 0 else a for a in axis)
+          axes = list(range(static_rank))
+          remaining_axes = [a for a in axes if a not in positive_axis]
+          perm_before = remaining_axes + list(positive_axis)
+          perm_after = [perm_before.index(a) for a in axes]
+        else:
+          rank = array_ops.rank(tensor)
+          positive_axis = map_fn.map_fn(
+              lambda i: cond.cond(i >= 0, lambda: i, lambda: i + rank),
+              ops.convert_to_tensor(axis),
+          )
+          axes = math_ops.range(rank)
+          perm_before = array_ops.concat(
+              [
+                  gen_array_ops.list_diff(axes, positive_axis, dtypes.int32)[0],
+                  positive_axis,
+              ],
+              axis=0,
+          )
+          perm_after = map_fn.map_fn(
+              lambda i: math_ops.cast(
+                  array_ops.squeeze(
+                      array_ops.where_v2(math_ops.equal(perm_before, i))
+                  ),
+                  dtype=dtypes.int32,
+              ),
+              axes,
+          )
         permed = array_ops.transpose(tensor, perm=perm_before)
+        # reduce_max over an empty axis is -inf. Norms are non-negative, so
+        # clamp the result at zero.
+        svd_max = math_ops.reduce_max(
+            math_ops.abs(gen_linalg_ops.svd(permed, compute_uv=False)[0]),
+            axis=-1,
+            keepdims=True,
+        )
         matrix_2_norm = array_ops.expand_dims(
-            math_ops.reduce_max(
-                math_ops.abs(gen_linalg_ops.svd(permed, compute_uv=False)[0]),
-                axis=-1,
-                keepdims=True),
-            axis=-1)
+            math_ops.maximum(svd_max, math_ops.cast(0, dtype=svd_max.dtype)),
+            axis=-1,
+        )
         result = array_ops.transpose(matrix_2_norm, perm=perm_after)
       else:
         # NOTE: we unfortunately cannot use tf.math.reduce_euclidean_norm, since
@@ -805,11 +891,15 @@ def norm(tensor,
         result = math_ops.reduce_sum(result, sum_axis, keepdims=True)
         if is_matrix_norm:
           result = math_ops.reduce_max(result, axis[-1], keepdims=True)
+          result = math_ops.maximum(
+              result, math_ops.cast(0, dtype=result.dtype)
+          )
       elif ord == np.inf:
         if is_matrix_norm:
           result = math_ops.reduce_sum(result, axis[1], keepdims=True)
         max_axis = None if axis is None else axis[0]
         result = math_ops.reduce_max(result, max_axis, keepdims=True)
+        result = math_ops.maximum(result, math_ops.cast(0, dtype=result.dtype))
       else:
         # General p-norms (positive p only)
         result = math_ops.pow(
@@ -817,6 +907,8 @@ def norm(tensor,
             1.0 / ord)
     if not keepdims:
       result = array_ops.squeeze(result, axis)
+    if is_float16:
+      result = math_ops.cast(result, dtypes.float16)
     return result
 
 

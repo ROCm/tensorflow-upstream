@@ -1856,39 +1856,44 @@ def _resize_image_with_pad_common(image, target_height, target_width,
 
     image = control_flow_ops.with_dependencies(assert_ops, image)
 
-    def max_(x, y):
-      if _is_tensor(x) or _is_tensor(y):
-        return math_ops.maximum(x, y)
-      else:
-        return max(x, y)
-
     _, height, width, _ = _ImageDimensions(image, rank=4)
 
-    # convert values to float, to ease divisions
-    f_height = math_ops.cast(height, dtype=dtypes.float32)
-    f_width = math_ops.cast(width, dtype=dtypes.float32)
-    f_target_height = math_ops.cast(target_height, dtype=dtypes.float32)
-    f_target_width = math_ops.cast(target_width, dtype=dtypes.float32)
+    # The image is scaled by min(target_width / width, target_height / height)
+    # so that it fits within the target. Compute the resized size and the
+    # padding in exact integer arithmetic: in float32 the scaled size can land
+    # just below a whole number, and the floor below would then drop a row or
+    # column of the image and pad it with zeros instead.
+    i_height = math_ops.cast(height, dtype=dtypes.int64)
+    i_width = math_ops.cast(width, dtype=dtypes.int64)
+    i_target_height = math_ops.cast(target_height, dtype=dtypes.int64)
+    i_target_width = math_ops.cast(target_width, dtype=dtypes.int64)
 
-    # Find the ratio by which the image must be adjusted
-    # to fit within the target
-    ratio = max_(f_width / f_target_width, f_height / f_target_height)
-    resized_height_float = f_height / ratio
-    resized_width_float = f_width / ratio
-    resized_height = math_ops.cast(
-        math_ops.floor(resized_height_float), dtype=dtypes.int32)
-    resized_width = math_ops.cast(
-        math_ops.floor(resized_width_float), dtype=dtypes.int32)
+    scaled_height = i_height * i_target_width
+    scaled_width = i_width * i_target_height
 
-    padding_height = (f_target_height - resized_height_float) / 2
-    padding_width = (f_target_width - resized_width_float) / 2
-    f_padding_height = math_ops.floor(padding_height)
-    f_padding_width = math_ops.floor(padding_width)
-    p_height = max_(0, math_ops.cast(f_padding_height, dtype=dtypes.int32))
-    p_width = max_(0, math_ops.cast(f_padding_width, dtype=dtypes.int32))
+    resized_height = math_ops.minimum(i_target_height, scaled_height // i_width)
+    resized_width = math_ops.minimum(i_target_width, scaled_width // i_height)
+
+    # floor((target - scaled size) / 2), where the scaled size need not be a
+    # whole number.
+    zero = constant_op.constant(0, dtype=dtypes.int64)
+    p_height = math_ops.maximum(
+        zero, (scaled_width - scaled_height) // (2 * i_width)
+    )
+    p_width = math_ops.maximum(
+        zero, (scaled_height - scaled_width) // (2 * i_height)
+    )
+    p_height = math_ops.cast(p_height, dtype=dtypes.int32)
+    p_width = math_ops.cast(p_width, dtype=dtypes.int32)
 
     # Resize first, then pad to meet requested dimensions
-    resized = resize_fn(image, [resized_height, resized_width])
+    resized = resize_fn(
+        image,
+        [
+            math_ops.cast(resized_height, dtype=dtypes.int32),
+            math_ops.cast(resized_width, dtype=dtypes.int32),
+        ],
+    )
 
     padded = pad_to_bounding_box(resized, p_height, p_width, target_height,
                                  target_width)
@@ -2581,12 +2586,34 @@ def convert_image_dtype(image, dtype, saturate=False, name=None):
     else:
       if image.dtype.is_integer:
         # Converting to float: first cast, then scale. No saturation possible.
+        if image.dtype.max > float(dtype.max):
+          # Large integers overflow half (uint16 max casts to inf), so scale in
+          # float32 and only cast the result, which is in [-1, 1], to `dtype`.
+          scaled = math_ops.multiply(
+              math_ops.cast(image, dtypes.float32), 1.0 / image.dtype.max
+          )
+          return math_ops.cast(scaled, dtype, name=name)
         cast = math_ops.cast(image, dtype)
         scale = 1. / image.dtype.max
         return math_ops.multiply(cast, scale, name=name)
       else:
         # Converting from float: first scale, then cast
         scale = dtype.max + 0.5  # avoid rounding problems in the cast
+        if (
+            float(image.dtype.max) < scale
+            or float(image.dtype.as_numpy_dtype(scale)) >= dtype.max + 1
+        ):
+          # The scale rounds up to dtype.max + 1 or more in the image's type
+          # (e.g. 256 in bfloat16 for uint8, 2**31 in float32 for int32), so
+          # 1.0 would overflow the cast. Scale half and bfloat16 in float32
+          # instead, and keep the scale below dtype.max + 1.
+          if image.dtype.size < 4:
+            image = math_ops.cast(image, dtypes.float32)
+          np_dtype = image.dtype.as_numpy_dtype
+          scale = min(
+              np_dtype(scale),
+              np.nextafter(np_dtype(dtype.max + 1), np_dtype(0)),
+          )
         scaled = math_ops.multiply(image, scale)
         if saturate:
           return math_ops.saturate_cast(scaled, dtype, name=name)
@@ -2819,12 +2846,12 @@ def adjust_hue(image, delta, name=None):
   >>> image = tf.constant(image)
   >>> tf.image.adjust_hue(image, 0.2)
   <tf.Tensor: shape=(3, 2, 3), dtype=int32, numpy=
-  array([[[ 2,  1,  3],
-        [ 5,  4,  6]],
-       [[ 8,  7,  9],
-        [11, 10, 12]],
-       [[14, 13, 15],
-        [17, 16, 18]]], dtype=int32)>
+  array([[[ 2,  0,  2],
+        [ 5,  3,  5]],
+       [[ 8,  6,  8],
+        [11,  9, 11]],
+       [[14, 12, 14],
+        [17, 15, 17]]], dtype=int32)>
   """
   with ops.name_scope(name, 'adjust_hue', [image]) as name:
     if context.executing_eagerly():
@@ -3312,9 +3339,59 @@ def encode_png(image, compression=-1, name=None):
 
 
 @tf_export(
+    'io.encode_jxl',
+    'image.encode_jxl',
+    v1=['io.encode_jxl', 'image.encode_jxl'],
+)
+@dispatch.add_dispatch_support
+def encode_jxl(image, quality=95.0, effort=7, name=None):
+  r"""JPEG XL-encode an image.
+
+  `image` is a rank-N Tensor of type uint8 or uint16 with shape `batch_dims +
+  [height, width, channels]`, where `channels` is:
+
+  *   1: for grayscale.
+  *   3: for RGB.
+  *   4: for RGBA.
+
+  `quality` is a JPEG-style quality factor in `[0.0, 100.0]`. It is mapped
+  internally to a JPEG XL Butteraugli distance using the same mapping as
+  `cjxl -q`: `100.0` encodes losslessly, `95.0` (the default) is high-quality
+  lossy encoding matching `encode_jpeg`, `90.0` is visually lossless, and
+  lower values compress more. Quality factors are not comparable across
+  codecs, so a given `quality` will not produce the same file size or visual
+  quality as the same value passed to `tf.io.encode_jpeg`.
+
+  The `effort` parameter (1 to 9) controls compression effort (default 7).
+
+  Args:
+    image: A `Tensor`. Must be one of the following types: `uint8`, `uint16`.
+      Rank N >= 3 with shape `batch_dims + [height, width, channels]`.
+    quality: An optional `float`. Defaults to `95.0`. Quality factor in `[0.0,
+      100.0]`; `100.0` encodes losslessly, `95.0` is high-quality lossy, and
+      lower values compress more.
+    effort: An optional `int`. Defaults to `7`. Effort setting from 1 (fastest)
+      to 9 (slowest, best compression).
+    name: A name for the operation (optional).
+
+  Returns:
+    A `Tensor` of type `string`.
+  """
+  image = ops.convert_to_tensor(image)
+  image = _AssertAtLeast3DImage(image)
+  return gen_image_ops.encode_jxl(
+      image,
+      quality=quality,
+      effort=effort,
+      name=name,
+  )
+
+
+@tf_export(
     'io.decode_image',
     'image.decode_image',
-    v1=['io.decode_image', 'image.decode_image'])
+    v1=['io.decode_image', 'image.decode_image'],
+)
 @dispatch.add_dispatch_support
 def decode_image(contents,
                  channels=None,
@@ -3426,6 +3503,7 @@ def total_variation(images, name=None):
   """
 
   with ops.name_scope(name, 'total_variation'):
+    images = ops.convert_to_tensor(images, name='images')
     ndims = images.get_shape().ndims
 
     if ndims == 3:
@@ -4262,21 +4340,33 @@ def psnr(a, b, max_val, name=None):
     and shape [batch_size, 1].
   """
   with ops.name_scope(name, 'PSNR', [a, b]):
+    # Convert first: max_val is cast to the dtype of `a` below, and the shape
+    # check reads their static shapes, neither of which an unconverted value
+    # has.
+    a = ops.convert_to_tensor(a, name='a')
+    b = ops.convert_to_tensor(b, name='b')
+
     # Need to convert the images to float32.  Scale max_val accordingly so that
     # PSNR is computed correctly.
     max_val = math_ops.cast(max_val, a.dtype)
     max_val = convert_image_dtype(max_val, dtypes.float32)
     a = convert_image_dtype(a, dtypes.float32)
     b = convert_image_dtype(b, dtypes.float32)
-    mse = math_ops.reduce_mean(math_ops.squared_difference(a, b), [-3, -2, -1])
-    psnr_val = math_ops.subtract(
-        20 * math_ops.log(max_val) / math_ops.log(10.0),
-        np.float32(10 / np.log(10)) * math_ops.log(mse),
-        name='psnr')
 
+    # Check the shapes before reducing, so a rank below 3 is reported as such
+    # rather than surfacing from the reduction. This has to come after the
+    # conversions above: the check compares the two shapes with an op that
+    # needs both images to have the same dtype.
     _, _, checks = _verify_compatible_image_shapes(a, b)
     with ops.control_dependencies(checks):
-      return array_ops.identity(psnr_val)
+      a = array_ops.identity(a)
+
+    mse = math_ops.reduce_mean(math_ops.squared_difference(a, b), [-3, -2, -1])
+    return math_ops.subtract(
+        20 * math_ops.log(max_val) / math_ops.log(10.0),
+        np.float32(10 / np.log(10)) * math_ops.log(mse),
+        name='psnr',
+    )
 
 
 def _ssim_helper(x, y, reducer, max_val, compensation=1.0, k1=0.01, k2=0.03):
@@ -4722,6 +4812,7 @@ def image_gradients(image):
   Raises:
     ValueError: If `image` is not a 4D tensor.
   """
+  image = ops.convert_to_tensor(image, name='image')
   if image.get_shape().ndims != 4:
     raise ValueError('image_gradients expects a 4D tensor '
                      '[batch_size, h, w, d], not {}.'.format(image.get_shape()))
@@ -4785,6 +4876,7 @@ def sobel_edges(image):
     [dy[1], dx[1]], ..., [dy[d-1], dx[d-1]]] calculated using the Sobel filter.
   """
   # Define vertical and horizontal Sobel filters.
+  image = ops.convert_to_tensor(image, name='image')
   static_image_shape = image.get_shape()
   image_shape = array_ops.shape(image)
   kernels = [[[-1, -2, -1], [0, 0, 0], [1, 2, 1]],

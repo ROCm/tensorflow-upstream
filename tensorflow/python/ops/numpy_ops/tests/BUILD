@@ -222,11 +222,10 @@ py_test(
     shard_count = 20,
     strict_deps = True,
     tags = [
-        "exclusive-if-local",
         "gpu",
         "no_pip",
 	    "cuda-only",  # Disabling due to excessive test length
-        "requires-gpu-nvidia",
+        "requires-gpu-sm90",
     ],
     deps = [
         ":config",
@@ -249,12 +248,13 @@ py_test(
 
 py_test(
     name = "np_indexing_test",
+    timeout = "long",
     srcs = ["np_indexing_test.py"],
     args = [
         "--num_generated_cases=90",
         "--enable_x64",  # Needed to enable dtype check
     ],
-    shard_count = 10,
+    shard_count = 30,
     strict_deps = True,
     # TODO(b/164245103): Re-enable GPU once tf.tensor_strided_slice_update's segfault is fixed.
     tags = [
@@ -289,7 +289,7 @@ py_test(
     tags = [
         "gpu",
         "no_pip",
-        "requires-gpu-nvidia",
+        "requires-gpu-sm90",
     ],
     deps = [
         ":config",
@@ -297,8 +297,7 @@ py_test(
         ":test_util",
         # copybara:uncomment "//third_party/py/google/protobuf:use_fast_cpp_protos",
         "//third_party/py/numpy",
-        "//tensorflow/python/ops/numpy_ops:np_config",
-        "//tensorflow/python/ops/numpy_ops:numpy",
+        "//tensorflow/python/framework:test_lib",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
     ],

@@ -1,20 +1,18 @@
 """Provides the repository macro to import Tensor IR."""
 
-load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
+load("//third_party:quilt_repo.bzl", "quilt_http_archive")
+load("//third_party:repo.bzl", "tf_mirror_urls")
 
 def repo():
     """Imports Tensor IR."""
-    TENSOR_IR_COMMIT = "63692d79629e6f32a1d8757695590a59e0adbafd"
-    TENSOR_IR_SHA256 = "b80794d7c2bfb1bc1ca432d892977becba8d35ec6c18c586acbd648ccc8074dd"
+    TENSOR_IR_COMMIT = "05ada823a8495dd042d20691d662bef0ee54dd5d"
+    TENSOR_IR_SHA256 = "72d57d8463495f7af7e34296d8b2ce6bb7e9f0ec4d450695ba3f72c30bb9be7f"
 
-    tf_http_archive(
+    quilt_http_archive(
         name = "tensor_ir",
         build_file = "//third_party/tensor_ir:tensor_ir.BUILD",
         sha256 = TENSOR_IR_SHA256,
         strip_prefix = "tensor-ir-{}".format(TENSOR_IR_COMMIT),
         urls = tf_mirror_urls("https://github.com/NVIDIA/tensor-ir/archive/{}.tar.gz".format(TENSOR_IR_COMMIT)),
-        patch_file = [
-            "//third_party/tensor_ir:patches/unused_variable.patch",
-            "//third_party/tensor_ir:patches/symbol_op_interface.patch",
-        ],
+        series = "//third_party/tensor_ir:patches/series",
     )

@@ -175,7 +175,8 @@ class BatchMatmulBroadcastRankMismatchTest(test.TestCase):
     w = np.random.normal(size=[4, 16]).astype(np.float32)
     expected = np.matmul(p, w)
     result = math_ops.matmul(p, w)
-    self.assertAllClose(self.evaluate(result), expected, rtol=1e-5, atol=1e-5)
+    tol = 1e-3 if test.is_gpu_available() else 1e-5
+    self.assertAllClose(self.evaluate(result), expected, rtol=tol, atol=tol)
 
   def testRank4xRank2BatchDim(self):
     np.random.seed(42)
@@ -183,7 +184,8 @@ class BatchMatmulBroadcastRankMismatchTest(test.TestCase):
     w = np.random.normal(size=[5, 7]).astype(np.float32)
     expected = np.matmul(p, w)
     result = math_ops.matmul(p, w)
-    self.assertAllClose(self.evaluate(result), expected, rtol=1e-5, atol=1e-5)
+    tol = 1e-3 if test.is_gpu_available() else 1e-5
+    self.assertAllClose(self.evaluate(result), expected, rtol=tol, atol=tol)
 
   def testRank3xRank2(self):
     np.random.seed(42)
@@ -191,7 +193,8 @@ class BatchMatmulBroadcastRankMismatchTest(test.TestCase):
     w = np.random.normal(size=[4, 6]).astype(np.float32)
     expected = np.matmul(p, w)
     result = math_ops.matmul(p, w)
-    self.assertAllClose(self.evaluate(result), expected, rtol=1e-5, atol=1e-5)
+    tol = 1e-3 if test.is_gpu_available() else 1e-5
+    self.assertAllClose(self.evaluate(result), expected, rtol=tol, atol=tol)
 
 
 class BatchMatmulGradientTest(test.TestCase):

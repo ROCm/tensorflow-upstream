@@ -18,6 +18,7 @@ import numpy as np
 
 from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
+from tensorflow.python.eager import def_function
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
@@ -136,6 +137,41 @@ class PoolingTest(test.TestCase):
         padding="SAME",
         expected=expected_output)
 
+  @test_util.run_in_graph_and_eager_modes
+  def testAvgPool3dValidEmptyOutput(self):
+    # A VALID window slightly larger than the input yields an empty output in
+    # both eager and graph modes (see #113322).
+    value = array_ops.zeros([1, 3, 3, 3, 2])
+    output = nn_ops.avg_pool3d(
+        value, ksize=4, strides=4, padding="VALID", data_format="NDHWC"
+    )
+    self.assertEqual(output.shape.as_list(), [1, 0, 0, 0, 2])
+    self.assertEqual(self.evaluate(output).shape, (1, 0, 0, 0, 2))
+
+  def testAvgPool3dValidEmptyOutputInTfFunction(self):
+    @def_function.function
+    def f(x):
+      return nn_ops.avg_pool3d(
+          x, ksize=4, strides=4, padding="VALID", data_format="NDHWC"
+      )
+
+    self.assertEqual(f(array_ops.zeros([1, 3, 3, 3, 2])).shape, (1, 0, 0, 0, 2))
+
+  @test_util.run_in_graph_and_eager_modes
+  def testAvgPool3dValidNegativeOutput(self):
+    with self.assertRaisesRegex(
+        (ValueError, errors_impl.InvalidArgumentError),
+        "Negative dimension size|Computed output size would be negative",
+    ):
+      self.evaluate(
+          nn_ops.avg_pool3d(
+              array_ops.zeros([1, 1, 3, 3, 2]),
+              ksize=[4, 1, 1],
+              strides=1,
+              padding="VALID",
+          )
+      )
+
   def testAvgPool3dGrad(self):
     with self.assertRaises(
         (errors.ResourceExhaustedError, errors.InvalidArgumentError)):
@@ -154,6 +190,44 @@ class PoolingTest(test.TestCase):
               data_format="NDHWC",
           )
           self.evaluate(t)
+
+  @test_util.run_in_graph_and_eager_modes
+  @test_util.disable_xla("Xla does not raise error on out of bounds access")
+  def testAvgPool3dGradMismatchedGradShapeRaisesError(self):
+    for orig_input_shape, grad_shape, ksize, expected in (
+        (
+            [1, 4, 28, 28, 3],
+            [1, 2, 14, 14, 6],
+            2,
+            r"\[1,2,14,14,3\], but got " r"\[1,2,14,14,6\]",
+        ),
+        (
+            [2, 2, 2, 2, 2],
+            [2, 3, 3, 3, 3],
+            1,
+            r"\[2,2,2,2,2\], but got " r"\[2,3,3,3,3\]",
+        ),
+        (
+            [1, 2, 2, 2, 1],
+            [1, 3, 3, 3, 1],
+            1,
+            r"\[1,2,2,2,1\], but got " r"\[1,3,3,3,1\]",
+        ),
+    ):
+      with self.assertRaisesRegex(
+          (errors_impl.InvalidArgumentError, ValueError),
+          "Expected grad shape to be " + expected,
+      ):
+        self.evaluate(
+            gen_nn_ops.AvgPool3DGrad(
+                orig_input_shape=orig_input_shape,
+                grad=array_ops.zeros(grad_shape),
+                ksize=[1, ksize, ksize, ksize, 1],
+                strides=[1, ksize, ksize, ksize, 1],
+                padding="VALID",
+                data_format="NDHWC",
+            )
+        )
 
   def testAvgPool3dGradEmptyInput(self):
     for data_format, use_gpu in GetTestConfigs():

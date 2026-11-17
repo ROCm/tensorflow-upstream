@@ -21,6 +21,10 @@ Rates are not supported as of now, but the comments hint how to edit the code
 when rates are to be added.
 */
 
+#include <string>
+
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #define USE_EIGEN_TENSOR
 #define EIGEN_USE_THREADS
 
@@ -130,9 +134,9 @@ class ExtractVolumePatchesOp : public UnaryOp<T> {
         MultiplyWithoutOverflow(ksize_rows,
                                 MultiplyWithoutOverflow(ksize_cols, depth)));
     OP_REQUIRES(context, patch_size >= 0,
-                errors::InvalidArgument(
+                absl::InvalidArgumentError(absl::StrCat(
                     "Output size would overflow: ", ksize_planes, " x ",
-                    ksize_rows, " x ", ksize_cols, " x ", depth));
+                    ksize_rows, " x ", ksize_cols, " x ", depth)));
 
     const std::vector<int64_t> out_sizes = {batch, out_planes, out_rows,
                                             out_cols, patch_size};

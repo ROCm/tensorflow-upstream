@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #define EIGEN_USE_GPU
 
@@ -153,4 +153,4 @@ template struct LogDeterminantFromPivotedLUFunctor<GPUDevice, complex128>;
 }  // namespace functor
 }  // namespace tensorflow
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM

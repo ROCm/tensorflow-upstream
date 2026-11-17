@@ -58,6 +58,9 @@ absl::Status SetOutputToSizedImage(InferenceContext* c,
           " in ", c->DebugString()));
     }
     auto vec = size_tensor->vec<int32_t>();
+    if (vec(0) < 0 || vec(1) < 0) {
+      return errors::InvalidArgument("size elements must be non-negative");
+    }
     height = c->MakeDim(vec(0));
     width = c->MakeDim(vec(1));
   }
@@ -416,6 +419,18 @@ REGISTER_OP("ResizeNearestNeighborGrad")
         TF_RETURN_IF_ERROR(c->ReplaceDim(input, 2, c->UnknownDim(), &input));
       } else {
         auto size_vec = size->vec<int32_t>();
+        if (size_vec(0) < 0 || size_vec(1) < 0) {
+          return errors::InvalidArgument(
+              "shape_t's elements must be non-negative");
+        }
+        bool non_empty = c->FullyDefined(input);
+        for (int i = 0; non_empty && i < c->Rank(input); ++i) {
+          non_empty = c->Value(c->Dim(input, i)) > 0;
+        }
+        if (non_empty && (size_vec(0) == 0 || size_vec(1) == 0)) {
+          return errors::InvalidArgument(
+              "shape_t's elements must be positive for non-empty grads");
+        }
         TF_RETURN_IF_ERROR(
             c->ReplaceDim(input, 1, c->MakeDim(size_vec(0)), &input));
         TF_RETURN_IF_ERROR(
@@ -670,9 +685,18 @@ REGISTER_OP("DecodeWebP")
 REGISTER_OP("DecodeJxl")
     .Input("contents: string")
     .Attr("channels: int = 0")
-    .Attr("dtype: {uint8} = DT_UINT8")
+    .Attr("dtype: {uint8, uint16} = DT_UINT8")
     .Output("image: dtype")
     .SetShapeFn(DecodeImageShapeFn);
+
+// --------------------------------------------------------------------------
+REGISTER_OP("EncodeJxl")
+    .Attr("quality: float = 95.0")
+    .Attr("effort: int = 7")
+    .Attr("T: {uint8, uint16} = DT_UINT8")
+    .Input("image: T")
+    .Output("contents: string")
+    .SetShapeFn(BatchedEncodeImageShapeFn);
 
 // --------------------------------------------------------------------------
 REGISTER_OP("RGBToHSV")

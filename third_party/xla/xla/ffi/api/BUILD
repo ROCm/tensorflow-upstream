@@ -54,6 +54,8 @@ filegroup(
         "collectives_c_api.h",
         "collectives_ffi.h",
         "ffi.h",
+        "kernel_api.h",
+        "kernel_c_api.h",
         "record_api.h",
         "record_c_api.h",
         "record_ffi.h",
@@ -65,6 +67,7 @@ filegroup(
     srcs = [
         "api.h",
         "collectives_api.h",
+        "kernel_api.h",
         "record_api.h",
     ],
 )
@@ -74,6 +77,7 @@ filegroup(
     srcs = [
         "c_api.h",
         "collectives_c_api.h",
+        "kernel_c_api.h",
         "record_c_api.h",
     ],
 )
@@ -81,7 +85,7 @@ filegroup(
 cc_library(
     name = "api",
     hdrs = [":api_headers"],
-    visibility = ["//visibility:private"],
+    visibility = ["//xla/ffi:__pkg__"],
     deps = [
         ":c_api",
     ],
@@ -108,11 +112,20 @@ cc_library(
 )
 
 cc_library(
+    name = "kernel_api",
+    hdrs = ["kernel_api.h"],
+    deps = [
+        ":c_api",
+    ],
+)
+
+cc_library(
     name = "record_api",
     hdrs = ["record_api.h"],
     deps = [
         ":api",
         ":c_api",
+        ":kernel_api",
     ],
 )
 
@@ -150,6 +163,7 @@ xla_cc_test(
     deps = [
         ":c_api",
         ":ffi",
+        "//xla:custom_options",
         "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -187,6 +201,7 @@ xla_cc_test(
     deps = [
         ":c_api",
         ":ffi",
+        ":kernel_api",
         ":record_api",
         ":record_ffi",
         "//xla/ffi:call_frame",
