@@ -46,7 +46,8 @@ tfrun bazel $TFCI_BAZEL_BAZELRC_ARGS build  $TFCI_BAZEL_COMMON_ARGS --config=$TF
 ROCM_DIST="$(bazel info output_base)/external/local_config_rocm/rocm/rocm_dist"
 export LD_LIBRARY_PATH="${ROCM_DIST}/lib:${ROCM_DIST}/lib/rocm_sysdeps/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
-tfrun "$TFCI_FIND_BIN" ./bazel-bin/tensorflow/tools/pip_package -iname "*.whl" -exec cp {} $TFCI_OUTPUT_DIR \;
+# Only look inside wheel_house, which is where the :wheel rule writes.
+tfrun "$TFCI_FIND_BIN" ./bazel-bin/tensorflow/tools/pip_package/wheel_house -iname "*.whl" -exec cp {} $TFCI_OUTPUT_DIR \;
 tfrun mkdir -p ./dist
 tfrun cp $TFCI_OUTPUT_DIR/*.whl ./dist
 tfrun bash ./ci/official/utilities/rename_and_verify_wheels.sh
