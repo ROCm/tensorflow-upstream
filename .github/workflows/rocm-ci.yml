@@ -45,13 +45,13 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: therock_release_10.1
+    name: latest
     uses: ./.github/workflows/rocm-ci-reusable.yml
     permissions:
       contents: read
       packages: read
     with:
-      mode_name: therock_release_10.1
+      mode_name: stable
       runner_label: ${{ inputs.runner_label || 'linux-tensorflow-mi250-4' }}
       rocm_tarball: 'https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.1.0.tar.gz'
       rocm_tarball_hash: 'a95c72f0052168f2262365dff71c2259331721ad0a65da7957dc7d96ccb77021'
