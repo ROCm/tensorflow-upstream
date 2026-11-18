@@ -53,5 +53,5 @@ jobs:
     with:
       mode_name: stable
       runner_label: ${{ inputs.runner_label || 'linux-tensorflow-mi250-4' }}
-      rocm_tarball: 'https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.1.0.tar.gz'
-      rocm_tarball_hash: 'a95c72f0052168f2262365dff71c2259331721ad0a65da7957dc7d96ccb77021'
+      rocm_tarball: 'https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.2.0.tar.gz'
+      rocm_tarball_hash: '6ac0b54de1a410b9727c37607c4c2cb6b4795c3db0a9b01393bccc8d8d01e87b'

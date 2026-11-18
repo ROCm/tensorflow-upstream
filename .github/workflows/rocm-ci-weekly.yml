@@ -20,13 +20,12 @@
 # distributions instead of the single pinned stable one:
 #
 #   therock_lts_7.14         LTS release  repo.amd.com         (7.14.x)
-#   therock_prerelease_10.2  pre-release  rc.repo.amd.com      (10.2.x)
 #   therock_nightly_10.3     nightly      nightly.repo.amd.com (10.3.x)
 #
 # Versions are resolved at run time by
 # tensorflow/tools/ci_build/linux/rocm/detect-therock-version.sh (the same
 # script ROCm/xla's rocm_xla_ci_nightly.yml uses), so no version bump is
-# needed when a new 7.14.x / 10.2.x / 10.3.x drops.
+# needed when a new 7.14.x / 10.3.x drops.
 #
 name: TF theRock CI Weekly
 run-name: >-
@@ -84,7 +83,6 @@ jobs:
           # version lives under a sibling path on the same host.
           MODES_SPEC=$(cat <<'EOF'
           therock_lts_7.14|https://repo.amd.com/rocm/whl-multi-arch/|7.14|https://repo.amd.com/rocm/tarball-multi-arch/
-          therock_prerelease_10.2|https://rc.repo.amd.com/rocm/whl-next/|10.2|https://rc.repo.amd.com/rocm/core/tarball/
           therock_nightly_10.3|https://nightly.repo.amd.com/rocm/whl-next/|10.3|https://nightly.repo.amd.com/rocm/core/tarball/
           EOF
           )
