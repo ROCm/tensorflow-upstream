@@ -17,24 +17,6 @@ limitations under the License.
 
 #include "tensorflow/core/common_runtime/gpu/gpu_device.h"
 
-<<<<<<< HEAD
-#include "absl/synchronization/notification.h"
-#include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
-#include "xla/stream_executor/gpu/gpu_init.h"
-#include "xla/tsl/framework/device_id.h"
-#include "xla/tsl/framework/device_id_manager.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "tensorflow/core/common_runtime/gpu/gpu_process_state.h"
-#include "tensorflow/core/platform/env.h"
-#include "tensorflow/core/platform/errors.h"
-#include "tensorflow/core/platform/random.h"
-#include "tensorflow/core/platform/status.h"
-#include "tensorflow/core/platform/test.h"
-#include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
-#include "xla/stream_executor/gpu/gpu_init.h"
-#include "xla/tsl/framework/device_id.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-=======
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -43,7 +25,6 @@ limitations under the License.
 #include <string>
 #include <unordered_map>
 #include <vector>
->>>>>>> upstream/master
 
 #include <gmock/gmock.h>
 #include "absl/log/check.h"
@@ -54,11 +35,6 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
-<<<<<<< HEAD
-#include "tensorflow/core/tfrt/common/pjrt_util.h"
-#include "xla/pjrt/pjrt_client.h"
-#endif  // TF_GPU_USE_PJRT
-=======
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
@@ -86,7 +62,6 @@ limitations under the License.
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/public/session_options.h"
 #include "tensorflow/core/tfrt/common/pjrt_util.h"
->>>>>>> upstream/master
 
 #if GOOGLE_CUDA
 // Needed for CUDA_VERSION preprocessor directive

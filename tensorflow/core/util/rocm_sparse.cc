@@ -237,37 +237,16 @@ TF_CALL_HIP_LAPACK_TYPES(CSRMM_INSTANCE);
       gpusparseDnMatDescr_t matC, hipsparseSpMMAlg_t alg, size_t* bufferSize) \
       const {                                                                 \
     DCHECK(initialized_);                                                     \
-<<<<<<< HEAD
-    TF_RETURN_IF_GPUSPARSE_ERROR(hipsparseSpMM_bufferSize(          \
-        *gpusparse_handle_, transA, transB, alpha, matA, matB, beta, matC,    \
-        dtype, alg, bufferSize));                                             \
-=======
     alignas(sizeof(Scalar)) const Scalar alpha_aligned = *alpha;              \
     alignas(sizeof(Scalar)) const Scalar beta_aligned = *beta;                \
-    TF_RETURN_IF_GPUSPARSE_ERROR(se::wrap::hipsparseSpMM_bufferSize(          \
+    TF_RETURN_IF_GPUSPARSE_ERROR(hipsparseSpMM_bufferSize(          \
         *gpusparse_handle_, transA, transB, &alpha_aligned, matA, matB,       \
         &beta_aligned, matC, dtype, alg, bufferSize));                        \
->>>>>>> upstream/master
     return OkStatus();                                                        \
   }
 
 TF_CALL_HIPSPARSE_DTYPES(SPMM_BUFFERSIZE_INSTANCE);
 
-<<<<<<< HEAD
-#define SPMM_INSTANCE(Scalar, dtype)                                          \
-  template <>                                                                 \
-  Status GpuSparse::SpMM<Scalar>(                                             \
-      hipsparseOperation_t transA, hipsparseOperation_t transB,               \
-      const Scalar* alpha, const hipsparseSpMatDescr_t matA,                  \
-      const gpusparseDnMatDescr_t matB, const Scalar* beta,                   \
-      gpusparseDnMatDescr_t matC, hipsparseSpMMAlg_t alg, int8* buffer)       \
-      const {                                                                 \
-    DCHECK(initialized_);                                                     \
-    TF_RETURN_IF_GPUSPARSE_ERROR(                                             \
-        hipsparseSpMM(*gpusparse_handle_, transA, transB, alpha,    \
-                                matA, matB, beta, matC, dtype, alg, buffer)); \
-    return OkStatus();                                                        \
-=======
 #define SPMM_INSTANCE(Scalar, dtype)                                    \
   template <>                                                           \
   Status GpuSparse::SpMM<Scalar>(                                       \
@@ -279,11 +258,10 @@ TF_CALL_HIPSPARSE_DTYPES(SPMM_BUFFERSIZE_INSTANCE);
     DCHECK(initialized_);                                               \
     alignas(sizeof(Scalar)) const Scalar alpha_aligned = *alpha;        \
     alignas(sizeof(Scalar)) const Scalar beta_aligned = *beta;          \
-    TF_RETURN_IF_GPUSPARSE_ERROR(se::wrap::hipsparseSpMM(               \
+    TF_RETURN_IF_GPUSPARSE_ERROR(hipsparseSpMM(               \
         *gpusparse_handle_, transA, transB, &alpha_aligned, matA, matB, \
         &beta_aligned, matC, dtype, alg, buffer));                      \
     return OkStatus();                                                  \
->>>>>>> upstream/master
   }
 
 TF_CALL_HIPSPARSE_DTYPES(SPMM_INSTANCE);

@@ -141,12 +141,6 @@ cc_library(
 )
 
 _ROCM_STAGED_RPATHS = [
-<<<<<<< HEAD
-    "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
-    "-Wl,-rpath,%{rocm_execroot_path}/rocm/%{rocm_root}/lib",
-]
-
-=======
     "-Wl,-rpath,{}/lib".format(_ROCM.rocm_runfiles_path),
     "-Wl,-rpath,{}/lib".format(_ROCM.rocm_execroot_path),
 ]
@@ -157,17 +151,12 @@ _ROCM_HOST_LIB_RPATHS = [
     "-Wl,-rpath={}".format(_ROCM.rocm_lib_paths),
 ] if _ROCM.rocm_lib_paths else []
 
->>>>>>> upstream/master
 cc_library(
     name = "rocm_rpath",
     linkopts = select({
         ":build_hermetic": _ROCM_STAGED_RPATHS,
         ":link_only": [],
-<<<<<<< HEAD
-        ":multiple_rocm_paths": _ROCM_STAGED_RPATHS + ["-Wl,-rpath=%{rocm_lib_paths}"],
-=======
         ":multiple_rocm_paths": _ROCM_STAGED_RPATHS + _ROCM_HOST_LIB_RPATHS,
->>>>>>> upstream/master
         "//conditions:default": _ROCM_STAGED_RPATHS + ["-Wl,-rpath,/opt/rocm/lib"],
     }),
     visibility = ["//visibility:public"],

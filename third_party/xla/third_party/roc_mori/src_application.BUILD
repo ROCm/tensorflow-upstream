@@ -35,11 +35,8 @@ cc_library(
     copts = [
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",
-<<<<<<< HEAD
         "-Wno-error=unused-result",
-=======
         "-std=c++17",
->>>>>>> upstream/master
     ],
     linkstatic = True,
     visibility = ["//visibility:private"],
@@ -73,11 +70,8 @@ cc_library(
     # it is ABI-incompatible with the libstdc++.so that other libraries use.
     copts = [
         "-fvisibility-inlines-hidden",
-<<<<<<< HEAD
         "-Wno-error=unused-result",
-=======
         "-std=c++17",
->>>>>>> upstream/master
     ],
     linkopts = [
         "-ldl",

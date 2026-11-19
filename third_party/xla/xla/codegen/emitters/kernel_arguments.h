@@ -22,11 +22,8 @@ limitations under the License.
 
 #include "absl/functional/function_ref.h"
 #include "absl/status/statusor.h"
-<<<<<<< HEAD
-=======
 #include "absl/types/span.h"
 #include "xla/codegen/emitters/kernel_arguments.pb.h"
->>>>>>> upstream/master
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/shaped_slice.h"

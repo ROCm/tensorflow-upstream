@@ -59,13 +59,8 @@ class AMDGPURegisterSpillingTest
     auto path = tsl::testing::XlaSrcRoot();
     path = path.erase(path.length() - 4);                                            
     return LoadIRModule(
-<<<<<<< HEAD:third_party/xla/xla/service/gpu/llvm_gpu_backend/amdgpu_register_spilling_test.cc
-        tsl::io::JoinPath(path, "external/xla/xla", "service", "gpu",
-                          "llvm_gpu_backend", "tests_data", filename),
-=======
-        tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "backends", "gpu",
+        tsl::io::JoinPath(path, "external/xla/xla", "backends", "gpu",
                           "target_lowering", "tests_data", filename),
->>>>>>> upstream/master:third_party/xla/xla/backends/gpu/target_lowering/amdgpu_register_spilling_test.cc
         context);
   }
 
@@ -174,13 +169,8 @@ TEST(AMDGPUCacheHitModuleStatsTest, CacheHitReturnsIdenticalModuleStats) {
     auto path = tsl::testing::XlaSrcRoot();
     path = path.erase(path.length() - 4);
     return LoadIRModule(
-<<<<<<< HEAD:third_party/xla/xla/service/gpu/llvm_gpu_backend/amdgpu_register_spilling_test.cc
-        tsl::io::JoinPath(path, "external/xla/xla", "service", "gpu",
-                          "llvm_gpu_backend", "tests_data",
-=======
-        tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "backends", "gpu",
+        tsl::io::JoinPath(path, "external/xla/xla", "backends", "gpu",
                           "target_lowering", "tests_data",
->>>>>>> upstream/master:third_party/xla/xla/backends/gpu/target_lowering/amdgpu_register_spilling_test.cc
                           "amdgpu_vgpr_spills.ll"),
         &context);
   };

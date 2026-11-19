@@ -1117,11 +1117,7 @@ xla_test(
     backends = ["gpu"],
     # Data dependency must be declared for the cache.
     data = ["test_autotune_cache.textproto"],
-<<<<<<< HEAD
-    env = {"XLA_FLAGS": "--xla_gpu_load_autotune_results_from=TEST_WORKSPACE/" + "../" + repo_name() + "/" +
-=======
-    env = {"XLA_FLAGS": "--xla_load_autotune_cache_from=TEST_WORKSPACE/" +
->>>>>>> upstream/master
+    env = {"XLA_FLAGS": "--xla_load_autotune_cache_from=TEST_WORKSPACE/" + "../" + repo_name() + "/" +
                         package_name() +
                         "/test_autotune_cache.textproto"},
     deps = [
