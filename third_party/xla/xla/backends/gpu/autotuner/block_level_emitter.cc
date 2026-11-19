@@ -24,16 +24,18 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/nullability.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/codegen/triton/tma_utils.h"
+#include "xla/codegen/tiling/tiling_util.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -44,10 +46,11 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 #include "xla/service/instruction_fusion.h"
+#include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/concurrency/executor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/xla.pb.h"
 #include "triton/Version.h"
 
@@ -56,6 +59,19 @@ namespace xla::gpu {
 using ::xla::xtile::BlockLevelFusionConfig;
 
 namespace {
+
+// Returns the executor to evaluate tiling candidates on, or nullptr to evaluate
+// them inline on the calling thread.
+tsl::Executor* absl_nullable TilingSearchExecutor(
+    tsl::thread::ThreadPool* absl_nullable thread_pool) {
+  if (thread_pool == nullptr) {
+    return nullptr;
+  }
+  // The callers below block on the result, so running them on a thread of the
+  // pool they dispatch to would deadlock.
+  CHECK_EQ(thread_pool->CurrentThreadId(), -1);
+  return thread_pool->AsExecutor();
+}
 
 std::unique_ptr<BackendConfig> Pack(
     const BlockLevelFusionConfig& block_level_config) {
@@ -104,6 +120,15 @@ absl::StatusOr<std::optional<BlockLevelFusionConfig>> GetPreExistingConfig(
   return std::nullopt;
 }
 
+// Returns whether `instr` is already a generic Triton fusion.
+bool IsTritonFusion(const HloInstruction& instr) {
+  absl::StatusOr<GpuBackendConfig> gpu_backend_config =
+      instr.backend_config<GpuBackendConfig>();
+  return gpu_backend_config.ok() &&
+         gpu_backend_config->fusion_backend_config().kind() ==
+             kTritonFusionKind;
+}
+
 }  // namespace
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
@@ -112,9 +137,17 @@ BlockLevelEmitterBackend::GetSupportedConfigs(const HloInstruction& instr) {
     return std::vector<std::unique_ptr<BackendConfig>>();
   }
 
+  int32_t num_configs = instr.GetModule()
+                            ->config()
+                            .debug_options()
+                            .xla_gpu_fusion_autotune_top_k_configs();
+
   ABSL_ASSIGN_OR_RETURN(std::optional<BlockLevelFusionConfig> pre_existing_config,
                    GetPreExistingConfig(instr));
-  if (pre_existing_config.has_value()) {
+  // A pre-existing config is the only candidate unless exploring more than one
+  // config was requested. Then the candidates are the cost model's top-k
+  // configs, whose top-1 normally is the pre-existing config.
+  if (pre_existing_config.has_value() && num_configs == 1) {
     std::vector<std::unique_ptr<BackendConfig>> configs;
     configs.push_back(Pack(pre_existing_config.value()));
     return configs;
@@ -122,26 +155,27 @@ BlockLevelEmitterBackend::GetSupportedConfigs(const HloInstruction& instr) {
   auto fusion_adaptor =
       HloFusionAdaptor::ForInstruction(Cast<HloFusionInstruction>(&instr));
 
-  int32_t num_configs = instr.GetModule()
-                            ->config()
-                            .debug_options()
-                            .xla_gpu_fusion_autotune_top_k_configs();
-  ABSL_ASSIGN_OR_RETURN(TopKTiledRunTimeDataOrError tiled_runtime_data,
-                   indexing_performance_model_.TryFindTopKBestTilingsForFusion(
-                       *fusion_adaptor, num_configs));
-
-  if (std::holds_alternative<FusionDecision>(tiled_runtime_data)) {
-    return std::vector<std::unique_ptr<BackendConfig>>();
-  }
-
-  const auto& tiled_runtime_data_list =
-      std::get<absl::InlinedVector<TiledRunTimeData, 4>>(tiled_runtime_data);
+  ABSL_ASSIGN_OR_RETURN(
+      TopKTiledRunTimeDataOrError tiled_runtime_data,
+      indexing_performance_model_
+          .TryFindTopKBestTilingsForFusionAsync(
+              *fusion_adaptor, num_configs, TilingSearchExecutor(thread_pool_))
+          .Await());
 
   std::vector<std::unique_ptr<BackendConfig>> configs;
-  configs.reserve(num_configs);
-  for (const auto& tiled_runtime_data : tiled_runtime_data_list) {
-    configs.push_back(Pack(
-        tiled_runtime_data.block_level_parameters.ToBlockLevelFusionConfig()));
+  if (const auto* tiled_runtime_data_list =
+          std::get_if<absl::InlinedVector<TiledRunTimeData, 4>>(
+              &tiled_runtime_data)) {
+    configs.reserve(tiled_runtime_data_list->size());
+    for (const TiledRunTimeData& tiling : *tiled_runtime_data_list) {
+      configs.push_back(
+          Pack(tiling.block_level_parameters.ToBlockLevelFusionConfig()));
+    }
+  }
+  // If not empty, `configs` usually includes the pre-existing config, unless it
+  // didn't come from the cost model (e.g. hand-written).
+  if (configs.empty() && pre_existing_config.has_value()) {
+    configs.push_back(Pack(*pre_existing_config));
   }
   if (stream_executor::gpu::IsTmaAvailableForDevice(
           target_config().device_description)) {
@@ -155,9 +189,11 @@ BlockLevelEmitterBackend::GetCostModelConfig(const HloInstruction& instr) {
   auto fusion_adaptor =
       HloFusionAdaptor::ForInstruction(Cast<HloFusionInstruction>(&instr));
 
-  ABSL_ASSIGN_OR_RETURN(
-      TiledRunTimeDataOrError tiled_runtime_data_or_error,
-      indexing_performance_model_.TryFindBestTilingForFusion(*fusion_adaptor));
+  ABSL_ASSIGN_OR_RETURN(TiledRunTimeDataOrError tiled_runtime_data_or_error,
+                   indexing_performance_model_
+                       .TryFindBestTilingForFusionAsync(
+                           *fusion_adaptor, TilingSearchExecutor(thread_pool_))
+                       .Await());
 
   if (const auto* fusion_decision =
           std::get_if<FusionDecision>(&tiled_runtime_data_or_error)) {
@@ -229,10 +265,20 @@ bool BlockLevelEmitterBackend::IsSupported(const HloInstruction& instr) {
     // taken care of it.
     return false;
   }
+  // The same-shape multi-output fusion flag sends these fusions to the
+  // block-level emitter, so it must support them.
+  const bool is_enabled_same_shape_multi_output_fusion =
+      instr.GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_enable_same_shape_multi_output_fusion() &&
+      IsSameShapeMultiOutputFusion(*fusion, Shape::Equal().IgnoreElementType());
   if (!xla_gpu_experimental_all_fusions_with_triton_ &&
+      !is_enabled_same_shape_multi_output_fusion && !IsTritonFusion(instr) &&
       !absl::c_any_of(
           fusion->fused_instructions_computation()->instructions(),
-          HloPredicateIsOp<HloOpcode::kReduce, HloOpcode::kTranspose>)) {
+          HloPredicateIsOp<HloOpcode::kReduce, HloOpcode::kTranspose,
+                           HloOpcode::kConcatenate, HloOpcode::kScan>)) {
     return false;
   }
   const HloComputation* fusion_computation =

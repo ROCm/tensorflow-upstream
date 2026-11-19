@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/semaphore.h"
 
 #include <cstdint>
+#include <utility>
 
 #include "absl/log/check.h"
 #include "absl/synchronization/mutex.h"
@@ -28,26 +29,31 @@ Semaphore::Semaphore(int64_t capacity)
   CHECK_GE(capacity, 0);
 }
 
-bool Semaphore::CanAcquire(CanAcquireArgs* args) {
-  return args->semaphore->value_ >= args->amount;
-}
-
 void Semaphore::Acquire(int64_t amount) {
   CHECK_GE(amount, 0);
+  absl::MutexLock lock(mu_);
+  if (value_ >= amount) {
+    value_ -= amount;
+    return;
+  }
 
-  CanAcquireArgs args;
-  args.semaphore = this;
-  args.amount = amount;
+  Waiter waiter{amount};
+  if (tail_ != nullptr) {
+    tail_->next = &waiter;
+  } else {
+    head_ = &waiter;
+  }
+  tail_ = &waiter;
 
-  mu_.LockWhen(absl::Condition(&CanAcquire, &args));
-  value_ -= amount;
-  mu_.unlock();
+  while (!waiter.granted) {
+    waiter.cv.Wait(&mu_);
+  }
 }
 
 bool Semaphore::TryAcquire(int64_t amount) {
   CHECK_GE(amount, 0);
   absl::MutexLock lock(mu_);
-  if (value_ >= amount) {
+  if (head_ == nullptr && value_ >= amount) {
     value_ -= amount;
     return true;
   }
@@ -58,6 +64,26 @@ void Semaphore::Release(int64_t amount) {
   CHECK_GE(amount, 0);
   absl::MutexLock lock(mu_);
   value_ += amount;
+  Waiter* prev = nullptr;
+  for (Waiter* w = head_; w != nullptr && value_ > 0;) {
+    Waiter* next = w->next;
+    if (w->amount <= value_) {
+      value_ -= w->amount;
+      if (prev != nullptr) {
+        prev->next = next;
+      } else {
+        head_ = next;
+      }
+      if (next == nullptr) {
+        tail_ = prev;
+      }
+      w->granted = true;
+      w->cv.Signal();
+    } else {
+      prev = w;
+    }
+    w = next;
+  }
 }
 
 Semaphore::ScopedReservation::~ScopedReservation() {
@@ -67,17 +93,19 @@ Semaphore::ScopedReservation::~ScopedReservation() {
 }
 
 Semaphore::ScopedReservation::ScopedReservation(
-    ScopedReservation&& other) noexcept {
-  semaphore_ = other.semaphore_;
-  amount_ = other.amount_;
-  other.semaphore_ = nullptr;
-}
+    ScopedReservation&& other) noexcept
+    : semaphore_(std::exchange(other.semaphore_, nullptr)),
+      amount_(std::exchange(other.amount_, 0)) {}
 
 Semaphore::ScopedReservation& Semaphore::ScopedReservation::operator=(
     ScopedReservation&& other) noexcept {
-  semaphore_ = other.semaphore_;
-  amount_ = other.amount_;
-  other.semaphore_ = nullptr;
+  if (this != &other) {
+    if (semaphore_) {
+      semaphore_->Release(amount_);
+    }
+    semaphore_ = std::exchange(other.semaphore_, nullptr);
+    amount_ = std::exchange(other.amount_, 0);
+  }
   return *this;
 }
 

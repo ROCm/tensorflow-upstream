@@ -37,6 +37,7 @@ tf_py_strict_test(
         "//tensorflow/python/framework:tensor",
         "//tensorflow/python/framework:test_lib",
         "//tensorflow/python/ops:data_flow_ops",
+        "//tensorflow/python/ops:data_flow_ops_gen",
         "//tensorflow/python/platform:client_testlib",
         "//third_party/py/numpy",
     ],
@@ -53,6 +54,7 @@ tf_py_strict_test(
         "//tensorflow/python/framework:test_lib",
         "//tensorflow/python/ops:array_ops",
         "//tensorflow/python/ops:data_flow_ops",
+        "//tensorflow/python/ops:data_flow_ops_gen",
         "//tensorflow/python/ops:math_ops",
         "//tensorflow/python/ops:state_ops",
         "//tensorflow/python/ops:variables",
@@ -169,6 +171,7 @@ cuda_py_strict_test(
     size = "small",
     srcs = ["list_ops_test.py"],
     grpc_enabled = True,
+    shard_count = 4,
     deps = [
         "//tensorflow/core:protos_all_py",
         "//tensorflow/python/client:session",

@@ -46,11 +46,12 @@ namespace xla::gpu {
 
 AsyncStartThunk::AsyncStartThunk(ThunkInfo thunk_info,
                                  ExecutionStreamId execution_stream_id,
-                                 ThunkSequence thunks)
+                                 ThunkSequence thunks, int devices_per_host)
     : Thunk(Thunk::kAsyncStart, std::move(thunk_info)),
       execution_stream_id_(execution_stream_id),
       executor_(std::move(thunks)),
-      async_execution_(std::make_shared<AsyncExecution>(this->thunk_info())) {}
+      async_execution_(std::make_shared<AsyncExecution>(this->thunk_info(),
+                                                        devices_per_host)) {}
 
 AsyncStartThunk::AsyncStartThunk(
     ThunkInfo thunk_info, ExecutionStreamId execution_stream_id,
@@ -91,8 +92,37 @@ absl::Status AsyncStartThunk::ExecuteOnStream(const ExecuteParams& params) {
       }
       return params.additional_compute_streams[idx];
     }
-    return params.collective_params->async_streams.at(
-        execution_stream_id_.communication_id().value());
+    if (execution_stream_id_.is_memcpy()) {
+      MemcpyStreamId id = execution_stream_id_.memcpy_id();
+      if (id != kMemcpyD2HStreamId && id != kMemcpyH2DStreamId) {
+        return InvalidArgument("Invalid memcpy stream id: %d", id.value());
+      }
+      bool is_d2h = id == kMemcpyD2HStreamId;
+      se::Stream* stream =
+          is_d2h ? params.device_to_host_stream : params.host_to_device_stream;
+      if (stream == nullptr) {
+        return Internal("%s stream is not available for async execution",
+                        is_d2h ? "device_to_host" : "host_to_device");
+      }
+      return stream;
+    }
+    if (execution_stream_id_.is_communication()) {
+      return params.collective_params->async_streams.at(
+          execution_stream_id_.communication_id().value());
+    }
+    auto it = params.locality_domain_streams.find(
+        execution_stream_id_.locality_domain_id());
+    if (it == params.locality_domain_streams.end()) {
+      return InvalidArgument(
+          "No execution stream available for locality-domain stream id: %v",
+          execution_stream_id_);
+    }
+    if (it->second == nullptr) {
+      return InvalidArgument(
+          "Null execution stream for locality-domain stream id: %v",
+          execution_stream_id_);
+    }
+    return it->second;
   };
 
   ABSL_ASSIGN_OR_RETURN(se::Stream * async_stream, std::invoke(get_async_stream));
@@ -178,9 +208,14 @@ absl::StatusOr<ThunkProto> AsyncStartThunk::ToProto() const {
   if (execution_stream_id_.is_computation()) {
     start_proto->set_computation_stream_id(
         execution_stream_id_.computation_id().value());
-  } else {
+  } else if (execution_stream_id_.is_memcpy()) {
+    start_proto->set_memcpy_stream_id(execution_stream_id_.memcpy_id().value());
+  } else if (execution_stream_id_.is_communication()) {
     start_proto->set_communication_stream_id(
         execution_stream_id_.communication_id().value());
+  } else {
+    start_proto->set_locality_domain_stream_id(
+        execution_stream_id_.locality_domain_id().value());
   }
 
   start_proto->mutable_thunks();
@@ -193,13 +228,24 @@ absl::StatusOr<ThunkProto> AsyncStartThunk::ToProto() const {
 
 absl::StatusOr<std::unique_ptr<AsyncStartThunk>> AsyncStartThunk::FromProto(
     ThunkInfo thunk_info, const AsyncStartThunkProto& proto,
-    const Deserializer& deserializer, AsyncExecutionMap& async_executions) {
+    const Deserializer& deserializer, AsyncExecutionMap& async_executions,
+    int devices_per_host) {
   auto make_stream_id = [&]() -> absl::StatusOr<ExecutionStreamId> {
     switch (proto.execution_stream_id_case()) {
       case AsyncStartThunkProto::kComputationStreamId:
         return ComputationStreamId(proto.computation_stream_id());
       case AsyncStartThunkProto::kCommunicationStreamId:
         return CommunicationStreamId(proto.communication_stream_id());
+      case AsyncStartThunkProto::kMemcpyStreamId: {
+        MemcpyStreamId id(proto.memcpy_stream_id());
+        if (id != kMemcpyD2HStreamId && id != kMemcpyH2DStreamId) {
+          return InvalidArgument(
+              "Invalid memcpy stream id in AsyncStartThunk: %d", id.value());
+        }
+        return id;
+      }
+      case AsyncStartThunkProto::kLocalityDomainStreamId:
+        return LocalityDomainStreamId(proto.locality_domain_stream_id());
       default:
         return Internal("Unknown execution stream id type in AsyncStartThunk");
     }
@@ -213,7 +259,8 @@ absl::StatusOr<std::unique_ptr<AsyncStartThunk>> AsyncStartThunk::FromProto(
   }
 
   auto start_thunk = std::make_unique<AsyncStartThunk>(
-      std::move(thunk_info), execution_stream_id, std::move(nested));
+      std::move(thunk_info), execution_stream_id, std::move(nested),
+      devices_per_host);
 
   AsyncExecutionId id(proto.async_execution_id());
   async_executions[id] = start_thunk->async_execution();

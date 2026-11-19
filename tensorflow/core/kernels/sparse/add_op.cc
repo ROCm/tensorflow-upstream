@@ -19,17 +19,25 @@ limitations under the License.
 #define EIGEN_USE_GPU
 #endif
 
+#include <cstddef>
+#include <cstdint>
+#include <utility>
+
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
-#include "tensorflow/core/framework/op.h"
+#include "xla/tsl/platform/errors.h"
+#include "tensorflow/core/framework/allocator.h"
 #include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/op_requires.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/tensor_types.h"
-#include "tensorflow/core/framework/tensor_util.h"
+#include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/framework/variant.h"
 #include "tensorflow/core/framework/variant_op_registry.h"
-#include "tensorflow/core/kernels/dense_update_functor.h"
+#include "tensorflow/core/kernels/fill_functor.h"
 #include "tensorflow/core/kernels/sparse/kernels.h"
 #include "tensorflow/core/kernels/sparse/sparse_matrix.h"
-#include "tensorflow/core/kernels/fill_functor.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "tensorflow/core/util/cuda_sparse.h"
@@ -281,7 +289,7 @@ struct CSRSparseMatrixAdd<GPUDevice, T>
         beta_(beta),
         initialized_(false) {}
 
-  absl::Status Initialize() {
+  absl::Status Initialize() override {
     TF_RETURN_IF_ERROR(cuda_sparse_.Initialize());
     TF_RETURN_IF_ERROR(descrA_.Initialize());
     TF_RETURN_IF_ERROR(descrB_.Initialize());
@@ -292,7 +300,7 @@ struct CSRSparseMatrixAdd<GPUDevice, T>
 
   absl::Status GetWorkspaceSize(const ConstCSRComponent<T>& a,
                                 const ConstCSRComponent<T>& b,
-                                size_t* bufferSize) {
+                                size_t* bufferSize) override {
     DCHECK(initialized_);
 
     const int m = a.row_ptr.size() - 1;
@@ -320,7 +328,7 @@ struct CSRSparseMatrixAdd<GPUDevice, T>
   absl::Status GetOutputStructure(const ConstCSRComponent<T>& a,
                                   const ConstCSRComponent<T>& b,
                                   TTypes<int32_t>::UnalignedVec c_row_ptr,
-                                  int* output_nnz, void* workspace) {
+                                  int* output_nnz, void* workspace) override {
     DCHECK(initialized_);
 
     const int m = a.row_ptr.size() - 1;
@@ -349,7 +357,7 @@ struct CSRSparseMatrixAdd<GPUDevice, T>
 
   absl::Status Compute(const ConstCSRComponent<T>& a,
                        const ConstCSRComponent<T>& b, CSRComponent<T>* c,
-                       void* workspace) {
+                       void* workspace) override {
     DCHECK(initialized_);
 
     const int m = a.row_ptr.size() - 1;
@@ -379,8 +387,12 @@ struct CSRSparseMatrixAdd<GPUDevice, T>
   GpuSparseMatrixDescriptor descrA_;
   GpuSparseMatrixDescriptor descrB_;
   GpuSparseMatrixDescriptor descrC_;
-  const T alpha_;
-  const T beta_;
+  // Passed by address to GpuSparse, whose CUDA wrappers reinterpret these
+  // as cuComplex / cuDoubleComplex (alignof == sizeof(T)). std::complex
+  // only guarantees alignof(value_type); the wrappers re-align internally,
+  // and this over-alignment is kept as defense in depth.
+  alignas(sizeof(T)) const T alpha_;
+  alignas(sizeof(T)) const T beta_;
   bool initialized_;
 
   CSRSparseMatrixAdd(const CSRSparseMatrixAdd&) = delete;

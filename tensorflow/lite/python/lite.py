@@ -65,6 +65,7 @@ from tensorflow.lite.python.op_hint import is_ophint_converted as _is_ophint_con
 from tensorflow.lite.python.op_hint import OpHint  # pylint: disable=unused-import
 from tensorflow.lite.python.optimize import calibrator as _calibrator
 from tensorflow.lite.python.util import _jit
+from tensorflow.lite.python.util import _mlir
 from tensorflow.lite.python.util import build_debug_info_func as _build_debug_info_func
 from tensorflow.lite.python.util import convert_debug_info_func as _convert_debug_info_func
 from tensorflow.lite.python.util import freeze_graph as _freeze_graph
@@ -119,9 +120,14 @@ class Optimize(enum.Enum):
   DEFAULT
       The default optimization strategy that enables post-training quantization.
       The type of post-training quantization that will be used is dependent on
-      the other converter options supplied. Refer to the
-      [documentation](https://ai.google.dev/edge/litert/models/post_training_quantization)
-      for further information on the types available and how to use them.
+      the other converter options supplied.
+
+      Post-training quantization in the converter is deprecated. Convert the
+      model to float32 and quantize it with [LiteRT
+      Quantizer](https://github.com/google-ai-edge/LiteRT/tree/main/litert_quantizer)
+      instead. See the [migration
+      guide](https://developers.google.com/edge/litert/quantization/tflq_to_litertq_migration).
+      `DEFAULT` is still needed to convert quantization-aware trained models.
 
   OPTIMIZE_FOR_SIZE
       Deprecated. Does the same as DEFAULT.
@@ -174,6 +180,11 @@ class Optimize(enum.Enum):
 @_tf_export("lite.RepresentativeDataset")
 class RepresentativeDataset:
   """Representative dataset used to optimize the model.
+
+  Deprecated: the converter only uses it for post-training integer
+  quantization, which is deprecated. LiteRT Quantizer takes calibration data
+  directly. See the [migration
+  guide](https://developers.google.com/edge/litert/quantization/tflq_to_litertq_migration).
 
   This is a generator function that provides a small dataset to calibrate or
   estimate the range, i.e, (min, max) of all floating-point arrays in the model
@@ -241,6 +252,14 @@ class TargetSpec:
     # used for fp16 post-training quantization, where some models can use fp16
     # accumulators instead of the typical fp32 type.
     self._experimental_supported_accumulation_type = None
+
+
+_POST_TRAINING_QUANTIZATION_DEPRECATION_WARNING = (
+    "Post-training quantization in the TFLite converter is deprecated. Convert"
+    " the model to float32 (without `tf.lite.Optimize.DEFAULT`) and quantize it"
+    " with LiteRT Quantizer instead. See the migration guide:"
+    " https://developers.google.com/edge/litert/quantization/tflq_to_litertq_migration"
+)
 
 
 class QuantizationMode:
@@ -396,6 +415,22 @@ class QuantizationMode:
         self.is_any_optimization_enabled()
         and self._smallest_supported_type().size == 2
         and _dtypes.bfloat16 in self._target_spec.supported_types
+    )
+
+  def is_post_training_quantization(self):
+    """Whether the converter applies post-training quantization."""
+    # Exclude quantization-aware trained models first: the post-training checks
+    # below can be true for them too (e.g. with a representative dataset or QDQ
+    # annotations), but their conversion still needs `Optimize.DEFAULT`.
+    if (
+        self.is_quantization_aware_training()
+        or self.is_low_bit_quantize_aware_training()
+    ):
+      return False
+    return (
+        self.is_post_training_integer_quantization()
+        or self.is_post_training_dynamic_range_quantization()
+        or self.is_post_training_float16_quantization()
     )
 
   def activations_type(self):
@@ -646,6 +681,7 @@ class TFLiteConverterBase:
     self._experimental_default_to_single_batch_in_tensor_list_ops = False
     self._experimental_unfold_large_splat_constant = False
     self._experimental_fold_fp16_resource_casts = True
+    self._experimental_fold_fp16_casts_into_fully_connected = False
     self._experimental_tf_quantization_mode = None
     # If unset, bias:int32 is by default except 16x8 quant.
     # For 16x8 quant, bias:int64 is used to prevent any overflow by default.
@@ -826,6 +862,9 @@ class TFLiteConverterBase:
             self._experimental_unfold_large_splat_constant
         ),
         "fold_fp16_resource_casts": self._experimental_fold_fp16_resource_casts,
+        "fold_fp16_casts_into_fully_connected": (
+            self._experimental_fold_fp16_casts_into_fully_connected
+        ),
         "default_to_single_batch_in_tensor_list_ops": (
             self._experimental_default_to_single_batch_in_tensor_list_ops
         ),
@@ -1149,6 +1188,9 @@ class TFLiteConverterBase:
       self, model, quant_mode, debug_options, quant_io=True
   ):
     """Apply optimizations on a TFLite model."""
+
+    if quant_mode.is_post_training_quantization():
+      logging.warning(_POST_TRAINING_QUANTIZATION_DEPRECATION_WARNING)
 
     # Disable TFLite quantization pass when
     # `experimental_use_stablehlo_quantizer` is set to `True`. StableHLO
@@ -2113,7 +2155,12 @@ class TFLiteJaxConverterV2(TFLiteConverterBaseV2):
       hlo_proto = (
           _jit(self._serving_funcs[0])
           .trace(*ordered_inputs)
-          .lower(lowering_platforms=("cpu",))
+          .lower(
+              lowering_platforms=("cpu",),
+              _private_parameters=_mlir.LoweringParameters(
+                  hoist_constants_as_args=False
+              ),
+          )
           .compiler_ir("hlo")
           .as_serialized_hlo_module_proto()
       )
@@ -2178,17 +2225,20 @@ class TFLiteConverterV2(TFLiteFrozenGraphConverterV2):
   """Converts a TensorFlow model into TensorFlow Lite model.
 
   Attributes:
-    optimizations: Experimental flag, subject to change. Set of optimizations to
-      apply. e.g {tf.lite.Optimize.DEFAULT}. (default None, must be None or a
-      set of values of type `tf.lite.Optimize`)
-    representative_dataset: A generator function used for integer quantization
-      where each generated sample has the same order, type and shape as the
-      inputs to the model. Usually, this is a small subset of a few hundred
-      samples randomly chosen, in no particular order, from the training or
-      evaluation dataset. This is an optional attribute, but required for full
-      integer quantization, i.e, if `tf.int8` is the only supported type in
-      `target_spec.supported_types`. Refer to `tf.lite.RepresentativeDataset`.
-      (default None)
+    optimizations: Post-training quantization with `tf.lite.Optimize.DEFAULT`
+      is deprecated; quantize the converted float32 model with LiteRT Quantizer
+      instead (see `tf.lite.Optimize`). Experimental flag, subject to change.
+      Set of optimizations to apply. e.g {tf.lite.Optimize.DEFAULT}. (default
+      None, must be None or a set of values of type `tf.lite.Optimize`)
+    representative_dataset: Deprecated along with post-training quantization in
+      the converter (see `tf.lite.Optimize`). A generator function used for
+      integer quantization where each generated sample has the same order, type
+      and shape as the inputs to the model. Usually, this is a small subset of a
+      few hundred samples randomly chosen, in no particular order, from the
+      training or evaluation dataset. This is an optional attribute, but
+      required for full integer quantization, i.e, if `tf.int8` is the only
+      supported type in `target_spec.supported_types`. Refer to
+      `tf.lite.RepresentativeDataset`. (default None)
     target_spec: Experimental flag, subject to change. Specifications of the
       target device, including supported ops set, supported types and a set 
       of user's defined TensorFlow operators required in the TensorFlow Lite 
@@ -3116,17 +3166,20 @@ class TFLiteConverter(TFLiteFrozenGraphConverter):
   model into either a TFLite FlatBuffer or graph visualization.
 
   Attributes:
-    optimizations: Experimental flag, subject to change. Set of optimizations to
-      apply. e.g {tf.lite.Optimize.DEFAULT}. (default None, must be None or a
-      set of values of type `tf.lite.Optimize`)
-    representative_dataset: A generator function used for integer quantization
-      where each generated sample has the same order, type and shape as the
-      inputs to the model. Usually, this is a small subset of a few hundred
-      samples randomly chosen, in no particular order, from the training or
-      evaluation dataset. This is an optional attribute, but required for full
-      integer quantization, i.e, if `tf.int8` is the only supported type in
-      `target_spec.supported_types`. Refer to `tf.lite.RepresentativeDataset`.
-      (default None)
+    optimizations: Post-training quantization with `tf.lite.Optimize.DEFAULT` is
+      deprecated; quantize the converted float32 model with LiteRT Quantizer
+      instead (see `tf.lite.Optimize`). Experimental flag, subject to change.
+      Set of optimizations to apply. e.g {tf.lite.Optimize.DEFAULT}. (default
+      None, must be None or a set of values of type `tf.lite.Optimize`)
+    representative_dataset: Deprecated along with post-training quantization in
+      the converter (see `tf.lite.Optimize`). A generator function used for
+      integer quantization where each generated sample has the same order, type
+      and shape as the inputs to the model. Usually, this is a small subset of a
+      few hundred samples randomly chosen, in no particular order, from the
+      training or evaluation dataset. This is an optional attribute, but
+      required for full integer quantization, i.e, if `tf.int8` is the only
+      supported type in `target_spec.supported_types`. Refer to
+      `tf.lite.RepresentativeDataset`. (default None)
     target_spec: Experimental flag, subject to change. Specifications of target
       device, including supported ops set, supported types and a set of user's
       defined TensorFlow operators required in the TensorFlow Lite runtime.
@@ -3179,8 +3232,8 @@ class TFLiteConverter(TFLiteFrozenGraphConverter):
     exclude_conversion_metadata: Whether not to embed the conversion metadata
       into the converted model. (default False)
     target_ops: Deprecated. Please use `target_spec.supported_ops` instead.
-    post_training_quantize: Deprecated. Please use `optimizations` instead and
-      set it to `{tf.lite.Optimize.DEFAULT}`. (default False)
+    post_training_quantize: Deprecated. Quantize the converted float32 model
+      with LiteRT Quantizer instead (see `tf.lite.Optimize`). (default False)
     experimental_new_converter: Experimental flag, subject to change. Enables
       MLIR-based conversion. (default True)
     experimental_new_quantizer: Experimental flag, subject to change. Enables

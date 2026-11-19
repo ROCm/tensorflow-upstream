@@ -23,6 +23,7 @@ limitations under the License.
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <string>
@@ -68,6 +69,52 @@ namespace {
 
 constexpr size_t kExtraNodeCapacity = 10;
 constexpr float kTensorCapacityInc = 1.1f;
+
+size_t GetTypeAlignment(TfLiteType type) {
+  switch (type) {
+    case kTfLiteInt64:
+      return alignof(int64_t);
+    case kTfLiteUInt64:
+      return alignof(uint64_t);
+    case kTfLiteFloat64:
+      return alignof(double);
+    case kTfLiteComplex128:
+      return alignof(TfLiteComplex128);
+    case kTfLiteFloat32:
+      return alignof(float);
+    case kTfLiteInt32:
+      return alignof(int32_t);
+    case kTfLiteUInt32:
+      return alignof(uint32_t);
+    case kTfLiteComplex64:
+      return alignof(TfLiteComplex64);
+    case kTfLiteInt16:
+      return alignof(int16_t);
+    case kTfLiteUInt16:
+      return alignof(uint16_t);
+    case kTfLiteFloat16:
+      return alignof(TfLiteFloat16);
+    case kTfLiteBFloat16:
+      return alignof(TfLiteBFloat16);
+    case kTfLiteInt8:
+      return alignof(int8_t);
+    case kTfLiteUInt8:
+      return alignof(uint8_t);
+    case kTfLiteBool:
+      return alignof(bool);
+    case kTfLiteInt4:
+    case kTfLiteUInt4:
+    case kTfLiteInt2:
+    case kTfLiteFloat8E4M3FN:
+    case kTfLiteFloat8E5M2:
+    case kTfLiteNoType:
+    case kTfLiteString:
+    case kTfLiteResource:
+    case kTfLiteVariant:
+      return 1;
+  }
+  return 1;
+}
 
 struct TfLiteQuantizationDeleter {
   void operator()(TfLiteQuantization* q) {
@@ -348,6 +395,11 @@ namespace {
 void CopyVectorToTfLiteIntArray(const std::vector<int>& vec,
                                 TfLiteIntArray* arr) {
   arr->size = vec.size();
+  // An empty vector may return a null data(); passing null to memcpy is
+  // undefined behavior even when the size is zero.
+  if (arr->size == 0) {
+    return;
+  }
   memcpy(arr->data, vec.data(), sizeof(int) * arr->size);
 }
 
@@ -1965,6 +2017,33 @@ TfLiteStatus Subgraph::SetTensorParametersReadOnly(
     TF_LITE_ENSURE(&context_, required_bytes <= bytes);
   }
 
+  if (buffer != nullptr && bytes > 0 &&
+      reinterpret_cast<uintptr_t>(buffer) % GetTypeAlignment(type) != 0) {
+    TFLITE_LOG_PROD_ONCE(
+        tflite::TFLITE_LOG_WARNING,
+        "Read-only tensor #%d (%s) has an unaligned buffer (%p, required "
+        "alignment %zu); copying to an aligned heap buffer. Re-export the "
+        "model to align buffers in the FlatBuffer and enable zero-copy mmap.",
+        tensor_index, name ? name : "<unnamed>", buffer,
+        GetTypeAlignment(type));
+    // The extra bytes are required by XNNPack to avoid out-of-bounds
+    // SIMD reads (matching TfLiteTensorAllocationSize in common.cc).
+    constexpr size_t kExtraAllocationBytes = 16;
+    if (bytes > std::numeric_limits<size_t>::max() - kExtraAllocationBytes) {
+      return kTfLiteError;
+    }
+    std::unique_ptr<char, FreeDeleter> aligned_buffer(
+        static_cast<char*>(malloc(bytes + kExtraAllocationBytes)));
+    TF_LITE_ENSURE(&context_, aligned_buffer != nullptr);
+    memcpy(aligned_buffer.get(), buffer, bytes);
+    memset(aligned_buffer.get() + bytes, 0, kExtraAllocationBytes);
+    buffer = aligned_buffer.get();
+    // Clear `allocation` since `buffer` now resides on the heap rather than
+    // inside the original `MMAPAllocation` region.
+    allocation = nullptr;
+    aligned_ro_buffers_.push_back(std::move(aligned_buffer));
+  }
+
   TfLiteTensor& tensor = context_.tensors[tensor_index];
   if (type == tensor.type &&
       EqualArrayAndTfLiteIntArray(tensor.dims, ndims, dims)) {
@@ -2312,10 +2391,14 @@ TfLiteStatus Subgraph::ReplaceNodeWithSubgraph(
   // NOLINTNEXTLINE: absl not allowed.
   std::unordered_map<int, int> input_map, output_map;
   for (int i = 0; i < subgraph->inputs_.size(); ++i) {
-    input_map[subgraph->inputs_[i]] = node.inputs->data[i];
+    if (subgraph->inputs_[i] != kTfLiteOptionalTensor) {
+      input_map[subgraph->inputs_[i]] = node.inputs->data[i];
+    }
   }
   for (int i = 0; i < subgraph->outputs_.size(); ++i) {
-    output_map[subgraph->outputs_[i]] = node.outputs->data[i];
+    if (subgraph->outputs_[i] != kTfLiteOptionalTensor) {
+      output_map[subgraph->outputs_[i]] = node.outputs->data[i];
+    }
   }
 
   // Clone all inserted subgraph tensors and add them to this subgraph
@@ -2360,6 +2443,9 @@ TfLiteStatus Subgraph::ReplaceNodeWithSubgraph(
     auto ReMapTensorIndex = [tensor_offset](
                                 const std::unordered_map<int, int>& map,
                                 const int tensor_index) {
+      if (tensor_index == kTfLiteOptionalTensor) {
+        return kTfLiteOptionalTensor;
+      }
       auto it = map.find(tensor_index);
       if (it != map.end()) {
         return it->second;
@@ -2378,7 +2464,9 @@ TfLiteStatus Subgraph::ReplaceNodeWithSubgraph(
     std::vector<int> node_intermediates(decomp_node.intermediates->size);
     for (int i = 0; i < node_intermediates.size(); ++i) {
       node_intermediates[i] =
-          decomp_node.intermediates->data[i] + tensor_offset;
+          decomp_node.intermediates->data[i] == kTfLiteOptionalTensor
+              ? kTfLiteOptionalTensor
+              : decomp_node.intermediates->data[i] + tensor_offset;
     }
 
     // Add new op to subgraph.

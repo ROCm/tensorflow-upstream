@@ -1593,12 +1593,18 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
 
     string data_format_str;
     TensorFormat data_format;
-    std::vector<int32> ksize, strides;
+    // Read `ksize` and `strides` as int64_t, the type attributes are stored
+    // in, so that a value outside the int32 range reaches the kernel, which
+    // rejects it, instead of aborting here.
+    std::vector<int64_t> ksize, strides;
     TF_CHECK_OK(GetNodeAttr(n->def(), "ksize", &ksize));
     TF_CHECK_OK(GetNodeAttr(n->def(), "strides", &strides));
     TF_CHECK_OK(GetNodeAttr(n->def(), "data_format", &data_format_str));
     bool result = FormatFromString(data_format_str, &data_format);
-    DCHECK(result);
+    // The oneDNN MaxPool ops accept only NHWC and NCHW (NDHWC and NCDHW in 3D).
+    if (!result || (data_format != FORMAT_NHWC && data_format != FORMAT_NCHW)) {
+      return false;
+    }
 
     // Condition that specifies non-batch-wise and non-depth-wise pooling.
     if (GetTensorDim(ksize, data_format, 'N') == 1 &&
@@ -2729,8 +2735,8 @@ void MklLayoutRewritePass::CopyAttrsFromPadAndConv2D(const Node* orig_node1,
   DataType T;
   string data_format;
   string padding;
-  std::vector<int32> strides;
-  std::vector<int32> dilations;
+  std::vector<int64_t> strides;
+  std::vector<int64_t> dilations;
   bool use_cudnn_on_gpu;
 
   // Get all attributes from old node 1.
@@ -2761,8 +2767,8 @@ void MklLayoutRewritePass::CopyAttrsFromPadAndFusedConv2D(
   int num_args;
   string data_format;
   string padding;
-  std::vector<int32> strides;
-  std::vector<int32> dilations;
+  std::vector<int64_t> strides;
+  std::vector<int64_t> dilations;
   float epsilon;
   std::vector<string> fused_ops;
   DataType Tpaddings;
@@ -2800,7 +2806,7 @@ void MklLayoutRewritePass::CopyAttrsQuantizedConv2D(const Node* orig_node,
   DataType Tinput, Tfilter, out_type;
   string padding;
   string data_format("NHWC");
-  std::vector<int32> strides, dilations, padding_list;
+  std::vector<int64_t> strides, dilations, padding_list;
   bool has_padding_list = HasNodeAttr(orig_node->def(), "padding_list");
 
   // Get all attributes from old node.
@@ -3032,8 +3038,8 @@ Status MklLayoutRewritePass::MergeConv2DWithBiasAdd(std::unique_ptr<Graph>* g,
   // 1. Get all attributes from input nodes.
   DataType T_pred, T_succ;
   string padding;
-  std::vector<int32> strides;
-  std::vector<int32> dilations;
+  std::vector<int64_t> strides;
+  std::vector<int64_t> dilations;
   string data_format_pred, data_format_succ;
   bool use_cudnn_on_gpu;
   TF_CHECK_OK(GetNodeAttr(pred->def(), "T", &T_pred));
@@ -3198,8 +3204,8 @@ Status MklLayoutRewritePass::MergePadWithConv2D(std::unique_ptr<Graph>* g,
   // 1. Get all attributes from input nodes.
   DataType T_pred, T_succ;
   string padding;
-  std::vector<int32> strides;
-  std::vector<int32> dilations;
+  std::vector<int64_t> strides;
+  std::vector<int64_t> dilations;
   string data_format_pred, data_format_succ;
 
   TF_CHECK_OK(GetNodeAttr(pred->def(), "T", &T_pred));

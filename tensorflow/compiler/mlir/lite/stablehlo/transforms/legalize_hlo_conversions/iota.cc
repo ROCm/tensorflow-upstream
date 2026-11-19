@@ -28,29 +28,35 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
+#include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 #include "tensorflow/compiler/mlir/lite/stablehlo/transforms/legalize_hlo_conversions/op_util_common.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 
 namespace mlir::odml {
 namespace {
 
 //===------------------------------------------------------------------------===
-// mhlo.iota -> tfl.range
+// stablehlo.iota -> tfl.range
 //===------------------------------------------------------------------------===
 
-class LegalizeIota : public OpConversionPattern<mhlo::IotaOp> {
+class LegalizeIota : public OpConversionPattern<stablehlo::IotaOp> {
  public:
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
-      mhlo::IotaOp op, OpAdaptor adaptor,
+      stablehlo::IotaOp op, OpAdaptor adaptor,
       ConversionPatternRewriter& rewriter) const final;
 };
 
-bool IsIotaLegal(mhlo::IotaOp op) {
+// tfl.range only supports i32, i64 and f32. Narrower floats are materialized
+// in f32 and cast back, which is exact because an iota only holds small
+// integral values. Leaving them unconverted emits a STABLEHLO_IOTA builtin
+// that the TFLite runtime has no kernel for.
+bool IsNarrowFloat(Type e_type) { return e_type.isBF16() || e_type.isF16(); }
+
+bool IsIotaLegal(stablehlo::IotaOp op) {
   auto e_type = llvm::cast<ShapedType>(op.getType()).getElementType();
-  return !(e_type.isF32() || e_type.isSignlessInteger(32) ||
-           e_type.isSignlessInteger(64));
+  return !(e_type.isF32() || IsNarrowFloat(e_type) ||
+           e_type.isSignlessInteger(32) || e_type.isSignlessInteger(64));
 }
 
 std::tuple<DenseElementsAttr, DenseElementsAttr, DenseElementsAttr>
@@ -70,81 +76,86 @@ BuildRangeParams(Type e_type, int64_t iota_dim_size, OpBuilder& b) {
 }
 
 LogicalResult LegalizeIota::matchAndRewrite(
-    mhlo::IotaOp op, OpAdaptor adaptor,
+    stablehlo::IotaOp op, OpAdaptor adaptor,
     ConversionPatternRewriter& rewriter) const {
   if (IsIotaLegal(op)) {
-    return rewriter.notifyMatchFailure(op, "Must be i32, i64 or f32");
+    return rewriter.notifyMatchFailure(op, "Must be i32, i64 or a float");
   }
 
   auto type = llvm::cast<ShapedType>(op.getType());
   auto e_type = type.getElementType();
+  const bool needs_cast = IsNarrowFloat(e_type);
+  const Type range_e_type = needs_cast ? rewriter.getF32Type() : e_type;
   const int64_t iota_dim_size = type.getDimSize(op.getIotaDimension());
 
   auto [start, limit, delta] =
-      BuildRangeParams(e_type, iota_dim_size, rewriter);
+      BuildRangeParams(range_e_type, iota_dim_size, rewriter);
 
   auto start_op = arith::ConstantOp::create(rewriter, op->getLoc(), start);
   auto limit_op = arith::ConstantOp::create(rewriter, op->getLoc(), limit);
   auto delta_op = arith::ConstantOp::create(rewriter, op->getLoc(), delta);
 
-  auto range_type = RankedTensorType::get({iota_dim_size}, e_type);
-  auto range_op = TFL::RangeOp::create(rewriter, op->getLoc(), range_type,
-                                       start_op, limit_op, delta_op);
+  auto range_type = RankedTensorType::get({iota_dim_size}, range_e_type);
+  Value result = TFL::RangeOp::create(rewriter, op->getLoc(), range_type,
+                                      start_op, limit_op, delta_op);
 
-  if (type.getRank() == 1) {
-    rewriter.replaceOp(op, range_op);
-    return success();
+  if (type.getRank() > 1) {
+    // stablehlo.iota allows filling ND tensors iota-style. Reshape and
+    // broadcast tfl 1D range output.
+    llvm::SmallVector<int64_t> reshape_shape(type.getRank(), 1);
+    reshape_shape[op.getIotaDimension()] = iota_dim_size;
+    Value reshape_shape_cst = arith::ConstantOp::create(
+        rewriter, op->getLoc(), rewriter.getI64TensorAttr(reshape_shape));
+    reshape_shape_cst =
+        TFL::CastOp::create(rewriter, op->getLoc(),
+                            llvm::cast<ShapedType>(reshape_shape_cst.getType())
+                                .clone(rewriter.getI32Type()),
+                            reshape_shape_cst);
+
+    auto reshape_type = RankedTensorType::get(reshape_shape, range_e_type);
+    auto reshape_op = TFL::ReshapeOp::create(
+        rewriter, op->getLoc(), reshape_type, result, reshape_shape_cst);
+
+    auto broad_cast_shape_cst = arith::ConstantOp::create(
+        rewriter, op->getLoc(), rewriter.getI64TensorAttr(type.getShape()));
+    result = TFL::BroadcastToOp::create(rewriter, op->getLoc(),
+                                        type.clone(range_e_type), reshape_op,
+                                        broad_cast_shape_cst);
   }
 
-  // mhlo.iota allows filling ND tensors iota-style. Reshape and broadcast
-  // tfl 1D range output.
+  if (needs_cast) {
+    result = TFL::CastOp::create(rewriter, op->getLoc(), type, result);
+  }
 
-  llvm::SmallVector<int64_t> reshape_shape(type.getRank(), 1);
-  reshape_shape[op.getIotaDimension()] = iota_dim_size;
-  Value reshape_shape_cst = arith::ConstantOp::create(
-      rewriter, op->getLoc(), rewriter.getI64TensorAttr(reshape_shape));
-  reshape_shape_cst =
-      TFL::CastOp::create(rewriter, op->getLoc(),
-                          llvm::cast<ShapedType>(reshape_shape_cst.getType())
-                              .clone(rewriter.getI32Type()),
-                          reshape_shape_cst);
-
-  auto reshape_type = RankedTensorType::get(reshape_shape, e_type);
-  auto reshape_op = TFL::ReshapeOp::create(rewriter, op->getLoc(), reshape_type,
-                                           range_op, reshape_shape_cst);
-
-  auto broad_cast_shape_cst = arith::ConstantOp::create(
-      rewriter, op->getLoc(), rewriter.getI64TensorAttr(type.getShape()));
-
-  rewriter.replaceOpWithNewOp<TFL::BroadcastToOp>(op, type, reshape_op,
-                                                  broad_cast_shape_cst);
-
+  rewriter.replaceOp(op, result);
   return success();
 }
 
 //===------------------------------------------------------------------------===
-// mhlo.dynamic_iota -> tfl.range
+// stablehlo.dynamic_iota -> tfl.range
 //===------------------------------------------------------------------------===
 
-class LegalizeDynamicIotaOp : public OpConversionPattern<mhlo::DynamicIotaOp> {
+class LegalizeDynamicIotaOp
+    : public OpConversionPattern<stablehlo::DynamicIotaOp> {
  public:
   using OpConversionPattern::OpConversionPattern;
 
   LogicalResult matchAndRewrite(
-      mhlo::DynamicIotaOp op, OpAdaptor adaptor,
+      stablehlo::DynamicIotaOp op, OpAdaptor adaptor,
       ConversionPatternRewriter& rewriter) const final;
 };
 
-bool IsDynamicIotaLegal(mhlo::DynamicIotaOp op) {
+bool IsDynamicIotaLegal(stablehlo::DynamicIotaOp op) {
   auto type = llvm::cast<ShapedType>(op.getType());
   auto element_type = type.getElementType();
-  return (!element_type.isF32() && !element_type.isSignlessInteger(32) &&
+  return (!element_type.isF32() && !IsNarrowFloat(element_type) &&
+          !element_type.isSignlessInteger(32) &&
           !element_type.isSignlessInteger(64)) ||
          type.getRank() > 1 || op.getIotaDimension() != 0;
 }
 
 LogicalResult LegalizeDynamicIotaOp::matchAndRewrite(
-    mhlo::DynamicIotaOp op, OpAdaptor adaptor,
+    stablehlo::DynamicIotaOp op, OpAdaptor adaptor,
     ConversionPatternRewriter& rewriter) const {
   if (IsDynamicIotaLegal(op)) {
     return failure();
@@ -152,17 +163,19 @@ LogicalResult LegalizeDynamicIotaOp::matchAndRewrite(
 
   auto type = llvm::cast<ShapedType>(op.getType());
   Type element_type = type.getElementType();
+  const bool needs_cast = IsNarrowFloat(element_type);
+  const Type range_e_type = needs_cast ? rewriter.getF32Type() : element_type;
 
   auto [start, unused_limit, delta] =
-      BuildRangeParams(element_type, /*iota_dim_size*/ 0, rewriter);
+      BuildRangeParams(range_e_type, /*iota_dim_size*/ 0, rewriter);
 
   auto start_op = arith::ConstantOp::create(rewriter, op.getLoc(), start);
   auto delta_op = arith::ConstantOp::create(rewriter, op.getLoc(), delta);
 
   auto output_shape = op.getOperand();
-  if (mlir::isa<FloatType>(element_type)) {
+  if (mlir::isa<FloatType>(range_e_type)) {
     auto cast_type =
-        mlir::cast<ShapedType>(output_shape.getType()).clone(element_type);
+        mlir::cast<ShapedType>(output_shape.getType()).clone(range_e_type);
     output_shape =
         TFL::CastOp::create(rewriter, op.getLoc(), cast_type, output_shape);
   }
@@ -173,15 +186,21 @@ LogicalResult LegalizeDynamicIotaOp::matchAndRewrite(
   auto scalar_shape =
       arith::ConstantOp::create(rewriter, op.getLoc(), scalar_attr);
   auto limit_scalar = TFL::ReshapeOp::create(
-      rewriter, op.getLoc(), RankedTensorType::get({}, element_type),
+      rewriter, op.getLoc(), RankedTensorType::get({}, range_e_type),
       output_shape, scalar_shape);
 
   const uint64_t dimension = op.getIotaDimension();
   auto range_type =
-      RankedTensorType::get({type.getShape()[dimension]}, element_type);
+      RankedTensorType::get({type.getShape()[dimension]}, range_e_type);
 
-  rewriter.replaceOpWithNewOp<TFL::RangeOp>(op, range_type, start_op,
-                                            limit_scalar, delta_op);
+  Value result = TFL::RangeOp::create(rewriter, op.getLoc(), range_type,
+                                      start_op, limit_scalar, delta_op);
+
+  if (needs_cast) {
+    result = TFL::CastOp::create(rewriter, op.getLoc(), type, result);
+  }
+
+  rewriter.replaceOp(op, result);
 
   return success();
 }
@@ -191,8 +210,8 @@ LogicalResult LegalizeDynamicIotaOp::matchAndRewrite(
 void PopulateIotaPatterns(MLIRContext* ctx, RewritePatternSet& patterns,
                           ConversionTarget& target) {
   patterns.add<LegalizeIota, LegalizeDynamicIotaOp>(ctx);
-  target.addDynamicallyLegalOp<mhlo::IotaOp>(IsIotaLegal);
-  target.addDynamicallyLegalOp<mhlo::DynamicIotaOp>(IsDynamicIotaLegal);
+  target.addDynamicallyLegalOp<stablehlo::IotaOp>(IsIotaLegal);
+  target.addDynamicallyLegalOp<stablehlo::DynamicIotaOp>(IsDynamicIotaLegal);
 }
 
 }  // namespace mlir::odml

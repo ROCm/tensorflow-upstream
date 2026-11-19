@@ -1,3 +1,64 @@
+# Release 2.23.0
+
+## TensorFlow
+
+<INSERT SMALL BLURB ABOUT RELEASE FOCUS AREA AND POTENTIAL TOOLCHAIN CHANGES>
+
+### Breaking Changes
+
+*   <BREAKING CHANGES GO HERE>
+
+### Known Caveats
+
+*   <CAVEATS REGARDING THE RELEASE (BUT NOT BREAKING CHANGES).>
+
+### Major Features and Improvements
+
+* `tf.lite`
+    * Adds blockwise quantization support in the converter and `quant_spec` metadata in `FullyConnectedOptions`.
+    * `tfl.cast` now supports casting packed INT2/INT4/UINT4 inputs to any non-packed output type (CAST op version 10).
+    * `tfl.dequantize` now supports inputs quantized with N-D blockwise quantization (`BlockwiseQuantization.block_shape`) (DEQUANTIZE op version 10).
+    * `tfl.batch_matmul` now supports RHS inputs quantized with N-D blockwise quantization (`BlockwiseQuantization.block_shape`) alongside INT8 affine LHS and output tensors (BATCH_MATMUL op version 5).
+    * `tfl.fully_connected` now supports INT2, INT4, UINT4, INT8, UINT8 and INT16 filters quantized with N-D blockwise quantization (`BlockwiseQuantization.block_shape`), including fractional zero points, alongside INT8 per-tensor input and output tensors and an optional INT32 bias carrying its own scale (FULLY_CONNECTED op version 16).
+    * `tfl.fully_connected` now supports dynamic range (hybrid) quantization with N-D blockwise quantized filters: FLOAT32 or FLOAT16 input and output, with each input row quantized to INT8 at runtime (symmetrically by default, or asymmetrically with its own zero point when `asymmetric_quantize_inputs` is set), and an optional bias of the input type or FLOAT32 (FULLY_CONNECTED op version 17).
+    * `tfl.embedding_lookup` now supports INT2, INT4, UINT4, INT8, UINT8 and INT16 tables quantized with N-D blockwise quantization (`BlockwiseQuantization.block_shape`), including fractional zero points such as a centered INT2 grid, with FLOAT32 or FLOAT16 outputs (EMBEDDING_LOOKUP op version 6). The converter folds constant blockwise dequantized tables into such lookups.
+* `tf.function` / `PolymorphicFunction`:
+    * Added `clear_cache()` method to `PolymorphicFunction` to explicitly clear compiled concrete functions and dispatch tables, freeing retained graph memory.
+
+### Bug Fixes and Other Changes
+
+*   `tf.linalg.band_part`: `num_lower` and `num_upper` values that exceed the
+    number of rows or columns of the input are now clamped to the matrix
+    dimensions instead of raising an `InvalidArgumentError`. This matches the
+    documented definition of the op and the behavior of the XLA lowering used by
+    `tf.function(jit_compile=True)`.
+*   `tf.image.resize_with_pad`: the resized size and padding are now computed
+    exactly instead of in float32. For some sizes the image used to be scaled
+    one pixel short of the target and padded with a row or column of zeros
+    (e.g. 512x512 to 224x224), or placed one pixel off center.
+*   `tf.signal.hann_window` and `tf.signal.hamming_window`: `periodic=True`
+    (the default) now also produces a periodic window for odd
+    `window_length`. Previously odd lengths always got the symmetric window,
+    so `tf.signal.stft` and `tf.signal.inverse_stft` with the default window
+    and an odd `frame_length` now return different values. The new values
+    match `scipy.signal.get_window` and `tf.raw_ops.AudioSpectrogram`.
+*   `tf.dtypes.saturate_cast`: `int64` inputs no longer get a wrong upper limit
+    on x86 when the output dtype can hold the `int64` maximum, which clamped
+    every value to the `int64` minimum. `uint32` and `uint64` inputs no longer
+    raise `NotFoundError`.
+*   `tf.data.experimental.CsvDataset` and `make_csv_dataset`: restoring an
+    iterator from a checkpoint with `header=True` no longer loses rows or fails
+    with a parse error.
+*   `tf.vectorized_map`, `tf.GradientTape.jacobian` and `batch_jacobian`:
+    `tf.roll` with a negative axis no longer rolls along the wrong dimension,
+    which could mix values between batch elements or return a wrong Jacobian.
+
+## Thanks to our Contributors
+
+This release contains contributions from many people at Google, as well as:
+
+<INSERT>, <NAME>, <HERE>, <USING>, <GITHUB>, <HANDLE>
+
 # Release 2.22.0
 
 ## TensorFlow
@@ -18,12 +79,18 @@ In `tensorflow/c/experimental/filesystem/filesystem_interface.h`, removed `TF_Tr
 
 ### Major Features and Improvements
 
+*   Support for Python 3.14 has been added.
+* `tf.distribute.experimental`
+    * Introduces `tf.distribute.experimental.auto_strategy`, a dynamic factory API that automatically detects available hardware (TPUs, multiple GPUs, or multi-worker clusters via `TF_CONFIG`) and resolves the optimal distribution strategy, safely falling back to single device execution.
 * `tf.lite`
     * Adds support for QUI4 (Quantized Unsigned 4-bit) in Dequantize operator.
     * Adds support for FP16 and BF16 in Unpack operator.
     * Adds support for FP16 in Transpose and DynamicUpdateSlice operator.
     * Transpose now supports up to 8D tensors.
     * Adds support for FLOAT8_E4M3FN and FLOAT8_E5M2 data types.
+*   `tf.experimental.fold`: Adds support for folding/reconstructing image
+    tensors from extracted spatial patches as an inverse operation to
+    `tf.image.extract_patches`.
 
 ### Bug Fixes and Other Changes
 
@@ -63,6 +130,14 @@ In `tensorflow/c/experimental/filesystem/filesystem_interface.h`, removed `TF_Tr
         arithmetic; combining integer inputs with floating-point tolerances
         (including the defaults) now raises an error unless automatic type
         promotion is enabled, which keeps the cost of promotion opt-in.
+
+*   `tf.nn.elu`
+
+    *   Fixes the second derivative computed by automatic differentiation for
+        small negative inputs. There `elu(x)` rounds to `0.0`, which made the
+        backward pass of the gradient take the positive branch and return `0`
+        instead of a value close to `1`. Fixes
+        [#124830](https://github.com/tensorflow/tensorflow/issues/124830).
 
 *   oneDNN (MKL) convolution and transpose kernels
 
@@ -3518,7 +3593,7 @@ This release introduces several vulnerability fixes:
     *   Add `keepdims` argument to all `GlobalPooling` layers.
     *   Add `include_preprocessing` argument to `MobileNetV3` architectures to
         control the inclusion of `Rescaling` layer in the model.
-    *   Add optional argument (`force`) to `make_(train|test|predict)_funtion`
+    *   Add optional argument (`force`) to `make_(train|test|predict)_function`
         methods to skip the cached function and generate a new one. This is
         useful to regenerate in a single call the compiled training function
         when any `.trainable` attribute of any model's layer has changed.

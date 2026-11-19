@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -46,7 +47,8 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/file_system.h"
-#include "xla/util.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/util/sorted_range.h"
 
 namespace xla::gpu {
 namespace {
@@ -88,15 +90,17 @@ absl::Status KernelReuseCache::Load(const CompilationCacheProto& proto) {
     return absl::OkStatus();
   }
   absl::MutexLock lock(m_);
-  for (const auto& [name, entry] : proto.entries()) {
+  for (const auto& [name, entry] : tsl::KeySortedRange(proto.entries())) {
     std::optional<se::ClusterDim> cluster_dim;
     if (entry.has_cluster_dim()) {
       cluster_dim =
           se::ClusterDim{entry.cluster_dim().x(), entry.cluster_dim().y(),
                          entry.cluster_dim().z()};
     }
-    std::vector<uint8_t> binary(entry.binary().data(),
-                                entry.binary().data() + entry.binary().size());
+    std::shared_ptr<const std::vector<uint8_t>> binary =
+        std::make_shared<const std::vector<uint8_t>>(
+            entry.binary().data(),
+            entry.binary().data() + entry.binary().size());
     TF_RET_CHECK(
         cache_
             .insert(
@@ -116,7 +120,7 @@ CompilationCacheProto KernelReuseCache::Export() const {
   absl::MutexLock lock(m_);
   CompilationCacheProto proto;
   proto.set_compatibility_version(kCacheCompatibilityVersion);
-  for (const auto& [fingerprint, future] : cache_) {
+  for (const auto& [fingerprint, future] : tsl::KeySortedRange(cache_)) {
     const absl::StatusOr<Entry>& cache_entry = future.Await();
     if (!cache_entry.ok()) {
       // If a generator failed, the Future will hold an error.
@@ -147,9 +151,11 @@ CompilationCacheProto KernelReuseCache::Export() const {
       *proto_entry.mutable_cluster_dim() = cluster_dim_proto;
     }
     proto_entry.set_shmem_bytes(cache_entry->shmem_bytes);
-    proto_entry.set_binary(absl::string_view(
-        reinterpret_cast<const char*>(cache_entry->binary.data()),
-        cache_entry->binary.size()));
+    if (cache_entry->binary != nullptr) {
+      proto_entry.set_binary(absl::string_view(
+          reinterpret_cast<const char*>(cache_entry->binary->data()),
+          cache_entry->binary->size()));
+    }
   }
   return proto;
 }
@@ -168,12 +174,13 @@ absl::Status UpdateDiskKernelCache(absl::string_view path, const bool do_append,
   }
 
   absl::flat_hash_set<std::string> kernel_fingerprints;
-  for (const auto& [_, entry] : disk_cache.entries()) {
+  for (const auto& [_, entry] : tsl::KeySortedRange(disk_cache.entries())) {
     kernel_fingerprints.insert(entry.fingerprint());
   }
 
   int stored_kernel_count = 0;
-  for (const auto& [name, entry] : current_cache.entries()) {
+  for (const auto& [name, entry] :
+       tsl::KeySortedRange(current_cache.entries())) {
     if (kernel_fingerprints.contains(entry.fingerprint())) {
       continue;
     }
@@ -190,22 +197,22 @@ absl::Status UpdateDiskKernelCache(absl::string_view path, const bool do_append,
   return absl::OkStatus();
 }
 
-std::pair<tsl::Future<const KernelReuseCache::Entry*>, bool>
+std::pair<tsl::Future<KernelReuseCache::Kernel>, bool>
 KernelReuseCache::GetWithStatus(
     const HloComputation* fused_computation,
-    absl::Span<const emitters::KernelArgument> kernel_arguments,
+    const emitters::KernelArguments& kernel_arguments,
     absl::string_view discriminator,
     absl::FunctionRef<tsl::Future<KernelReuseCache::Entry>()> generator) {
   std::string fingerprint = emitters::GetComputationFingerprint(
-      fused_computation, kernel_arguments, discriminator);
+      fused_computation, kernel_arguments.args(), discriminator);
   VLOG(4) << "Fingerprint: ";
   XLA_VLOG_LINES(4, fingerprint);
-  return GetWithStatus(std::move(fingerprint), generator);
+  return GetWithStatus(std::move(fingerprint), kernel_arguments, generator);
 }
 
-std::pair<tsl::Future<const KernelReuseCache::Entry*>, bool>
+std::pair<tsl::Future<KernelReuseCache::Kernel>, bool>
 KernelReuseCache::GetWithStatus(
-    std::string fingerprint,
+    std::string fingerprint, const emitters::KernelArguments& kernel_arguments,
     absl::FunctionRef<tsl::Future<KernelReuseCache::Entry>()> generator) {
   absl::MutexLock lock(m_);
   hits_.insert(fingerprint);
@@ -220,7 +227,20 @@ KernelReuseCache::GetWithStatus(
   }
 
   return {it->second.Map(
-              [](const KernelReuseCache::Entry& entry) { return &entry; }),
+              [kernel_arguments](const KernelReuseCache::Entry& entry) mutable {
+                return KernelReuseCache::Kernel{
+                    GpuKernelSpec{
+                        entry.kernel_name,
+                        entry.launch_dimensions,
+                        std::move(kernel_arguments),
+                        entry.shmem_bytes,
+                        entry.use_pdl,
+                        entry.tma_metadata,
+                        entry.cluster_dim,
+                    },
+                    entry.binary,
+                };
+              }),
           cached};
 }
 

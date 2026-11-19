@@ -41,6 +41,37 @@ limitations under the License.
 
 namespace xla {
 
+bool AbslParseFlag(absl::string_view text, CompilerMetadataOnLoad* on_load,
+                   std::string* error) {
+  if (text == "keep") {
+    *on_load = CompilerMetadataOnLoad::kKeep;
+    return true;
+  }
+  if (text == "strip") {
+    *on_load = CompilerMetadataOnLoad::kStrip;
+    return true;
+  }
+  if (text == "strip_and_compress") {
+    *on_load = CompilerMetadataOnLoad::kStripAndCompress;
+    return true;
+  }
+  *error = absl::StrCat("unknown CompilerMetadataOnLoad '", text,
+                        "'; expected keep, strip or strip_and_compress");
+  return false;
+}
+
+std::string AbslUnparseFlag(CompilerMetadataOnLoad on_load) {
+  switch (on_load) {
+    case CompilerMetadataOnLoad::kKeep:
+      return "keep";
+    case CompilerMetadataOnLoad::kStrip:
+      return "strip";
+    case CompilerMetadataOnLoad::kStripAndCompress:
+      return "strip_and_compress";
+  }
+  return absl::StrCat(static_cast<int>(on_load));
+}
+
 PjRtCompilerRegistry& PjRtCompilerRegistry::Global() {
   static absl::NoDestructor<PjRtCompilerRegistry> global_registry;
   return *global_registry;
@@ -125,6 +156,19 @@ absl::StatusOr<PjRtCompiler*> PjRtCompilerRegistry::GetCompiler(
   return GetOrCreateCompiler(platform_name, variant_name);
 }
 
+bool PjRtCompilerRegistry::IsCompilerRegistered(
+    absl::string_view platform_name, absl::string_view variant_name) {
+  PjRtCompilerType key{platform_name, variant_name};
+  {
+    absl::MutexLock l(compiler_mutex_);
+    if (compilers_.contains(key)) {
+      return true;
+    }
+  }
+  absl::MutexLock l(factory_mutex_);
+  return factories_.contains(key);
+}
+
 absl::Status PjRtCompilerRegistry::InitializeVariant(
     absl::string_view platform_name, absl::string_view variant_name) {
   return GetOrCreateCompiler(platform_name, variant_name).status();
@@ -186,6 +230,12 @@ absl::Status PjRtInitializeCompilerVariants() {
   return PjRtCompilerRegistry::Global().InitializeAllVariants();
 }
 
+bool PjRtIsCompilerVariantRegistered(absl::string_view platform_name,
+                                     absl::string_view variant_name) {
+  return PjRtCompilerRegistry::Global().IsCompilerRegistered(platform_name,
+                                                             variant_name);
+}
+
 void PjRtRegisterDefaultCompiler(absl::string_view platform_name,
                                  std::unique_ptr<PjRtCompiler> compiler) {
   CHECK_OK(PjRtCompilerRegistry::Global().RegisterCompiler(
@@ -225,9 +275,9 @@ absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(
                                                     compiler_variant);
 }
 
-static absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(
+absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(
     const PjRtTopologyDescription& topology,
-    std::optional<PjRtCompilerVariant> variant = std::nullopt) {
+    std::optional<PjRtCompilerVariant> variant) {
   if (std::optional<PjRtCompiler*> topology_compiler = topology.compiler()) {
     return *topology_compiler;
   }
@@ -279,10 +329,11 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCompile(
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtDeserializeExecutable(
     const PjRtTopologyDescription& topology,
     riegeli::Any<riegeli::Reader*> reader,
-    std::optional<CompileOptions> options) {
+    std::optional<CompileOptions> options,
+    const DeserializeExecutableOptions& deserialize_options) {
   ABSL_ASSIGN_OR_RETURN(PjRtCompiler * compiler, GetPjRtCompiler(topology));
-  return compiler->DeserializeExecutable(topology, std::move(reader),
-                                         std::move(options));
+  return compiler->DeserializeExecutable(
+      topology, std::move(reader), std::move(options), deserialize_options);
 }
 
 absl::Status PjRtPhaseCompiler::RegisterPhase(

@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
+#include "xla/service/latency_estimator.h"  // IWYU pragma: export
 #include "xla/shape_util.h"
 #include "xla/side_effect_util.h"
 #include "xla/status_macros.h"
@@ -64,14 +65,6 @@ limitations under the License.
 namespace xla {
 
 inline constexpr int64_t kInvalidAnnotation = -1;
-
-struct CanonicalAsyncOp {
-  HloOpcode outer;  // kAsyncStart or kAsyncDone
-  HloOpcode inner;  // kAllReduce, kAllGather, kAllToAll, kCollectiveBroadcast,
-                    // kCollectivePermute, or kReduceScatter
-};
-
-CanonicalAsyncOp DefaultGetCanonicalAsyncOp(const HloInstruction& hlo);
 
 // Returns the matching start instruction for an async-done instruction.
 // Supports both canonical async ops (e.g. kAsyncDone, kAllGatherDone) and
@@ -93,9 +86,6 @@ inline bool IsNopInstruction(HloOpcode op, const HloInstruction& hlo) {
          (op == HloOpcode::kTuple && hlo.user_count() == 1 &&
           hlo.users().front()->opcode() == HloOpcode::kWhile);
 }
-
-using GetCanonicalAsyncOpFunc =
-    std::function<CanonicalAsyncOp(const HloInstruction& hlo)>;
 
 class HloGraphNode;
 class ModulePressureState;
@@ -208,41 +198,12 @@ struct SchedulerConfig {
   bool top_down_scheduling = false;
   // If true, enable schedule by structure.
   bool enable_schedule_by_structure = false;
+  // If true (and enable_schedule_by_structure is true), synchronous
+  // collectives are used as schedule anchors by the target-specific
+  // schedule-by-structure (critical path depth) heuristic.
+  bool enable_cpd_for_sync_collective = true;
   // If set, only log computations that match the given regular expression.
   std::string log_computation_re;
-};
-
-// Class used estimate latency between instructions and cost of HLOs.
-class LatencyEstimator {
- public:
-  using TimeCost = double;
-  // Uses the approximate or cost model function for GetLatencyBetween based on
-  // a flag.
-  virtual TimeCost GetLatencyBetween(const HloGraphNode& from,
-                                     const HloGraphNode& target) const = 0;
-  // Uses the approximate or cost model function for NodeCost based on a flag.
-  virtual TimeCost NodeCost(const HloInstruction* node) const = 0;
-  // Returns the core frequency used in latency estimation.
-  virtual int CyclesPerMicrosecond() const = 0;
-
-  // Returns the latency cycles of the instruction if it is specified in the
-  // frontend attributes. Otherwise, returns std::nullopt.
-  std::optional<TimeCost> GetLatencyFromMetadata(
-      const HloInstruction& instruction) const;
-
-  virtual ~LatencyEstimator() = default;
-
-  inline CanonicalAsyncOp GetCanonicalAsyncOp(const HloInstruction& hlo) const {
-    return get_canonical_async_op_(hlo);
-  }
-  bool IsAsyncPair(const HloGraphNode& from, const HloGraphNode& target) const;
-  bool IsP2pPair(const HloGraphNode& from, const HloGraphNode& target) const;
-  explicit LatencyEstimator(
-      GetCanonicalAsyncOpFunc func = DefaultGetCanonicalAsyncOp)
-      : get_canonical_async_op_(func) {}
-
- private:
-  GetCanonicalAsyncOpFunc get_canonical_async_op_;
 };
 
 // Implementation of LatencyEstimator using an approximate cost model.
@@ -474,6 +435,12 @@ class AsyncTracker {
 
   const SchedulerConfig& GetConfig() const { return config_; }
 
+  // Overrides SchedulerConfig::enable_cpd_for_sync_collective. Used by the
+  // scheduler to reschedule with a different schedule-by-structure setting.
+  void SetEnableCpdForSyncCollective(bool enable) {
+    config_.enable_cpd_for_sync_collective = enable;
+  }
+
   // Clears the cache of per-computation resource maps. This is needed when,
   // e.g., we modify the schedule of a computation, which could change the
   // resource usage of the computation.
@@ -521,7 +488,7 @@ class AsyncTracker {
   GetCanonicalAsyncOpFunc get_canonical_async_op_;
 
  protected:
-  const SchedulerConfig config_;
+  SchedulerConfig config_;
   mutable absl::Mutex resources_cache_mu_;
   mutable absl::flat_hash_map<const HloInstruction*,
                               std::unique_ptr<ResourcesVector>>
@@ -1248,6 +1215,18 @@ class HloGraphNode {
   EdgeStorage predecessors_;
   EdgeStorage successors_;
 };
+
+// HloGraphNode overloads of LatencyEstimator pair predicates. They are defined
+// here because HloGraphNode is only complete in this header.
+inline bool LatencyEstimator::IsAsyncPair(const HloGraphNode& from,
+                                          const HloGraphNode& target) const {
+  return IsAsyncPair(from.GetInstr(), target.GetInstr());
+}
+
+inline bool LatencyEstimator::IsP2pPair(const HloGraphNode& from,
+                                        const HloGraphNode& target) const {
+  return IsP2pPair(from.GetInstr(), target.GetInstr());
+}
 
 // Schedule graph that can be used to drive scheduling
 // of HLO instructions.

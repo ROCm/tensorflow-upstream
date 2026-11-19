@@ -17,11 +17,13 @@ limitations under the License.
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -31,6 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/autotune_cache_store.h"
 #include "xla/backends/autotuner/autotuner.h"
@@ -47,6 +50,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/factory.h"
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
 #include "xla/backends/gpu/autotuner/legacy_cache.h"
+#include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -55,9 +59,12 @@ limitations under the License.
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/compiler.h"
 #include "xla/service/decision.h"
+#include "xla/service/gpu/autotuning/gpu_default_backend_policy.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/mlir_context_pool.h"
+#include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
@@ -83,10 +90,11 @@ using AutotuneDecision = Decision;
 // are the only viable configurations to try.
 AutotuneDecision AllowRegSpillsForGpuInstruction(
     const HloInstruction& instruction, autotuner::Backend backend) {
-  // CUBLASLT_FISSION creates loop fusions for the decomposed prologue and
+  // Fission backends create loop fusions for the decomposed prologue and
   // epilogue of the GEMM fusion. These fusions are allowed to spill as they
   // have limited configs and can still be faster.
-  if (backend == autotuner::Backend::CUBLASLT_FISSION) {
+  if (backend == autotuner::Backend::CUBLASLT_FISSION ||
+      backend == autotuner::Backend::CUDNN_FISSION) {
     return AutotuneDecision::Allow();
   }
   if (instruction.opcode() == HloOpcode::kCustomCall) {
@@ -182,11 +190,30 @@ AutotuneDecision ShouldAssignConfigToGemmFusion(
       "Fusion kind is not supported for GEMM autotuning");
 }
 
-AutotuneDecision ShouldAssignConfigToGenericFusion(
-    bool enable_fusion_autotuner, const HloInstruction& instruction) {
+// Generic Triton fusions usually already have a config from the cost model.
+// Autotune them only when top-k > 1, and only with the block-level emitter, the
+// only backend that keeps them as Triton fusions.
+AutotuneDecision ShouldAssignConfigToTritonFusion(
+    bool enable_fusion_autotuner, bool block_level_emitter_enabled,
+    int top_k_configs) {
   if (!enable_fusion_autotuner) {
     return AutotuneDecision::Forbid("Fusion autotuner is disabled");
   }
+  if (!block_level_emitter_enabled) {
+    return AutotuneDecision::Forbid("Block-level emitter backend is disabled");
+  }
+  if (top_k_configs == 1) {
+    return AutotuneDecision::Forbid(
+        "Triton fusions keep the cost model's config when autotuning over a "
+        "single config");
+  }
+  return AutotuneDecision::Allow();
+}
+
+AutotuneDecision ShouldAssignConfigToGenericFusion(
+    bool enable_fusion_autotuner,
+    const absl::flat_hash_set<autotuner::Backend>& enabled_backends,
+    const HloInstruction& instruction) {
   auto fusion = Cast<const HloFusionInstruction>(&instruction);
   if (fusion->fusion_kind() == HloInstruction::FusionKind::kCustom) {
     return AutotuneDecision::Forbid(
@@ -196,12 +223,26 @@ AutotuneDecision ShouldAssignConfigToGenericFusion(
                      HloPredicateIsOp<HloOpcode::kScatter>)) {
     return AutotuneDecision::Forbid("Fusions with Scatter are not supported");
   }
-  return AutotuneDecision::Allow();
+  if (enable_fusion_autotuner) {
+    return AutotuneDecision::Allow();
+  }
+  // Without the fusion autotuner (autotune level 0 or deterministic ops),
+  // fusions whose default backend is enabled still get a config, picked
+  // without online autotuning. The others keep the native emitters.
+  std::optional<autotuner::Backend> default_backend =
+      GetDefaultBackend(instruction);
+  if (default_backend.has_value() &&
+      enabled_backends.contains(*default_backend)) {
+    return AutotuneDecision::Allow();
+  }
+  return AutotuneDecision::Forbid("Fusion autotuner is disabled");
 }
 
 AutotuneDecision ShouldAssignConfigToInstruction(
     bool do_not_autotune_cublas, bool do_not_autotune_cudnn,
-    bool enable_fusion_autotuner, const HloInstruction& instruction) {
+    bool enable_fusion_autotuner,
+    const absl::flat_hash_set<autotuner::Backend>& enabled_backends,
+    int top_k_configs, const HloInstruction& instruction) {
   // 1. Custom calls.
   if (instruction.opcode() == HloOpcode::kCustomCall) {
     return ShouldAssignConfigToCustomCall(do_not_autotune_cublas,
@@ -221,9 +262,17 @@ AutotuneDecision ShouldAssignConfigToInstruction(
         backend_config.kind() == kCustomFusionKind) {
       return ShouldAssignConfigToGemmFusion(instruction);
     }
-    // 3. Generic fusions.
+    // 3. Generic Triton-only fusions. These are expected to only be tuned by
+    // the BlockLevelEmitterBackend.
+    if (backend_config.kind() == kTritonFusionKind) {
+      return ShouldAssignConfigToTritonFusion(
+          enable_fusion_autotuner,
+          enabled_backends.contains(autotuner::Backend::BLOCK_LEVEL_EMITTER),
+          top_k_configs);
+    }
+    // 4. Generic fusions.
     return ShouldAssignConfigToGenericFusion(enable_fusion_autotuner,
-                                             instruction);
+                                             enabled_backends, instruction);
   }
   return AutotuneDecision::Forbid(
       "Instruction is neither custom call nor fusion");
@@ -246,6 +295,21 @@ std::unique_ptr<AutotunerCacheInterface> CreateAutotunerCache(
     const DebugOptions& debug_options,
     const Compiler::GpuTargetConfig& target_config,
     const std::vector<std::unique_ptr<CodegenBackend>>& backends) {
+  // The autotune cache is process-wide and keyed without debug options, so it
+  // may contain timing-based picks inserted by other (non-deterministic)
+  // modules. Using them would make a deterministic compilation depend on what
+  // else was compiled in the process first, so don't use any cache unless
+  // xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops is
+  // enabled.
+  const bool use_cache_for_deterministic_ops =
+      debug_options
+          .xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops();
+  if ((debug_options.xla_gpu_deterministic_ops() ||
+       debug_options.xla_gpu_exclude_nondeterministic_ops()) &&
+      !use_cache_for_deterministic_ops) {
+    return nullptr;
+  }
+
   std::string cache_dir = debug_options.xla_gpu_per_fusion_autotune_cache_dir();
 
   if (!debug_options.xla_gpu_use_new_autotune_cache_format()) {
@@ -263,9 +327,12 @@ std::unique_ptr<AutotunerCacheInterface> CreateAutotunerCache(
         cache_dir,
         GetCacheMode(debug_options.xla_gpu_experimental_autotune_cache_mode()));
   }
-  return std::make_unique<TieredCache>(cache_ctx, KeyMatchingMode::kLoose,
-                                       std::move(primary),
-                                       std::move(secondary));
+  KeyMatchingMode matching_mode =
+      debug_options.xla_autotune_cache_require_strict_codegen_match()
+          ? KeyMatchingMode::kStrict
+          : KeyMatchingMode::kLoose;
+  return std::make_unique<TieredCache>(
+      cache_ctx, matching_mode, std::move(primary), std::move(secondary));
 }
 
 }  // namespace
@@ -330,6 +397,12 @@ ProfileOptions GetProfileOptions(const DebugOptions& debug_options,
     profile_options.redzone_padding_bytes = 0;
   }
   profile_options.should_init_buffers = check_buffers;
+  // The cache flush buffer is only needed if candidates are profiled.
+  profile_options.flush_caches =
+      debug_options.xla_gpu_autotune_level() > 0 &&
+      debug_options.xla_gpu_autotune_flush_l2_cache();
+  profile_options.num_timed_runs =
+      debug_options.xla_gpu_autotune_num_timed_runs();
   return profile_options;
 }
 
@@ -342,6 +415,8 @@ Autotuner::Options GetAutotunerOptions(const DebugOptions& debug_options,
     autotuner_options.excluded_backends.push_back(
         autotuner::Backend::HIPBLASLT_FISSION);
   }
+  autotuner_options.preferred_backend =
+      debug_options.xla_autotuner_preferred_backend();
   autotuner_options.correctness_check_options.enable_correctness_check =
       is_buffer_check_supported && debug_options.xla_gpu_autotune_level() >= 4;
   autotuner_options.correctness_check_options.relative_tolerance =
@@ -357,25 +432,27 @@ Autotuner::Options GetAutotunerOptions(const DebugOptions& debug_options,
 
 InstructionFilterFn GetShouldAssignConfigToInstructionFn(
     const DebugOptions& debug_options,
-    const se::GpuComputeCapability& gpu_version) {
+    absl::Span<const autotuner::Backend> enabled_backends) {
   bool do_not_autotune_cublas =
-      debug_options.xla_gpu_experimental_disable_binary_libraries() ||
-      debug_options.xla_gpu_autotune_level() == 0;
+      debug_options.xla_gpu_experimental_disable_binary_libraries();
   bool do_not_autotune_cudnn =
-      debug_options.xla_gpu_experimental_disable_binary_libraries() ||
-      (do_not_autotune_cublas && !gpu_version.IsRocm());
+      debug_options.xla_gpu_experimental_disable_binary_libraries();
 
   bool enable_fusion_autotuner =
       debug_options.xla_gpu_autotune_level() != 0 &&
       !debug_options.xla_gpu_exclude_nondeterministic_ops() &&
       !debug_options.xla_gpu_deterministic_ops() &&
       debug_options.xla_gpu_experimental_enable_fusion_autotuner();
+  int top_k_configs = debug_options.xla_gpu_fusion_autotune_top_k_configs();
 
   return [do_not_autotune_cublas, do_not_autotune_cudnn,
-          enable_fusion_autotuner](const HloInstruction& instruction) -> bool {
+          enable_fusion_autotuner,
+          enabled_backends = absl::flat_hash_set<autotuner::Backend>(
+              enabled_backends.begin(), enabled_backends.end()),
+          top_k_configs](const HloInstruction& instruction) -> bool {
     AutotuneDecision decision = ShouldAssignConfigToInstruction(
         do_not_autotune_cublas, do_not_autotune_cudnn, enable_fusion_autotuner,
-        instruction);
+        enabled_backends, top_k_configs, instruction);
     if (!decision) {
       VLOG(3) << "Not assigning configs to " << instruction.name() << ": "
               << decision.Explain();
@@ -384,41 +461,52 @@ InstructionFilterFn GetShouldAssignConfigToInstructionFn(
   };
 }
 
-absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
-ConfigAssignerPass::GetEnabledBackends(
-    se::StreamExecutor* stream_exec,
-    se::DeviceAddressAllocator* device_allocator,
-    const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
-    const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
-    HloCostAnalysis::ShapeSizeFunction shape_size_fn, Compiler* compiler,
-    se::PlatformId platform_id) {
+std::vector<autotuner::Backend> GetEnabledBackendTypes(
+    const DebugOptions& debug_options,
+    const se::GpuComputeCapability& gpu_version) {
   std::vector<autotuner::Backend> autotune_backends;
   for (const auto& backend :
        debug_options.xla_gpu_experimental_autotune_backends()) {
     autotune_backends.push_back(static_cast<autotuner::Backend>(backend));
+  }
+  // An empty list means all backends. It happens for DebugOptions that don't
+  // start from DefaultDebugOptionsIgnoringFlags(), e.g. ones serialized before
+  // it populated the list. Populate it like the defaults do, so that the
+  // backends disabled below are removed.
+  if (autotune_backends.empty()) {
+    for (int i = 0; i < autotuner::Backend_descriptor()->value_count(); ++i) {
+      const auto backend = static_cast<autotuner::Backend>(
+          autotuner::Backend_descriptor()->value(i)->number());
+      if (backend != autotuner::Backend::UNSPECIFIED_BACKEND) {
+        autotune_backends.push_back(backend);
+      }
+    }
   }
 
   std::vector<autotuner::Backend> disabled_autotune_backends;
   if (debug_options.xla_gpu_experimental_disable_binary_libraries()) {
     disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT);
     disabled_autotune_backends.push_back(autotuner::Backend::CUDNN);
+    disabled_autotune_backends.push_back(autotuner::Backend::CUDNN_FISSION);
     disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT);
     disabled_autotune_backends.push_back(autotuner::Backend::MIOPEN);
     disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT_FISSION);
   }
 
-  if (debug_options.xla_gpu_autotune_level() == 0 ||
-      debug_options.xla_gpu_exclude_nondeterministic_ops() ||
-      debug_options.xla_gpu_deterministic_ops() ||
-      !debug_options.xla_gpu_experimental_enable_fusion_autotuner()) {
-    disabled_autotune_backends.push_back(autotuner::Backend::NATIVE_EMITTER);
-    disabled_autotune_backends.push_back(
-        autotuner::Backend::BLOCK_LEVEL_EMITTER);
+  if ((debug_options.xla_gpu_exclude_nondeterministic_ops() ||
+       debug_options.xla_gpu_deterministic_ops()) &&
+      debug_options.xla_gpu_experimental_deterministic_ops_triton() ==
+          DebugOptions::DETERMINISTIC_OPS_TRITON_MODE_OFF) {
+    disabled_autotune_backends.push_back(autotuner::Backend::TRITON);
   }
 
-  if (debug_options.xla_gpu_exclude_nondeterministic_ops() ||
-      debug_options.xla_gpu_deterministic_ops()) {
-    disabled_autotune_backends.push_back(autotuner::Backend::TRITON);
+  if (!debug_options.xla_gpu_experimental_enable_tensor_ir()) {
+    disabled_autotune_backends.push_back(autotuner::Backend::TENSOR_IR);
+  }
+
+  if (!EnsureTritonSupportsComputeCapability(gpu_version).ok()) {
+    disabled_autotune_backends.push_back(
+        autotuner::Backend::BLOCK_LEVEL_EMITTER);
   }
 
   autotune_backends.erase(
@@ -428,22 +516,34 @@ ConfigAssignerPass::GetEnabledBackends(
                                                     backend);
                      }),
       autotune_backends.end());
+  return autotune_backends;
+}
 
+absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
+ConfigAssignerPass::CreateBackends(
+    absl::Span<const autotuner::Backend> backend_types,
+    se::StreamExecutor* stream_exec,
+    se::DeviceAddressAllocator* device_allocator,
+    const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
+    const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
+    HloCostAnalysis::ShapeSizeFunction shape_size_fn, Compiler* compiler,
+    se::PlatformId platform_id, tsl::thread::ThreadPool* thread_pool,
+    MlirContextPool* absl_nonnull mlir_context_pool) {
   auto& registry = stream_executor::PlatformObjectRegistry::GetGlobalRegistry();
   ABSL_ASSIGN_OR_RETURN(const GetCodegenBackends::Type& get_codegen_backends,
                    registry.FindObject<GetCodegenBackends>(platform_id));
   std::vector<std::unique_ptr<CodegenBackend>> backends = get_codegen_backends(
       stream_exec, device_allocator, &debug_options, compiler, target_config,
-      alias_info, mlir_context, shape_size_fn, autotune_backends);
+      alias_info, mlir_context, shape_size_fn, backend_types, thread_pool,
+      mlir_context_pool);
 
   return backends;
 }
 
 absl::StatusOr<std::unique_ptr<ConfigAssignerPass>> ConfigAssignerPass::Create(
     ConfigAssignerPass::GetBackendsFn get_backends_fn,
-    const DebugOptions& debug_options,
-    const se::GpuComputeCapability& gpu_version,
-    se::StreamExecutor* stream_executor, tsl::thread::ThreadPool* thread_pool,
+    const DebugOptions& debug_options, se::StreamExecutor* stream_executor,
+    tsl::thread::ThreadPool* thread_pool,
     const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
     mlir::MLIRContext* mlir_context,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn,
@@ -452,14 +552,23 @@ absl::StatusOr<std::unique_ptr<ConfigAssignerPass>> ConfigAssignerPass::Create(
   ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<CodegenBackend>> backends,
                    get_backends_fn());
 
+  std::vector<autotuner::Backend> enabled_backends;
+  enabled_backends.reserve(backends.size());
+  for (const std::unique_ptr<CodegenBackend>& backend : backends) {
+    enabled_backends.push_back(backend->backend());
+  }
   InstructionFilterFn should_assign_config_to =
-      GetShouldAssignConfigToInstructionFn(debug_options, gpu_version);
+      GetShouldAssignConfigToInstructionFn(debug_options, enabled_backends);
 
   bool is_deviceless = stream_executor == nullptr;
   ConfigAssigner::Options assigner_options =
       GetConfigAssignerOptions(debug_options, is_deviceless);
+  assigner_options.default_backend_fn = GetDefaultBackend;
   CodegenOrchestrator::Options orchestrator_options =
       GetCodegenOrchestratorOptions(debug_options);
+  // Null in deterministic mode unless
+  // xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops is
+  // enabled.
   std::unique_ptr<AutotunerCacheInterface> cache =
       CreateAutotunerCache(debug_options, *target_config, backends);
 
@@ -469,26 +578,25 @@ absl::StatusOr<std::unique_ptr<ConfigAssignerPass>> ConfigAssignerPass::Create(
 
   std::unique_ptr<Autotuner> autotuner = nullptr;
   if (!is_deviceless) {
-      // TODO(intel-tf): Enable buffer checking for SYCL once
-      // BufferComparatorKernel and RedzoneAllocatorKernel are registered for
-      // SYCL platform.
-      bool is_buffer_check_supported = stream_executor->GetPlatform()->id() !=
-                                       stream_executor::sycl::kSyclPlatformId;
-      std::unique_ptr<Profiler> profiler = GpuProfiler::Create(
-          stream_executor,
-          GetProfileOptions(debug_options, is_buffer_check_supported),
-          allocator);
-      Autotuner::Options autotuner_options =
-          GetAutotunerOptions(debug_options, is_buffer_check_supported);
-      autotuner_options.cache_context = AutotuneCacheContext::Create(
-          target_config->device_description, orchestrator->codegen_backends());
+    // TODO(intel-tf): Enable buffer checking for SYCL once
+    // BufferComparatorKernel and RedzoneAllocatorKernel are registered for
+    // SYCL platform.
+    bool is_buffer_check_supported = stream_executor->GetPlatform()->id() !=
+                                     stream_executor::sycl::kSyclPlatformId;
+    std::unique_ptr<Profiler> profiler = GpuProfiler::Create(
+        stream_executor,
+        GetProfileOptions(debug_options, is_buffer_check_supported), allocator);
+    Autotuner::Options autotuner_options =
+        GetAutotunerOptions(debug_options, is_buffer_check_supported);
+    autotuner_options.cache_context = AutotuneCacheContext::Create(
+        target_config->device_description, orchestrator->codegen_backends());
 
-      std::vector<std::unique_ptr<Profiler>> profilers;
-      profilers.push_back(std::move(profiler));
+    std::vector<std::unique_ptr<Profiler>> profilers;
+    profilers.push_back(std::move(profiler));
 
-      ABSL_ASSIGN_OR_RETURN(autotuner,
-                       Autotuner::Create(*orchestrator, std::move(profilers),
-                                         autotuner_options, thread_pool));
+    ABSL_ASSIGN_OR_RETURN(autotuner,
+                     Autotuner::Create(*orchestrator, std::move(profilers),
+                                       autotuner_options, thread_pool));
   }
 
   VLOG(1) << "ConfigAssigner options: " << assigner_options.ToString();

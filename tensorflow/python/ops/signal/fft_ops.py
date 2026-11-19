@@ -36,7 +36,9 @@ def _infer_fft_length_for_fftn(input_tensor):
 def _infer_fft_length_for_irfftn(input_tensor):
   fft_shape = input_tensor.get_shape()[-len(input_tensor.shape) :]
   fft_length = fft_shape.as_list()
-  fft_length[-1] = max(0, 2 * (fft_length[-1] - 1))
+  # A rank 0 input leaves nothing to index, as in _infer_fft_length_for_irfft.
+  if fft_length:
+    fft_length[-1] = max(0, 2 * (fft_length[-1] - 1))
   return _ops.convert_to_tensor(fft_length, _dtypes.int32)
 
 
@@ -112,6 +114,11 @@ def _maybe_pad_for_rfft(input_tensor, fft_rank, fft_length, is_reverse=False):
       any(dim.value == 0 for dim in input_tensor.shape.dims)):
     return input_tensor
 
+  # An N-D transform over a rank 0 input has no dimensions to pad, and the
+  # reverse branch below would index off the end of an empty fft_shape.
+  if fft_rank == 0:
+    return input_tensor
+
   # If we know the shapes ahead of time, we can either skip or pre-compute the
   # appropriate paddings. Otherwise, fall back to computing paddings in
   # TensorFlow.
@@ -151,6 +158,12 @@ def _maybe_pad_for_rfft(input_tensor, fft_rank, fft_length, is_reverse=False):
   return _array_ops.pad(input_tensor, paddings)
 
 
+def _rename_input_arg_doc(doc):
+  """Renames input to input_tensor in generated op docstrings."""
+  doc = doc.replace("`input`", "`input_tensor`")
+  return re.sub(r"(?m)^( +)input:", r"\1input_tensor:", doc)
+
+
 def _rfft_wrapper(fft_fn, fft_rank, default_name):
   """Wrapper around gen_spectral_ops.rfft* that infers fft_length argument."""
 
@@ -183,6 +196,7 @@ def _rfft_wrapper(fft_fn, fft_rank, default_name):
       return fft_fn(input_tensor, fft_length, Tcomplex=complex_dtype, name=name)
   if fft_fn.__doc__ is not None:
     _rfft.__doc__ = re.sub("    Tcomplex.*?\n", "", fft_fn.__doc__)
+    _rfft.__doc__ = _rename_input_arg_doc(_rfft.__doc__)
   return _rfft
 
 
@@ -217,11 +231,8 @@ def _irfft_wrapper(ifft_fn, fft_rank, default_name):
       return ifft_fn(input_tensor, fft_length, Treal=real_dtype, name=name)
 
   if ifft_fn.__doc__ is not None:
-    _irfft.__doc__ = re.sub(
-        "`input`",
-        "`input_tensor`",
-        re.sub("    Treal.*?\n", "", ifft_fn.__doc__),
-    )
+    _irfft.__doc__ = re.sub("    Treal.*?\n", "", ifft_fn.__doc__)
+    _irfft.__doc__ = _rename_input_arg_doc(_irfft.__doc__)
   return _irfft
 
 
@@ -239,7 +250,7 @@ def _fftn_wrapper(fft_n, default_name):
           input_tensor, preferred_dtype=_dtypes.complex64
       )
       axes = _process_empty_axes(input_tensor, axes)
-      fft_rank = axes.shape[0]
+      fft_rank = axes.shape[-1] if axes.shape.ndims else 0
       input_tensor.shape.with_rank_at_least(fft_rank)
       if fft_length is None:
         fft_length = _infer_fft_length_for_fftn(input_tensor)
@@ -264,6 +275,7 @@ def _fftn_wrapper(fft_n, default_name):
 
   if fft_n.__doc__ is not None:
     _fftn.__doc__ = re.sub(r"    Tcomplex.*?\n", "", fft_n.__doc__)
+    _fftn.__doc__ = _rename_input_arg_doc(_fftn.__doc__)
   return _fftn
 
 
@@ -281,7 +293,7 @@ def _ifftn_wrapper(ifft_n, default_name):
           input_tensor, preferred_dtype=_dtypes.complex64
       )
       axes = _process_empty_axes(input_tensor, axes)
-      fft_rank = axes.shape[0]
+      fft_rank = axes.shape[-1] if axes.shape.ndims else 0
       input_tensor.shape.with_rank_at_least(fft_rank)
       if fft_length is None:
         fft_length = _infer_fft_length_for_fftn(input_tensor)
@@ -306,6 +318,7 @@ def _ifftn_wrapper(ifft_n, default_name):
 
   if ifft_n.__doc__ is not None:
     _ifftn.__doc__ = re.sub(r"    Tcomplex.*?\n", "", ifft_n.__doc__)
+    _ifftn.__doc__ = _rename_input_arg_doc(_ifftn.__doc__)
   return _ifftn
 
 
@@ -323,7 +336,7 @@ def _rfftn_wrapper(rfft_n, default_name):
           input_tensor, preferred_dtype=_dtypes.float32
       )
       axes = _process_empty_axes(input_tensor, axes)
-      fft_rank = axes.shape[0]
+      fft_rank = axes.shape[-1] if axes.shape.ndims else 0
       if input_tensor.dtype not in (_dtypes.float32, _dtypes.float64):
         raise ValueError(
             "RFFT requires tf.float32 or tf.float64 inputs, got: %s"
@@ -365,6 +378,7 @@ def _rfftn_wrapper(rfft_n, default_name):
 
   if rfft_n.__doc__ is not None:
     _rfftn.__doc__ = re.sub(r"    Tcomplex.*?\n", "", rfft_n.__doc__)
+    _rfftn.__doc__ = _rename_input_arg_doc(_rfftn.__doc__)
   return _rfftn
 
 
@@ -382,7 +396,7 @@ def _irfftn_wrapper(irfft_n, default_name):
           input_tensor, preferred_dtype=_dtypes.complex64
       )
       axes = _process_empty_axes(input_tensor, axes)
-      fft_rank = axes.shape[0]
+      fft_rank = axes.shape[-1] if axes.shape.ndims else 0
       input_tensor.shape.with_rank_at_least(fft_rank)
       if input_tensor.dtype not in (_dtypes.complex64, _dtypes.complex128):
         raise ValueError(
@@ -419,11 +433,8 @@ def _irfftn_wrapper(irfft_n, default_name):
       )
 
   if irfft_n.__doc__ is not None:
-    _irfftn.__doc__ = re.sub(
-        "`input`",
-        "`input_tensor`",
-        re.sub(r"    Treal.*?\n", "", irfft_n.__doc__),
-    )
+    _irfftn.__doc__ = re.sub(r"    Treal.*?\n", "", irfft_n.__doc__)
+    _irfftn.__doc__ = _rename_input_arg_doc(_irfftn.__doc__)
   return _irfftn
 
 
@@ -671,7 +682,10 @@ def fftshift(x, axes=None, name=None):
   with _ops.name_scope(name, "fftshift") as name:
     x = _ops.convert_to_tensor(x)
     if axes is None:
-      axes = tuple(range(x.shape.ndims))
+      if x.shape.ndims is not None:
+        axes = tuple(range(x.shape.ndims))
+      else:
+        axes = _math_ops.range(_array_ops.rank(x))
       shift = _array_ops.shape(x) // 2
     elif isinstance(axes, int):
       shift = _array_ops.shape(x)[axes] // 2
@@ -716,7 +730,10 @@ def ifftshift(x, axes=None, name=None):
   with _ops.name_scope(name, "ifftshift") as name:
     x = _ops.convert_to_tensor(x)
     if axes is None:
-      axes = tuple(range(x.shape.ndims))
+      if x.shape.ndims is not None:
+        axes = tuple(range(x.shape.ndims))
+      else:
+        axes = _math_ops.range(_array_ops.rank(x))
       shift = -(_array_ops.shape(x) // 2)
     elif isinstance(axes, int):
       shift = -(_array_ops.shape(x)[axes] // 2)

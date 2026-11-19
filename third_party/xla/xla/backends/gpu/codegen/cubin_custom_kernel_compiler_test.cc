@@ -16,10 +16,12 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -30,32 +32,44 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
+#include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
-#include "xla/codegen/llvm_kernel_source.h"
+#include "xla/codegen/mlir_kernel_source.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
+#include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/pjrt/mlir_to_hlo.h"
-#include "xla/runtime/object_pool.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/target_constants.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
 
+using ::testing::ElementsAre;
 using ::xla::xtile::BlockLevelFusionConfig;
 using ::xla::xtile::BlockLevelParameters;
+
+GpuTopology SingleDeviceGpuTopology() {
+  return GpuTopology(/*platform_version=*/"", /*num_partitions=*/1,
+                     /*num_hosts_per_partition=*/1,
+                     /*num_devices_per_host=*/1);
+}
 
 TEST(CubinCustomKernelCompilerTest, CallbackInvoked) {
   int compiler_invoked = 0;
@@ -67,46 +81,137 @@ TEST(CubinCustomKernelCompilerTest, CallbackInvoked) {
   };
 
   DebugOptions debug_options;
+  GpuTopology gpu_topology = SingleDeviceGpuTopology();
+  llvm::Triple triple(nvptx::TargetTriple());
+  std::string data_layout = nvptx::DataLayout();
   CubinCustomKernelCompiler kernel_compiler(
-      llvm_compiler, TestGpuDeviceInfo::H100SXMDeviceInfo(), debug_options);
+      llvm_compiler, TestGpuDeviceInfo::H100SXMDeviceInfo(), debug_options,
+      gpu_topology, triple, data_layout);
 
   int hook_invoked = 0;
-  kernel_compiler.SetPreOptimizationHook(
-      [&](const llvm::Module&) { hook_invoked++; });
+  kernel_compiler.SetPreOptimizationHook([&](const llvm::Module& llvm_module) {
+    EXPECT_EQ(llvm_module.getTargetTriple(), triple);
+    EXPECT_EQ(llvm_module.getDataLayoutStr(), data_layout);
+    hook_invoked++;
+  });
+
+  MlirContextPool mlir_context_pool([]() { return CreateMlirContext(); });
+  HloModule hlo_module("test_module", {});
 
   constexpr int kIterations = 3;
   for (int i = 0; i < kIterations; i++) {
-    auto llvm_context = std::make_unique<llvm::LLVMContext>();
-    auto llvm_module = std::make_unique<llvm::Module>("Test", *llvm_context);
-    LlvmKernelSource kernel_source(std::move(llvm_context),
-                                   std::move(llvm_module));
-    emitters::KernelArguments kernel_arguments({});
+    ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
+                         mlir_context_pool.GetOrCreate());
+    (*borrowed_context)
+        ->appendDialectRegistry(MlirKernelEmitter::GetDialectRegistry());
+    (*borrowed_context)->loadAllAvailableDialects();
 
+    std::string kernel_name = absl::StrCat("kernel", i);
+    ASSERT_OK_AND_ASSIGN(
+        mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
+        ParseMlirModuleString(absl::StrCat("module {\n"
+                                           "  func.func @",
+                                           kernel_name,
+                                           "() attributes {xla.backend_kind = "
+                                           "#xla.backend_kind<gpu>} {\n"
+                                           "    return\n"
+                                           "  }\n"
+                                           "}\n"),
+                              **borrowed_context));
+
+    emitters::KernelArguments kernel_arguments({});
     Thunk::ThunkInfo thunk_info;
     LaunchDimensions dimensions;
+    bool use_pdl = (i == 0);
     ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Thunk> thunk,
         kernel_compiler
-            .Compile(thunk_info, std::move(kernel_source),
-                     absl::StrCat("kernel", i), kernel_arguments, dimensions)
+            .Compile(thunk_info,
+                     MlirKernelDefinition{
+                         GpuKernelSpec(kernel_name, dimensions,
+                                       kernel_arguments, std::nullopt, use_pdl),
+                         MlirKernelSource(nullptr, std::move(mlir_module))},
+                     std::move(borrowed_context), hlo_module,
+                     /*unroll_factor=*/0)
             .Await());
+    const auto* custom_kernel_thunk =
+        dynamic_cast<const CustomKernelThunk*>(thunk.get());
+    ASSERT_NE(custom_kernel_thunk, nullptr);
+    EXPECT_EQ(custom_kernel_thunk->custom_kernel_name(), kernel_name);
+    EXPECT_EQ(custom_kernel_thunk->use_pdl(), use_pdl);
   }
 
   EXPECT_EQ(kIterations, compiler_invoked);
   EXPECT_EQ(kIterations, hook_invoked);
+  EXPECT_EQ(mlir_context_pool.num_available(), mlir_context_pool.num_created());
+}
+
+TEST(CubinCustomKernelCompilerTest, CompileToTargetBinaryMlirWithThreadPool) {
+  const int64_t main_thread_id = tsl::Env::Default()->GetCurrentThreadId();
+  MlirContextPool mlir_context_pool([]() { return CreateMlirContext(); });
+  auto llvm_compiler =
+      [main_thread_id, &mlir_context_pool](
+          llvm::Module& llvm_module, const se::DeviceDescription& descr,
+          const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
+    EXPECT_NE(tsl::Env::Default()->GetCurrentThreadId(), main_thread_id);
+    EXPECT_EQ(mlir_context_pool.num_available(),
+              mlir_context_pool.num_created());
+    EXPECT_NE(llvm_module.getFunction("async_kernel"), nullptr);
+    return std::vector<uint8_t>{1, 2, 3};
+  };
+
+  DebugOptions debug_options;
+  GpuTopology gpu_topology = SingleDeviceGpuTopology();
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "compile", 2);
+  CubinCustomKernelCompiler kernel_compiler(
+      llvm_compiler, TestGpuDeviceInfo::H100SXMDeviceInfo(), debug_options,
+      gpu_topology, llvm::Triple(nvptx::TargetTriple()), nvptx::DataLayout(),
+      &thread_pool);
+
+  ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
+                       mlir_context_pool.GetOrCreate());
+  (*borrowed_context)
+      ->appendDialectRegistry(MlirKernelEmitter::GetDialectRegistry());
+  (*borrowed_context)->loadAllAvailableDialects();
+
+  ASSERT_OK_AND_ASSIGN(
+      mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
+      ParseMlirModuleString(
+          "module {\n"
+          "  func.func @async_kernel() attributes {xla.backend_kind = "
+          "#xla.backend_kind<gpu>} {\n"
+          "    return\n"
+          "  }\n"
+          "}\n",
+          **borrowed_context));
+
+  HloModule hlo_module("test_module", {});
+  emitters::KernelArguments kernel_arguments({});
+  LaunchDimensions dimensions;
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<uint8_t> cubin,
+      kernel_compiler
+          .CompileToTargetBinary(
+              MlirKernelDefinition{
+                  GpuKernelSpec("async_kernel", dimensions, kernel_arguments,
+                                std::nullopt, /*use_pdl=*/false),
+                  MlirKernelSource(nullptr, std::move(mlir_module))},
+              std::move(borrowed_context), hlo_module, /*unroll_factor=*/2)
+          .Await());
+  EXPECT_THAT(cubin, ElementsAre(1, 2, 3));
+  EXPECT_EQ(mlir_context_pool.num_available(), mlir_context_pool.num_created());
 }
 
 TEST_F(HloHardwareIndependentTestBase, TritonCompile) {
-  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool(
-      []() { return CreateMlirContext(); });
-  TF_ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
-                          mlir_context_pool.GetOrCreate());
+  MlirContextPool mlir_context_pool([]() { return CreateMlirContext(); });
+  ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
+                       mlir_context_pool.GetOrCreate());
   LoadMlirDialectsForTriton(**borrowed_context);
 
-  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                          ParseMlirModuleString(R"(
+  ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                       ParseMlirModuleString(R"(
 module {
-  xtile.entry_func @random_name(%arg0: memref<125x127xf32>, %arg1: memref<125x127xf32>, %arg2: index) attributes {num_opaque_args = 0 : i32} {
+  xtile.entry_func @random_name(%arg0: memref<125x127xf32>, %arg1: memref<125x127xf32>, %arg2: index) {
     %c0 = arith.constant 0 : index
     %0 = xla.apply_indexing #xla.indexing_map<"(pid_0) -> (pid_0 * 4), domain: pid_0 in [0, 31]">(%arg2)
     %1 = xtile.extract %arg0[%0, %c0] [4, 128] [1, 1] : memref<125x127xf32> -> tensor<4x128xf32>
@@ -115,7 +220,7 @@ module {
     xtile.return
   }
 })",
-                                                **borrowed_context));
+                                             **borrowed_context));
   TritonKernelSource triton_source(std::move(module));
 
   auto llvm_compiler =
@@ -124,11 +229,12 @@ module {
     return std::vector<uint8_t>{1};
   };
   DebugOptions debug_options;
-  CubinCustomKernelCompiler kernel_compiler(
-      llvm_compiler, TestGpuDeviceInfo::H100SXMDeviceInfo(), debug_options);
-
+  GpuTopology gpu_topology = SingleDeviceGpuTopology();
   llvm::Triple triple(nvptx::TargetTriple());
   std::string data_layout = nvptx::DataLayout();
+  CubinCustomKernelCompiler kernel_compiler(
+      llvm_compiler, TestGpuDeviceInfo::H100SXMDeviceInfo(), debug_options,
+      gpu_topology, triple, data_layout);
 
   BlockLevelParameters block_level_parameters =
       BlockLevelParameters::FromBlockLevelFusionConfig(
@@ -139,7 +245,7 @@ module {
             num_ctas: 1
             num_stages: 1
           )pb"));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       TritonWrapperResult result,
       kernel_compiler
           .CompileTritonToLlvm("random_name", HloModule{"test_module", {}},

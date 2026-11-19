@@ -55,23 +55,20 @@ using Callback = std::function<void()>;
 static inline absl::Status ParseAndCheckBoxSizes(const Tensor& boxes,
                                                  const Tensor& box_index,
                                                  int* num_boxes) {
-  if (boxes.NumElements() == 0 && box_index.NumElements() == 0) {
-    *num_boxes = 0;
-    return absl::OkStatus();
-  }
-  // The shape of 'boxes' is [num_boxes, 4].
+  // The shape of 'boxes' is [num_boxes, 4] and the shape of 'box_index' is
+  // [num_boxes]. The ranks must be validated even when both tensors are
+  // empty, since the kernels later access them as rank-2 and rank-1 tensors.
   if (boxes.dims() != 2) {
     return absl::InvalidArgumentError(
-        absl::StrCat("boxes must be 2-D", boxes.shape().DebugString()));
+        absl::StrCat("boxes must be 2-D, got ", boxes.shape().DebugString()));
+  }
+  if (box_index.dims() != 1) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "box_index must be 1-D, got ", box_index.shape().DebugString()));
   }
   *num_boxes = boxes.dim_size(0);
   if (boxes.dim_size(1) != 4) {
     return absl::InvalidArgumentError("boxes must have 4 columns");
-  }
-  // The shape of 'box_index' is [num_boxes].
-  if (box_index.dims() != 1) {
-    return absl::InvalidArgumentError(
-        absl::StrCat("box_index must be 1-D", box_index.shape().DebugString()));
   }
   if (box_index.dim_size(0) != *num_boxes) {
     return absl::InvalidArgumentError("box_index has incompatible shape");
@@ -423,7 +420,7 @@ class CropAndResizeGradImageOp : public AsyncOpKernel {
         absl::InvalidArgumentError("image_size and grads are incompatible"),
         done);
 
-    if (std::is_same<Device, GPUDevice>::value) {
+    if (std::is_same_v<Device, GPUDevice>) {
       OP_REQUIRES_ASYNC(
           context, !OpDeterminismRequired(),
           absl::UnimplementedError(
@@ -507,11 +504,18 @@ struct CropAndResizeBackpropImage<CPUDevice, T> {
             (crop_width > 1) ? (x2 - x1) * (image_width - 1) / (crop_width - 1)
                              : 0;
 
+        const float y_base = (crop_height > 1)
+                                 ? y1 * (image_height - 1)
+                                 : 0.5f * (y1 + y2) * (image_height - 1);
+        const float y_scale_factor = (crop_height > 1) ? height_scale : 0.0f;
+        const float x_base = (crop_width > 1)
+                                 ? x1 * (image_width - 1)
+                                 : 0.5f * (x1 + x2) * (image_width - 1);
+        const float x_scale_factor = (crop_width > 1) ? width_scale : 0.0f;
+
         for (int y = 0; y < crop_height; ++y) {
-          const float in_y = (crop_height > 1)
-                                 ? y1 * (image_height - 1) + y * height_scale
-                                 : 0.5 * (y1 + y2) * (image_height - 1);
-          if (in_y < 0 || in_y > image_height - 1) {
+          const float in_y = y_base + y * y_scale_factor;
+          if (!(in_y >= 0 && in_y <= image_height - 1)) {
             continue;
           }
           const int top_y_index = floorf(in_y);
@@ -519,10 +523,8 @@ struct CropAndResizeBackpropImage<CPUDevice, T> {
           const float y_lerp = in_y - top_y_index;
 
           for (int x = 0; x < crop_width; ++x) {
-            const float in_x = (crop_width > 1)
-                                   ? x1 * (image_width - 1) + x * width_scale
-                                   : 0.5 * (x1 + x2) * (image_width - 1);
-            if (in_x < 0 || in_x > image_width - 1) {
+            const float in_x = x_base + x * x_scale_factor;
+            if (!(in_x >= 0 && in_x <= image_width - 1)) {
               continue;
             }
 
@@ -645,7 +647,7 @@ class CropAndResizeGradBoxesOp : public AsyncOpKernel {
         absl::InvalidArgumentError("boxes and grads have incompatible shape"),
         done);
 
-    if (std::is_same<Device, GPUDevice>::value) {
+    if (std::is_same_v<Device, GPUDevice>) {
       OP_REQUIRES_ASYNC(
           context, !OpDeterminismRequired(),
           absl::UnimplementedError(
@@ -727,11 +729,18 @@ struct CropAndResizeBackpropBoxes<CPUDevice, T> {
           (crop_height > 1) ? (y2 - y1) * height_ratio : 0;
       const float width_scale = (crop_width > 1) ? (x2 - x1) * width_ratio : 0;
 
+      const float y_base = (crop_height > 1)
+                               ? y1 * (image_height - 1)
+                               : 0.5f * (y1 + y2) * (image_height - 1);
+      const float y_scale_factor = (crop_height > 1) ? height_scale : 0.0f;
+      const float x_base = (crop_width > 1)
+                               ? x1 * (image_width - 1)
+                               : 0.5f * (x1 + x2) * (image_width - 1);
+      const float x_scale_factor = (crop_width > 1) ? width_scale : 0.0f;
+
       for (int y = 0; y < crop_height; ++y) {
-        const float in_y = (crop_height > 1)
-                               ? y1 * (image_height - 1) + y * height_scale
-                               : 0.5 * (y1 + y2) * (image_height - 1);
-        if (in_y < 0 || in_y > image_height - 1) {
+        const float in_y = y_base + y * y_scale_factor;
+        if (!(in_y >= 0 && in_y <= image_height - 1)) {
           continue;
         }
         const int top_y_index = floorf(in_y);
@@ -739,10 +748,8 @@ struct CropAndResizeBackpropBoxes<CPUDevice, T> {
         const float y_lerp = in_y - top_y_index;
 
         for (int x = 0; x < crop_width; ++x) {
-          const float in_x = (crop_width > 1)
-                                 ? x1 * (image_width - 1) + x * width_scale
-                                 : 0.5 * (x1 + x2) * (image_width - 1);
-          if (in_x < 0 || in_x > image_width - 1) {
+          const float in_x = x_base + x * x_scale_factor;
+          if (!(in_x >= 0 && in_x <= image_width - 1)) {
             continue;
           }
           const int left_x_index = floorf(in_x);

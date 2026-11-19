@@ -41,6 +41,7 @@ TfLiteRegistration* Register_NEG();
 
 namespace {
 
+using testing::ElementsAre;
 using testing::ElementsAreArray;
 using testing::Not;
 
@@ -330,6 +331,178 @@ TEST_F(SubgraphResizeTensorTest,
   // Touch memory to trigger ASAN in case of incorrect handling.
   std::fill_n(tensor_.data.raw, tensor_.bytes, 0);
   std::fill_n(tensor_.dims->data, tensor_.dims->size, 1);
+}
+
+TEST(ReplaceNodeSubsetsWithDelegateKernels,
+     HandlesNodeSubsetWithNoOutputTensors) {
+  static constexpr int kNumTensors = 1;
+  static constexpr int kInputTensorIndex = 0;
+  static constexpr int kExpectedPartitions = 1;
+  static constexpr int kExpectedReplacedNodes = 1;
+  static constexpr int kExpectedInputTensors = 1;
+  static constexpr int kExpectedOutputTensors = 0;
+
+  // Build a subgraph with a single node that has one input tensor and zero
+  // output tensors (matching the shape of ASSIGN_VARIABLE).
+  Interpreter interpreter;
+  Subgraph& subgraph = interpreter.primary_subgraph();
+  ASSERT_EQ(subgraph.AddTensors(/*tensors_to_add=*/kNumTensors), kTfLiteOk);
+  ASSERT_EQ(subgraph.SetInputs({kInputTensorIndex}), kTfLiteOk);
+  ASSERT_EQ(subgraph.SetOutputs({}), kTfLiteOk);
+
+  TfLiteRegistration op_registration = {};
+  int node_index = -1;
+  ASSERT_EQ(
+      subgraph.AddNodeWithParameters(
+          /*inputs=*/{kInputTensorIndex}, /*outputs=*/{}, /*intermediates=*/{},
+          /*init_data=*/nullptr, /*init_data_size=*/0,
+          /*builtin_data=*/nullptr, &op_registration, &node_index),
+      kTfLiteOk);
+
+  // Delegate the partition and verify that both preview partitioning and
+  // delegate kernel initialization receive output_tensors->size == 0 without
+  // triggering undefined behavior in CopyVectorToTfLiteIntArray.
+  bool kernel_initialized = false;
+  TfLiteDelegate delegate = TfLiteDelegateCreate();
+  delegate.data_ = &kernel_initialized;
+  delegate.Prepare = [](TfLiteContext* context,
+                        TfLiteDelegate* delegate) -> TfLiteStatus {
+    TfLiteIntArray* execution_plan = nullptr;
+    if (context->GetExecutionPlan(context, &execution_plan) != kTfLiteOk) {
+      return kTfLiteError;
+    }
+
+    TfLiteDelegateParams* preview_params = nullptr;
+    int num_partitions = 0;
+    if (context->PreviewDelegatePartitioning(context, execution_plan,
+                                             &preview_params,
+                                             &num_partitions) != kTfLiteOk) {
+      return kTfLiteError;
+    }
+    EXPECT_EQ(num_partitions, kExpectedPartitions);
+    if (preview_params && num_partitions == kExpectedPartitions) {
+      EXPECT_EQ(preview_params[0].nodes_to_replace->size,
+                kExpectedReplacedNodes);
+      EXPECT_EQ(preview_params[0].input_tensors->size, kExpectedInputTensors);
+      if (preview_params[0].input_tensors->size == kExpectedInputTensors) {
+        EXPECT_EQ(preview_params[0].input_tensors->data[0], kInputTensorIndex);
+      }
+      EXPECT_EQ(preview_params[0].output_tensors->size, kExpectedOutputTensors);
+    }
+
+    TfLiteRegistration delegate_kernel_registration = {};
+    delegate_kernel_registration.init =
+        [](TfLiteContext* context, const char* buffer, size_t length) -> void* {
+      const TfLiteDelegateParams* params =
+          reinterpret_cast<const TfLiteDelegateParams*>(buffer);
+      if (!params) {
+        ADD_FAILURE() << "Expected non-null TfLiteDelegateParams.";
+        return nullptr;
+      }
+      if (params->delegate && params->delegate->data_) {
+        *static_cast<bool*>(params->delegate->data_) = true;
+      }
+      EXPECT_EQ(params->nodes_to_replace->size, kExpectedReplacedNodes);
+      EXPECT_EQ(params->input_tensors->size, kExpectedInputTensors);
+      if (params->input_tensors->size == kExpectedInputTensors) {
+        EXPECT_EQ(params->input_tensors->data[0], kInputTensorIndex);
+      }
+      EXPECT_EQ(params->output_tensors->size, kExpectedOutputTensors);
+      return nullptr;
+    };
+
+    return context->ReplaceNodeSubsetsWithDelegateKernels(
+        context, delegate_kernel_registration, execution_plan, delegate);
+  };
+
+  ASSERT_EQ(interpreter.ModifyGraphWithDelegate(&delegate), kTfLiteOk);
+  EXPECT_TRUE(kernel_initialized);
+}
+
+TEST(ReplaceNodeWithSubgraph, PreservesOptionalTensorIndices) {
+  static StderrReporter* error_reporter = new StderrReporter;
+  std::vector<std::unique_ptr<Subgraph>> subgraphs;
+  for (int i = 0; i < 2; ++i) {
+    subgraphs.emplace_back(new Subgraph(/*error_reporter=*/error_reporter,
+                                        /*external_contexts=*/nullptr,
+                                        /*subgraphs=*/&subgraphs,
+                                        /*resources=*/nullptr,
+                                        /*resource_ids=*/nullptr,
+                                        /*initialization_status_map=*/nullptr,
+                                        /*subgraph_index=*/i));
+  }
+
+  Subgraph& primary = *subgraphs[0];
+  Subgraph& decomp = *subgraphs[1];
+
+  // Primary subgraph has 2 tensors (input 0, output 1) and 1 composite node.
+  ASSERT_EQ(primary.AddTensors(/*tensors_to_add=*/2), kTfLiteOk);
+  ASSERT_EQ(primary.SetInputs({0}), kTfLiteOk);
+  ASSERT_EQ(primary.SetOutputs({1}), kTfLiteOk);
+  TfLiteRegistration composite_reg = {};
+  int composite_node_index = -1;
+  ASSERT_EQ(primary.AddNodeWithParameters(
+                /*inputs=*/{0, kTfLiteOptionalTensor},
+                /*outputs=*/{1, kTfLiteOptionalTensor},
+                /*intermediates=*/{}, /*init_data=*/nullptr,
+                /*init_data_size=*/0, /*builtin_data=*/nullptr, &composite_reg,
+                &composite_node_index),
+            kTfLiteOk);
+
+  // Decomposition subgraph has 3 tensors: input 0, internal tensor 1, output 2.
+  // Its op uses kTfLiteOptionalTensor (-1) in inputs, outputs, and
+  // intermediates (e.g. FULLY_CONNECTED without a bias tensor).
+  ASSERT_EQ(decomp.AddTensors(/*tensors_to_add=*/3), kTfLiteOk);
+  ASSERT_EQ(decomp.SetInputs({0, kTfLiteOptionalTensor}), kTfLiteOk);
+  ASSERT_EQ(decomp.SetOutputs({2, kTfLiteOptionalTensor}), kTfLiteOk);
+  TfLiteRegistration inner_reg = {};
+  int inner_node_index = -1;
+  ASSERT_EQ(decomp.AddNodeWithParameters(
+                /*inputs=*/{0, 1, kTfLiteOptionalTensor},
+                /*outputs=*/{2, kTfLiteOptionalTensor},
+                /*intermediates=*/{1, kTfLiteOptionalTensor},
+                /*init_data=*/nullptr, /*init_data_size=*/0,
+                /*builtin_data=*/nullptr, &inner_reg, &inner_node_index),
+            kTfLiteOk);
+
+  const auto* composite_node_and_reg =
+      primary.node_and_registration(composite_node_index);
+  ASSERT_NE(composite_node_and_reg, nullptr);
+  int last_inserted_execution_index = -1;
+  ASSERT_EQ(primary.ReplaceNodeWithSubgraph(
+                /*execution_index=*/0, composite_node_and_reg->first,
+                /*subgraph_index=*/1, last_inserted_execution_index),
+            kTfLiteOk);
+  EXPECT_EQ(last_inserted_execution_index, 0);
+
+  ASSERT_EQ(primary.execution_plan().size(), 1);
+  const int inlined_node_index = primary.execution_plan()[0];
+  const auto* inlined_node_and_reg =
+      primary.node_and_registration(inlined_node_index);
+  ASSERT_NE(inlined_node_and_reg, nullptr);
+  const TfLiteNode& inlined_node = inlined_node_and_reg->first;
+
+  // Input 0 maps to primary tensor 0, internal tensor 1 is offset by 2 -> 3,
+  // and kTfLiteOptionalTensor (-1) is preserved rather than becoming 2 + (-1).
+  ASSERT_NE(inlined_node.inputs, nullptr);
+  EXPECT_THAT(
+      std::vector<int>(inlined_node.inputs->data,
+                       inlined_node.inputs->data + inlined_node.inputs->size),
+      ElementsAre(0, 3, kTfLiteOptionalTensor));
+
+  // Output 2 maps to primary tensor 1, and kTfLiteOptionalTensor is preserved.
+  ASSERT_NE(inlined_node.outputs, nullptr);
+  EXPECT_THAT(
+      std::vector<int>(inlined_node.outputs->data,
+                       inlined_node.outputs->data + inlined_node.outputs->size),
+      ElementsAre(1, kTfLiteOptionalTensor));
+
+  // Intermediate 1 is offset by 2 -> 3, and kTfLiteOptionalTensor is preserved.
+  ASSERT_NE(inlined_node.intermediates, nullptr);
+  EXPECT_THAT(std::vector<int>(inlined_node.intermediates->data,
+                               inlined_node.intermediates->data +
+                                   inlined_node.intermediates->size),
+              ElementsAre(3, kTfLiteOptionalTensor));
 }
 
 }  // namespace

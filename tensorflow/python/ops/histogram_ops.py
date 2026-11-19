@@ -77,18 +77,21 @@ def histogram_fixed_width_bins(values,
     shape = array_ops.shape(values)
 
     values = array_ops.reshape(values, [-1])
-    value_range = ops.convert_to_tensor(value_range, name='value_range')
+    value_range = ops.convert_to_tensor(
+        value_range, dtype_hint=values.dtype, name='value_range'
+    )
     nbins = ops.convert_to_tensor(nbins, dtype=dtypes.int32, name='nbins')
     check = control_flow_assert.Assert(
         math_ops.greater(nbins, 0), ['nbins %s must > 0' % nbins])
     nbins = control_flow_ops.with_dependencies([check], nbins)
-    nbins_float = math_ops.cast(nbins, values.dtype)
 
     # Map tensor values that fall within value_range to [0, 1].
     scaled_values = math_ops.truediv(
         values - value_range[0],
         value_range[1] - value_range[0],
         name='scaled_values')
+    # truediv returns a float tensor for integer values.
+    nbins_float = math_ops.cast(nbins, scaled_values.dtype)
 
     # map tensor values within the open interval value_range to {0,.., nbins-1},
     # values outside the open interval will be zero or less, or nbins or more.
@@ -96,7 +99,8 @@ def histogram_fixed_width_bins(values,
 
     # Clip edge cases (e.g. value = value_range[1]) or "outliers."
     indices = math_ops.cast(
-        clip_ops.clip_by_value(indices, 0, nbins_float - 1), dtypes.int32)
+        clip_ops.clip_by_value(indices, 0, nbins_float - 1), dtype
+    )
     return array_ops.reshape(indices, shape)
 
 

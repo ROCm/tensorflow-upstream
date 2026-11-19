@@ -106,10 +106,26 @@ cc_library(
 )
 
 cc_library(
+    name = "object_buffer_identifier",
+    hdrs = ["object_buffer_identifier.h"],
+    deps = [
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "ir_compiler",
     srcs = ["ir_compiler.cc"],
     hdrs = ["ir_compiler.h"],
-    defines = if_llvm_aarch32_available(["XLA_LLVM_AARCH32_AVAILABLE=1"]) + if_llvm_aarch64_available([
+    # TODO(xla-cpu): Have users who need a specific target architecture include
+    # and initialize that LLVM backend directly.
+    defines = select({
+        "//xla/tsl:aarch32_or_cross": [
+            "XLA_LLVM_AARCH32_AVAILABLE=1",
+        ],
+        "//conditions:default": [],
+    }) + if_llvm_aarch64_available([
         "XLA_LLVM_AARCH64_AVAILABLE=1",
     ]) + if_llvm_powerpc_available([
         "XLA_LLVM_POWERPC_AVAILABLE=1",
@@ -120,6 +136,7 @@ cc_library(
     ]),
     deps = [
         ":kernel_api_ir_builder",
+        ":object_buffer_identifier",
         ":polynomial_approximations",
         "//xla:util",
         "//xla:xla_proto_cc",
@@ -132,7 +149,6 @@ cc_library(
         "//xla/service/cpu:cpu_options",
         "//xla/service/cpu:executable_proto_cc",
         "//xla/service/llvm_ir:llvm_util",
-        "//xla/tools:llvm_targets",  # fixdeps: keep
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
@@ -158,7 +174,17 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
-    ],
+    ] + if_llvm_aarch32_available([
+        "@llvm-project//llvm:ARMCodeGen",  # fixdeps: keep
+    ]) + if_llvm_aarch64_available([
+        "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
+    ]) + if_llvm_powerpc_available([
+        "@llvm-project//llvm:PowerPCCodeGen",  # fixdeps: keep
+    ]) + if_llvm_system_z_available([
+        "@llvm-project//llvm:SystemZCodeGen",  # fixdeps: keep
+    ]) + if_llvm_x86_available([
+        "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
+    ]),
 )
 
 xla_cc_test(
@@ -167,14 +193,15 @@ xla_cc_test(
     deps = [
         ":ir_compiler",
         ":kernel_api_ir_builder",
+        ":object_buffer_identifier",
         "//xla:debug_options_flags",
         "//xla:util",
         "//xla/backends/cpu:target_machine_options",
         "//xla/service/cpu:backend_config_proto_cc",
-        "//xla/service/cpu:cpu_compiler_pure",
         "//xla/service/cpu:test_header_helper",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
@@ -184,9 +211,7 @@ xla_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-        "@llvm-project//llvm:AArch64AsmParser",  # fixdeps: keep
         "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
-        "@llvm-project//llvm:ARMAsmParser",  # fixdeps: keep
         "@llvm-project//llvm:ARMCodeGen",  # fixdeps: keep
         "@llvm-project//llvm:AsmParser",
         "@llvm-project//llvm:Core",
@@ -194,8 +219,8 @@ xla_cc_test(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
-        "@llvm-project//llvm:X86AsmParser",  # fixdeps: keep
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -229,6 +254,7 @@ cc_library(
         "@com_google_absl//absl/base:config",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
@@ -239,9 +265,6 @@ cc_library(
         "@llvm-project//mlir:AffineToStandard",
         "@llvm-project//mlir:AffineTransforms",
         "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:ArithTransforms",
-        "@llvm-project//mlir:BufferizationPipelines",
-        "@llvm-project//mlir:BufferizationTransforms",
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
         "@llvm-project//mlir:ComplexToStandard",
         "@llvm-project//mlir:ControlFlowDialect",
@@ -252,8 +275,6 @@ cc_library(
         "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:LLVMIRTransforms",
         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
-        "@llvm-project//mlir:LinalgDialect",
-        "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MathToLLVM",
         "@llvm-project//mlir:MathToLibm",
@@ -263,10 +284,8 @@ cc_library(
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:SCFToControlFlow",
-        "@llvm-project//mlir:SCFTransforms",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
-        "@llvm-project//mlir:TensorTransforms",
         "@llvm-project//mlir:ToLLVMIRTranslation",
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:UBDialect",
@@ -275,10 +294,10 @@ cc_library(
         "@llvm-project//mlir:VectorToLLVM",
         "@llvm-project//mlir:VectorToSCF",
         "@llvm-project//mlir:VectorTransforms",
-        "@stablehlo//:linalg_passes",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_passes",
         "@stablehlo//:stablehlo_passes_optimization",
+        "@tsl//tsl/platform",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
     ],
@@ -289,41 +308,28 @@ cc_library(
     srcs = ["jit_compiler.cc"],
     hdrs = ["jit_compiler.h"],
     deps = [
-        ":compiled_function_library",
-        ":contiguous_section_memory_manager",
-        ":cpu_features",
         ":execution_engine",
         ":ir_compiler",
-        ":jit_memory_mapper",
         ":object_loader",
         "//xla:util",
         "//xla/backends/cpu/runtime:function_library",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:ExecutionEngine",
-        "@llvm-project//llvm:MC",
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//llvm:OrcShared",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
     ] + if_llvm_aarch64_available([
@@ -475,6 +481,7 @@ cc_library(
     hdrs = ["kernel_api_ir_builder.h"],
     deps = [
         ":symbol_name_util",
+        ":target_machine_features",
         "//xla:shape_util",
         "//xla:util",
         "//xla/backends/cpu:alignment",
@@ -609,11 +616,13 @@ cc_library(
     deps = [
         ":contiguous_section_memory_manager",
         ":jit_memory_mapper",
+        ":object_buffer_identifier",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//llvm:Support",
@@ -622,38 +631,139 @@ cc_library(
 )
 
 cc_library(
-    name = "computation_kernel_emitter",
-    srcs = ["computation_kernel_emitter.cc"],
-    hdrs = ["computation_kernel_emitter.h"],
+    name = "computation_kernel_arguments",
+    srcs = ["computation_kernel_arguments.cc"],
+    hdrs = ["computation_kernel_arguments.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/codegen:kernel_spec",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
+        "//xla/service:shaped_slice",
+        "//xla/service/cpu:ir_emission_utils",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "computation_kernel_arguments_test",
+    srcs = ["computation_kernel_arguments_test.cc"],
+    deps = [
+        ":computation_kernel_arguments",
+        "//xla/hlo/analysis:alias_info",
+        "//xla/hlo/analysis:hlo_ordering",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:buffer_assignment",
+        "//xla/service:buffer_value",
+        "//xla/service:logical_buffer",
+        "//xla/service:shaped_slice",
+        "//xla/service/cpu:cpu_executable",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "thunk_sequence_kernel_emitter",
+    srcs = ["thunk_sequence_kernel_emitter.cc"],
+    hdrs = ["thunk_sequence_kernel_emitter.h"],
     deps = [
         ":kernel_api_ir_builder",
         ":target_machine_features",
         "//xla:shape_util",
+        "//xla:status_macros",
         "//xla:util",
+        "//xla/backends/cpu:alignment",
+        "//xla/backends/cpu/runtime:call_thunk",
+        "//xla/backends/cpu/runtime:conditional_thunk",
+        "//xla/backends/cpu/runtime:copy_thunk",
+        "//xla/backends/cpu/runtime:kernel_thunk",
+        "//xla/backends/cpu/runtime:thunk",
+        "//xla/backends/cpu/runtime:thunk_executor",
+        "//xla/backends/cpu/runtime:while_thunk",
         "//xla/codegen:kernel_definition",
         "//xla/codegen:kernel_emitter",
         "//xla/codegen:kernel_spec",
         "//xla/codegen:llvm_kernel_source",
-        "//xla/hlo/ir:hlo",
+        "//xla/runtime:buffer_use",
         "//xla/runtime:work_group",
         "//xla/service:buffer_assignment",
-        "//xla/service/cpu:backend_config_proto_cc",
-        "//xla/service/cpu:ir_emitter",
-        "//xla/service/llvm_ir:ir_array",
+        "//xla/service:decision",
+        "//xla/service:shaped_slice",
         "//xla/service/llvm_ir:llvm_util",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Linker",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
+
+xla_cc_test(
+    name = "thunk_sequence_kernel_emitter_test",
+    srcs = ["thunk_sequence_kernel_emitter_test.cc"],
+    deps = [
+        ":ir_compiler",
+        ":jit_compiler",
+        ":kernel_api_ir_builder",
+        ":target_machine_features",
+        ":thunk_sequence_kernel_emitter",
+        "//xla:debug_options_flags",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu:alignment",
+        "//xla/backends/cpu:target_machine_options",
+        "//xla/backends/cpu/runtime:call_thunk",
+        "//xla/backends/cpu/runtime:conditional_thunk",
+        "//xla/backends/cpu/runtime:copy_thunk",
+        "//xla/backends/cpu/runtime:function_library",
+        "//xla/backends/cpu/runtime:kernel_c_api",
+        "//xla/backends/cpu/runtime:kernel_thunk",
+        "//xla/backends/cpu/runtime:rng_state_thunk",
+        "//xla/backends/cpu/runtime:thunk",
+        "//xla/backends/cpu/runtime:while_thunk",
+        "//xla/codegen:kernel_definition",
+        "//xla/codegen:kernel_spec",
+        "//xla/codegen:llvm_kernel_source",
+        "//xla/runtime:buffer_use",
+        "//xla/runtime:work_group",
+        "//xla/service:buffer_assignment",
+        "//xla/service:decision",
+        "//xla/service:shaped_slice",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:AsmParser",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
         "@llvm-project//llvm:ir_headers",
     ],
 )
@@ -733,6 +843,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/cpu:alignment",
         "//xla/backends/cpu/codegen/emitters:cpu_fusion_emitters",
         "//xla/backends/cpu/codegen/tiled:tiled_fusion_emitter",
@@ -740,10 +851,14 @@ cc_library(
         "//xla/codegen:ir_emission_utils",
         "//xla/codegen:kernel_definition",
         "//xla/codegen:mlir_kernel_source",
+        "//xla/codegen/emitters:computation_partitioner",
         "//xla/codegen/emitters:concatenate_kernel_emitter",
         "//xla/codegen/emitters:dynamic_update_slice_kernel_emitter",
+        "//xla/codegen/emitters:elemental_hlo_to_mlir",
+        "//xla/codegen/emitters:kernel_api_builder",
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/codegen/emitters:loop_kernel_emitter",
+        "//xla/codegen/emitters:type_util",
         "//xla/codegen/emitters/ir:xla",
         "//xla/codegen/xtile:block_level_parameters",
         "//xla/hlo/ir:hlo",
@@ -756,18 +871,23 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service/cpu:backend_config_proto_cc",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:TensorDialect",
     ],
 )
 
@@ -778,23 +898,6 @@ xla_cc_test(
         ":symbol_name_util",
         "//xla/tsl/platform:statusor",
         "@com_google_googletest//:gtest_main",
-    ],
-)
-
-py_test(
-    name = "computation_kernel_emitter_test",
-    srcs = ["computation_kernel_emitter_test.py"],
-    strict_deps = True,
-    tags = [
-        "no_oss",
-    ],
-    deps = [
-        "//third_party/py/numpy",
-        "//xla/backends/cpu/testlib",
-        "//xla/codegen/testlib",
-        "//xla/python:xla_extension",
-        "@absl_py//absl/testing:absltest",
-        "@absl_py//absl/testing:parameterized",
     ],
 )
 

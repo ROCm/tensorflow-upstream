@@ -37,6 +37,7 @@ cuda_py_strict_test(
         "//tensorflow/python/ops:control_flow_ops",
         "//tensorflow/python/ops:gradient_checker_v2",
         "//tensorflow/python/ops:linalg_ops",
+        "//tensorflow/python/ops:linalg_ops_gen",
         "//tensorflow/python/ops:math_ops",
         "//tensorflow/python/ops:stateless_random_ops",
         "//tensorflow/python/ops:variables",
@@ -56,6 +57,7 @@ cuda_py_strict_test(
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:for_generated_wrappers",
         "//tensorflow/python/framework:test_lib",
+        "//tensorflow/python/ops:array_ops",
         "//tensorflow/python/ops:control_flow_ops",
         "//tensorflow/python/ops:linalg_ops",
         "//tensorflow/python/ops:linalg_ops_gen",
@@ -143,9 +145,10 @@ cuda_py_strict_test(
     name = "linalg_ops_test",
     size = "medium",
     srcs = ["linalg_ops_test.py"],
-    shard_count = 8,
+    shard_count = 20,
     tags = ["no_windows_gpu"],
     deps = [
+        "//tensorflow/python/eager:def_function",
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:dtypes",
         "//tensorflow/python/framework:ops",
@@ -202,7 +205,7 @@ cuda_py_strict_test(
     name = "linear_operator_block_diag_test",
     size = "medium",
     srcs = ["linear_operator_block_diag_test.py"],
-    shard_count = 8,
+    shard_count = 16,
     tags = ["optonly"],
     deps = [
         "//tensorflow/python/eager:backprop",
@@ -253,7 +256,7 @@ cuda_py_strict_test(
     name = "linear_operator_composition_test",
     size = "medium",
     srcs = ["linear_operator_composition_test.py"],
-    shard_count = 5,
+    shard_count = 20,  # TSAN shards time out at 5, b/582488646
     tags = [
         "optonly",  # times out
     ],
@@ -430,7 +433,7 @@ cuda_py_strict_test(
     name = "linear_operator_low_rank_update_test",
     size = "medium",
     srcs = ["linear_operator_low_rank_update_test.py"],
-    shard_count = 15,
+    shard_count = 30,
     tags = ["optonly"],
     deps = [
         "//tensorflow/python/framework:config",
@@ -629,7 +632,9 @@ tf_py_strict_test(
     tags = ["no_windows_gpu"],
     deps = [
         "//tensorflow/python/client:session",
+        "//tensorflow/python/eager:def_function",
         "//tensorflow/python/framework:constant_op",
+        "//tensorflow/python/framework:dtypes",
         "//tensorflow/python/framework:for_generated_wrappers",
         "//tensorflow/python/framework:test_lib",
         "//tensorflow/python/ops:array_ops",
@@ -654,8 +659,10 @@ cuda_py_strict_test(
         "//tensorflow/python/framework:constant_op",
         "//tensorflow/python/framework:for_generated_wrappers",
         "//tensorflow/python/framework:test_lib",
+        "//tensorflow/python/ops:array_ops",
         "//tensorflow/python/ops:control_flow_ops",
         "//tensorflow/python/ops:linalg_ops",
+        "//tensorflow/python/ops:linalg_ops_gen",
         "//tensorflow/python/ops:math_ops",
         "//tensorflow/python/ops:random_ops",
         "//tensorflow/python/ops:variables",
@@ -691,6 +698,7 @@ cuda_py_strict_test(
     name = "matrix_solve_ls_op_test",
     size = "medium",
     srcs = ["matrix_solve_ls_op_test.py"],
+    shard_count = 8,
     deps = [
         "//tensorflow/python/client:session",
         "//tensorflow/python/eager:context",
@@ -723,6 +731,7 @@ cuda_py_strict_test(
         "//tensorflow/python/ops:array_ops",
         "//tensorflow/python/ops:control_flow_ops",
         "//tensorflow/python/ops:linalg_ops",
+        "//tensorflow/python/ops:linalg_ops_gen",
         "//tensorflow/python/ops:stateless_random_ops",
         "//tensorflow/python/ops:variables",
         "//tensorflow/python/platform:benchmark",
@@ -787,12 +796,17 @@ cuda_py_strict_test(
     # TODO(b/208263392): Re-enable. tf.Squeeze op after tf.Where op doesn't reshape.
     xla_enable_strict_auto_jit = False,
     deps = [
+        "//tensorflow/python/eager:backprop",
+        "//tensorflow/python/eager:def_function",
         "//tensorflow/python/framework:constant_op",
+        "//tensorflow/python/framework:dtypes",
         "//tensorflow/python/framework:test_lib",
         "//tensorflow/python/ops:array_ops",
         "//tensorflow/python/ops:linalg_ops",
+        "//tensorflow/python/ops:nn_impl",
         "//tensorflow/python/platform:client_testlib",
         "//third_party/py/numpy",
+        "@absl_py//absl/testing:parameterized",
     ],
 )
 
@@ -813,6 +827,7 @@ cuda_py_strict_test(
         "//tensorflow/python/ops:control_flow_ops",
         "//tensorflow/python/ops:gradient_checker_v2",
         "//tensorflow/python/ops:linalg_ops",
+        "//tensorflow/python/ops:linalg_ops_gen",
         "//tensorflow/python/ops:stateless_random_ops",
         "//tensorflow/python/ops:variables",
         "//tensorflow/python/platform:benchmark",
@@ -936,6 +951,7 @@ cuda_py_strict_test(
         "//tensorflow/python/eager:backprop",
         "//tensorflow/python/eager:context",
         "//tensorflow/python/framework:constant_op",
+        "//tensorflow/python/framework:errors",
         "//tensorflow/python/framework:for_generated_wrappers",
         "//tensorflow/python/framework:test_lib",
         "//tensorflow/python/ops:array_ops",

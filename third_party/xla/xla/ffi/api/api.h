@@ -230,7 +230,8 @@ inline bool operator!=(const XLA_FFI_Metadata& a, const XLA_FFI_Metadata& b) {
 inline bool operator==(const XLA_FFI_Handler_Bundle& a,
                        const XLA_FFI_Handler_Bundle& b) {
   return a.instantiate == b.instantiate && a.prepare == b.prepare &&
-         a.initialize == b.initialize && a.execute == b.execute;
+         a.initialize == b.initialize && a.execute == b.execute &&
+         a.record == b.record;
 }
 
 inline bool operator!=(const XLA_FFI_Handler_Bundle& a,
@@ -265,6 +266,9 @@ enum class Traits : uint32_t {
   //      arguments (e.g. it does *not* do any runtime device memory
   //      allocations);
   //   3. the FFI handler may not query the execution status of the stream.
+  //
+  // Handler bundles that provide a `record` stage implementation are
+  // automatically marked as command-buffer compatible at registration time.
   kCmdBufferCompatible = XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE,
 };
 
@@ -327,7 +331,8 @@ class Ffi {
       XLA_FFI_Handler* execute, XLA_FFI_Handler_Traits traits = 0) {
     return RegisterStaticHandler(
         api, name, platform,
-        XLA_FFI_Handler_Bundle{nullptr, nullptr, nullptr, execute}, traits);
+        XLA_FFI_Handler_Bundle{nullptr, nullptr, nullptr, execute, nullptr},
+        traits);
   }
 
   // Registers a custom type so that it can be used with State and UserData
@@ -555,6 +560,13 @@ class Dictionary;
 // implementation is provided by the `ffi.h` header.
 class Context;
 
+// A context tag for decoding per-execution custom options as a Dictionary:
+// Ffi::Bind().Ctx<CustomOptions>().To([](Dictionary options) { ... });
+// Options are separate from static attributes. The dictionary and any decoded
+// string or array views are valid only until the handler returns, even if it
+// returns a future. Deep-copy values needed by asynchronous work.
+struct CustomOptions {};
+
 namespace internal {
 
 // WARNING: A lot of template metaprograming on top of C++ variadic templates
@@ -599,6 +611,9 @@ struct AttrsTag {};
 // A type tag to distinguish parameter extracted from an execution context.
 template <typename T>
 struct CtxTag {};
+
+template <typename T, ExecutionStage stage>
+struct IsStageCompatibleCtx : std::true_type {};
 
 //----------------------------------------------------------------------------//
 // A template for counting tagged arguments in the Ts pack.
@@ -745,6 +760,15 @@ class Binding {
 
   template <typename T>
   Binding<stage, Ts..., internal::CtxTag<T>> Ctx() && {
+    static_assert(internal::IsStageCompatibleCtx<T, stage>::value,
+                  "context type is not compatible with the execution stage");
+    return {std::move(*this)};
+  }
+
+  template <template <ExecutionStage> typename T>
+  Binding<stage, Ts..., internal::CtxTag<T<stage>>> Ctx() && {
+    static_assert(internal::IsStageCompatibleCtx<T<stage>, stage>::value,
+                  "context type is not compatible with the execution stage");
     return {std::move(*this)};
   }
 
@@ -1780,7 +1804,7 @@ struct Decode<AttrTag<T>> {
         return false;
       }
       for (size_t i = 0; i < a->len; ++i) {
-        if (XLA_FFI_PREDICT_FALSE(a->ptr[i] != b.data()[i])) {
+        if (XLA_FFI_PREDICT_FALSE(a->ptr[i] != b[i])) {
           return false;
         }
       }
@@ -2025,6 +2049,7 @@ class DictionaryBase {
   };
 
   size_t size() const { return attrs_->size; }
+  bool empty() const { return size() == 0; }
 
   bool contains(std::string_view name) const { return Find(name).has_value(); }
 
@@ -2077,6 +2102,11 @@ class DictionaryBase {
 
  private:
   std::optional<size_t> Find(std::string_view name) const {
+    // Empty dictionaries can have null backing arrays.
+    if (attrs_->size == 0) {
+      return std::nullopt;
+    }
+
     XLA_FFI_ByteSpan** begin = attrs_->names;
     XLA_FFI_ByteSpan** end = begin + attrs_->size;
 
@@ -2097,6 +2127,34 @@ class DictionaryBase {
   }
 
   const XLA_FFI_Attrs* attrs_;
+};
+
+// Custom options (run time per-call options) use the same binary layout as
+// statically know attributes and can be decoded into the same `Dictionary`.
+template <typename Dictionary>
+struct CustomOptionsDecoding {
+  using Type = Dictionary;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_InvokeContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    if (api->struct_size <
+            XLA_FFI_STRUCT_SIZE(XLA_FFI_Api, XLA_FFI_CustomOptions_Get) ||
+        api->XLA_FFI_CustomOptions_Get == nullptr) {
+      return diagnostic.Emit(
+          "Custom options are not supported by this FFI API");
+    }
+
+    XLA_FFI_CustomOptions_Get_Args args = {
+        XLA_FFI_CustomOptions_Get_Args_STRUCT_SIZE, nullptr, ctx, nullptr};
+    if (XLA_FFI_Error* error = api->XLA_FFI_CustomOptions_Get(&args)) {
+      diagnostic.Emit("Failed to get custom options: ")
+          << GetErrorMessage(api, error);
+      DestroyError(api, error);
+      return std::nullopt;
+    }
+    return Dictionary(args.attrs);
+  }
 };
 
 }  // namespace internal

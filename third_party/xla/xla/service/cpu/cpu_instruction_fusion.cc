@@ -30,7 +30,6 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/service/cpu/cpu_options.h"
 #include "xla/service/fusion_node_indexing_evaluation.h"
-#include "xla/service/hlo_module_config.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape_util.h"
@@ -148,24 +147,35 @@ bool IsCoupledReductionShiftExpProducer(const HloInstruction* instr) {
 }
 
 // Should we block the fusion of the subcomputation of the passed instruction?
-bool BlockSubcomputationFusion(const HloInstruction* instruction,
-                               const HloModuleConfig& config) {
+bool BlockSubcomputationFusion(const HloInstruction* instruction) {
   HloOpcode opcode = instruction->opcode();
   if (opcode == HloOpcode::kScatter) {
     return true;
   }
-  const bool use_experimental_fusion_emitters =
-      options::UseExperimentalLoopFusion(config);
 
   // If the instruction itself can be fused then the subcomputation should be
   // blocked as the fusion emitter can't emit fusion ops inside another
   // fusion.
-  if (use_experimental_fusion_emitters &&
-      emitters::IsSupportedElementalOp(opcode)) {
-    return true;
-  }
+  return emitters::IsSupportedElementalOp(opcode);
+}
 
-  return false;
+// The number of distinct operands `fusion` would have after fusing `producer`
+// into it: its current operands minus the producer itself, plus every producer
+// operand that is not already an operand of the fusion.
+int64_t OperandCountAfterFusing(const HloInstruction* fusion,
+                                const HloInstruction* producer) {
+  int64_t count = 0;
+  for (const HloInstruction* operand : fusion->operands()) {
+    if (operand != producer) {
+      ++count;
+    }
+  }
+  for (const HloInstruction* operand : producer->unique_operands()) {
+    if (!absl::c_linear_search(fusion->operands(), operand)) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 }  // namespace
@@ -193,6 +203,7 @@ bool CpuInstructionFusion::IsExpensive(const HloInstruction& instruction) {
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kFloor:
+    case HloOpcode::kFma:
     case HloOpcode::kGetTupleElement:
     case HloOpcode::kImag:
     case HloOpcode::kInfeed:
@@ -221,6 +232,7 @@ bool CpuInstructionFusion::IsExpensive(const HloInstruction& instruction) {
     case HloOpcode::kShiftLeft:
     case HloOpcode::kShiftRightArithmetic:
     case HloOpcode::kShiftRightLogical:
+    case HloOpcode::kShuffle:
     case HloOpcode::kSlice:
     case HloOpcode::kStochasticConvert:
     case HloOpcode::kSubtract:
@@ -277,9 +289,11 @@ bool CpuInstructionFusion::IsExpensive(const HloInstruction& instruction) {
 
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
       return true;
 
       // Expensive instructions or unusual instructions for which fusion is
@@ -310,7 +324,6 @@ bool CpuInstructionFusion::IsExpensive(const HloInstruction& instruction) {
     case HloOpcode::kCollectivePermuteDone:
     case HloOpcode::kCollectivePermuteStart:
     case HloOpcode::kCustomCall:
-    case HloOpcode::kDomain:
     case HloOpcode::kDot:
     case HloOpcode::kFft:
     case HloOpcode::kFusion:
@@ -327,6 +340,7 @@ bool CpuInstructionFusion::IsExpensive(const HloInstruction& instruction) {
     case HloOpcode::kRng:
     case HloOpcode::kRngGetAndUpdateState:
     case HloOpcode::kRngBitGenerator:
+    case HloOpcode::kDotGeneral:
     case HloOpcode::kScaledDot:
     case HloOpcode::kScan:
     case HloOpcode::kScatter:
@@ -385,7 +399,7 @@ void CpuInstructionFusion::ComputeInstructionsToSkip(
         for (HloInstruction* instr :
              callable->called_computation()->instructions())
           instructions_to_skip_.insert(instr);
-      } else if (BlockSubcomputationFusion(instruction, module->config())) {
+      } else if (BlockSubcomputationFusion(instruction)) {
         for (const auto* computation : instruction->called_computations()) {
           for (const auto* instr : computation->instructions()) {
             instructions_to_skip_.insert(instr);
@@ -444,14 +458,22 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
   // better job with pure data movement loops.
   auto is_minor_dim_concatenate = [](const HloInstruction* hlo) {
     // For vectors it's always beneficial to fuse concatenations.
-    if (hlo->shape().dimensions().size() <= 1) return false;
+    if (hlo->shape().dimensions().size() <= 1) {
+      return false;
+    }
 
-    // For small concatenated dimensions we don't loose any performance by
-    // fusing the concatenation as we don't have opportunities for vectorization
-    // anyway.
+    // Minor dimension concatenations with sufficient contiguous bytes benefit
+    // from pure data movement (memcpy / SIMD loads and stores) when unfused.
+    // Fusing them leads to branches in the innermost loop. However, small
+    // concatenations (e.g. few rows or tiny total bytes) are dominated by
+    // kernel launch and thunk dispatch overhead, so we keep them fused.
     int64_t concat_dim = hlo->concatenate_dimension();
+    int64_t concat_dim_bytes =
+        hlo->shape().dimensions(concat_dim) *
+        ShapeUtil::ByteSizeOfPrimitiveType(hlo->shape().element_type());
+    int64_t total_bytes = ShapeUtil::ByteSizeOfElements(hlo->shape());
     return concat_dim == LayoutUtil::Minor(hlo->shape().layout(), 0) &&
-           hlo->shape().dimensions(concat_dim) >= 128;
+           concat_dim_bytes >= 64 && total_bytes >= 2048;
   };
 
   if ((producer->opcode() == HloOpcode::kConcatenate &&
@@ -471,6 +493,25 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
   }
 
   RETURN_IF_NOT_FUSIBLE(InstructionFusion::ShouldFuse(consumer, operand_index));
+
+  // Keep the number of distinct operands of a loop fusion within a budget.
+  // Without one, long chains such as the pad-accumulate adjoints of stencil
+  // codes grow into fusions with hundreds of operands (and ~1000 fused
+  // instructions per output element): the elemental emitter then generates
+  // per-element code that neither vectorizes nor fits in registers, and such a
+  // fusion runs several times slower than materializing its inputs. This check
+  // is deliberately independent of may_duplicate(): the code-duplication check
+  // below is skipped when the pass runs with may_duplicate=false (multi-output
+  // fusion mode), which is exactly when the oversized fusions appeared. There
+  // is deliberately no budget on fused instructions: splitting a long
+  // elementwise chain changes FMA contraction across the new kernel boundary
+  // and so changes numerics.
+  if (consumer->opcode() == HloOpcode::kFusion && max_fusion_operands_ > 0 &&
+      OperandCountAfterFusing(consumer, producer) > max_fusion_operands_) {
+    return FusionDecision::Forbid(
+        "Not fusing: fusion would exceed the operand budget "
+        "(xla_cpu_max_fusion_operands).");
+  }
 
   // Fusing too many reductions together can lead to a giant LLVM modules after
   // loop unrolling. We prefer to split such fusions into multiple kernels to

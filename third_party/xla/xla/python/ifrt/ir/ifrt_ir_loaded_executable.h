@@ -25,7 +25,6 @@ limitations under the License.
 #include "absl/base/call_once.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -40,7 +39,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
-#include "xla/python/ifrt/ir/compiled_ifrt_ir_program.h"
+#include "xla/python/ifrt/ir/compilation/compiled_ifrt_ir_program.h"
 #include "xla/python/ifrt/ir/program_memory_tracer.h"
 #include "xla/python/ifrt/mpmd_executable.h"
 #include "xla/python/ifrt/rtti.h"
@@ -62,12 +61,10 @@ class IfrtIrLoadedExecutable
   ~IfrtIrLoadedExecutable() override = default;
 
   Client* client() const override {
-    DCHECK(this);
     return client_;
   }
 
   absl::string_view name() const override {
-    DCHECK(this);
     return program_->program_name;
   }
 
@@ -82,7 +79,6 @@ class IfrtIrLoadedExecutable
 
   UserContextRef user_context() const override { return user_context_; }
 
-  int num_devices() const override;
   int64_t SizeOfGeneratedCodeInBytes() const override;
   absl::StatusOr<xla::CompiledMemoryStats> GetCompiledMemoryStats()
       const override;
@@ -118,8 +114,6 @@ class IfrtIrLoadedExecutable
       absl::Span<BundleRef> args, const ExecuteOptions& options) override;
 
   std::optional<DeviceListRef> devices() const override;
-
-  absl::Span<Device* const> addressable_devices() const override;
 
   absl::StatusOr<absl::flat_hash_map<std::string, absl::Span<Device* const>>>
   GetMpmdAddressableDevices() const override;

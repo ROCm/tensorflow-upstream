@@ -60,6 +60,9 @@ class CudaKernel : public Kernel {
   void set_gpu_function(CUfunction gpu_function) {
     gpu_function_ = gpu_function;
   }
+  PlatformSpecificHandle platform_specific_handle() const override {
+    return PlatformSpecificHandle{gpu_function_};
+  }
 
   // Collects metadata for the specified kernel.
   absl::StatusOr<KernelMetadata> GetKernelMetadata();
@@ -67,6 +70,11 @@ class CudaKernel : public Kernel {
   // Updates the maximum dynamic shared memory bytes for this kernel.
   absl::Status UpdateMaxDynamicSharedMemoryBytes(
       int32_t shared_memory_bytes) const;
+
+  // Enables non-portable cluster sizes (> 8 blocks per cluster) for this
+  // kernel when required by `cluster_dims`.
+  absl::Status UpdateNonPortableClusterSize(
+      const std::optional<ClusterDim>& cluster_dims) const;
 
  private:
   absl::Status Launch(const ThreadDim& thread_dims, const BlockDim& block_dims,
@@ -79,6 +87,7 @@ class CudaKernel : public Kernel {
   unsigned arity_ = 0;  // number of formal parameters the kernel takes
 
   mutable std::atomic<int32_t> max_dynamic_shared_memory_bytes_{0};
+  mutable std::atomic<bool> non_portable_cluster_size_allowed_{false};
 };
 
 }  // namespace stream_executor::gpu

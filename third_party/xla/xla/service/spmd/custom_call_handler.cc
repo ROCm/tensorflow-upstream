@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -141,10 +142,13 @@ constexpr char kSPMDOpMultiRotate[] = "_SPMDInternalOp_MultiRotate";
 constexpr char kSPMDOpMultiSlice[] = "_SPMDInternalOp_MultiSlice";
 constexpr char kSPMDOpWrap[] = "_SPMDInternalOp_Wrap";
 
-bool IsTopKIndexOutputUsed(HloInstruction* hlo) {
+bool IsTopKIndexOutputUsed(const HloInstruction* hlo) {
+  if (hlo->IsRoot()) {
+    return true;
+  }
   for (const HloInstruction* user : hlo->users()) {
     if (user->opcode() == HloOpcode::kGetTupleElement) {
-      if (user->tuple_index() > 0 && !user->users().empty()) {
+      if (user->tuple_index() > 0 && !user->IsDead()) {
         return true;
       }
     } else {
@@ -159,7 +163,14 @@ bool IsTopKIndexOutputUsed(HloInstruction* hlo) {
 
 absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
     HloInstruction* hlo) {
-  if (!hlo->operand(0)->has_sharding()) {
+  // TopkRewriter flattens rank >= 2 inputs to 2D and leaves rank 1 inputs as
+  // 1D; this handler assumes a 2D [batch, sort] input.
+  if (hlo->operand_count() != 1 || !hlo->operand(0)->has_sharding() ||
+      !hlo->operand(0)->shape().IsArray() ||
+      hlo->operand(0)->shape().dimensions().size() != 2 ||
+      !hlo->shape().IsTuple() || hlo->shape().tuple_shapes().size() != 2 ||
+      !hlo->shape().tuple_shapes(0).IsArray() ||
+      hlo->shape().tuple_shapes(0).dimensions().size() != 2) {
     return DefaultAction(hlo);
   }
 
@@ -192,19 +203,11 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
   auto partitioned_input = GetPartitionedHlo(input).PadWithValue(
       CreateFirstWithType(element_type, &b_));
 
-  auto partition_state = partitioned_input.state();
-  auto replicated_sharding = HloSharding::Replicate();
-  // If batch dimension is partitioned, partial replicated on sort dimension.
-  if (batch_dim_partition > 1) {
-    auto sharding_grouped =
-        hlo_sharding_util::GroupShardingOnDims(sharding, {batch_dim});
-    partition_state = CreatePerGroupPartitioningState(
-        partitioned_input.state(), sharding_grouped.device_groups,
-        partitioned_input.state().b);
-    replicated_sharding =
-        hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(sharding,
-                                                                 {sort_dim});
-  }
+  const HloSharding replicated_sharding =
+      batch_dim_partition > 1
+          ? hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(sharding,
+                                                                     {sort_dim})
+          : HloSharding::Replicate();
 
   // Each partition needs to do TopK separately, thus the base shape
   // becomes [batch_size, k * shard_count].
@@ -240,7 +243,15 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
   HloInstruction* slice_sort_value = nullptr;
   HloInstruction* slice_index_value = nullptr;
 
+  const int64_t partitioned_batch_size =
+      CeilOfRatio(batch_size, batch_dim_partition);
   if (IsTopKIndexOutputUsed(hlo)) {
+    const hlo_sharding_util::GroupedSharding sharding_grouped =
+        hlo_sharding_util::GroupShardingOnDims(sharding, {batch_dim});
+    PartitionedHlo::PartitioningState partition_state =
+        CreatePerGroupPartitioningState(partitioned_input.state(),
+                                        sharding_grouped.device_groups,
+                                        partitioned_input.state().b);
     // Get index from TopK.
     HloInstruction* index_gte =
         b_.AddInstruction(HloInstruction::CreateGetTupleElement(
@@ -277,21 +288,18 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
     XlaBuilder b("Sort.Compare");
     XlaComputation comparator = CreateScalarComparisonComputation(
         "compare-value-and-index", {input->shape().element_type(), S32},
-        {Gt, Lt}, &b);
+        {GtTotalOrder, LtTotalOrder}, &b);
     ABSL_ASSIGN_OR_RETURN(HloComputation * compare_computation,
                      XlaComputationToHloComputation(comparator, module_));
     // Each partition needs to do TopK separately, thus the base shape for sort
     // becomes [ceil(batch_size / batch_dim_partition), k * shard_count].
     const Shape sort_shape = ShapeUtil::MakeTupleShape(
-        {ShapeUtil::MakeShape(
-             hlo->operand(0)->shape().element_type(),
-             {CeilOfRatio(batch_size, batch_dim_partition), k * shard_count}),
-         ShapeUtil::MakeShape(
-             S32,
-             {CeilOfRatio(batch_size, batch_dim_partition), k * shard_count})});
-    auto sort = b_.AddInstruction(HloInstruction::CreateSort(
+        {ShapeUtil::MakeShape(element_type,
+                              {partitioned_batch_size, k * shard_count}),
+         ShapeUtil::MakeShape(S32, {partitioned_batch_size, k * shard_count})});
+    HloInstruction* sort = b_.AddInstruction(HloInstruction::CreateSort(
         sort_shape, sort_dim, {replicated_value_gte, replicated_index_gte},
-        compare_computation, true));
+        compare_computation, /*is_stable=*/false));
     sort->set_sharding(
         replicated_sharding.GetTupleSharding(sort->shape()).value());
     PartitionedHlo replicated_sort(sort, replicated_shape,
@@ -314,20 +322,19 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
     // Sort only the replicated values.
     XlaBuilder b("Sort.Compare");
     XlaComputation comparator = CreateScalarComparisonComputation(
-        "compare-value", {input->shape().element_type()}, {Gt}, &b);
+        "compare-value", {input->shape().element_type()}, {GtTotalOrder}, &b);
     ABSL_ASSIGN_OR_RETURN(HloComputation * compare_computation,
                      XlaComputationToHloComputation(comparator, module_));
 
     const Shape sort_shape = ShapeUtil::MakeShape(
-        hlo->operand(0)->shape().element_type(),
-        {CeilOfRatio(batch_size, batch_dim_partition), k * shard_count});
-    auto sort = b_.AddInstruction(
+        element_type, {partitioned_batch_size, k * shard_count});
+    HloInstruction* sort = b_.AddInstruction(
         HloInstruction::CreateSort(sort_shape, sort_dim, {replicated_value_gte},
-                                   compare_computation, true));
+                                   compare_computation, /*is_stable=*/false));
     sort->set_sharding(replicated_sharding);
 
-    const Shape sort_replicated_shape = ShapeUtil::MakeShape(
-        hlo->operand(0)->shape().element_type(), {batch_size, k * shard_count});
+    const Shape sort_replicated_shape =
+        ShapeUtil::MakeShape(element_type, {batch_size, k * shard_count});
     PartitionedHlo replicated_sort(sort, sort_replicated_shape,
                                    MakePartitioningState());
 
@@ -339,7 +346,8 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
     HloInstruction* dummy_index_constant = b_.AddInstruction(
         HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(0)));
     slice_index_value = b_.AddInstruction(HloInstruction::CreateBroadcast(
-        ShapeUtil::MakeShape(S32, {batch_size, k}), dummy_index_constant, {}));
+        ShapeUtil::MakeShape(S32, {partitioned_batch_size, k}),
+        dummy_index_constant, {}));
     slice_index_value->set_sharding(replicated_sharding);
   }
 
@@ -462,18 +470,22 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_RotateRight(
 
   HloInstruction* rotated1 = rotate_with_padding(
       (amount + right_padding) % (shard_size * participating_shards));
+  PrimitiveType offset_type = (shard_size * hlo->sharding().dimension(dim) >=
+                               std::numeric_limits<int32_t>::max())
+                                  ? S64
+                                  : S32;
   HloInstruction* shard_offset = MakePartitionOffsets(
       hlo->shape(), hlo->sharding(), MakePartitioningState().partition_id, &b_,
-      {dim})[dim];
+      offset_type, {dim})[dim];
   HloInstruction* iota = b_.AddInstruction(HloInstruction::CreateIota(
-      ShapeUtil::ChangeElementType(rotated0->shape(), S32), dim));
+      ShapeUtil::ChangeElementType(rotated0->shape(), offset_type), dim));
   HloInstruction* selection_boundary =
       b_.AddInstruction(HloInstruction::CreateBroadcast(
           iota->shape(),
           b_.AddInstruction(HloInstruction::CreateBinary(
               shard_offset->shape(), HloOpcode::kSubtract,
               b_.AddInstruction(HloInstruction::CreateConstant(
-                  LiteralUtil::CreateR0<int32_t>(amount))),
+                  LiteralUtil::CreateR0(offset_type, amount))),
               shard_offset)),
           {}));
   HloInstruction* pred = b_.AddInstruction(HloInstruction::CreateCompare(
@@ -675,10 +687,15 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
   single_element_per_device_shape.set_dimensions(dim, participating_shards);
   HloInstruction* shard_offset = MakePartitionOffsets(
       single_element_per_device_shape, element_sharding,
-      MakePartitioningState().partition_id, &b_, {dim})[dim];
+      MakePartitioningState().partition_id, &b_, S32, {dim})[dim];
 
+  PrimitiveType offset_type =
+      (full_pre_wrap_size >= std::numeric_limits<int32_t>::max() ||
+       shard_size >= std::numeric_limits<int32_t>::max())
+          ? S64
+          : S32;
   HloInstruction* zero_offset = b_.AddInstruction(
-      HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(0)));
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0(offset_type, 0)));
 
   HloInstruction* left_halo = nullptr;
   HloInstruction* participating_shards_minus_one_op =
@@ -726,15 +743,16 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
     } else {
       HloInstruction* other_offset =
           b_.AddInstruction(HloInstruction::CreateConstant(
-              LiteralUtil::CreateR0<int32_t>(shard_size - left_amount)));
+              LiteralUtil::CreateR0(offset_type, shard_size - left_amount)));
       HloInstruction* last_offset = b_.AddInstruction(
-          HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(
+          HloInstruction::CreateConstant(LiteralUtil::CreateR0(
+              offset_type,
               (full_pre_wrap_size - shard_size * (participating_shards - 1)) -
-              left_amount)));
+                  left_amount)));
       HloInstruction* start_idx =
           b_.AddInstruction(HloInstruction::CreateTernary(
-              shard_offset->shape(), HloOpcode::kSelect, is_last, last_offset,
-              other_offset));
+              ShapeUtil::MakeShape(offset_type, {}), HloOpcode::kSelect,
+              is_last, last_offset, other_offset));
 
       std::vector<HloInstruction*> start_indices(
           pre_wrap_shape.dimensions().size(), zero_offset);
@@ -782,16 +800,21 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
       TF_RET_CHECK(pad_value != nullptr);
       int64_t leftover_offset =
           full_pre_wrap_size - (participating_shards - 1) * shard_size;
+      PrimitiveType index_type =
+          (full_pre_wrap_size >= std::numeric_limits<int32_t>::max() ||
+           shard_size >= std::numeric_limits<int32_t>::max())
+              ? S64
+              : S32;
       Shape index_shape =
-          ShapeUtil::ChangeElementType(local_input->shape(), S32);
+          ShapeUtil::ChangeElementType(local_input->shape(), index_type);
       HloInstruction* iota =
           b_.AddInstruction(HloInstruction::CreateIota(index_shape, dim));
       HloInstruction* limit_index =
           b_.AddInstruction(HloInstruction::CreateConstant(
-              LiteralUtil::CreateR0<int32_t>(leftover_offset)));
+              LiteralUtil::CreateR0(index_type, leftover_offset)));
       HloInstruction* shard_size_const =
           b_.AddInstruction(HloInstruction::CreateConstant(
-              LiteralUtil::CreateR0<int32_t>(shard_size)));
+              LiteralUtil::CreateR0(index_type, shard_size)));
       HloInstruction* true_limit_index =
           b_.AddInstruction(HloInstruction::CreateTernary(
               limit_index->shape(), HloOpcode::kSelect, is_last, limit_index,
@@ -844,17 +867,18 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
           pre_wrap_shape.dimensions().size(), zero_offset);
 
       HloInstruction* last_offset = b_.AddInstruction(
-          HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(
-              left_amount +
-              (full_pre_wrap_size - (participating_shards - 1) * shard_size))));
+          HloInstruction::CreateConstant(LiteralUtil::CreateR0(
+              offset_type,
+              left_amount + (full_pre_wrap_size -
+                             (participating_shards - 1) * shard_size))));
       HloInstruction* other_offset =
           b_.AddInstruction(HloInstruction::CreateConstant(
-              LiteralUtil::CreateR0<int32_t>(left_amount + shard_size)));
+              LiteralUtil::CreateR0(offset_type, left_amount + shard_size)));
 
       HloInstruction* start_idx =
           b_.AddInstruction(HloInstruction::CreateTernary(
-              shard_offset->shape(), HloOpcode::kSelect, is_last, last_offset,
-              other_offset));
+              ShapeUtil::MakeShape(offset_type, {}), HloOpcode::kSelect,
+              is_last, last_offset, other_offset));
 
       start_indices[dim] = start_idx;
 
@@ -1338,6 +1362,27 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCall(HloInstruction* hlo) {
       return instr;
     });
     return absl::OkStatus();
+  }
+
+  if (hlo->custom_call_target() == "compute-on-start") {
+    std::vector<HloInstruction*> call_args;
+    call_args.reserve(hlo->operand_count());
+    for (int64_t i = 0; i < hlo->operand_count(); ++i) {
+      call_args.push_back(GetPartitionedHlo(hlo->operand(i)).hlo());
+    }
+    SetPartitionedHlo(hlo, [&] {
+      auto* custom_call = b_.AddInstruction(hlo->CloneWithNewOperands(
+          MakePartitionedShape(hlo->shape(), hlo->sharding()), call_args));
+      custom_call->set_raw_backend_config_string(
+          hlo->raw_backend_config_string());
+      custom_call->set_frontend_attributes(hlo->frontend_attributes());
+      return custom_call;
+    });
+    return absl::OkStatus();
+  }
+
+  if (hlo->custom_call_target() == "compute-on-done") {
+    return HandleElementwise(hlo);
   }
 
   if (hlo->custom_call_target() == "TopK") {

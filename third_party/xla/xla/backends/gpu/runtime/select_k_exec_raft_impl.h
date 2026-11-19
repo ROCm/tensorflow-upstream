@@ -16,18 +16,20 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_SELECT_K_EXEC_RAFT_IMPL_H_
 #define XLA_BACKENDS_GPU_RUNTIME_SELECT_K_EXEC_RAFT_IMPL_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <optional>
-#include <utility>
+#include <string>
+#include <type_traits>
 
-#include "absl/container/flat_hash_map.h"
-#include "absl/log/check.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
-#include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/include/cuda_bf16.h"
 #include "raft/core/device_mdspan.hpp"
 #include "raft/core/mdspan_types.hpp"
@@ -48,123 +50,167 @@ using raft::matrix::SelectAlgo;
 
 namespace raft_internal {
 
-// Simple RAII wrapper to manage temporary device memory allocations
-class OwningScratchAllocator {
+// Custom RMM memory resource backed by a fixed pre-allocated device buffer.
+// Uses a bump allocator that unwinds LIFO deallocations and resets to offset 0
+// when all live allocations are freed. This is stream-safe because all RAFT
+// operations in select_k_exec execute sequentially on a single bound CUDA
+// stream.
+class FixedBufferDeviceMemoryResource : public rmm::mr::device_memory_resource {
  public:
-  OwningScratchAllocator(int device_ordinal,
-                         se::DeviceAddressAllocator* allocator)
-      : device_ordinal_(device_ordinal), allocator_(allocator) {}
+  FixedBufferDeviceMemoryResource() = default;
 
-  OwningScratchAllocator(OwningScratchAllocator&&) = default;
-  OwningScratchAllocator& operator=(OwningScratchAllocator&&) = default;
-
-  // Allocate memory and track ownership
-  absl::StatusOr<se::DeviceAddress<uint8_t>> AllocateBytes(int64_t byte_size) {
-    ABSL_ASSIGN_OR_RETURN(se::ScopedDeviceAddress<uint8_t> buffer,
-                     allocator_->Allocate(device_ordinal_, byte_size,
-                                          /*retry_on_failure=*/false));
-
-    se::DeviceAddress<uint8_t> res = *buffer;
-    void* raw_ptr = res.opaque();
-    buffers_.emplace(raw_ptr, std::move(buffer));
-    return res;
+  void Reset(void* base_ptr, size_t capacity) {
+    base_ptr_ = static_cast<char*>(base_ptr);
+    capacity_ = capacity;
+    offset_ = 0;
+    peak_offset_ = 0;
+    live_allocations_ = 0;
+    last_error_ = absl::OkStatus();
+    VLOG(3) << "FixedBufferDeviceMemoryResource: reset with capacity "
+            << capacity_;
   }
 
-  // Deallocate tracked memory; safe no-op if pointer not found
-  absl::Status DeallocateBytes(void* ptr) noexcept {
-    auto it = buffers_.find(ptr);
-    if (it != buffers_.end()) {
-      buffers_.erase(it);  // RAII frees memory
-      return absl::OkStatus();
-    }
-    return absl::NotFoundError("Pointer not found");
-  }
-
-  se::DeviceAddressAllocator* get_allocator() const { return allocator_; }
-
-  void set_allocator(se::DeviceAddressAllocator* allocator) {
-    allocator_ = allocator;
-  }
-
- private:
-  int device_ordinal_;
-  se::DeviceAddressAllocator* allocator_;
-  // key = raw device pointer, value = owning memory object
-  absl::flat_hash_map<void*, se::ScopedDeviceAddress<uint8_t>> buffers_;
-};
-
-// Custom RMM memory resource backed by StreamExecutor allocator
-class XlaDeviceMemoryResource : public rmm::mr::device_memory_resource {
- public:
-  XlaDeviceMemoryResource(int device_ordinal,
-                          se::DeviceAddressAllocator* allocator)
-      : scratch_allocator_(device_ordinal, allocator) {}
-
-  se::DeviceAddressAllocator* get_allocator() const {
-    return scratch_allocator_.get_allocator();
-  }
-
-  void set_allocator(se::DeviceAddressAllocator* allocator) {
-    scratch_allocator_.set_allocator(allocator);
-  }
+  size_t capacity() const { return capacity_; }
+  size_t allocated_bytes() const { return offset_; }
+  size_t peak_allocated_bytes() const { return peak_offset_; }
+  size_t live_allocations() const { return live_allocations_; }
+  const absl::Status& last_error() const { return last_error_; }
 
  protected:
   void* do_allocate(std::size_t bytes, rmm::cuda_stream_view stream) override {
-    auto mem = scratch_allocator_.AllocateBytes(bytes);
-    if (!mem.ok()) {
-      // RMM expects exceptions
-      throw rmm::bad_alloc(std::string(mem.status().ToString()));
+    if (bytes == 0) {
+      return nullptr;
     }
-    return mem->opaque();
+    if (base_ptr_ == nullptr || bytes > ~(kAlignment - 1)) {
+      ThrowScratchCapacityExceeded(absl::StrCat(
+          "FixedBufferDeviceMemoryResource: scratch capacity exceeded! "
+          "Requested: ",
+          bytes, ", remaining: ",
+          base_ptr_ != nullptr && capacity_ >= offset_ ? capacity_ - offset_
+                                                       : 0,
+          ", total capacity: ", capacity_));
+    }
+    std::uintptr_t current_addr =
+        reinterpret_cast<std::uintptr_t>(base_ptr_ + offset_);
+    size_t padding = (kAlignment - (current_addr % kAlignment)) % kAlignment;
+    size_t aligned_bytes = AlignBytes(bytes);
+    if (offset_ > capacity_ || padding > capacity_ - offset_ ||
+        aligned_bytes > capacity_ - offset_ - padding) {
+      ThrowScratchCapacityExceeded(absl::StrCat(
+          "FixedBufferDeviceMemoryResource: scratch capacity exceeded! "
+          "Requested: ",
+          bytes, " (aligned: ", aligned_bytes,
+          "), remaining: ", capacity_ >= offset_ ? capacity_ - offset_ : 0,
+          ", total capacity: ", capacity_));
+    }
+    offset_ += padding;
+    size_t alloc_offset = offset_;
+    void* ptr = base_ptr_ + alloc_offset;
+    offset_ += aligned_bytes;
+    peak_offset_ = std::max(peak_offset_, offset_);
+    ++live_allocations_;
+    VLOG(3) << "FixedBufferDeviceMemoryResource: allocate " << bytes
+            << " (aligned: " << aligned_bytes << ") at offset " << alloc_offset
+            << " (used: " << offset_ << ", peak: " << peak_offset_
+            << ", live: " << live_allocations_ << ")";
+    return ptr;
   }
 
   void do_deallocate(void* ptr, std::size_t bytes,
                      rmm::cuda_stream_view stream) noexcept override {
-    auto status = scratch_allocator_.DeallocateBytes(ptr);
-    if (!status.ok()) {
-      // do_deallocate should be noexcept. Don’t throw; just log.
-      LOG(ERROR) << "Scratch Deallocation failed: " << status;
+    if (ptr == nullptr || bytes == 0 || base_ptr_ == nullptr ||
+        live_allocations_ == 0 || bytes > ~(kAlignment - 1)) {
+      return;
     }
+    std::uintptr_t ptr_addr = reinterpret_cast<std::uintptr_t>(ptr);
+    std::uintptr_t base_addr = reinterpret_cast<std::uintptr_t>(base_ptr_);
+    if (ptr_addr < base_addr || ptr_addr % kAlignment != 0) {
+      return;
+    }
+    size_t aligned_bytes = AlignBytes(bytes);
+    size_t ptr_offset = ptr_addr - base_addr;
+    if (ptr_offset > offset_ || aligned_bytes > offset_ - ptr_offset) {
+      return;
+    }
+    if (--live_allocations_ == 0) {
+      offset_ = 0;
+    } else if (offset_ - ptr_offset == aligned_bytes) {
+      offset_ = ptr_offset;
+    }
+    VLOG(3) << "FixedBufferDeviceMemoryResource: deallocate " << bytes
+            << " (aligned: " << aligned_bytes << ") at offset " << ptr_offset
+            << " (used: " << offset_ << ", peak: " << peak_offset_
+            << ", live: " << live_allocations_ << ")";
   }
 
  private:
-  OwningScratchAllocator scratch_allocator_;
+  // Ensure 256-byte alignment for CUDA / CUB operations.
+  static constexpr size_t kAlignment = 256;
+
+  static constexpr size_t AlignBytes(size_t bytes) {
+    return (bytes + kAlignment - 1) & ~(kAlignment - 1);
+  }
+
+  // Records the allocation error as an absl::Status before throwing so XLA can
+  // recover the exact diagnostic even when cross-DSO RTTI in static-libc++
+  // builds lands in `catch (...)`.
+  [[noreturn]] void ThrowScratchCapacityExceeded(const std::string& msg) {
+    if (last_error_.ok()) {
+      last_error_ = absl::InternalError(absl::StrCat("select_k failed: ", msg));
+    }
+    throw rmm::bad_alloc(msg);
+  }
+
+  char* base_ptr_ = nullptr;
+  size_t capacity_ = 0;
+  size_t offset_ = 0;
+  size_t peak_offset_ = 0;
+  size_t live_allocations_ = 0;
+  absl::Status last_error_;
 };
 
 // RAII wrapper for RAFT resources bound to a CUDA stream
 struct RaftStreamResource : public se::Stream::Resource {
   raft::resources res;
-  std::shared_ptr<XlaDeviceMemoryResource> xla_dev_mem_res;
+  std::shared_ptr<FixedBufferDeviceMemoryResource> fixed_buffer_mr;
   ~RaftStreamResource() override = default;
 
   // Factory to create a RaftStreamResource tied to a CUDA stream.
-  // Sets up `raft::resources` with a custom XlaDeviceMemoryResource
-  // using the given allocator and binds it to the provided stream.
+  // Sets up `raft::resources` with FixedBufferDeviceMemoryResource
+  // and binds it to the provided stream.
   //
   // Args:
-  //   device_ordinal: Device index.
-  //   allocator: StreamExecutor memory allocator.
   //   cuda_stream: CUDA stream to bind.
   // Returns:
   //   Unique pointer to an initialized RaftStreamResource.
-  static std::unique_ptr<RaftStreamResource> Create(
-      int device_ordinal, se::DeviceAddressAllocator* allocator,
-      cudaStream_t cuda_stream) {
-    // Assign our custom AllocatorForRaft for this device
+  static std::unique_ptr<RaftStreamResource> Create(cudaStream_t cuda_stream) {
     auto handle = std::make_unique<RaftStreamResource>();
-    handle->xla_dev_mem_res =
-        std::make_shared<XlaDeviceMemoryResource>(device_ordinal, allocator);
+    handle->fixed_buffer_mr =
+        std::make_shared<FixedBufferDeviceMemoryResource>();
     raft::resource::set_workspace_resource(handle->res,
-                                           handle->xla_dev_mem_res);
-    // Set Cuda Stream
+                                           handle->fixed_buffer_mr);
     raft::resource::set_cuda_stream(handle->res,
                                     rmm::cuda_stream_view{cuda_stream});
+    VLOG(3) << "RaftStreamResource: created for stream " << cuda_stream;
     return handle;
   }
 };
 
 template <typename T>
 SelectAlgo choose_select_k_algorithm(uint32_t rows, uint32_t cols, uint32_t k);
+
+template <typename T>
+constexpr absl::string_view SelectKTypeName() {
+  if constexpr (std::is_same_v<T, float>) {
+    return "float";
+  } else if constexpr (std::is_same_v<T, nv_bfloat16>) {
+    return "bfloat16";
+  } else if constexpr (std::is_same_v<T, std::uint64_t>) {
+    return "uint64_t";
+  } else {
+    return "unknown";
+  }
+}
 
 }  // namespace raft_internal
 
@@ -176,11 +222,12 @@ absl::Status select_k_exec(int device_ordinal,
                            se::DeviceAddressBase data_out,
                            se::DeviceAddressBase indices_out,
                            std::uint32_t batch, std::uint32_t n,
-                           std::uint32_t k) {
+                           std::uint32_t k,
+                           se::DeviceAddressBase scratch_buffer) {
   // Pick the most suitable algorithm
   SelectAlgo algo = raft_internal::choose_select_k_algorithm<T>(batch, n, k);
-  VLOG(3) << "select_k_exec_raft: "
-          << "device_ordinal: " << device_ordinal << ", "
+  VLOG(3) << "select_k_exec_raft<" << raft_internal::SelectKTypeName<T>()
+          << ">: device_ordinal: " << device_ordinal << ", "
           << "allocator: " << allocator << ", "
           << "stream: " << stream << ", "
           << "data_in: " << data_in.opaque() << " (" << data_in.size() << "B)"
@@ -188,6 +235,8 @@ absl::Status select_k_exec(int device_ordinal,
           << "B)"
           << ", indices_out: " << indices_out.opaque() << " ("
           << indices_out.size() << "B)"
+          << ", scratch: " << scratch_buffer.opaque() << " ("
+          << scratch_buffer.size() << "B)"
           << ", batch: " << batch << ", n: " << n << ", k: " << k
           << ", algo: " << algo;
 
@@ -198,19 +247,22 @@ absl::Status select_k_exec(int device_ordinal,
       << "Failed to cast se::Stream to cudaStream_t.";
   raft_internal::RaftStreamResource* resContainer =
       stream->GetOrCreateResource<raft_internal::RaftStreamResource>(
-          [device_ordinal, allocator, cuda_stream] {
-            return raft_internal::RaftStreamResource::Create(
-                device_ordinal, allocator, cuda_stream);
+          [cuda_stream] {
+            return raft_internal::RaftStreamResource::Create(cuda_stream);
           });
   TF_RET_CHECK(resContainer != nullptr)
       << "Failed to create or retrieve RaftStreamResource";
 
-  // resContainer is scoped to a single stream.
-  // Because a stream does not execute select_k_exec concurrently from multiple
-  // threads, it is safe to update the allocator without additional locking.
-  if (allocator != resContainer->xla_dev_mem_res->get_allocator()) {
-    resContainer->xla_dev_mem_res->set_allocator(allocator);
+  // Check the pre-allocated scratch buffer is valid.
+  if (scratch_buffer.opaque() == nullptr || scratch_buffer.size() == 0) {
+    return absl::InvalidArgumentError(
+        "select_k_exec requires a valid non-empty scratch_buffer");
   }
+
+  resContainer->fixed_buffer_mr->Reset(scratch_buffer.opaque(),
+                                       scratch_buffer.size());
+  auto reset_cleanup = absl::MakeCleanup(
+      [resContainer] { resContainer->fixed_buffer_mr->Reset(nullptr, 0); });
 
   try {
     // Wrap raw device pointers in RAFT matrix views
@@ -236,9 +288,20 @@ absl::Status select_k_exec(int device_ordinal,
         /*algo=*/algo);
 
     return absl::OkStatus();
+  } catch (const rmm::bad_alloc& e) {
+    if (!resContainer->fixed_buffer_mr->last_error().ok()) {
+      return resContainer->fixed_buffer_mr->last_error();
+    }
+    return absl::InternalError(absl::StrCat("select_k failed: ", e.what()));
   } catch (const std::exception& e) {
+    if (!resContainer->fixed_buffer_mr->last_error().ok()) {
+      return resContainer->fixed_buffer_mr->last_error();
+    }
     return absl::InternalError(absl::StrCat("select_k failed: ", e.what()));
   } catch (...) {
+    if (!resContainer->fixed_buffer_mr->last_error().ok()) {
+      return resContainer->fixed_buffer_mr->last_error();
+    }
     return absl::InternalError("select_k failed with unknown exception");
   }
 }

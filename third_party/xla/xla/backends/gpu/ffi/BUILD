@@ -102,7 +102,7 @@ xla_cc_binary(
 
 [
     genrule(
-        name = "xla_ffi_aot_custom_call_executable_" + target,
+        name = "compile_xla_ffi_aot_custom_call_executable_" + target,
         testonly = True,
         outs = ["xla_ffi_aot_custom_call_executable_" + target],
         cmd = "$(execpath :xla_ffi_aot_custom_call_compile_main) $@ " + target,
@@ -125,7 +125,7 @@ xla_cc_binary(
         name = "xla_ffi_aot_custom_call_" + target + "_test",
         srcs = ["xla_ffi_aot_custom_call_test.cc"],
         backends = [target],
-        data = [":xla_ffi_aot_custom_call_executable_" + target],
+        data = [":compile_xla_ffi_aot_custom_call_executable_" + target],
         tags = [
             "cuda-only",
             "depends-on-libcuda-in-compilation",
@@ -159,3 +159,21 @@ xla_cc_binary(
         "h100",
     ]
 ]
+
+cc_library(
+    name = "ffi_attributes_from_backend_config",
+    srcs = ["ffi_attributes_from_backend_config.cc"],
+    hdrs = ["ffi_attributes_from_backend_config.h"],
+    deps = [
+        "//xla:status_macros",
+        "//xla/ffi:attribute_map",
+        "//xla/ffi:attributes",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:backend_configs_cc",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@llvm-project//mlir:AsmParser",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)

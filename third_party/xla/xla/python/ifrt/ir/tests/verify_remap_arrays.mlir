@@ -26,7 +26,7 @@ func.func @remap_from_two_to_one_array(
   %0, %ctrl_0 = ifrt.RemapArrays(%arg0, %arg1)
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>,
                 #ifrt.array_mapping<1, 0, [#ifrt.mapping<[0:1:1] to [1:2:1]>]>]
-      {donated=true}
+      <donated=true>
       : (!array0, !array1) -> (!array2)
   return
 }
@@ -94,6 +94,25 @@ func.func @requires_same_per_shard_shape(
 func.func @requires_at_least_one_input() attributes {ifrt.function} {
   // expected-error@+1 {{'ifrt.RemapArrays' op requires at least one input array}}
   %0, %ctrl_0 = ifrt.RemapArrays() mappings = [] : () -> (!array)
+  return
+}
+
+// -----
+
+func.func @error_zero_inputs_and_outputs() attributes {ifrt.function} {
+  // expected-error@+1 {{'ifrt.RemapArrays' op requires at least one input array}}
+  %ctrl_0 = ifrt.RemapArrays() mappings = [] : () -> ()
+  return
+}
+
+// -----
+
+!array = !ifrt.array<tensor<2x4xi32>,
+                     #ifrt.sharding_param<1x2 to [0] on 2>, [0,1]>
+func.func @requires_at_least_one_output(%arg0: !array)
+    attributes {ifrt.function} {
+  // expected-error@+1 {{'ifrt.RemapArrays' op requires at least one output array}}
+  %ctrl_0 = ifrt.RemapArrays(%arg0) mappings = [] : (!array) -> ()
   return
 }
 

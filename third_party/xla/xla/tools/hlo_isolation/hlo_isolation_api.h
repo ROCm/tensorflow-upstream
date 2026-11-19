@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -62,6 +63,25 @@ struct ModuleIsolationOptions {
   bool run_hlo_passes = false;
   int64_t max_module_size_bytes = 0;
   bool reject_unconstrained_ops = false;
+  bool use_dataflow_based_input_generation = true;
+
+  // XLA allows a backend to compute an instruction in a wider type than the
+  // one declared by the HLO (see DebugOptions::xla_allow_excess_precision).
+  // A fusion can therefore keep intermediates in f32 where the defused
+  // reference is forced to round to bf16 at every instruction boundary, which
+  // shows up as a numeric mismatch even though both results are correct. When
+  // this is true, a mismatch against the defused reference is re-checked with
+  // excess precision disabled on both sides before it is reported.
+  //
+  // Off by default: the re-check recompiles the module under test, so a
+  // genuine miscompile that only reproduces with excess precision enabled
+  // would be silently accepted. Enable it only for fuzzing-style runs where
+  // the false positive rate matters more than the miss rate.
+  bool retry_without_excess_precision = false;
+
+  // If true, re-runs a failing module with FusionDebugger enabled to compare
+  // intermediate instructions inside the fusion against the reference runner.
+  bool enable_fusion_debugger = true;
 
   std::function<absl::StatusOr<Literal>(
       std::unique_ptr<HloModule> module, HloRunnerInterface* runner,
@@ -143,6 +163,8 @@ absl::StatusOr<std::vector<NumericMismatch>> ExtractAndEnrichTopMismatches(
 absl::StatusOr<std::vector<NumericMismatch>> ExtractTopMismatches(
     std::string error_message, bool is_tuple = false);
 
+absl::StatusOr<NumericMismatch> ParseMismatchLine(absl::string_view line);
+
 absl::StatusOr<std::vector<bool>> DetectReducesInModuleOutput(
     const HloModule* module);
 
@@ -154,6 +176,15 @@ int64_t GetFusionCountInNestedFusion(const HloInstruction* fusion_instr);
 bool ModuleContainsLargeKeyValueSort(const HloModule& module);
 bool ModuleTestsFloatsForEquality(const HloModule& module);
 bool ComputationHasRng(const HloComputation* computation);
+
+// Returns whether a main thread computation of `module` starts an async chain
+// on the `sparsecore` thread, that is, whether it offloads to SparseCore.
+bool IsSparseCoreModule(const HloModule& module);
+
+// Returns a skip reason (`CONTAINS_RNG`, `CONTAINS_MOSAIC_KERNEL`, or
+// `NO_WORK_IN_SPARSECORE_OFFLOAD`) when `module` cannot be meaningfully
+// evaluated in isolation, or `std::nullopt` otherwise.
+std::optional<std::string> SparseCoreOffloadSkipReason(const HloModule& module);
 
 }  // namespace hlo_isolation
 }  // namespace xla

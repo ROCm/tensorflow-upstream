@@ -44,6 +44,14 @@ limitations under the License.
 
 namespace tensorflow {
 
+namespace {
+// Upper bound on TensorList reserve/resize element count (CWE-770). Each slot
+// is a Tensor (~24-32 bytes); INT32_MAX would allocate ~48-64 GB of metadata.
+// 2^24 slots (~400 MB metadata) leaves room for large TensorArray / pfor
+// workloads.
+constexpr int32_t kMaxTensorListElements = 1 << 24;
+}  // namespace
+
 typedef Eigen::ThreadPoolDevice CPUDevice;
 
 absl::Status TensorShapeFromTensor(const Tensor& t, PartialTensorShape* out) {
@@ -343,6 +351,11 @@ class TensorListReserve : public OpKernel {
                     absl::StrCat("The num_elements to reserve must be a "
                                  "non negative number, but got ",
                                  num_elements)));
+    OP_REQUIRES(c, num_elements <= kMaxTensorListElements,
+                absl::InvalidArgumentError(absl::StrCat(
+                    "TensorListReserve: num_elements (", num_elements,
+                    ") exceeds maximum allowed elements (",
+                    kMaxTensorListElements, ").")));
     TensorList output;
     output.element_shape = element_shape;
     output.element_dtype = element_dtype_;
@@ -391,6 +404,14 @@ class TensorListResize : public OpKernel {
         c, size >= 0,
         absl::InvalidArgumentError(absl::StrCat(
             "TensorListSlice expects size to be non-negative. Got: ", size)));
+    // Only growing the list allocates; shrinking must always be allowed.
+    if (size > input_list->tensors().size()) {
+      OP_REQUIRES(c, size <= kMaxTensorListElements,
+                  absl::InvalidArgumentError(
+                      absl::StrCat("TensorListResize: requested size (", size,
+                                   ") exceeds maximum allowed elements (",
+                                   kMaxTensorListElements, ").")));
+    }
 
     std::unique_ptr<Tensor> maybe_result =
         c->forward_input(0, 0, DT_VARIANT, TensorShape{},
@@ -492,8 +513,16 @@ class TensorListSetItem : public OpKernel {
                       "Trying to modify element ", index, " in a list with ",
                       l->tensors().size(), " elements.")));
     } else if (index >= l->tensors().size()) {
-      // size_t cast avoids signed overflow when index == INT32_MAX.
-      output_list->tensors().resize(static_cast<size_t>(index) + 1,
+      // Cap implicit growth to the same limit as TensorListReserve/Resize
+      // (CWE-770). Without this, a large index with max_num_elements=-1 could
+      // trigger a multi-gigabyte allocation.
+      const int64_t new_size = static_cast<int64_t>(index) + 1;
+      OP_REQUIRES(c, new_size <= kMaxTensorListElements,
+                  absl::InvalidArgumentError(absl::StrCat(
+                      "TensorListSetItem: requested implicit resize to ",
+                      new_size, " exceeds maximum allowed elements (",
+                      kMaxTensorListElements, ").")));
+      output_list->tensors().resize(static_cast<size_t>(new_size),
                                     Tensor(DT_INVALID));
     }
     output_list->tensors()[index] = value;

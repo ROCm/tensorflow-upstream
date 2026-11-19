@@ -302,8 +302,10 @@ absl::StatusOr<bool> UnrollInternal(HloInstruction* while_op,
                    NextSchedulingGroupId(*while_op->GetModule()));
   std::vector<HloInstruction*> new_calls;
   new_calls.reserve(config.trip_count);
-  for (int64_t i = config.init; i < config.trip_count + config.init; ++i) {
-    CHECK(OverflowSafeAdd(i, (int64_t)1).has_value());
+  for (int64_t iter = 0; iter < config.trip_count; ++iter) {
+    int64_t i = OverflowSafeAdd(config.init,
+                                OverflowSafeMultiply(iter, config.step).first)
+                    .value();
 
     HloComputation* unrolled_body = module->AddEmbeddedComputation(
         UnrollSingleIterationOfTrivialLoop(while_op, config, i,
@@ -350,8 +352,10 @@ absl::StatusOr<UnrollResult> UnrollInternalWrappedAndReturnReplacement(
 
   std::vector<HloInstruction*> new_calls;
   new_calls.reserve(config.trip_count);
-  for (int64_t i = config.init; i < config.trip_count + config.init; ++i) {
-    CHECK(OverflowSafeAdd(i, (int64_t)1).has_value());
+  for (int64_t iter = 0; iter < config.trip_count; ++iter) {
+    int64_t i = OverflowSafeAdd(config.init,
+                                OverflowSafeMultiply(iter, config.step).first)
+                    .value();
 
     HloComputation* unrolled_body = module->AddEmbeddedComputation(
         UnrollSingleIterationOfTrivialLoop(while_op, config, i,
@@ -876,10 +880,13 @@ std::optional<int64_t> MatchShapeCoveringDynamicIndexInstruction(
   // Based on the instruction type, start indices start from index 1 or 2 of the
   // operands.
   int64_t start_indices_offset;
+  const Shape* slice_shape;
   if (instr->opcode() == HloOpcode::kDynamicSlice) {
     start_indices_offset = 1;
+    slice_shape = &instr->shape();
   } else if (instr->opcode() == HloOpcode::kDynamicUpdateSlice) {
     start_indices_offset = 2;
+    slice_shape = &instr->operand(1)->shape();
   } else {
     return std::nullopt;
   }
@@ -928,23 +935,29 @@ std::optional<int64_t> MatchShapeCoveringDynamicIndexInstruction(
     return std::nullopt;
   }
 
-  if (opcode == HloOpcode::kDynamicSlice) {
-    const Shape& result_shape = instr->shape();
-    if (result_shape.dimensions(dynamic_index) != 1) {
-      VLOG(3) << "The slice size on the dynamic_index dimension must be 1.";
-      return std::nullopt;
-    }
+  // With trip count equal to the dimension size, the induction variable only
+  // visits every index if it runs 0, 1, 2, ...
+  std::optional<Range> loop_range = MatchTrivialLoopRange(config.while_instr);
+  if (!loop_range.has_value() || !loop_range->IsStepKnown() ||
+      loop_range->min().GetSignedValue() != 0 ||
+      loop_range->step()->GetSignedValue() != 1) {
+    VLOG(3) << "The loop induction variable must start at 0 with step 1.";
+    return std::nullopt;
+  }
 
-    const Shape& operand_shape = operand->shape();
-    CHECK_EQ(result_shape.dimensions().size(),
-             operand_shape.dimensions().size());
-    for (int64_t i = 0; i < result_shape.dimensions().size(); ++i) {
-      if (i != dynamic_index &&
-          result_shape.dimensions(i) != operand_shape.dimensions(i)) {
-        VLOG(3) << "The slice sizes must match the operand-shape on "
-                   "non-dynamic-index dimensions.";
-        return std::nullopt;
-      }
+  if (slice_shape->dimensions(dynamic_index) != 1) {
+    VLOG(3) << "The slice size on the dynamic_index dimension must be 1.";
+    return std::nullopt;
+  }
+
+  const Shape& operand_shape = operand->shape();
+  CHECK_EQ(slice_shape->dimensions().size(), operand_shape.dimensions().size());
+  for (int64_t i = 0; i < slice_shape->dimensions().size(); ++i) {
+    if (i != dynamic_index &&
+        slice_shape->dimensions(i) != operand_shape.dimensions(i)) {
+      VLOG(3) << "The slice sizes must match the operand-shape on "
+                 "non-dynamic-index dimensions.";
+      return std::nullopt;
     }
   }
 
@@ -1178,37 +1191,37 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
   if (dynamic_index_range == std::nullopt ||
       !dynamic_index_range->IsBounded() ||
       !dynamic_index_range->IsStepKnown() ||
-      dynamic_index_range->step()->GetSignedValue() == 0) {
+      dynamic_index_range->step()->GetSignedValue() <= 0) {
     VLOG(3) << "Could not compute compact dynamic index range.";
     return std::nullopt;
   }
 
   const int64_t dimension_size = input_shape.dimensions(dynamic_index.value());
-  // We keep a boolean per possible index of the dynamic dimension, initially
-  // false.
-  std::vector<bool> indices_covered(dimension_size);
   const int64_t slice_size = slice_shape->dimensions(dynamic_index.value());
+  int64_t covered_until = 0;
 
   // Here, we simulate the loop based on the xla::Range that we have computed
-  // to represent the input to the DS/DUS.
+  // to represent the input to the DS/DUS. Because `dynamic_index_range` has a
+  // positive step (`step > 0`) and clamping to `[0, dimension_size -
+  // slice_size]` is monotonic, `clamped_start_index_value` is monotonically
+  // non-decreasing across iterations, so tracking the contiguous covered prefix
+  // `[0, covered_until)` is sufficient.
   for (int64_t start_index_value = dynamic_index_range->min().GetSignedValue();
        start_index_value <= dynamic_index_range->max()->GetSignedValue();
        start_index_value += dynamic_index_range->step()->GetSignedValue()) {
     // DS and DUS clamp start indices so that the entire region is in-bounds.
     int64_t clamped_start_index_value = std::min(
         std::max<int64_t>(start_index_value, 0), dimension_size - slice_size);
-    // The DS/DUS covers `slice_size` many indices.
-    for (int64_t index = clamped_start_index_value;
-         index < clamped_start_index_value + slice_size; ++index) {
-      indices_covered[index] = true;
+    if (clamped_start_index_value > covered_until) {
+      break;
     }
+    covered_until =
+        std::max(covered_until, clamped_start_index_value + slice_size);
   }
 
-  for (int index = 0; index < indices_covered.size(); ++index) {
-    if (!indices_covered[index]) {
-      VLOG(3) << "Index " << index << " was not covered.";
-      return std::nullopt;
-    }
+  if (covered_until < dimension_size) {
+    VLOG(3) << "Index " << covered_until << " was not covered.";
+    return std::nullopt;
   }
   return dynamic_index;
 }
@@ -1287,7 +1300,9 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
   Literal indvar_iter_val = std::move(indvar_init_result).value();
   std::optional<int64_t> trip_count =
       MatchTrivialLoopTripCount(while_op, *indvar_tuple_idx, indvar_iter_val);
-  if (!trip_count.has_value()) {
+  std::optional<int64_t> step =
+      MatchTrivialLoopInductionStep(while_op, *indvar_tuple_idx);
+  if (!trip_count.has_value() || !step.has_value()) {
     VLOG(3) << "Loop doesn't have trivial trip count";
     return std::nullopt;
   }
@@ -1300,6 +1315,7 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
       LiteralUtil::LiteralAsScalarInt64(std::move(indvar_iter_val)).value();
   config.trip_count = trip_count.value();
   config.induction_var_idx = *indvar_tuple_idx;
+  config.step = *step;
   return config;
 }
 

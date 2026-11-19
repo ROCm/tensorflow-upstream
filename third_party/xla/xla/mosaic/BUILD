@@ -52,19 +52,14 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:CommonFolders",
-        "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:MathDialect",
-        "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Pass",
-        "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:VectorDialect",
+        "@llvm-project//mlir:ViewLikeInterface",
     ],
 )
 
@@ -170,6 +165,7 @@ td_library(
     srcs = [
         "dialect/tpu/tpu.td",
         "dialect/tpu/tpu_enums.td",
+        "dialect/tpu/tpu_matmul_ops.td",
         "dialect/tpu/tpu_ops.td",
         "dialect/tpu/tpu_types.td",
     ],
@@ -182,6 +178,7 @@ td_library(
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:PassBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
+        "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
     ],
 )
 
@@ -239,7 +236,7 @@ cc_library(
         ":tpu_inc_gen",
         ":tpu_serde_pass",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:CAPIIRObjects",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
@@ -260,22 +257,11 @@ xla_cc_test(
 )
 
 xla_cc_test(
-    name = "divisibility_check_test",
-    srcs = ["dialect/tpu/divisibility_check_test.cc"],
-    deps = [
-        ":tpu_dialect",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-    ],
-)
-
-xla_cc_test(
     name = "tpu_ops_verification_test",
     srcs = ["dialect/tpu/tpu_ops_verification_test.cc"],
     deps = [
         ":tpu_dialect",
+        "//xla:shape_util",
         "//xla/mlir/utils:error_util",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",

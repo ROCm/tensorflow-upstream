@@ -13,9 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <memory>
 
 #include <gtest/gtest.h>
+#include "absl/log/log.h"
 #include "xla/experiments/sm_bandwidth_benchmark/sm_bw_kernels.h"
 #include "xla/experiments/sm_bandwidth_benchmark/sm_bw_utils.h"
 
@@ -293,7 +297,9 @@ struct UseMaxNumberOfRegistersPerSmImpl {
 
     for (int coeff = 1; coeff <= 3; coeff++) {
       int num_threads = kNum32BitRegisters / ((1 << chunks_log) * coeff);
-      if (num_threads > kMaxBlockSize) continue;
+      if (num_threads > kMaxBlockSize) {
+        continue;
+      }
       float time_diff = BenchmarkCustomDeviceCopy<1 << chunks_log>(
           kReps, d_in.get(), d_out.get(), kSize, kNumBlocks, num_threads);
       EXPECT_TRUE(

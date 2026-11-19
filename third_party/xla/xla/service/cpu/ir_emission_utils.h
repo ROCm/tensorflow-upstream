@@ -17,10 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_CPU_IR_EMISSION_UTILS_H_
 
 #include <cstdint>
-#include <utility>
-#include <vector>
 
-#include "llvm/IR/Value.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 
@@ -40,17 +37,9 @@ bool CanUseEigenConvolution(
 int64_t GetMinimumAlignmentForArray(
     const Shape& shape, const TargetMachineFeatures& target_machine_features);
 
-// Dynamic loop bounds are specified as an array of dimension index
-// [start, limit) pairs of ir values (one for each partitioned outer dimension).
-//
-// EX: Let 'shape' = [8, 16, 32], with the loop bounds of the two-most major
-//     dimensions dynamic. Then 'dynamic_loop_bounds' will contain the
-//     following ir values for the two most-major dimensions:
-//       [dim0_index_start_ir_value, dim0_index_limit_ir_value]
-//       [dim1_index_start_ir_value, dim1_index_limit_ir_value]
-//
-// See IrFunction and ParallelLoopEmitter for details.
-using DynamicLoopBounds = std::vector<std::pair<llvm::Value*, llvm::Value*>>;
+// Returns true if no thunks are emitted for `hlo`: its semantics are encoded by
+// buffer assignment, by the schedule, or by constants owned by the executable.
+bool EmitsNoThunks(const HloInstruction& hlo);
 
 }  // namespace cpu
 }  // namespace xla

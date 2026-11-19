@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/hlo_computation_deduplicator.h"
 
+#include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
@@ -25,6 +27,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/shape_util.h"
 #include "tsl/platform/logging.h"
@@ -32,7 +35,7 @@ limitations under the License.
 namespace xla {
 
 bool HloComputationDeduplicator::ContainsLargeConstants(HloComputation* comp) {
-  int total_size = 0;
+  int64_t total_size = 0;
   for (HloInstruction* instruction : comp->instructions()) {
     if (instruction->IsConstant()) {
       total_size += ShapeUtil::ArrayDataSize(instruction->literal().shape());
@@ -58,7 +61,7 @@ absl::StatusOr<bool> HloComputationDeduplicator::RunImpl(
       HloPrintOptions::PrintSubcomputationMode::kOff);
   options.set_print_infeed_outfeed_config(false);
   options.set_print_only_essential_constants(true);
-  options.set_print_operand_shape(true);
+  options.set_print_operand_shape(!deduplicate_large_computations_);
   options.set_print_ids(false);
   options.set_print_backend_config(true);
   options.set_canonicalize_computations(true);
@@ -87,15 +90,31 @@ absl::StatusOr<bool> HloComputationDeduplicator::RunImpl(
     }
     return false;
   };
-  for (HloComputation* comp :
-       module->MakeComputationPostOrder(execution_threads)) {
+
+  std::vector<HloComputation*> post_order =
+      module->MakeComputationPostOrder(execution_threads);
+  absl::flat_hash_map<std::pair<int64_t, int64_t>, int> signature_counts;
+  if (deduplicate_large_computations_) {
+    signature_counts.reserve(post_order.size());
+    for (HloComputation* comp : post_order) {
+      if (!comp->IsEntryComputation()) {
+        ++signature_counts[{comp->instruction_count(), comp->num_parameters()}];
+      }
+    }
+  }
+
+  for (HloComputation* comp : post_order) {
     // Ignore entry computation since it is called from outside and computations
     // with large number of instructions or large-size constants due to increase
     // in time taken to stringify. Also ignore fusion computations, which need
     // to have a 1:1 relationship between caller and computation, except if we
     // run in the mode where we want to annotate duplicate fusion computations.
-    if (comp->IsEntryComputation() || comp->instruction_count() > 128 ||
-        ContainsLargeConstants(comp) ||
+    if (comp->IsEntryComputation() ||
+        (deduplicate_large_computations_ &&
+         signature_counts[{comp->instruction_count(), comp->num_parameters()}] <
+             2) ||
+        (!deduplicate_large_computations_ &&
+         (comp->instruction_count() > 128 || ContainsLargeConstants(comp))) ||
         (!mark_fusion_duplications_ && comp->IsFusionComputation())) {
       continue;
     }
@@ -108,6 +127,16 @@ absl::StatusOr<bool> HloComputationDeduplicator::RunImpl(
     }
 
     std::string comp_str = comp->ToString(options);
+
+    // HloDataflowAnalysis::IsRegularCallComputation requires that a computation
+    // called by a kCall has only kCall callers; keep call targets apart.
+    if (absl::c_any_of(comp->caller_instructions(),
+                       [](const HloInstruction* instr) {
+                         return instr->opcode() == HloOpcode::kCall;
+                       })) {
+      comp_str += " (call target)";
+    }
+
     auto poss_dup = unique_comps.find(comp_str);
     if (poss_dup != unique_comps.end() &&
         poss_dup->second->Equal(*comp, /* is_layout_sensitive = */ true,

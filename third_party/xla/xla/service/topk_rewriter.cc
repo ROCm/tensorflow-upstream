@@ -15,10 +15,10 @@ limitations under the License.
 
 #include "xla/service/topk_rewriter.h"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "xla/comparison_util.h"
 #include "xla/hlo/builder/lib/comparators.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -42,6 +43,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_context.h"
+#include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/pass/hlo_pass_options.h"
+#include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/hlo_creation_utils.h"
@@ -53,9 +58,12 @@ limitations under the License.
 
 namespace xla {
 
-namespace m = match;
+struct NanSafeGtMatch {
+  ComparisonOrder order;
+  bool is_stable_expanded;
+};
 
-static bool IsNanSafeGt(HloComputation* comp) {
+static std::optional<NanSafeGtMatch> MatchNanSafeGt(HloComputation* comp) {
   namespace m = match;
   auto match_bitcast_f32 = [](int64_t parameter_number) {
     auto param = m::Parameter(parameter_number)
@@ -159,71 +167,123 @@ static bool IsNanSafeGt(HloComputation* comp) {
     return param;
   };
 
-  auto match_compare = [](PrimitiveType type) {
-    auto param0 = m::Parameter(0).WithShape(m::Shape().WithElementType(type));
-    auto param1 = m::Parameter(1).WithShape(m::Shape().WithElementType(type));
-    return m::Gt(param0, param1);
+  auto not_weak_order = [](const HloInstruction* instr) {
+    return instr->comparison_order() != ComparisonOrder::kWeak;
   };
 
-  auto match_default_compare = [](PrimitiveType type) {
-    auto params_with_type = [&](int i, PrimitiveType t) {
+  HloInstruction* cmp = nullptr;
+  auto match_compare = [&](PrimitiveType type, int64_t lhs_param,
+                           int64_t rhs_param) {
+    auto param0 =
+        m::Parameter(lhs_param).WithShape(m::Shape().WithElementType(type));
+    auto param1 =
+        m::Parameter(rhs_param).WithShape(m::Shape().WithElementType(type));
+    return m::Gt(&cmp, param0, param1).WithPredicate(not_weak_order);
+  };
+
+  auto match_default_compare = [&](PrimitiveType type, int64_t lhs_param,
+                                   int64_t rhs_param) {
+    auto params_with_type = [&](int64_t i, PrimitiveType t) {
       return m::Parameter(i).WithShape(m::Shape().WithElementType(t));
     };
-    auto params =
-        std::vector({// Values
-                     params_with_type(0, type), params_with_type(1, type),
-                     // Indices
-                     params_with_type(2, S32), params_with_type(3, S32)});
+    auto params = std::vector(
+        {// Values
+         params_with_type(lhs_param, type), params_with_type(rhs_param, type),
+         // Indices
+         params_with_type(2, S32), params_with_type(3, S32)});
     auto const_true = m::Broadcast(m::Constant());
-    auto values_gt = m::Gt(params[0], params[1]);
+    auto values_gt =
+        m::Gt(&cmp, params[0], params[1]).WithPredicate(not_weak_order);
     return m::Select(const_true, values_gt, const_true);
   };
 
-  auto match_all_types = [](HloInstruction* root, auto callback) {
-    bool result = false;
-    for (auto type : {BF16, F32, S32, U32}) {
-      result = result || Match(root, callback(type));
+  auto match_key_compare =
+      [&](HloInstruction* key_root, int64_t lhs_param,
+          int64_t rhs_param) -> std::optional<ComparisonOrder> {
+    if (Match(key_root, m::Gt(match_generic_iec559(lhs_param, F32, S32),
+                              match_generic_iec559(rhs_param, F32, S32))) ||
+        Match(key_root, m::Gt(match_generic_iec559(lhs_param, BF16, S16),
+                              match_generic_iec559(rhs_param, BF16, S16))) ||
+        Match(key_root, m::Gt(match_generic_iec559_with_convert(lhs_param, BF16,
+                                                                F32, S32),
+                              match_generic_iec559_with_convert(rhs_param, BF16,
+                                                                F32, S32))) ||
+        Match(key_root, m::Gt(match_bitcast_f32(lhs_param),
+                              match_bitcast_f32(rhs_param))) ||
+        Match(key_root, m::Gt(match_bitcast_bf16(lhs_param),
+                              match_bitcast_bf16(rhs_param))) ||
+        Match(key_root, m::Gt(match_bitcast_f32_with_convert(lhs_param),
+                              match_bitcast_f32_with_convert(rhs_param))) ||
+        Match(key_root, m::Gt(match_bitcast_bf16_with_convert(lhs_param),
+                              match_bitcast_bf16_with_convert(rhs_param))) ||
+        Match(key_root, m::Gt(match_s32(lhs_param), match_s32(rhs_param)))) {
+      return ComparisonOrder::kTotal;
     }
-    return result;
+    cmp = nullptr;
+    for (auto type : {BF16, F32, S32, U32}) {
+      if (Match(key_root, match_compare(type, lhs_param, rhs_param)) ||
+          Match(key_root, match_default_compare(type, lhs_param, rhs_param))) {
+        if (cmp != nullptr) {
+          return cmp->comparison_order();
+        }
+      }
+    }
+    return std::nullopt;
   };
 
-  return Match(comp->root_instruction(),
-               m::Gt(match_generic_iec559(0, F32, S32),
-                     match_generic_iec559(1, F32, S32))) ||
-         Match(comp->root_instruction(),
-               m::Gt(match_generic_iec559(0, BF16, S16),
-                     match_generic_iec559(1, BF16, S16))) ||
-         Match(comp->root_instruction(),
-               m::Gt(match_generic_iec559_with_convert(0, BF16, F32, S32),
-                     match_generic_iec559_with_convert(1, BF16, F32, S32))) ||
-         Match(comp->root_instruction(),
-               m::Gt(match_bitcast_f32(0), match_bitcast_f32(1))) ||
-         Match(comp->root_instruction(),
-               m::Gt(match_bitcast_bf16(0), match_bitcast_bf16(1))) ||
-         Match(comp->root_instruction(),
-               m::Gt(match_bitcast_f32_with_convert(0),
-                     match_bitcast_f32_with_convert(1))) ||
-         Match(comp->root_instruction(),
-               m::Gt(match_bitcast_bf16_with_convert(0),
-                     match_bitcast_bf16_with_convert(1))) ||
-         Match(comp->root_instruction(), m::Gt(match_s32(0), match_s32(1))) ||
-         match_all_types(comp->root_instruction(), match_compare) ||
-         match_all_types(comp->root_instruction(), match_default_compare);
+  HloInstruction* root = comp->root_instruction();
+  // If the sort comparator was expanded by StableSortExpander, the root is
+  // Select(Eq(old_root, cloned_root), Lt(Parameter(2), Parameter(3)),
+  // old_root), where cloned_root computes the same key comparison with swapped
+  // parameters (1, 0).
+  HloInstruction* eq = nullptr;
+  HloInstruction* old_root = nullptr;
+  if (Match(root, m::Select(m::Eq(&eq, m::Op(), m::Op()),
+                            m::Lt(m::Parameter(2), m::Parameter(3)),
+                            m::Op(&old_root))) &&
+      (eq->operand(0) == old_root || eq->operand(1) == old_root)) {
+    HloInstruction* cloned_root = eq->operand(0) == old_root
+                                      ? eq->mutable_operand(1)
+                                      : eq->mutable_operand(0);
+    std::optional<ComparisonOrder> lhs_order =
+        match_key_compare(old_root, 0, 1);
+    std::optional<ComparisonOrder> rhs_order =
+        match_key_compare(cloned_root, 1, 0);
+    if (lhs_order.has_value() && lhs_order == rhs_order) {
+      return NanSafeGtMatch{*lhs_order, /*is_stable_expanded=*/true};
+    }
+    return std::nullopt;
+  }
+
+  std::optional<ComparisonOrder> order = match_key_compare(root, 0, 1);
+  if (!order.has_value()) {
+    return std::nullopt;
+  }
+  return NanSafeGtMatch{*order, /*is_stable_expanded=*/false};
 }
 
 // Look for the instructions emitted from: xla/client/lib/sorting.cc
 static bool HasIota(HloSortInstruction* sort, HloInstruction* data) {
   namespace m = match;
-  const std::array<int64_t, 1> sort_dims = {
-      data->shape().dimensions(sort->sort_dimension())};
-  auto match_iota = [](auto dims) {
-    return m::Iota().WithShape(m::Shape().WithElementType(S32).WithDims(dims));
-  };
-  return Match(sort->operand(1), match_iota(data->shape().dimensions())) ||
-         Match(sort->operand(1), m::Broadcast(match_iota(sort_dims)));
+  const int64_t sort_dim = sort->sort_dimension();
+  const HloInstruction* iota = nullptr;
+  if (Match(sort->operand(1),
+            m::Iota(&iota).WithShape(m::Shape().WithElementType(S32).WithDims(
+                data->shape().dimensions())))) {
+    return Cast<HloIotaInstruction>(iota)->iota_dimension() == sort_dim;
+  }
+  if (Match(sort->operand(1),
+            m::Broadcast(m::Iota(&iota).WithElementType(S32))
+                .WithShape(m::Shape().WithElementType(S32).WithDims(
+                    data->shape().dimensions())))) {
+    return sort->operand(1)->dimensions(
+               Cast<HloIotaInstruction>(iota)->iota_dimension()) == sort_dim;
+  }
+  return false;
 }
 
-std::optional<int64_t> TopkRewriter::SortIsInTopK(HloInstruction* inst) {
+std::optional<int64_t> TopkRewriter::SortIsInTopK(HloInstruction* inst,
+                                                  ComparisonOrder* order) {
   HloSortInstruction* sort = DynCast<HloSortInstruction>(inst);
   if (sort == nullptr) {
     return std::nullopt;
@@ -236,8 +296,12 @@ std::optional<int64_t> TopkRewriter::SortIsInTopK(HloInstruction* inst) {
   if (sort->operand_count() == 2 && !HasIota(sort, data)) {
     return std::nullopt;
   }
-  if (!IsNanSafeGt(sort->to_apply())) {
+  std::optional<NanSafeGtMatch> matched = MatchNanSafeGt(sort->to_apply());
+  if (!matched.has_value()) {
     return std::nullopt;
+  }
+  if (order != nullptr) {
+    *order = matched->order;
   }
   const int64_t sort_dim = sort->sort_dimension();
 
@@ -295,7 +359,8 @@ struct TopKCustomCall {
   HloInstruction* index_gte;
 };
 
-TopKCustomCall CreateTopKCustomCall(HloSortInstruction* sort, const int64_t k) {
+TopKCustomCall CreateTopKCustomCall(HloSortInstruction* sort, const int64_t k,
+                                    ComparisonOrder order) {
   HloInstruction* input = sort->mutable_operand(0);
   Shape data_shape = input->shape();
   PrimitiveType element_type = data_shape.element_type();
@@ -343,8 +408,12 @@ TopKCustomCall CreateTopKCustomCall(HloSortInstruction* sort, const int64_t k) {
                                        ShapeUtil::MakeShape(S32, {k})});
   HloInstruction* topk = sort->AddInstruction(HloInstruction::CreateCustomCall(
       topk_shape, {input}, sort->to_apply(), "TopK"));
+  std::optional<NanSafeGtMatch> matched = MatchNanSafeGt(sort->to_apply());
+  const bool is_stable =
+      sort->is_stable() || (matched.has_value() && matched->is_stable_expanded);
   topk->set_raw_backend_config_string(absl::StrFormat(
-      "{is_stable = %s}", sort->is_stable() ? "true" : "false"));
+      "{is_stable = %s, order = \"%s\"}", is_stable ? "true" : "false",
+      ComparisonOrderToShortString(order)));
   HloInstruction* value_gte =
       sort->AddInstruction(HloInstruction::CreateGetTupleElement(
           topk->shape().tuple_shapes(0), topk, 0));
@@ -378,7 +447,8 @@ TopKCustomCall CreateTopKCustomCall(HloSortInstruction* sort, const int64_t k) {
 absl::StatusOr<HloInstruction*> TopkRewriter::TransformPatternToCustomCall(
     HloInstruction* inst) {
   // Check if sort is in TopK.
-  std::optional<int64_t> k = SortIsInTopK(inst);
+  ComparisonOrder order;
+  std::optional<int64_t> k = SortIsInTopK(inst, &order);
   if (!k) {
     return nullptr;
   }
@@ -398,11 +468,11 @@ absl::StatusOr<HloInstruction*> TopkRewriter::TransformPatternToCustomCall(
   }
 
   // Profitability check.
-  if (!is_profitable_to_convert_(sort, *k)) {
+  if (is_profitable_to_convert_ && !is_profitable_to_convert_(sort, *k)) {
     return nullptr;
   }
 
-  TopKCustomCall topkcc = CreateTopKCustomCall(sort, k.value());
+  TopKCustomCall topkcc = CreateTopKCustomCall(sort, k.value(), order);
 
   // If the slice starts at 0, its output matches topk_gte, so elide the slice.
   // Else, retarget the slice to take [start:k] directly from topk_gte.
@@ -507,7 +577,9 @@ class TopkDecomposerVisitor : public DfsHloRewriteVisitor {
 
  private:
   bool HasSingleUserReadingOnlyTheValueOutput(HloInstruction* inst) {
-    return inst->user_count() == 1 && inst->users().front()->tuple_index() == 0;
+    return inst->user_count() == 1 &&
+           inst->users().front()->opcode() == HloOpcode::kGetTupleElement &&
+           inst->users().front()->tuple_index() == 0;
   }
 
   absl::StatusOr<HloComputation*> CreateVariadicComparator(
@@ -727,5 +799,28 @@ absl::StatusOr<bool> TopkDecomposer::RunImpl(
   return TopkDecomposerVisitor(should_decompose_)
       .RunOnModule(module, execution_threads);
 }
+
+namespace {
+
+class TopkDecomposerFactory : public HloPassFactory {
+ public:
+  absl::string_view name() const override { return "topk-decomposer"; }
+
+  absl::StatusOr<std::unique_ptr<HloPassInterface>> Create(
+      const HloPassContext&, const HloPassOptions& options) const override {
+    return std::make_unique<TopkDecomposer>(
+        options.Get<bool>("only_topk_op").value_or(false)
+            ? HloPredicateIsOp<HloOpcode::kTopK>
+            : HloPredicate());
+  }
+};
+
+const HloPassFactory* const kTopkDecomposerRegistration =
+    RegisterHloPassFactory<TopkDecomposerFactory>();
+const HloPassFactory* const kTopkRewriterRegistration =
+    RegisterHloPassFactory<DefaultHloPassFactory<TopkRewriter>>(
+        "topk-rewriter");
+
+}  // namespace
 
 }  // namespace xla

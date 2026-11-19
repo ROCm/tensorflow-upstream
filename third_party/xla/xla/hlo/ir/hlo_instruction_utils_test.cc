@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,15 +26,18 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -43,6 +47,8 @@ namespace {
 
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
+using ::testing::Pair;
+using ::testing::UnorderedElementsAre;
 
 class HloInstructionUtilsTest : public HloHardwareIndependentTestBase {};
 
@@ -109,6 +115,31 @@ TEST_F(HloInstructionUtilsTest, TestAddOrUpdateVectorOfPairsAsAttribute) {
   EXPECT_EQ(param->frontend_attributes().map().at("foo"), "bar");
   EXPECT_EQ(param->frontend_attributes().map().at("baz"), "qux");
   EXPECT_EQ(param->frontend_attributes().map().at("quux"), "{{5,6},{7,8}}");
+}
+
+TEST_F(HloInstructionUtilsTest,
+       UpdateFrontendAttributesPreservesUnrelatedAttributes) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test
+    ENTRY main {
+      ROOT input = s32[] parameter(0),
+        frontend_attributes={keep="unchanged", conflict="old", remove="old", restore="old"}
+    }
+  )"));
+  HloInstruction* input = module->entry_computation()->root_instruction();
+  FrontendAttributes updates;
+  (*updates.mutable_map())["conflict"] = "new";
+  (*updates.mutable_map())["empty"] = "";
+  (*updates.mutable_map())["restore"] = "new";
+
+  UpdateFrontendAttributes(input, updates, {"remove", "restore"});
+  UpdateFrontendAttributes(input, FrontendAttributes{});
+  UpdateFrontendAttributes(input, input->frontend_attributes(), {"keep"});
+
+  EXPECT_THAT(
+      input->frontend_attributes().map(),
+      UnorderedElementsAre(Pair("keep", "unchanged"), Pair("conflict", "new"),
+                           Pair("empty", ""), Pair("restore", "new")));
 }
 
 TEST_F(HloInstructionUtilsTest,
@@ -697,6 +728,92 @@ TEST_F(HloInstructionUtilsTest, IsTopKStable) {
   EXPECT_TRUE(IsTopKStable(topk_default));
 }
 
+TEST_F(HloInstructionUtilsTest, SetTopKStability) {
+  const char* const hlo = R"(
+    HloModule test
+
+    compare-gt.1 {
+      p.1.lhs = s32[] parameter(2)
+      p.1.rhs = s32[] parameter(3)
+      p.0.lhs = f32[] parameter(0)
+      p.0.rhs = f32[] parameter(1)
+      ROOT compare = pred[] compare(p.0.lhs, p.0.rhs), direction=GT, order=TOTAL
+    }
+
+    ENTRY main {
+      arg = f32[1024] parameter(0)
+      topk_with_order = (f32[24], s32[24]) custom-call(arg), custom_call_target="TopK", called_computations={%compare-gt.1}, backend_config={is_stable = true, order = "TOTAL"}
+      topk_order_only = (f32[24], s32[24]) custom-call(arg), custom_call_target="TopK", called_computations={%compare-gt.1}, backend_config={order = "TOTAL"}
+      topk_empty = (f32[24], s32[24]) custom-call(arg), custom_call_target="TopK", called_computations={%compare-gt.1}
+      ROOT tuple = tuple(topk_with_order, topk_order_only, topk_empty)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(hlo));
+
+  auto* topk_with_order = Cast<HloCustomCallInstruction>(
+      FindInstruction(m.get(), "topk_with_order"));
+  auto* topk_order_only = Cast<HloCustomCallInstruction>(
+      FindInstruction(m.get(), "topk_order_only"));
+  auto* topk_empty =
+      Cast<HloCustomCallInstruction>(FindInstruction(m.get(), "topk_empty"));
+
+  SetTopKStability(topk_with_order, false);
+  EXPECT_EQ(topk_with_order->raw_backend_config_string(),
+            "{is_stable = false, order = \"TOTAL\"}");
+  EXPECT_FALSE(IsTopKStable(topk_with_order));
+  EXPECT_EQ(GetTopKOrder(topk_with_order), ComparisonOrder::kTotal);
+
+  SetTopKStability(topk_order_only, false);
+  EXPECT_EQ(topk_order_only->raw_backend_config_string(),
+            "{order = \"TOTAL\", is_stable = false}");
+  EXPECT_FALSE(IsTopKStable(topk_order_only));
+  EXPECT_EQ(GetTopKOrder(topk_order_only), ComparisonOrder::kTotal);
+
+  SetTopKStability(topk_empty, false);
+  EXPECT_EQ(topk_empty->raw_backend_config_string(), "{is_stable = false}");
+  EXPECT_FALSE(IsTopKStable(topk_empty));
+}
+
+TEST_F(HloInstructionUtilsTest, GetTopKOrder) {
+  const char* const hlo = R"(
+    HloModule test
+
+    compare-true {
+      p.1.lhs = s32[] parameter(2)
+      p.1.rhs = s32[] parameter(3)
+      p.0.lhs = f32[] parameter(0)
+      p.0.rhs = f32[] parameter(1)
+      ROOT c = pred[] constant(true)
+    }
+
+    ENTRY main {
+      arg = f32[1024] parameter(0)
+      topk_total = (f32[24], s32[24]) custom-call(arg), custom_call_target="TopK", called_computations={%compare-true}, backend_config={is_stable = true, order = "TOTAL"}
+      topk_partial = (f32[24], s32[24]) custom-call(arg), custom_call_target="TopK", called_computations={%compare-true}, backend_config={is_stable = false, order = "PARTIAL"}
+      topk_weak = (f32[24], s32[24]) custom-call(arg), custom_call_target="TopK", called_computations={%compare-true}, backend_config={is_stable = true, order = "WEAK"}
+      topk_default = (f32[24], s32[24]) custom-call(arg), custom_call_target="TopK", called_computations={%compare-true}
+      ROOT tuple = tuple(topk_total, topk_partial, topk_weak, topk_default)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(hlo));
+
+  auto* topk_total =
+      Cast<HloCustomCallInstruction>(FindInstruction(m.get(), "topk_total"));
+  auto* topk_partial =
+      Cast<HloCustomCallInstruction>(FindInstruction(m.get(), "topk_partial"));
+  auto* topk_weak =
+      Cast<HloCustomCallInstruction>(FindInstruction(m.get(), "topk_weak"));
+  auto* topk_default =
+      Cast<HloCustomCallInstruction>(FindInstruction(m.get(), "topk_default"));
+
+  EXPECT_EQ(GetTopKOrder(topk_total), ComparisonOrder::kTotal);
+  EXPECT_EQ(GetTopKOrder(topk_partial), ComparisonOrder::kPartial);
+  EXPECT_EQ(GetTopKOrder(topk_weak), ComparisonOrder::kWeak);
+  EXPECT_EQ(GetTopKOrder(topk_default), ComparisonOrder::kTotal);
+}
+
 TEST_F(HloInstructionUtilsTest, IsAllowedAsyncIntermediary) {
   const char* hlo_text = R"(
     HloModule test
@@ -900,6 +1017,69 @@ TEST_F(HloInstructionUtilsTest, FindAsyncTraversal) {
   EXPECT_EQ(async::FindAsyncConsumer(ag_start), ag_done);
   EXPECT_EQ(async::FindAsyncDone(ag_start), ag_done);
   EXPECT_EQ(async::FindAsyncDone(ag_done), ag_done);
+}
+
+TEST_F(HloInstructionUtilsTest, FindAsyncProducerThroughRebuiltContextTuple) {
+  // When an async context tuple `ctx` is rebuilt from individual elements and
+  // its operand subtuple `{0}` forwards a buffer shared with a sibling async
+  // op `small`, TraceAsyncDataflow must follow the producer owned elements
+  // `{1..n-1}` (`big_out`, `big_flag`) to `big` rather than element `{0}`.
+  constexpr absl::string_view kHlo = R"(
+HloModule test
+
+slice_big {
+  p0 = f32[8,4] parameter(0)
+  i0 = s32[] parameter(1)
+  ROOT ds = f32[4,4] dynamic-slice(p0, i0, i0), dynamic_slice_sizes={4,4}
+}
+
+slice_small {
+  p0 = f32[8,4] parameter(0)
+  i0 = s32[] parameter(1)
+  ROOT ds = f32[2,4] dynamic-slice(p0, i0, i0), dynamic_slice_sizes={2,4}
+}
+
+ENTRY main {
+  buf = f32[8,4] parameter(0)
+  zero = s32[] constant(0)
+  small = ((f32[8,4], s32[]), f32[2,4], s32[]) async-start(buf, zero), calls=slice_small
+  big = ((f32[8,4], s32[]), f32[4,4], s32[]) async-start(buf, zero), calls=slice_big
+  small_ops = (f32[8,4], s32[]) get-tuple-element(small), index=0
+  small_buf = f32[8,4] get-tuple-element(small_ops), index=0
+  big_ops = (f32[8,4], s32[]) get-tuple-element(big), index=0
+  big_i = s32[] get-tuple-element(big_ops), index=1
+  ops = (f32[8,4], s32[]) tuple(small_buf, big_i)
+  big_out = f32[4,4] get-tuple-element(big), index=1
+  big_flag = s32[] get-tuple-element(big), index=2
+  ctx = ((f32[8,4], s32[]), f32[4,4], s32[]) tuple(ops, big_out, big_flag)
+  big_done = f32[4,4] async-done(ctx)
+  small_barrier = ((f32[8,4], s32[]), f32[2,4], s32[]) opt-barrier(small)
+  small_done = f32[2,4] async-done(small_barrier)
+  ROOT r = (f32[2,4], f32[4,4]) tuple(small_done, big_done)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHlo));
+  auto* small = FindInstruction(m.get(), "small");
+  auto* small_done = FindInstruction(m.get(), "small_done");
+  auto* big = FindInstruction(m.get(), "big");
+  auto* ctx = FindInstruction(m.get(), "ctx");
+  auto* big_done = FindInstruction(m.get(), "big_done");
+
+  std::vector<async::AsyncTraceStep> steps;
+  EXPECT_EQ(async::TraceAsyncDataflow(
+                ctx, [](const HloInstruction* n) { return n->IsAsyncStart(); },
+                &steps),
+            big);
+  // Recorded step at `ctx` must record operand index 1 (`big_out`), not 0.
+  ASSERT_FALSE(steps.empty());
+  EXPECT_EQ(steps.front().instruction, ctx);
+  EXPECT_EQ(steps.front().operand_index, 1);
+
+  EXPECT_EQ(async::FindAsyncProducer(ctx), big);
+  EXPECT_EQ(async::FindAsyncStart(big_done), big);
+  EXPECT_EQ(async::FindAsyncDone(big), big_done);
+  EXPECT_EQ(async::FindAsyncDone(small), small_done);
 }
 
 }  // namespace

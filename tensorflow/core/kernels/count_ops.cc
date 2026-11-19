@@ -15,6 +15,8 @@ limitations under the License.
 
 #include <algorithm>
 #include <limits>
+#include <utility>
+#include <vector>
 
 #define EIGEN_USE_THREADS
 
@@ -80,12 +82,12 @@ absl::Status OutputSparse(const BatchedMap<T>& per_batch_counts,
   if (is_1d) {
     TF_RETURN_IF_ERROR(
         context->allocate_output(2, TensorShape({1}), &dense_shape));
-    dense_shape->flat<int64_t>().data()[0] = num_values;
+    dense_shape->flat<int64_t>()(0) = num_values;
   } else {
     TF_RETURN_IF_ERROR(
         context->allocate_output(2, TensorShape({2}), &dense_shape));
-    dense_shape->flat<int64_t>().data()[0] = num_batches;
-    dense_shape->flat<int64_t>().data()[1] = num_values;
+    dense_shape->flat<int64_t>()(0) = num_batches;
+    dense_shape->flat<int64_t>()(1) = num_values;
   }
 
   return absl::OkStatus();
@@ -267,7 +269,7 @@ class SparseCount : public OpKernel {
     }
 
     bool is_1d = shape.NumElements() == 1;
-    int num_batches = is_1d ? 1 : shape_vector(0);
+    int64_t num_batches = is_1d ? 1 : shape_vector(0);
     OP_REQUIRES(context, 0 < num_batches && num_batches < kMaxBatches,
                 absl::InvalidArgumentError(
                     absl::StrCat("Cannot allocate ", num_batches,
@@ -280,7 +282,7 @@ class SparseCount : public OpKernel {
     T max_value = 0;
 
     for (int idx = 0; idx < num_values; ++idx) {
-      int batch = is_1d ? 0 : indices_values(idx, 0);
+      int64_t batch = is_1d ? 0 : indices_values(idx, 0);
       if (batch >= num_batches) {
         OP_REQUIRES(context, batch < num_batches,
                     absl::InvalidArgumentError(absl::StrCat(

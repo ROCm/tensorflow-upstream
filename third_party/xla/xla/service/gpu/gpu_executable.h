@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/collective_memory_cache.h"
+#include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
@@ -45,6 +46,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_layout.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -52,6 +54,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
 #include "xla/service/gpu/gpu_module_globals.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
@@ -71,8 +74,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-class ExecutionWatchdogScope;
-
 // GPU-targeting implementation of the XLA Executable interface.
 //
 // Launches the given GPU kernel via the StreamExecutor.
@@ -83,6 +84,9 @@ class GpuExecutable : public Executable {
   struct NumAdditionalStreams {
     int compute = 0;
     int communication = 0;
+    bool need_d2h_stream = false;
+    bool need_h2d_stream = false;
+    std::vector<LocalityDomainStreamId> locality_domains;
   };
 
   using ConstantInfo = GpuModuleGlobals::ConstantInfo;
@@ -127,13 +131,14 @@ class GpuExecutable : public Executable {
     std::unique_ptr<GpuAliasInfo> alias_info;
     DebugOptions debug_options;
     se::DeviceDescription device_description;
-    std::unique_ptr<HloModule> debug_module = nullptr;
+    std::shared_ptr<HloModule> debug_module = nullptr;
     bool enable_debug_info_manager = true;
     ModuleStats module_stats;
     se::ExecutableAbiVersion executable_abi_version;
     std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options;
     BufferAssignmentProto buffer_assignment_proto;
     std::string buffer_allocations_debug_summary;
+    std::optional<GpuTopology> gpu_topology;
   };
 
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> Create(Params params);
@@ -242,12 +247,17 @@ class GpuExecutable : public Executable {
   absl::StatusOr<const BufferAllocToDeviceMemoryMap*> ResolveConstantGlobals(
       se::Stream* stream);
 
+  // Creates a `GpuExecutable` from its proto representation.
+  //
+  // If `debug_module` isn't populated, the HLO module is deserialized from the
+  // proto, which can be expensive.
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> FromProto(
       const GpuExecutableProto&,
       const se::DeviceDescription& device_description,
       absl::string_view platform, DebugOptions debug_options,
       const std::optional<se::KernelLoaderSpec::SymbolResolver>&
-          symbol_resolver = std::nullopt);
+          symbol_resolver = std::nullopt,
+      std::shared_ptr<HloModule> debug_module = nullptr);
 
   absl::StatusOr<GpuExecutableProto> ToProto() const;
 
@@ -265,7 +275,53 @@ class GpuExecutable : public Executable {
     return cpu_target_machine_options_;
   }
 
+  // The GPU topology the executable was compiled for. Not set for executables
+  // deserialized from protos that predate the `gpu_topology` field.
+  const std::optional<GpuTopology>& gpu_topology() const {
+    return gpu_topology_;
+  }
+
+  // The DebugOptions that execution uses. See `runtime_debug_options_` for
+  // which flags are read from here and which ones from the load-time options.
+  const DebugOptions& runtime_debug_options() const {
+    return runtime_debug_options_;
+  }
+
+  // The static device assignment from the config of the module this executable
+  // was compiled from, if any.
+  const std::optional<DeviceAssignment>& static_device_assignment() const {
+    return static_device_assignment_;
+  }
+
  private:
+  // The parts of the HloModuleConfig that the executable needs at run time.
+  struct ModuleConfigMetadata {
+    DebugOptions debug_options;
+    // Fallback slice size for executables without a GpuTopology, i.e. for
+    // executables serialized before `GpuExecutableProto` had the `gpu_topology`
+    // field. It's filled from `HloModuleConfig::partition_size`, which the GPU
+    // compiler sets to `GpuTopology::slice_size()`.
+    // TODO(b/567074116): Remove once `gpu_topology` is mandatory in
+    // `FromProto`.
+    int64_t slice_size = 0;
+    std::optional<DeviceAssignment> static_device_assignment;
+  };
+
+  // Reads the module config metadata from `proto` without deserializing the
+  // HLO module. Gives the same result as `HloModule::CreateFromProtoWithConfig`
+  // followed by the load-time overrides in `FromProto`.
+  static absl::StatusOr<ModuleConfigMetadata> ModuleConfigMetadataFromProto(
+      const HloModuleProtoWithConfig& proto,
+      const DebugOptions& load_time_debug_options);
+
+  // Like `Create`, but takes the module config metadata explicitly instead of
+  // reading it from `params.debug_module`. If `module_config_metadata` is not
+  // set, it's read from `params.debug_module` if available and otherwise
+  // defaults to `params.debug_options`.
+  static absl::StatusOr<std::unique_ptr<GpuExecutable>> CreateImpl(
+      Params params,
+      std::optional<ModuleConfigMetadata> module_config_metadata);
+
   // Additional streams borrowed at run time for the execution.
   struct BorrowedStreams {
     std::vector<se::Stream*> streams;
@@ -277,7 +333,7 @@ class GpuExecutable : public Executable {
 
   // Use GpuExecutable::Create() to create an instance.
   explicit GpuExecutable(
-      std::unique_ptr<HloModule> debug_module, std::vector<uint8_t> binary,
+      std::shared_ptr<HloModule> debug_module, std::vector<uint8_t> binary,
       BinaryMap dnn_compiled_graphs, se::DeviceDescription device_description,
       std::unique_ptr<ThunkExecutor> executable, std::string module_name,
       ProgramShape program_shape, std::vector<BufferAllocation> allocations,
@@ -291,7 +347,9 @@ class GpuExecutable : public Executable {
       std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options,
       BufferAssignmentProto buffer_assignment_proto,
       std::string buffer_allocations_debug_summary,
-      bool collective_use_minimal_resource);
+      bool collective_use_minimal_resource,
+      std::optional<GpuTopology> gpu_topology,
+      ModuleConfigMetadata module_config_metadata);
 
   // GpuExecutable check with either AMD's ISA version, or Nvidia's major minor
   // version for compute capability, depending on the hardware.
@@ -303,17 +361,15 @@ class GpuExecutable : public Executable {
       int num_streams, se::StreamPriority priority);
 
   static absl::Status ExecuteThunksImpl(
-      const DebugOptions* debug_options, const std::string& module_name,
-      ModuleIdentifier module_id, ThunkExecutor& thunk_executor,
-      Thunk::ExecutableSource executable_source,
+      const DebugOptions& debug_options, const std::string& module_name,
+      ThunkExecutor& thunk_executor, Thunk::ExecutableSource executable_source,
       const ServiceExecutableRunOptions* run_options,
       const BufferAllocations& buffer_allocations, bool block_host_until_done,
       std::optional<absl::Span<const BufferAllocation::Index>>
           persistent_alloc_indices,
-      NumAdditionalStreams num_additional_streams,
+      const NumAdditionalStreams& num_additional_streams,
       CollectiveMemoryCache& collective_memory_cache,
-      bool collective_use_minimal_resource,
-      ExecutionWatchdogScope* absl_nullable execution_watchdog);
+      bool collective_use_minimal_resource, int compiled_locality_domain_count);
 
   // Compare current allocation's address with previous run's address, and
   // report the allocation info if memory addressed changed. Useful for identify
@@ -333,6 +389,10 @@ class GpuExecutable : public Executable {
 
   // The GPU version for compute compatibility check.
   se::GpuComputeCapability gpu_version_;
+
+  // Number of usable locality domains recorded by the compile/PjRT device
+  // description. Runtime provisioning also validates the executor count.
+  int locality_domain_count_;
 
   // The thunks to be invoked by this GpuExecutable. They are generated by the
   // ThunkEmitter.
@@ -382,6 +442,36 @@ class GpuExecutable : public Executable {
   // buffer with the user.
   std::unique_ptr<GpuAliasInfo> alias_info_;
 
+  // The DebugOptions used at run time. These are the compile-time options from
+  // the module config, with `xla_dump_to` and
+  // `xla_gpu_experimental_nccl_window_symmetric` taken from the load-time
+  // options for loaded executables (see `FromProto`). If the executable has no
+  // module config at all, these are the options passed to `Create`.
+  //
+  // This is a copy taken in `Create`. Changing the module config after that
+  // (e.g. through `HloModule::mutable_config()`) doesn't affect execution.
+  //
+  // Not all flags are read from here. Today's per-flag precedence is:
+  //
+  // | Consumer                             | Options                  |
+  // |--------------------------------------|--------------------------|
+  // | ExecuteThunks (NCCL channels, stream | runtime_debug_options_   |
+  // | priority, nccl_window_symmetric,     |                          |
+  // | progress tracking, timeouts,         |                          |
+  // | rendezvous timeouts)                 |                          |
+  // | Buffer allocator (command buffer     | runtime_debug_options_   |
+  // | update mode)                         |                          |
+  // | ModuleAnnotations (trace annotation  | runtime_debug_options_   |
+  // | level)                               |                          |
+  // | Number of additional streams         | Params::debug_options    |
+  // | Thunk passes                         | Params::debug_options    |
+  // | debug_buffer_assignment_show_max     | Params::debug_options    |
+  // | Thunk deserialization (FromProto)    | Params::debug_options    |
+  DebugOptions runtime_debug_options_;
+
+  // Static device assignment from the module config, if any.
+  std::optional<DeviceAssignment> static_device_assignment_;
+
   ModuleAnnotations module_annotations_;
 
   int64_t debug_buffer_assignment_show_max_;
@@ -418,6 +508,9 @@ class GpuExecutable : public Executable {
   std::string buffer_allocations_debug_summary_;
 
   const bool collective_use_minimal_resource_;
+
+  // The GPU topology the executable was compiled for, if known.
+  std::optional<GpuTopology> gpu_topology_;
 };
 
 absl::StatusOr<absl::flat_hash_map<ShapeIndex, GpuExecutable::OutputInfo>>

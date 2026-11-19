@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/cudnn_fusion_utils.h"
 
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -26,6 +27,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/literal.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/shape_util.h"
@@ -79,7 +81,40 @@ PrecisionConfig GetPrecisionConfig(const HloInstruction& hlo) {
   return PrecisionConfig();
 }
 
+bool IsCudnnAmaxReduce(const HloInstruction& hlo) {
+  if (hlo.opcode() != HloOpcode::kReduce || hlo.operand_count() != 2 ||
+      !ShapeUtil::IsScalar(hlo.shape()) || hlo.shape().element_type() != F32) {
+    return false;
+  }
+  const HloInstruction* input = hlo.operand(0);
+  while (input->opcode() == HloOpcode::kBitcast) {
+    input = input->operand(0);
+  }
+  const HloInstruction* init = hlo.operand(1);
+  if (input->opcode() != HloOpcode::kAbs ||
+      init->opcode() != HloOpcode::kConstant ||
+      !(init->literal().IsAll(0) ||
+        init->literal().IsAllFloat(-std::numeric_limits<float>::infinity()))) {
+    return false;
+  }
+  const HloInstruction* root = hlo.to_apply()->root_instruction();
+  return root->opcode() == HloOpcode::kMaximum &&
+         root->operand(0)->opcode() == HloOpcode::kParameter &&
+         root->operand(1)->opcode() == HloOpcode::kParameter &&
+         root->operand(0) != root->operand(1);
+}
+
 namespace {
+
+// Returns true if `hlo` is a broadcast supported by cuDNN epilogue fusion.
+// Layout-normalized NHWC convolutions place the feature (channel) dimension
+// last, and cuDNN runtime kernels can misindex non-channel 1D broadcasts in 2D
+// conv epilogues, so 1D broadcasts are restricted to the last dimension.
+bool IsSupportedBroadcast(const HloInstruction& hlo) {
+  return ShapeUtil::IsScalar(hlo.operand(0)->shape()) ||
+         (hlo.operand(0)->shape().dimensions().size() == 1 &&
+          hlo.dimensions(0) == hlo.shape().dimensions().size() - 1);
+}
 
 bool IsEpilogueOpSupportedByCuDNN(const HloInstruction& hlo,
                                   bool can_fuse_reduce, bool is_nchw,
@@ -140,12 +175,12 @@ bool IsEpilogueOpSupportedByCuDNN(const HloInstruction& hlo,
              IsEpilogueOpSupportedByCuDNN(*hlo.users()[0], can_fuse_reduce,
                                           is_nchw, device_info);
     case HloOpcode::kBroadcast:
-      return ShapeUtil::IsScalar(hlo.operand(0)->shape()) ||
-             hlo.operand(0)->shape().dimensions().size() == 1;
+      return IsSupportedBroadcast(hlo);
     case HloOpcode::kConstant:
       return ShapeUtil::IsScalar(hlo.shape());
+    // The fusion compiler emits every reduce as a cuDNN AMAX reduction.
     case HloOpcode::kReduce:
-      return can_fuse_reduce && ShapeUtil::IsScalar(hlo.shape());
+      return can_fuse_reduce && IsCudnnAmaxReduce(hlo);
     default:
       return false;
   }
@@ -158,8 +193,7 @@ bool IsCheapToDuplicate(const HloInstruction* hlo) {
     return ShapeUtil::IsScalar(hlo->shape());
   }
   if (hlo->opcode() == HloOpcode::kBroadcast) {
-    return ShapeUtil::IsScalar(hlo->operand(0)->shape()) ||
-           hlo->operand(0)->shape().dimensions().size() == 1;
+    return IsSupportedBroadcast(*hlo);
   }
   if (hlo->opcode() == HloOpcode::kConvert) {
     return ShapeUtil::IsScalar(hlo->shape()) ||

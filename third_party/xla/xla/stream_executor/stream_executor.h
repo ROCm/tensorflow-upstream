@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
+#include "xla/stream_executor/memory_reservation.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
@@ -104,6 +105,21 @@ class StreamExecutor {
   absl::StatusOr<std::unique_ptr<Stream>> CreateStream() {
     return CreateStream(std::nullopt);
   }
+
+  // Creates a stream scoped to `locality_domain_id`. Backends without
+  // locality-domain execution support return Unimplemented without falling
+  // back to a generic stream.
+  virtual absl::StatusOr<std::unique_ptr<Stream>> CreateStreamInLocalityDomain(
+      int /*locality_domain_id*/,
+      std::optional<std::variant<StreamPriority, int>> /*priority*/) {
+    return absl::UnimplementedError(
+        "Locality-domain streams are not implemented by this executor");
+  }
+  absl::StatusOr<std::unique_ptr<Stream>> CreateStreamInLocalityDomain(
+      int locality_domain_id) {
+    return CreateStreamInLocalityDomain(locality_domain_id, std::nullopt);
+  }
+
   // Creates an EventBasedTimer for the given stream.
   virtual absl::StatusOr<std::unique_ptr<EventBasedTimer>>
   CreateEventBasedTimer(Stream* stream, bool use_delay_kernel) {
@@ -117,6 +133,32 @@ class StreamExecutor {
   virtual absl::StatusOr<std::unique_ptr<MemoryAllocator>>
   CreateMemoryAllocator(MemorySpace memory_space) {
     return absl::UnimplementedError("Not Implemented");
+  }
+
+  // Reserves device virtual address space without allocating physical memory.
+  // Backends implementing this must also support
+  // CreatePhysicalMemoryAllocation.
+  virtual absl::StatusOr<std::unique_ptr<MemoryReservation>>
+  CreateMemoryReservation(uint64_t size) {
+    return absl::UnimplementedError("Device VA reservation is not supported");
+  }
+
+  // Allocates physical device memory without mapping it to a virtual address.
+  // The returned size may be rounded up to the backend's mapping granularity.
+  virtual absl::StatusOr<std::unique_ptr<MemoryAllocation>>
+  CreatePhysicalMemoryAllocation(uint64_t size) {
+    return absl::UnimplementedError("Physical allocation is not supported");
+  }
+
+  // Creates a MemoryAllocator whose physical memory is placed on locality
+  // domain `locality_domain_id` of this device. Backends without
+  // locality-domain memory placement return Unimplemented without falling back
+  // to ordinary device memory.
+  virtual absl::StatusOr<std::unique_ptr<MemoryAllocator>>
+  CreateLocalityDomainMemoryAllocator(int /*locality_domain_id*/) {
+    return absl::UnimplementedError(
+        "Locality-domain memory allocators are not implemented by this "
+        "executor");
   }
 
   // Obtains metadata about the underlying device.

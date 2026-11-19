@@ -13,6 +13,10 @@
 # limitations under the License.
 # ==============================================================================
 
+load(
+    "//tensorflow:tensorflow.bzl",
+    "tf_cc_test",
+)
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 
 # This package contains classes corresponding to Revived SavedObjectGraph types
@@ -122,6 +126,30 @@ cc_library(
     ],
 )
 
+tf_cc_test(
+    name = "partially_revived_objects_test",
+    srcs = [
+        "partially_revived_objects_test.cc",
+    ],
+    deps = [
+        ":partially_revived_objects",
+        ":revived_objects",
+        ":tf_concrete_function_revival_state",
+        "//tensorflow/c/eager:immediate_execution_context",
+        "//tensorflow/c/experimental/saved_model/core:test_utils",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core/common_runtime:core_cpu_lib",
+        "//tensorflow/core/common_runtime/eager:context",
+        "//tensorflow/core/common_runtime/eager:core",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
 cc_library(
     name = "restored_resource",
     srcs = [
@@ -179,6 +207,10 @@ cc_library(
     ],
     hdrs = [
         "variable.h",
+    ],
+    visibility = [
+        "//tensorflow/c/experimental/saved_model/core:__pkg__",
+        "//tensorflow/c/experimental/saved_model/internal:__pkg__",
     ],
     deps = [
         ":tensorhandle_convertible",

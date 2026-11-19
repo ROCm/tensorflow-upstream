@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -322,6 +323,40 @@ backend_config={"sizes":["32"]}
       gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
           dot, block_params, ddh100_));
   EXPECT_GT(absl::ToInt64Microseconds(runtime_h100.exec_time), 0);
+}
+
+TEST_F(GpuDotFusionCostModelTest, VectorMatrixDotIsRejected) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+p0 = bf16[2048] parameter(0)
+p1 = bf16[2048,1024] parameter(1)
+ROOT r = bf16[1024] dot(p0, p1),
+lhs_contracting_dims={0}, rhs_contracting_dims={0}, algorithm=dot_bf16_bf16_bf16,
+backend_config={"sizes":["32"]}
+})"));
+
+  auto* dot =
+      Cast<HloDotInstruction>(module->entry_computation()->root_instruction());
+  EXPECT_THAT(gpu_dot_fusion_cost_model::IsSupported(dot),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
+}
+
+TEST_F(GpuDotFusionCostModelTest, InnerProductDotIsRejected) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+p0 = bf16[2048] parameter(0)
+p1 = bf16[2048] parameter(1)
+ROOT r = bf16[] dot(p0, p1),
+lhs_contracting_dims={0}, rhs_contracting_dims={0}, algorithm=dot_bf16_bf16_bf16,
+backend_config={"sizes":["32"]}
+})"));
+
+  auto* dot =
+      Cast<HloDotInstruction>(module->entry_computation()->root_instruction());
+  EXPECT_THAT(gpu_dot_fusion_cost_model::IsSupported(dot),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
 }
 
 // TODO(b/501002656): Remove this test once we support transposes in the dot
@@ -680,6 +715,28 @@ TEST_F(GpuDotFusionCostModelTest,
     EXPECT_GT(frac_a100, frac_h100);
     EXPECT_GT(frac_h100, frac_b200);
   }
+}
+
+TEST_F(GpuDotFusionCostModelTest,
+       EffectiveHbmBandwidthBlackwellVariantsUseDistinctTables) {
+  se::DeviceDescription dd_gb200 = ddb200_;
+  dd_gb200.set_name("NVIDIA GB200");
+
+  se::DeviceDescription dd_gb300 = ddb200_;
+  dd_gb300.set_name("NVIDIA GB300");
+  dd_gb300.set_gpu_compute_capability(
+      se::GpuComputeCapability(se::CudaComputeCapability(10, 3)));
+
+  constexpr int64_t k32MiB = 32 * 1024 * 1024;
+  float frac_b200 =
+      GetEffectiveHbmBandwidth(k32MiB, ddb200_) / ddb200_.memory_bandwidth();
+  float frac_gb200 =
+      GetEffectiveHbmBandwidth(k32MiB, dd_gb200) / dd_gb200.memory_bandwidth();
+  float frac_gb300 =
+      GetEffectiveHbmBandwidth(k32MiB, dd_gb300) / dd_gb300.memory_bandwidth();
+
+  EXPECT_LT(frac_b200, frac_gb200);
+  EXPECT_LT(frac_gb200, frac_gb300);
 }
 
 // Verifies that minimum transfer sizes are latency-bound and achieve a small

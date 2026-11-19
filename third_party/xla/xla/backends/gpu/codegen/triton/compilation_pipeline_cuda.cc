@@ -67,7 +67,9 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
        /*threads_per_warp=*/32, num_ctas}));
   pm->addPass(mt::gpu::createTritonGPUCoalesce());
   pm->addPass(mt::gpu::createTritonGPUF32DotTC({cuda_cc.IsAtLeastAmpere()}));
-  pm->addPass(ttng::createTritonNvidiaGPUPlanCTAPass());
+  pm->addPass(ttng::createTritonNvidiaGPUAssignCGALayoutsPass());
+  pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
+  pm->addPass(ttng::createTritonNvidiaGPUOptimizeCTALocalityPass());
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(mt::gpu::createTritonGPUOptimizeThreadLocality());
   pm->addPass(mt::gpu::createTritonGPUAccelerateMatmul());
@@ -161,18 +163,26 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   // pm->addPass(mt::instrument::createTritonInstrumentGlobalSanitizer());
   pm->addPass(mt::gpu::createTritonGPUCombineTensorSelectAndIf());
   pm->addPass(mt::gpu::createTritonGPUAllocateWarpGroups());
+  // If "gsan" or "consan" is enabled in options.instrumentation_mode, upstream
+  // skips this pass.
+  pm->addPass(mt::gpu::createTritonGPUOptimizeThreadRegions());
   pm->addPass(mlir::createSCFToControlFlowPass());
   pm->addPass(mlir::triton::gluon::createGluonInline());
   pm->addPass(
       mt::createAllocateSharedMemoryNvPass(cuda_cc_as_int, final_ptx_version));
   pm->addPass(ttng::createTritonTensorMemoryAllocationPass());
+  pm->addPass(ttng::createTritonGPUProxyFenceInsertion({cuda_cc_as_int}));
+  pm->addPass(
+      mt::createTritonNvidiaGPUMembar({cuda_cc_as_int, final_ptx_version}));
+  pm->addPass(ttng::createTritonNvidiaGPUTMemBarrierInsertionPass());
+  pm->addPass(ttng::createTritonNvidiaGPUOptimizeMBarrierArrivalsPass());
   // We could add a flag to XLA to optionally enable the following passes:
   // if "consan" in options.instrumentation_mode
   // pm->addPass(mt::instrument::createTritonInstrumentConcurrencySanitizer());
   // pm->addPass(mlir::triton::gluon::createGluonCanonicalize());
   // pm->addPass(mlir::createCSEPass());
-  pm->addPass(ttng::createTritonGPUProxyFenceInsertion({cuda_cc_as_int}));
-  pm->addPass(ttng::createTritonNvidiaGPUTMemBarrierInsertionPass());
+  pm->addPass(ttng::createTritonNvidiaGPUClusterBarrierMbarAllocatorPass());
+  pm->addPass(mt::gpu::createTritonGPUGlobalScratchAllocationPass());
   pm->addPass(
       mt::createConvertTritonGPUToLLVMPass(cuda_cc_as_int, final_ptx_version));
   pm->addPass(mt::createInitializeWSClusterBarriers(

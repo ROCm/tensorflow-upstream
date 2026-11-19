@@ -469,6 +469,10 @@ absl::StatusOr<xla::PrecisionConfig::Algorithm> ConvertDotAlgorithm(
       return xla::PrecisionConfig::ALG_DOT_BF16_BF16_F32;
     case mlir::hlo::detail::KnownDotAlgorithm::BF16_BF16_F32_X3:
       return xla::PrecisionConfig::ALG_DOT_BF16_BF16_F32_X3;
+    case mlir::hlo::detail::KnownDotAlgorithm::F8E4M3FN_F8E4M3FN_F32_X3:
+      return xla::PrecisionConfig::ALG_DOT_BF16_BF16_FP8X3;
+    case mlir::hlo::detail::KnownDotAlgorithm::F8E4M3FN_F8E4M3FN_F32_X4:
+      return xla::PrecisionConfig::ALG_DOT_BF16_BF16_FP8X4;
     case mlir::hlo::detail::KnownDotAlgorithm::BF16_BF16_F32_X6:
       return xla::PrecisionConfig::ALG_DOT_BF16_BF16_F32_X6;
     case mlir::hlo::detail::KnownDotAlgorithm::BF16_BF16_F32_X9:
@@ -511,6 +515,10 @@ absl::StatusOr<xla::PrecisionConfig::Algorithm> ConvertDotAlgorithm(
       return xla::PrecisionConfig::ALG_DOT_BF16_BF16_F32;
     case mlir::hlo::detail::KnownDotAlgorithm::BF16_BF16_F32_X3:
       return xla::PrecisionConfig::ALG_DOT_BF16_BF16_F32_X3;
+    case mlir::hlo::detail::KnownDotAlgorithm::F8E4M3FN_F8E4M3FN_F32_X3:
+      return xla::PrecisionConfig::ALG_DOT_BF16_BF16_FP8X3;
+    case mlir::hlo::detail::KnownDotAlgorithm::F8E4M3FN_F8E4M3FN_F32_X4:
+      return xla::PrecisionConfig::ALG_DOT_BF16_BF16_FP8X4;
     case mlir::hlo::detail::KnownDotAlgorithm::BF16_BF16_F32_X6:
       return xla::PrecisionConfig::ALG_DOT_BF16_BF16_F32_X6;
     case mlir::hlo::detail::KnownDotAlgorithm::BF16_BF16_F32_X9:
@@ -697,11 +705,11 @@ absl::StatusOr<xla::CustomCallApiVersion> ConvertCustomCallApiVersion(
 
 std::optional<xla::OpSharding> ConvertSharding(llvm::StringRef sharding) {
   xla::OpSharding sharding_proto;
-  if (sharding_proto.ParseFromString(sharding.str())) {
+  if (sharding_proto.ParseFromArray(sharding.data(), sharding.size())) {
     return sharding_proto;
   }
   absl::StatusOr<xla::HloSharding> sharding_cpp =
-      xla::ParseSharding(sharding.str());
+      xla::ParseSharding(absl::string_view(sharding.data(), sharding.size()));
   if (sharding_cpp.ok()) {
     return sharding_cpp->ToProto();
   }

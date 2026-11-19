@@ -28,8 +28,6 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Location.h"
-#include "mlir/IR/Value.h"
-#include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "xla/mosaic/dialect/tpu/tpu_dialect.h"
@@ -119,7 +117,7 @@ namespace mlir::tpu {
   TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, <=)
 
 template <bool adjust_bool = false>
-int8_t getTypeBitwidth(Type ty) {
+unsigned getTypeBitwidth(Type ty) {
   if (auto integer_ty = dyn_cast<IntegerType>(ty)) {
     const unsigned width = integer_ty.getWidth();
     if constexpr (adjust_bool) {
@@ -137,17 +135,15 @@ int8_t getTypeBitwidth(Type ty) {
 
 // Returns the bitwidth of the element type. The function works for both
 // scalar and vector types.
-template <bool adjust_bool = false>
-inline int8_t getElementTypeBitwidth(Type ty) {
+inline unsigned getElementTypeBitwidth(Type ty) {
   if (auto vty = dyn_cast<VectorType>(ty)) {
-    return getTypeBitwidth<adjust_bool>(vty.getElementType());
+    return getTypeBitwidth(vty.getElementType());
   }
-  return getTypeBitwidth<adjust_bool>(ty);
+  return getTypeBitwidth(ty);
 }
 
-template <bool adjust_bool = false>
-inline int8_t getElementTypeBitwidth(MemRefType ty) {
-  return getElementTypeBitwidth<adjust_bool>(ty.getElementType());
+inline unsigned getElementTypeBitwidth(MemRefType ty) {
+  return getElementTypeBitwidth(ty.getElementType());
 }
 
 // Debug only util.
@@ -167,7 +163,7 @@ std::string shapeToString(const T& shape) {
 
 // Computes the dimensions that were squeezed from the source shape to match the
 // target shape. Returns the dimensions in increasing order.
-FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
+FailureOr<SmallVector<int64_t>> computeSqueezedDimsChecked(
     Operation* op, ArrayRef<int64_t> source_shape,
     ArrayRef<int64_t> target_shape);
 
@@ -190,11 +186,6 @@ auto positiveMod(U a, V b) {
   DCHECK_GT(b, 0);
   return (a - 1) % b + 1;
 }
-
-// Fills the output of `size` number of elements with the given values and their
-// positions, and fills the rest with `missing`.
-SmallVector<Value> fillPositions(ValueRange values, ArrayRef<int32_t> positions,
-                                 int size, Value missing = nullptr);
 
 }  // namespace mlir::tpu
 

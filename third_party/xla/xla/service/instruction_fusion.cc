@@ -102,6 +102,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kFloor:
+    case HloOpcode::kFma:
     case HloOpcode::kGetTupleElement:
     case HloOpcode::kImag:
     case HloOpcode::kInfeed:
@@ -132,6 +133,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kShiftLeft:
     case HloOpcode::kShiftRightArithmetic:
     case HloOpcode::kShiftRightLogical:
+    case HloOpcode::kShuffle:
     case HloOpcode::kSlice:
     case HloOpcode::kStochasticConvert:
     case HloOpcode::kSubtract:
@@ -194,16 +196,17 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kCollectivePermuteDone:
     case HloOpcode::kCollectivePermuteStart:
     case HloOpcode::kCustomCall:
-    case HloOpcode::kDomain:
     case HloOpcode::kDot:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFft:
     case HloOpcode::kFusion:
     case HloOpcode::kGather:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
     case HloOpcode::kLogistic:
     case HloOpcode::kMap:
     case HloOpcode::kParameter:
@@ -218,6 +221,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kRngGetAndUpdateState:
     case HloOpcode::kRngBitGenerator:
     case HloOpcode::kRsqrt:
+    case HloOpcode::kDotGeneral:
     case HloOpcode::kScaledDot:
     case HloOpcode::kScan:
     case HloOpcode::kScatter:
@@ -667,10 +671,13 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
 
         HloInstruction* fusion_instruction = nullptr;
 
-        // Try "regular" fusion if the operand may be duplicated. Otherwise,
-        // perform multi-output fusion, unless this creates a cycle.
-        FusionDecision use_regular_fusion(do_not_duplicate.count(operand) == 0,
-                                          "operand can not be duplicated");
+        // Try "regular" fusion if the operand does not need to be duplicated,
+        // or if it may be duplicated. Otherwise, perform multi-output fusion,
+        // unless this creates a cycle.
+        FusionDecision use_regular_fusion(
+            !FusionWouldDuplicate(*operand, *instruction) ||
+                do_not_duplicate.count(operand) == 0,
+            "operand can not be duplicated");
         if (use_regular_fusion) {
           use_regular_fusion =
               use_regular_fusion.And(ShouldFuse(instruction, i));
@@ -999,7 +1006,7 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
       };
 
       auto get_constant_operand =
-          [](const HloInstruction* operand) -> std::optional<int> {
+          [](const HloInstruction* operand) -> std::optional<int64_t> {
         if (operand->IsConstant()) {
           return operand->literal().GetFirstInteger();
         }

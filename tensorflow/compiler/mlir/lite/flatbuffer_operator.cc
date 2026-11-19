@@ -27,7 +27,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "flatbuffers/buffer.h"  // from @flatbuffers
 #include "flatbuffers/flatbuffer_builder.h"  // from @flatbuffers
-#include "flatbuffers/flatbuffers.h"  // from @flatbuffers
 #include "flatbuffers/flexbuffers.h"  // from @flatbuffers
 #include "flatbuffers/string.h"  // from @flatbuffers
 #include "flatbuffers/vector.h"  // from @flatbuffers
@@ -52,17 +51,11 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/schema/mutable/schema_generated.h"
 #include "tensorflow/compiler/mlir/lite/schema/schema_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/convert_type.h"
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
-#include "tensorflow/compiler/mlir/tensorflow/utils/dynamic_shape_utils.h"
-#include "tensorflow/core/platform/errors.h"
-#include "tensorflow/core/platform/status.h"
-#include "tsl/platform/status.h"
+#include "tensorflow/compiler/mlir/lite/utils/shape_and_size_utils.h"
 
 namespace {
 
 using ::absl::StatusOr;
-using ::tensorflow::Status;
-using ::tensorflow::errors::InvalidArgument;
 
 StatusOr<mlir::StringAttr> GetPaddingAttr(TfLitePadding pad_params,
                                           mlir::Builder builder,
@@ -252,6 +245,78 @@ static tflite::LSTMKernelType ConvertTFL_LSTMKernelTypeAttrForOptionWriter(
   llvm_unreachable("invalid lstm_kernel_type in conversion.");
 }
 
+// Serializes one `quant_spec` value. Only the kinds that the specs actually
+// use are supported; anything else is a bug in the pass that built the
+// dictionary, and dropping it would silently change the op's meaning.
+//
+// The key is taken by `const std::string&` rather than `llvm::StringRef`
+// because the `flexbuffers::Builder` key overloads call `strlen` on it, and a
+// `StringRef` is not guaranteed to be null-terminated.
+static void SerializeQuantSpecValue(const std::string& key,
+                                    mlir::Attribute value,
+                                    flexbuffers::Builder* fbb) {
+  if (auto str = mlir::dyn_cast<mlir::StringAttr>(value)) {
+    fbb->String(key.c_str(), str.getValue().str());
+  } else if (auto boolean = mlir::dyn_cast<mlir::BoolAttr>(value)) {
+    fbb->Bool(key.c_str(), boolean.getValue());
+  } else if (auto integer = mlir::dyn_cast<mlir::IntegerAttr>(value)) {
+    fbb->Int(key.c_str(), integer.getInt());
+  } else if (auto fp = mlir::dyn_cast<mlir::FloatAttr>(value)) {
+    fbb->Double(key.c_str(), fp.getValueAsDouble());
+  } else {
+    llvm::report_fatal_error(llvm::Twine("quant_spec key '") + key +
+                             "' has an unsupported attribute kind");
+  }
+}
+
+static flatbuffers::Offset<flatbuffers::Vector<uint8_t>>
+ConvertDerivedQuantSpecAttrForOptionWriter(
+    mlir::DictionaryAttr attr, flatbuffers::FlatBufferBuilder* builder) {
+  if (!attr || attr.empty()) return 0;
+
+  flexbuffers::Builder fbb;
+  const size_t map_start = fbb.StartMap();
+  for (const mlir::NamedAttribute& named : attr) {
+    SerializeQuantSpecValue(named.getName().str(), named.getValue(), &fbb);
+  }
+  fbb.EndMap(map_start);
+  fbb.Finish();
+  return builder->CreateVector(fbb.GetBuffer());
+}
+
+static mlir::DictionaryAttr BuildDerivedQuantSpecAttr(
+    const std::vector<uint8_t>& quant_spec, mlir::Builder builder) {
+  if (quant_spec.empty()) return nullptr;
+
+  flexbuffers::Reference root = flexbuffers::GetRoot(quant_spec);
+  if (!root.IsMap()) return nullptr;
+  flexbuffers::Map map = root.AsMap();
+  flexbuffers::TypedVector keys = map.Keys();
+  flexbuffers::Vector values = map.Values();
+
+  llvm::SmallVector<mlir::NamedAttribute> entries;
+  entries.reserve(keys.size());
+  for (size_t i = 0; i < keys.size(); ++i) {
+    llvm::StringRef key = keys[i].AsKey();
+    flexbuffers::Reference val = values[i];
+    mlir::Attribute attr;
+    if (val.IsString()) {
+      attr = builder.getStringAttr(val.AsString().str());
+    } else if (val.IsBool()) {
+      attr = builder.getBoolAttr(val.AsBool());
+    } else if (val.IsIntOrUint()) {
+      attr = builder.getI64IntegerAttr(val.AsInt64());
+    } else if (val.IsFloat()) {
+      attr = builder.getF32FloatAttr(val.AsFloat());
+    } else {
+      llvm::report_fatal_error(llvm::Twine("quant_spec key '") + key +
+                               "' has an unsupported flexbuffer type");
+    }
+    entries.push_back(builder.getNamedAttr(key, attr));
+  }
+  return builder.getDictionaryAttr(entries);
+}
+
 static mlir::Attribute BuildBoolAttr(bool value, mlir::Builder builder) {
   return builder.getBoolAttr(value);
 }
@@ -328,7 +393,7 @@ static mlir::Attribute BuildRankedTensorAttr(std::vector<int64_t> shape,
     extendVec[i] = llvm::APInt(1, value[i]);
   }
   mlir::RankedTensorType ty =
-      tensorflow::GetTypeFromTFTensorShape(shape, builder.getIntegerType(1));
+      mlir::TFL::GetTypeFromTFLiteShape(shape, builder.getIntegerType(1));
   return mlir::DenseIntElementsAttr::get(ty, extendVec);
 }
 
@@ -336,7 +401,7 @@ static mlir::Attribute BuildRankedTensorAttr(std::vector<int64_t> shape,
                                              std::vector<int32_t> value,
                                              mlir::Builder builder) {
   mlir::RankedTensorType ty =
-      tensorflow::GetTypeFromTFTensorShape(shape, builder.getIntegerType(32));
+      mlir::TFL::GetTypeFromTFLiteShape(shape, builder.getIntegerType(32));
   return mlir::DenseIntElementsAttr::get(ty, value);
 }
 
@@ -344,7 +409,7 @@ static mlir::Attribute BuildRankedTensorAttr(std::vector<int64_t> shape,
                                              std::vector<int64_t> value,
                                              mlir::Builder builder) {
   mlir::RankedTensorType ty =
-      tensorflow::GetTypeFromTFTensorShape(shape, builder.getIntegerType(64));
+      mlir::TFL::GetTypeFromTFLiteShape(shape, builder.getIntegerType(64));
   return mlir::DenseIntElementsAttr::get(ty, value);
 }
 
@@ -352,7 +417,7 @@ static mlir::Attribute BuildRankedTensorAttr(std::vector<int64_t> shape,
                                              std::vector<float> value,
                                              mlir::Builder builder) {
   mlir::RankedTensorType ty =
-      tensorflow::GetTypeFromTFTensorShape(shape, builder.getF32Type());
+      mlir::TFL::GetTypeFromTFLiteShape(shape, builder.getF32Type());
   return mlir::DenseFPElementsAttr::get(ty, value);
 }
 
@@ -517,7 +582,7 @@ static mlir::Attribute BuildStablehlo_PrecisionConfigAttr(
   return builder.getArrayAttr(precision_attrs);
 }
 
-Status mlir::CustomOptionsToAttributes(
+absl::Status mlir::CustomOptionsToAttributes(
     const std::string& custom_code, llvm::ArrayRef<uint8_t> custom_options,
     mlir::Builder builder, mlir::Location loc,
     llvm::SmallVectorImpl<mlir::NamedAttribute>* attributes) {

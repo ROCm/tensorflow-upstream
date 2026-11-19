@@ -27,12 +27,16 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/transforms/library_matcher.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/cpu/backend_config.pb.h"
+#include "xla/service/cpu/dot_op_emitter.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -175,10 +179,94 @@ inline bool IsElementwiseAndNotConstant(const HloInstruction* instr) {
   return instr->IsElementwise() && !instr->IsConstant();
 }
 
+// Returns true for data movement, reshaping, or broadcasting ops that should
+// not terminate a library fusion.
+bool ShouldPeelOp(const HloInstruction* instr) {
+  switch (instr->opcode()) {
+    case xla::HloOpcode::kBroadcast:
+    case xla::HloOpcode::kReshape:
+    case xla::HloOpcode::kBitcast:
+    case xla::HloOpcode::kTranspose:
+    case xla::HloOpcode::kCopy:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// If a fusion terminates with a broadcast, peel that instruction out of the
+// fusion. Keeping a broadcast at the root of a fusion forces libraries to
+// materialize the broadcast into memory, whereas keeping it outside the fusion
+// in XLA allows it to remain a zero-cost metadata alias or be fused into
+// downstream consumers without materialization.
+absl::Status PeelTrailingCopies(HloFusionInstruction* fusion) {
+  HloComputation* fused_comp = fusion->fused_instructions_computation();
+  while (true) {
+    HloInstruction* root = fused_comp->root_instruction();
+    if (!ShouldPeelOp(root)) {
+      break;
+    }
+    if (root->operand_count() != 1) {
+      break;
+    }
+    HloInstruction* operand = root->mutable_operand(0);
+    if (operand->opcode() == HloOpcode::kParameter) {
+      break;
+    }
+
+    fused_comp->set_root_instruction(operand, /*accept_different_shape=*/true);
+    ABSL_RETURN_IF_ERROR(fused_comp->RemoveInstruction(root));
+
+    HloComputation* parent = fusion->parent();
+    Shape old_fusion_shape = fusion->shape();
+    *fusion->mutable_shape() = operand->shape();
+
+    HloInstruction* outer_instr = parent->AddInstruction(
+        root->CloneWithNewOperands(old_fusion_shape, {fusion}));
+
+    if (fusion == parent->root_instruction()) {
+      parent->set_root_instruction(outer_instr,
+                                   /*accept_different_shape=*/true);
+    }
+
+    std::vector<HloInstruction*> users = fusion->users();
+    for (HloInstruction* user : users) {
+      if (user != outer_instr) {
+        ABSL_RETURN_IF_ERROR(
+            fusion->ReplaceUseWithDifferentShape(user, outer_instr));
+      }
+    }
+    VLOG(3) << "Peeled trailing copy " << root->name() << " out of fusion "
+            << fusion->name();
+  }
+  return absl::OkStatus();
+}
+
+// Dots with a non-kEigen implementation strategy (e.g. kTiledLlvmIrGemv,
+// kTiledLlvmIrGemm, kNaiveLlvmIr) are lowered directly to LLVM IR rather than
+// calling a library, matching `call_library_for_instruction` in CpuCompiler.
+bool ShouldCallLibraryForDot(
+    const HloInstruction* instr,
+    const TargetMachineFeatures* target_machine_features) {
+  if (instr->opcode() != HloOpcode::kDot ||
+      target_machine_features == nullptr) {
+    return true;
+  }
+  const HloModuleConfig& config = instr->GetModule() != nullptr
+                                      ? instr->GetModule()->config()
+                                      : HloModuleConfig();
+  return GetDotImplementationStrategy(config, *instr, *target_machine_features,
+                                      /*allow_runtime_calls=*/true) ==
+         DotImplementationStrategy::kEigen;
+}
+
 }  // namespace
 
 absl::StatusOr<LibraryMatcher*> LibraryRewriter::ChooseLibrary(
     HloInstruction* instr) {
+  if (!ShouldCallLibraryForDot(instr, target_machine_features_)) {
+    return nullptr;
+  }
   for (std::unique_ptr<LibraryMatcher>& lib : libs_) {
     ABSL_ASSIGN_OR_RETURN(bool op_supported, lib->IsOpSupported(instr));
     if (op_supported && lib->ShouldCreateFusion(instr)) {
@@ -293,7 +381,8 @@ absl::StatusOr<bool> LibraryRewriter::FuseNeighbors(
       continue;
     }
 
-    if (!lib->ShouldFuse(fusion, instr)) {
+    if (!ShouldCallLibraryForDot(instr, target_machine_features_) ||
+        !lib->ShouldFuse(fusion, instr)) {
       VLOG(4) << "  Skipping unsupported instruction: " << instr->ToString();
       continue;
     }
@@ -373,6 +462,8 @@ absl::StatusOr<bool> LibraryRewriter::ProcessComputation(
         ABSL_ASSIGN_OR_RETURN(changed, FuseNeighbors(fusion, lib));
       }
     }
+
+    ABSL_RETURN_IF_ERROR(PeelTrailingCopies(fusion));
   }
   return !fused_.empty();
 }

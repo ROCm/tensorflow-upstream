@@ -28,12 +28,8 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
-#include "xla/codegen/tiling/experimental/tiled_hlo.h"
-#include "xla/codegen/tiling/experimental/tiling_space.h"
-#include "xla/codegen/tiling/symbolic_tile_analysis.h"
-#include "xla/codegen/tiling/tiled_hlo_computation.h"
-#include "xla/codegen/tiling/tiled_hlo_schedule.h"
-#include "xla/codegen/tiling/tiling_specification.h"
+#include "xla/codegen/tiling/tiled_hlo.h"
+#include "xla/codegen/tiling/tiling_space.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -586,71 +582,32 @@ TEST_F(CoalescingTest, Param) {
   EXPECT_THAT(IsReadCoalescedPerOperand(ir), ElementsAre(true, true, true));
 }
 
-class CoalescingForTiledHloTest : public CoalescingTest,
-                                  public ::testing::WithParamInterface<bool> {
+class CoalescingForTiledHloTest : public CoalescingTest {
  public:
-  bool use_experimental_tiling() const { return GetParam(); }
+  std::vector<double> EffectiveBandwidthUtilizationRatePerOperand(
+      const HloInstruction* root, absl::Span<int64_t const> tile_sizes) {
+    auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
 
-  template <typename TiledHloInstructionType>
-  std::vector<double> EffectiveBandwidthUtilizationRatePerOperandImpl(
-      const TiledHloInstructionType* tiled_hlo_root) {
+    auto tiling_space_or = TilingSpace::Create(*fusion_adaptor, &mlir_context_);
+    CHECK_OK(tiling_space_or);
+    auto tiling_space = std::move(tiling_space_or.value());
+    CHECK_OK(tiling_space->AssignTileSizes(tile_sizes));
+
+    absl::StatusOr<TiledHloComputation> tiled_hlo_computation =
+        TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space));
+    CHECK_OK(tiled_hlo_computation);
+
     std::vector<double> result;
-    for (const TiledHloInstructionType* operand : tiled_hlo_root->operands()) {
+    for (const TiledHloInstruction* operand :
+         tiled_hlo_computation->roots()[0]->operands()) {
       result.push_back(BandwidthUtilizationRateHeuristicForTiledMemoryAccess(
           *operand, device_info_));
     }
     return result;
   }
-
-  std::vector<double> EffectiveBandwidthUtilizationRatePerOperand(
-      const HloInstruction* root, absl::Span<int64_t const> tile_sizes) {
-    auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
-
-    if (use_experimental_tiling()) {
-      auto tiling_space_or =
-          experimental::TilingSpace::Create(*fusion_adaptor, &mlir_context_);
-      CHECK_OK(tiling_space_or);
-      auto tiling_space = std::move(tiling_space_or.value());
-      CHECK_OK(tiling_space->AssignTileSizes(tile_sizes));
-
-      absl::StatusOr<experimental::TiledHloComputation> tiled_hlo_computation =
-          experimental::TiledHloComputation::Tile(*fusion_adaptor,
-                                                  std::move(tiling_space));
-      CHECK_OK(tiled_hlo_computation);
-
-      return EffectiveBandwidthUtilizationRatePerOperandImpl(
-          tiled_hlo_computation->roots()[0]);
-    }
-
-    SymbolicTileAnalysis symbolic_tile_analysis =
-        std::get<SymbolicTileAnalysis>(SymbolicTileAnalysis::AnalyzeFusion(
-            *fusion_adaptor, &mlir_context_));
-
-    absl::StatusOr<TiledHloComputation> tiled_hlo_computation =
-        symbolic_tile_analysis.ComputeTiledComputation(
-            Tiling({{root, FlatTiling(tile_sizes.begin(), tile_sizes.end())}}),
-            CreateMajorToMinorTiledHloSchedule,
-            /*constraints_are_known_satisfied=*/true,
-            /*compute_all_tile_offset_indexing_maps=*/true);
-    CHECK_OK(tiled_hlo_computation);
-
-    return EffectiveBandwidthUtilizationRatePerOperandImpl(
-        tiled_hlo_computation->roots()[0]);
-  }
-
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options =
-        HloHardwareIndependentTestBase::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_experimental_enable_tiling_propagation(
-        use_experimental_tiling());
-    return debug_options;
-  }
 };
 
-INSTANTIATE_TEST_SUITE_P(CoalescingForTiledHloTest, CoalescingForTiledHloTest,
-                         testing::Bool());
-
-TEST_P(
+TEST_F(
     CoalescingForTiledHloTest,
     EffectiveBandwidthUtilizationRateIsComputedCorrectlyForTiledMemoryAccess) {  // NOLINT(whitespace/line_length)
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
@@ -693,6 +650,67 @@ ENTRY main {
   // are coalesced.
   EXPECT_THAT(EffectiveBandwidthUtilizationRatePerOperand(root, {6, 16}),
               ElementsAre(0.75));
+}
+
+TEST_F(CoalescingTest, TransposeLargeOuterDimExceedingInt32Max) {
+  absl::string_view ir = R"(
+    HloModule module
+
+    fusion {
+      %input = c128[2, 134217728, 16] parameter(0)
+      %transpose = c128[134217728, 2, 16] transpose(%input), dimensions={1, 0, 2}
+      ROOT %slice = c128[1, 2, 16] slice(%transpose), slice={[0:1:1], [0:2:1], [0:16:1]}
+    }
+
+    ENTRY entry {
+      %input = c128[2, 134217728, 16] parameter(0)
+      ROOT %fusion = c128[1, 2, 16] fusion(%input), kind=kLoop, calls=fusion
+  })";
+  // thread_x in [0, 15] reads [0, 15] and thread_x in [16, 31] reads
+  // [2147483648, 2147483663] (> INT32_MAX). Both 16-element c128 intervals are
+  // 256-byte contiguous reads and should be coalesced.
+  EXPECT_THAT(IsReadCoalescedPerOperand(ir), ElementsAre(true));
+}
+
+TEST_F(CoalescingTest, RhsTransposedLargeStrideExceedingInt32Max) {
+  absl::string_view ir = R"(
+    HloModule m
+    fusion {
+      p0 = f32[1073741824, 200]{1, 0} parameter(0)
+      p1 = f32[1073741824, 200]{0, 1} parameter(1)
+      ROOT exp = f32[1073741824, 200]{1, 0} add(p0, p1)
+    }
+    ENTRY e {
+      p0 = f32[1073741824, 200]{1, 0} parameter(0)
+      p1 = f32[1073741824, 200]{0, 1} parameter(1)
+      ROOT fusion = f32[1073741824, 200]{1, 0} fusion(p0, p1), kind=kInput, calls=fusion
+    }
+  )";
+  EXPECT_THAT(IsReadCoalescedPerOperand(ir), ElementsAre(true, false));
+}
+
+TEST_F(CoalescingTest, ReduceWindowIntervalElementsExceedingInt32Max) {
+  absl::string_view ir = R"(
+    HloModule m
+    add {
+      p0 = f32[] parameter(0)
+      p1 = f32[] parameter(1)
+      ROOT add = f32[] add(p0, p1)
+    }
+    fusion {
+      p0 = f32[2147483710] parameter(0)
+      c0 = f32[] constant(0)
+      ROOT rw = f32[32] reduce-window(p0, c0),
+        window={size=2147483648 stride=2}, to_apply=add
+    }
+    ENTRY e {
+      p0 = f32[2147483710] parameter(0)
+      ROOT fusion = f32[32] fusion(p0), kind=kLoop, calls=fusion
+    }
+  )";
+  // (thread_x)[s0] -> (thread_x * 2 + s0) for s0 in [0, 2147483647] produces a
+  // single contiguous interval of 2147483710 (> INT32_MAX) elements.
+  EXPECT_THAT(IsReadCoalescedPerOperand(ir), ElementsAre(true));
 }
 
 }  // namespace

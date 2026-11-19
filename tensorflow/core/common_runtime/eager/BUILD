@@ -13,7 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 
-load("@bazel_skylib//lib:selects.bzl", "selects")
 load(
     "@xla//xla/tsl/mkl:build_defs.bzl",
     "if_mkl",
@@ -21,8 +20,7 @@ load(
 )
 load(
     "//tensorflow:tensorflow.bzl",
-    "clean_dep",
-    "if_google",
+    "if_cuda_or_rocm",
     "if_zendnn",
     "tf_cc_test",
     "tf_cc_test_mkl",
@@ -229,11 +227,9 @@ tf_cuda_library(
     visibility = ["//tensorflow:internal"],
     deps = [
         ":context",
-        ":eager_executor",
         "//tensorflow/c/eager:immediate_execution_context",
         "//tensorflow/c/eager:immediate_execution_distributed_manager",
         "//tensorflow/core/distributed_runtime:master_env",
-        "//tensorflow/core/distributed_runtime:rendezvous_mgr_interface",
         "//tensorflow/core/distributed_runtime:worker_env",
     ] + select({
         "//tensorflow:android": [
@@ -278,30 +274,11 @@ tf_cuda_library(
             "@xla//xla/tsl/distributed_runtime/preemption:preemption_notifier",
             "@xla//xla/tsl/platform:statusor",
         ],
-    }) + if_google(
-        # TODO(b/282068262): PJRT pulls in TFRT components that are incompatible with ARM platform.
-        # Clean up so that PJRT can run on ARM (and remove "#if defined(PLATFORM_GOOGLE) ..." use
-        # from gpu_util.cc).
-        # Also it won't build with WeightWatcher which tracks OSS build binaries.
-        # TODO(b/290533709): Clean up this build rule.
-        selects.with_or({
-            clean_dep("//tensorflow:linux_x86_64_with_weightwatcher"): [],
-            (
-                clean_dep("//tensorflow:linux_x86_64"),
-            ): [
-                "//tensorflow/core",
-                "//tensorflow/core/framework:resource_base",
-                "@xla//xla/pjrt/distributed:key_value_store_interface",
-                "@xla//xla/pjrt:local_device_state",
-                "@xla//xla/service:gpu_topology",
-                "@xla//xla/pjrt:pjrt_client",
-                "@xla//xla/pjrt:pjrt_compiler",
-                "@xla//xla/service/gpu:gpu_executable_run_options",
-                "//tensorflow/core/common_runtime/gpu:gpu_runtime_impl",
-            ],
-            "//conditions:default": [],
-        }),
-    ),
+    }) + if_cuda_or_rocm([
+        "@xla//xla/pjrt/distributed:key_value_store_interface",
+        "//tensorflow/core/common_runtime/gpu:gpu_runtime_impl",
+        "//tensorflow/core/framework:resource_base",
+    ]),
 )
 
 tf_cc_test(
@@ -326,11 +303,15 @@ tf_cc_test(
         "//tensorflow/core/kernels:cast_op",
         "//tensorflow/core/kernels:logging_ops",
         "//tensorflow/core/kernels:math",
+        "//tensorflow/core/platform:env",
         "//tensorflow/core/platform:refcount",
         "//tensorflow/core/platform:status",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:refcount",
+        "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:status",
     ],
 )
@@ -665,6 +646,7 @@ cc_library(
         ":small_constants_optimizer",
         ":summary_optimizer",
         ":tensor_handle",
+        ":validate_function_devices",
         "//tensorflow/c:tf_tensor_internal",
         "//tensorflow/compiler/jit:common",
         "//tensorflow/core/profiler/lib:scoped_memory_debug_annotation",
@@ -703,6 +685,36 @@ cc_library(
         ":zen_eager_op_rewrite",
         "//tensorflow/core/graph:zen_graph_util",
     ]),
+)
+
+cc_library(
+    name = "validate_function_devices",
+    srcs = ["validate_function_devices.cc"],
+    hdrs = ["validate_function_devices.h"],
+    deps = [
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@xla//xla/tsl/util:device_name_utils",
+    ],
+)
+
+tf_cc_test(
+    name = "validate_function_devices_test",
+    srcs = ["validate_function_devices_test.cc"],
+    deps = [
+        ":validate_function_devices",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core/platform:status_matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest",
+    ],
 )
 
 tf_cc_test(
@@ -833,6 +845,7 @@ cc_library(
         ":small_constants_optimizer",
         ":summary_optimizer",
         ":tensor_handle",
+        ":validate_function_devices",
         "//tensorflow/c:c_api_internal",
         "//tensorflow/c:tf_tensor_internal",
         "//tensorflow/c/eager:abstract_function",

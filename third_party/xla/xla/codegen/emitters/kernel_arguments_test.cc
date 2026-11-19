@@ -25,10 +25,14 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/codegen/emitters/computation_fingerprint.h"
+#include "xla/codegen/emitters/kernel_arguments.pb.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
@@ -39,14 +43,19 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/proto/parse_text_proto.h"
+#include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::emitters {
 namespace {
+using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
 using ::testing::HasSubstr;
 using ::testing::SizeIs;
+using ::tsl::proto_testing::EqualsProto;
+using ::tsl::proto_testing::ParseTextProtoOrDie;
 
 using KernelArgumentsTest = HloHardwareIndependentTestBase;
 
@@ -415,6 +424,404 @@ TEST_F(KernelArgumentsTest,
   }
   EXPECT_THAT(invariant_flags,
               ElementsAre(false, true, false, true, true, true));
+}
+
+TEST_F(KernelArgumentsTest,
+       NoInvariantFrontendAnnotationPropagatesToInterleavedArguments) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    e {
+      a = s4[5] parameter(0)
+      b = s4[6] parameter(1)
+      c = s4[7] parameter(2)
+      t = tuple(c, b, a),
+        frontend_attributes={xla.no_invariant_operands="0,2"}
+    }
+  )"));
+  AliasInfo alias_info;
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+          &BufferSizeBytes, &alias_info, [](LogicalBuffer::Color) { return 0; },
+          std::move(opts)));
+
+  // Argument order: operand0, result0, operand1, result1, operand2, result2.
+  const std::vector<int32_t> interleaved_output_indices = {1, 3, 5};
+  ASSERT_OK_AND_ASSIGN(
+      KernelArguments kernel_arguments,
+      KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
+                              module->entry_computation()->root_instruction(),
+                              interleaved_output_indices));
+
+  std::vector<bool> invariant_flags;
+  invariant_flags.reserve(kernel_arguments.args().size());
+  for (const KernelArgument& arg : kernel_arguments.args()) {
+    invariant_flags.push_back(arg.invariant());
+  }
+  // Operands 0 and 2 are annotated as non-invariant, wherever they end up.
+  EXPECT_THAT(invariant_flags,
+              ElementsAre(false, true, true, true, false, true));
+}
+
+TEST_F(KernelArgumentsTest,
+       InterleavedOutputIndicesMustCoverAllOutputsInOrder) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    e {
+      a = s4[5] parameter(0)
+      b = s4[6] parameter(1)
+      c = s4[7] parameter(2)
+      t = tuple(c, b, a)
+    }
+  )"));
+  AliasInfo alias_info;
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+          &BufferSizeBytes, &alias_info, [](LogicalBuffer::Color) { return 0; },
+          std::move(opts)));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+
+  const std::vector<int32_t> too_few_indices = {1, 3};
+  EXPECT_THAT(
+      KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
+                              root, too_few_indices),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("Expected an interleaving index for each of the 3 "
+                         "results")));
+
+  const std::vector<int32_t> unordered_indices = {1, 5, 3};
+  EXPECT_THAT(
+      KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
+                              root, unordered_indices),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("must be strictly increasing")));
+}
+
+TEST_F(KernelArgumentsTest, SliceProviderCanOverrideBufferAssignment) {
+  constexpr absl::string_view kHloString = R"(
+    HloModule module
+
+    ENTRY entry {
+      param.0 = f32[1,2,3]{2,1,0} parameter(0)
+      param.1 = f32[1,2,3]{2,1,0} parameter(1)
+      ROOT add = f32[1,2,3]{2,1,0} add(param.0, param.1)
+    }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+          &BufferSizeBytes, &alias_info, [](LogicalBuffer::Color) { return 0; },
+          BufferAssigner::Options{/*allocate_buffers_for_constants=*/true}));
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  const HloInstruction* param0 = root->operand(0);
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice param1_slice,
+                       assignment->GetUniqueSlice(root->operand(1), {}));
+
+  // Redirect operand 0 onto operand 1's buffer, the way an emitter's
+  // allocation overrides do. A `BufferAssignment` alone cannot express this.
+  auto slice_provider =
+      [&](const HloInstruction& instruction,
+          const ShapeIndex& index) -> absl::StatusOr<BufferAllocation::Slice> {
+    if (&instruction == param0) {
+      return param1_slice;
+    }
+    return assignment->GetUniqueSlice(&instruction, index);
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      KernelArguments kernel_arguments,
+      KernelArguments::Create(slice_provider, gpu::GetDefaultBufferAlignment(),
+                              root));
+
+  ASSERT_THAT(kernel_arguments.args(), SizeIs(3));
+  EXPECT_EQ(kernel_arguments.args()[0].slice(), param1_slice);
+  EXPECT_EQ(kernel_arguments.args()[1].slice(), param1_slice);
+}
+
+TEST_F(KernelArgumentsTest, SliceProviderErrorsArePropagated) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    ENTRY entry {
+      p = f32[4] parameter(0)
+      ROOT add = f32[4] add(p, p)
+    }
+  )"));
+
+  auto slice_provider =
+      [](const HloInstruction& instruction,
+         const ShapeIndex& index) -> absl::StatusOr<BufferAllocation::Slice> {
+    return absl::NotFoundError("no slice for you");
+  };
+
+  EXPECT_THAT(
+      KernelArguments::Create(slice_provider, gpu::GetDefaultBufferAlignment(),
+                              module->entry_computation()->root_instruction()),
+      StatusIs(absl::StatusCode::kNotFound, HasSubstr("no slice for you")));
+}
+
+TEST_F(KernelArgumentsTest, OperandAndResultIndices) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    ENTRY main {
+      param0 = f32[10] parameter(0)
+      param1 = f32[20] parameter(1)
+      ROOT tuple_result = (f32[10], f32[20]) tuple(param0, param1)
+    }
+  )"));
+  HloInstruction* root = module->entry_computation()->root_instruction();
+
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+          &BufferSizeBytes, &alias_info, [](LogicalBuffer::Color) { return 0; },
+          BufferAssigner::Options{/*allocate_buffers_for_constants=*/true}));
+
+  ASSERT_OK_AND_ASSIGN(
+      KernelArguments kernel_arguments,
+      KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
+                              root));
+
+  // Operands come first, then the array leaves of the result shape.
+  EXPECT_THAT(kernel_arguments.PositionOfOperand(0), IsOkAndHolds(0));
+  EXPECT_THAT(kernel_arguments.PositionOfOperand(1), IsOkAndHolds(1));
+  EXPECT_THAT(kernel_arguments.PositionOfResult({0}), IsOkAndHolds(2));
+  EXPECT_THAT(kernel_arguments.PositionOfResult({1}), IsOkAndHolds(3));
+
+  EXPECT_THAT(kernel_arguments.PositionOfOperand(2),
+              StatusIs(absl::StatusCode::kOutOfRange));
+  EXPECT_THAT(kernel_arguments.PositionOfOperand(-1),
+              StatusIs(absl::StatusCode::kOutOfRange));
+  // The root is a tuple, so there is no array leaf at the top level.
+  EXPECT_THAT(kernel_arguments.PositionOfResult({}),
+              StatusIs(absl::StatusCode::kOutOfRange));
+}
+
+TEST_F(KernelArgumentsTest, OperandAndResultPositionsFollowInterleaving) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    ENTRY main {
+      param0 = f32[10] parameter(0)
+      param1 = f32[20] parameter(1)
+      ROOT tuple_result = (f32[10], f32[20]) tuple(param0, param1)
+    }
+  )"));
+  HloInstruction* root = module->entry_computation()->root_instruction();
+
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+          &BufferSizeBytes, &alias_info, [](LogicalBuffer::Color) { return 0; },
+          BufferAssigner::Options{/*allocate_buffers_for_constants=*/true}));
+
+  // Argument order becomes: input0, output0, input1, output1.
+  std::vector<int32_t> interleaved_indices = {1, 3};
+  ASSERT_OK_AND_ASSIGN(
+      KernelArguments kernel_arguments,
+      KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
+                              root, interleaved_indices));
+
+  EXPECT_THAT(kernel_arguments.PositionOfOperand(0), IsOkAndHolds(0));
+  EXPECT_THAT(kernel_arguments.PositionOfResult({0}), IsOkAndHolds(1));
+  EXPECT_THAT(kernel_arguments.PositionOfOperand(1), IsOkAndHolds(2));
+  EXPECT_THAT(kernel_arguments.PositionOfResult({1}), IsOkAndHolds(3));
+}
+
+TEST_F(KernelArgumentsTest, PositionOfResultOfNonTupleResult) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    ENTRY main {
+      param0 = f32[10] parameter(0)
+      ROOT result = f32[10] add(param0, param0)
+    }
+  )"));
+  HloInstruction* root = module->entry_computation()->root_instruction();
+
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+          &BufferSizeBytes, &alias_info, [](LogicalBuffer::Color) { return 0; },
+          BufferAssigner::Options{/*allocate_buffers_for_constants=*/true}));
+
+  ASSERT_OK_AND_ASSIGN(
+      KernelArguments kernel_arguments,
+      KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
+                              root));
+
+  EXPECT_THAT(kernel_arguments.PositionOfResult({}), IsOkAndHolds(2));
+  EXPECT_THAT(kernel_arguments.PositionOfResult({0}),
+              StatusIs(absl::StatusCode::kOutOfRange));
+}
+
+TEST_F(KernelArgumentsTest, HandBuiltArgumentsHaveNoKnownPositions) {
+  KernelArguments kernel_arguments(std::vector<KernelArgument>{KernelArgument(
+      ShapeUtil::MakeShape(F32, {4}), BufferAllocation::Slice())});
+
+  EXPECT_THAT(kernel_arguments.PositionOfOperand(0),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
+  EXPECT_THAT(kernel_arguments.PositionOfResult({}),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
+}
+
+TEST_F(KernelArgumentsTest, NonInvariantOperandChangesFingerprint) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    fused_ro_a {
+      p0 = f32[4] parameter(0)
+      ROOT r = f32[4] negate(p0)
+    }
+    fused_ro_b {
+      p0 = f32[4] parameter(0)
+      ROOT r = f32[4] negate(p0)
+    }
+    fused_rw_a {
+      p0 = f32[4] parameter(0)
+      ROOT r = f32[4] negate(p0)
+    }
+    fused_rw_b {
+      p0 = f32[4] parameter(0)
+      ROOT r = f32[4] negate(p0)
+    }
+    ENTRY main {
+      a = f32[4] parameter(0)
+      b = f32[4] parameter(1)
+      f_ro_0 = f32[4] fusion(a), kind=kLoop, calls=fused_ro_a,
+        frontend_attributes={xla.no_invariant_operands="0"}
+      f_ro_1 = f32[4] fusion(b), kind=kLoop, calls=fused_ro_b
+      t0 = f32[4] add(a, a)
+      t1 = f32[4] add(b, b)
+      f_rw_0 = f32[4] fusion(t0), kind=kLoop, calls=fused_rw_a,
+        frontend_attributes={xla.no_invariant_operands="0"}
+      f_rw_1 = f32[4] fusion(t1), kind=kLoop, calls=fused_rw_b
+      ROOT out = (f32[4], f32[4], f32[4], f32[4])
+        tuple(f_ro_0, f_ro_1, f_rw_0, f_rw_1)
+    }
+  )"));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+          &BufferSizeBytes, &alias_info, [](LogicalBuffer::Color) { return 0; },
+          BufferAssigner::Options{}));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  const HloInstruction* f_ro_0 = root->operand(0);
+  const HloInstruction* f_ro_1 = root->operand(1);
+  ASSERT_OK_AND_ASSIGN(
+      KernelArguments ro_args0,
+      KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
+                              f_ro_0));
+  ASSERT_OK_AND_ASSIGN(
+      KernelArguments ro_args1,
+      KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
+                              f_ro_1));
+  ASSERT_FALSE(ro_args0.args()[0].written());
+  EXPECT_NE(GetComputationFingerprint(f_ro_0->fused_instructions_computation(),
+                                      ro_args0.args()),
+            GetComputationFingerprint(f_ro_1->fused_instructions_computation(),
+                                      ro_args1.args()));
+
+  const HloInstruction* f_rw_0 = root->operand(2);
+  const HloInstruction* f_rw_1 = root->operand(3);
+  ASSERT_OK_AND_ASSIGN(
+      KernelArguments rw_args0,
+      KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
+                              f_rw_0));
+  ASSERT_OK_AND_ASSIGN(
+      KernelArguments rw_args1,
+      KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
+                              f_rw_1));
+  ASSERT_TRUE(rw_args0.args()[0].written());
+  EXPECT_NE(GetComputationFingerprint(f_rw_0->fused_instructions_computation(),
+                                      rw_args0.args()),
+            GetComputationFingerprint(f_rw_1->fused_instructions_computation(),
+                                      rw_args1.args()));
+}
+
+TEST_F(KernelArgumentsTest, PartiallyOverlappingSlicesMarkBothAliased) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    ENTRY main {
+      p0 = f32[8] parameter(0)
+      ROOT s = f32[4] slice(p0), slice={[0:4]}
+    }
+  )"));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  const HloInstruction* param0 = root->operand(0);
+  BufferAllocation alloc(/*index=*/0, /*size=*/32, /*color=*/0);
+  auto slice_provider =
+      [&](const HloInstruction& instruction,
+          const ShapeIndex& index) -> absl::StatusOr<BufferAllocation::Slice> {
+    if (&instruction == param0) {
+      return BufferAllocation::Slice(&alloc, 0, 32);
+    }
+    return BufferAllocation::Slice(&alloc, 8, 16);
+  };
+  ASSERT_OK_AND_ASSIGN(
+      KernelArguments args,
+      KernelArguments::Create(slice_provider, gpu::GetDefaultBufferAlignment(),
+                              root));
+  ASSERT_THAT(args.args(), SizeIs(2));
+  EXPECT_FALSE(args.args()[0].written());
+  EXPECT_TRUE(args.args()[0].aliased());
+  EXPECT_TRUE(args.args()[1].written());
+  EXPECT_TRUE(args.args()[1].aliased());
+}
+
+TEST_F(KernelArgumentsTest, ProtoRoundTrip) {
+  KernelArgumentsProto proto = ParseTextProtoOrDie<KernelArgumentsProto>(
+      R"pb(
+        args {
+          shape { dimensions: 1 element_type: F32 is_dynamic_dimension: false }
+          slice { offset: 0 size: 4 buffer_allocation_index: 0 }
+          aliased: true
+          alignment: 16
+          written: true
+          invariant: false
+          slice_index: 1
+        }
+        args {
+          shape { dimensions: 4 element_type: S32 is_dynamic_dimension: false }
+          aliased: false
+          alignment: 8
+          written: false
+          invariant: true
+        }
+        positions {
+          operands: 0
+          results {
+            shape_index { indexes: 0 }
+            position: 1
+          }
+        }
+      )pb");
+  std::vector<BufferAllocation> buffer_allocations = {
+      BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)};
+
+  ASSERT_OK_AND_ASSIGN(KernelArguments kernel_arguments,
+                       KernelArguments::FromProto(proto, buffer_allocations));
+
+  ASSERT_OK_AND_ASSIGN(KernelArgumentsProto round_trip_proto,
+                       kernel_arguments.ToProto());
+  EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
 }  // namespace

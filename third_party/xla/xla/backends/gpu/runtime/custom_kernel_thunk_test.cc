@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -52,8 +53,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
@@ -65,6 +64,36 @@ using ::testing::Field;
 using ::testing::Optional;
 using tsl::proto_testing::EqualsProto;
 using tsl::proto_testing::ParseTextProtoOrDie;
+
+TEST(CustomKernelThunkTest, ToStringIncludesPdlOnlyWhenEnabled) {
+  Thunk::ThunkInfo thunk_info;
+  thunk_info.profile_annotation = "test_kernel_profiler";
+  CustomKernel kernel("name",
+                      se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
+                          /*ptx=*/"", /*kernel_name=*/"name", /*arity=*/0),
+                      se::BlockDim(3, 2, 1), se::ThreadDim(4, 5, 6),
+                      /*shared_memory_bytes=*/42);
+  emitters::KernelArguments kernel_arguments({});
+  CustomKernelThunk thunk(thunk_info, kernel, kernel_arguments,
+                          /*devices_in_process=*/1);
+  EXPECT_EQ(thunk.ToString(0),
+            "kernel=name, profile_annotation=test_kernel_profiler, "
+            "launch dimensions=blocks: {3, 2, 1}, threads/block: {4, 5, 6}, "
+            "cluster_dim=nullopt, shmem_bytes=42");
+
+  CustomKernel clustered_kernel(
+      "clustered_name",
+      se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
+          /*ptx=*/"", /*kernel_name=*/"clustered_name", /*arity=*/0),
+      se::BlockDim(6, 4, 2), se::ThreadDim(8, 10, 12), se::ClusterDim(2, 2, 2),
+      /*shared_memory_bytes=*/84);
+  CustomKernelThunk pdl_thunk(thunk_info, clustered_kernel, kernel_arguments,
+                              /*devices_in_process=*/1, /*use_pdl=*/true);
+  EXPECT_EQ(pdl_thunk.ToString(0),
+            "kernel=clustered_name, profile_annotation=test_kernel_profiler, "
+            "launch dimensions=blocks: {6, 4, 2}, threads/block: {8, 10, 12}, "
+            "cluster_dim=ClusterDim{2, 2, 2}, shmem_bytes=84, use_pdl=true");
+}
 
 TEST(CustomKernelThunkTest, BufferUsesReturnsCorrectBuffers) {
   Shape arg_shape = ShapeUtil::MakeShape(F32, {512});
@@ -81,7 +110,8 @@ TEST(CustomKernelThunkTest, BufferUsesReturnsCorrectBuffers) {
   arg0.set_written(false);
   arg1.set_written(true);
   emitters::KernelArguments kernel_arguments({arg0, arg1});
-  CustomKernelThunk thunk(Thunk::ThunkInfo{}, kernel, kernel_arguments);
+  CustomKernelThunk thunk(Thunk::ThunkInfo{}, kernel, kernel_arguments,
+                          /*devices_in_process=*/1);
 
   Thunk::BufferUses buffers = thunk.buffer_uses();
 
@@ -104,7 +134,8 @@ TEST(CustomKernelThunkTest, BufferUsesReturnsBuffersInConsistentOrder) {
   arg0.set_written(false);
   arg1.set_written(true);
   emitters::KernelArguments kernel_arguments({arg0, arg1});
-  CustomKernelThunk thunk(Thunk::ThunkInfo{}, kernel, kernel_arguments);
+  CustomKernelThunk thunk(Thunk::ThunkInfo{}, kernel, kernel_arguments,
+                          /*devices_in_process=*/1);
 
   Thunk::BufferUses buffers1 = thunk.buffer_uses();
   Thunk::BufferUses buffers2 = thunk.buffer_uses();
@@ -128,7 +159,8 @@ TEST(CustomKernelThunkTest, ToProto) {
   emitters::KernelArgument arg0(ShapeUtil::MakeShape(F32, {512}), slice0);
   arg0.set_written(true);
   emitters::KernelArguments kernel_arguments({arg0});
-  CustomKernelThunk thunk(thunk_info, kernel, kernel_arguments);
+  CustomKernelThunk thunk(thunk_info, kernel, kernel_arguments,
+                          /*devices_in_process=*/1);
 
   EXPECT_THAT(
       thunk.ToProto(), IsOkAndHolds(EqualsProto(R"pb(
@@ -188,9 +220,10 @@ TEST(CustomKernelThunkTest, FromProto) {
   std::vector<BufferAllocation> buffer_allocations;
   buffer_allocations.emplace_back(/*index=*/0, /*size=*/1024, /*color=*/0);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<CustomKernelThunk> thunk,
-                          CustomKernelThunk::FromProto(
-                              Thunk::ThunkInfo{}, proto, buffer_allocations));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CustomKernelThunk> thunk,
+                       CustomKernelThunk::FromProto(Thunk::ThunkInfo{}, proto,
+                                                    buffer_allocations,
+                                                    /*devices_in_process=*/1));
 
   EXPECT_THAT(thunk->custom_kernel().name(), "test_kernel");
   EXPECT_THAT(thunk->arguments(),
@@ -221,7 +254,9 @@ static absl::StatusOr<se::StreamExecutor*> GpuExecutor() {
 // spec includes a custom args-packing function (required by command buffer
 // CreateLaunch/UpdateLaunch with KernelArgsDeviceAddressArray).
 static absl::StatusOr<std::unique_ptr<CustomKernelThunk>>
-MakeAddI32CustomKernelThunk(const std::vector<BufferAllocation>& allocs) {
+MakeAddI32CustomKernelThunk(
+    const std::vector<BufferAllocation>& allocs,
+    std::vector<int64_t> zeroed_output_buffer_indices = {}) {
   absl::string_view ptx =
       se::gpu::GetAddI32PtxKernelSpec().cuda_ptx_in_memory().value().ptx;
   ABSL_ASSIGN_OR_RETURN(
@@ -242,43 +277,46 @@ MakeAddI32CustomKernelThunk(const std::vector<BufferAllocation>& allocs) {
 
   return std::make_unique<CustomKernelThunk>(
       Thunk::ThunkInfo(), std::move(kernel),
-      emitters::KernelArguments({arg_a, arg_b, arg_c}));
+      emitters::KernelArguments({arg_a, arg_b, arg_c}),
+      /*devices_in_process=*/1, /*use_pdl=*/false,
+      std::move(zeroed_output_buffer_indices));
 }
 
 TEST(CustomKernelThunkTest, RecordCommandBuffer) {
-  TF_ASSERT_OK_AND_ASSIGN(std::string platform_name,
-                          PlatformUtil::CanonicalPlatformName("gpu"));
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
   auto name = absl::AsciiStrToUpper(platform_name);
   if (name == "ROCM" || name == "SYCL") {
     GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm or oneAPI.";
   }
-  TF_ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   se::DeviceAddress<int32_t> a_dev = executor->AllocateArray<int32_t>(1, 0);
   se::DeviceAddress<int32_t> b_dev = executor->AllocateArray<int32_t>(1, 0);
   se::DeviceAddress<int32_t> c_dev = executor->AllocateArray<int32_t>(1, 0);
 
   int32_t val_a = 1, val_b = 2;
-  TF_ASSERT_OK(stream->Memcpy(&a_dev, &val_a, sizeof(int32_t)));
-  TF_ASSERT_OK(stream->Memcpy(&b_dev, &val_b, sizeof(int32_t)));
-  TF_ASSERT_OK(stream->MemZero(&c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&a_dev, &val_a, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&b_dev, &val_b, sizeof(int32_t)));
+  ASSERT_OK(stream->MemZero(&c_dev, sizeof(int32_t)));
 
   std::vector<BufferAllocation> allocs = {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
       BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),
       BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),
   };
-  TF_ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs));
+  ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs));
 
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  Thunk::InitializeParams init_params;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
   init_params.executor = executor;
-  init_params.stream = stream.get();
   init_params.buffer_allocations = &buffer_allocations;
-  TF_ASSERT_OK(thunk->Initialize(init_params));
+  init_params.stream = stream.get();
+  ASSERT_OK(thunk->Initialize(init_params));
 
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
@@ -289,57 +327,57 @@ TEST(CustomKernelThunkTest, RecordCommandBuffer) {
   CommandStateManager state;
   Command::RecordParams record_params = {state};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
-      const se::CommandBuffer::Command* cmd,
-      thunk->Record(execute_params, record_params,
-                    Command::RecordCreate{/*dependencies=*/{}},
-                    command_buffer.get()));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd,
+                       thunk->Record(execute_params, record_params,
+                                     Command::RecordCreate{/*dependencies=*/{}},
+                                     command_buffer.get()));
   ASSERT_NE(cmd, nullptr);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
 
   int32_t result = 0;
-  TF_ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
   EXPECT_EQ(result, 3);  // 1 + 2 = 3
 }
 
 TEST(CustomKernelThunkTest, RecordCommandBufferUpdate) {
-  TF_ASSERT_OK_AND_ASSIGN(std::string platform_name,
-                          PlatformUtil::CanonicalPlatformName("gpu"));
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
   auto name = absl::AsciiStrToUpper(platform_name);
   if (name == "ROCM" || name == "SYCL") {
     GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm or oneAPI.";
   }
-  TF_ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   se::DeviceAddress<int32_t> a_dev = executor->AllocateArray<int32_t>(1, 0);
   se::DeviceAddress<int32_t> b_dev = executor->AllocateArray<int32_t>(1, 0);
   se::DeviceAddress<int32_t> c_dev = executor->AllocateArray<int32_t>(1, 0);
 
   int32_t val_a = 10, val_b = 20;
-  TF_ASSERT_OK(stream->Memcpy(&a_dev, &val_a, sizeof(int32_t)));
-  TF_ASSERT_OK(stream->Memcpy(&b_dev, &val_b, sizeof(int32_t)));
-  TF_ASSERT_OK(stream->MemZero(&c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&a_dev, &val_a, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&b_dev, &val_b, sizeof(int32_t)));
+  ASSERT_OK(stream->MemZero(&c_dev, sizeof(int32_t)));
 
   std::vector<BufferAllocation> allocs = {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
       BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),
       BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),
   };
-  TF_ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs));
+  ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs));
 
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  Thunk::InitializeParams init_params;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
   init_params.executor = executor;
-  init_params.stream = stream.get();
   init_params.buffer_allocations = &buffer_allocations;
-  TF_ASSERT_OK(thunk->Initialize(init_params));
+  init_params.stream = stream.get();
+  ASSERT_OK(thunk->Initialize(init_params));
 
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
@@ -351,46 +389,45 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdate) {
   Command::RecordParams record_params = {state};
 
   // First recording: RecordCreate.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
-      const se::CommandBuffer::Command* cmd,
-      thunk->Record(execute_params, record_params,
-                    Command::RecordCreate{/*dependencies=*/{}},
-                    command_buffer.get()));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd,
+                       thunk->Record(execute_params, record_params,
+                                     Command::RecordCreate{/*dependencies=*/{}},
+                                     command_buffer.get()));
   ASSERT_NE(cmd, nullptr);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
 
   int32_t result = 0;
-  TF_ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
   EXPECT_EQ(result, 30);  // 10 + 20 = 30
 
   // Update and re-submit with same allocations.
-  TF_ASSERT_OK(command_buffer->Update());
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK(command_buffer->Update());
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* updated_cmd,
       thunk->Record(execute_params, record_params, Command::RecordUpdate{cmd},
                     command_buffer.get()));
   EXPECT_EQ(updated_cmd, cmd);  // same command node is reused
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
 
   result = 0;
-  TF_ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
   EXPECT_EQ(result, 30);  // still 10 + 20 = 30
 }
 
 TEST(CustomKernelThunkTest, RecordCommandBufferUpdateWithNewOutputBuffer) {
-  TF_ASSERT_OK_AND_ASSIGN(std::string platform_name,
-                          PlatformUtil::CanonicalPlatformName("gpu"));
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
   auto name = absl::AsciiStrToUpper(platform_name);
   if (name == "ROCM" || name == "SYCL") {
     GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm or oneAPI.";
   }
-  TF_ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   se::DeviceAddress<int32_t> a_dev = executor->AllocateArray<int32_t>(1, 0);
   se::DeviceAddress<int32_t> b_dev = executor->AllocateArray<int32_t>(1, 0);
@@ -398,26 +435,27 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdateWithNewOutputBuffer) {
   se::DeviceAddress<int32_t> c2_dev = executor->AllocateArray<int32_t>(1, 0);
 
   int32_t val_a = 1, val_b = 2;
-  TF_ASSERT_OK(stream->Memcpy(&a_dev, &val_a, sizeof(int32_t)));
-  TF_ASSERT_OK(stream->Memcpy(&b_dev, &val_b, sizeof(int32_t)));
-  TF_ASSERT_OK(stream->MemZero(&c_dev, sizeof(int32_t)));
-  TF_ASSERT_OK(stream->MemZero(&c2_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&a_dev, &val_a, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&b_dev, &val_b, sizeof(int32_t)));
+  ASSERT_OK(stream->MemZero(&c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->MemZero(&c2_dev, sizeof(int32_t)));
 
   std::vector<BufferAllocation> allocs = {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
       BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),
       BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),
   };
-  TF_ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs));
+  ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs));
 
   se::StreamExecutorAddressAllocator allocator(executor);
 
   BufferAllocations alloc1({a_dev, b_dev, c_dev}, 0, &allocator);
-  Thunk::InitializeParams init_params;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
   init_params.executor = executor;
-  init_params.stream = stream.get();
   init_params.buffer_allocations = &alloc1;
-  TF_ASSERT_OK(thunk->Initialize(init_params));
+  init_params.stream = stream.get();
+  ASSERT_OK(thunk->Initialize(init_params));
 
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
@@ -428,20 +466,19 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdateWithNewOutputBuffer) {
   CommandStateManager state;
   Command::RecordParams record_params = {state};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
-      const se::CommandBuffer::Command* cmd,
-      thunk->Record(execute_params1, record_params,
-                    Command::RecordCreate{/*dependencies=*/{}},
-                    command_buffer.get()));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd,
+                       thunk->Record(execute_params1, record_params,
+                                     Command::RecordCreate{/*dependencies=*/{}},
+                                     command_buffer.get()));
   ASSERT_NE(cmd, nullptr);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
 
   int32_t result = 0;
-  TF_ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
   EXPECT_EQ(result, 3);  // 1 + 2 = 3
 
   // Update to use c2_dev as the output buffer.
@@ -450,33 +487,352 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdateWithNewOutputBuffer) {
       Thunk::ExecuteParams::Create(run_options, alloc2, stream.get(), nullptr,
                                    nullptr, nullptr, nullptr, {});
 
-  TF_ASSERT_OK(command_buffer->Update());
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK(command_buffer->Update());
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* updated_cmd,
       thunk->Record(execute_params2, record_params, Command::RecordUpdate{cmd},
                     command_buffer.get()));
   EXPECT_EQ(updated_cmd, cmd);  // same command node reused
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
 
   result = 0;
-  TF_ASSERT_OK(stream->Memcpy(&result, c2_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&result, c2_dev, sizeof(int32_t)));
   EXPECT_EQ(result, 3);  // 1 + 2 = 3 written into the new buffer
 
   result = 0;
-  TF_ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
   EXPECT_EQ(result, 3);  // original buffer still holds first-run result
 }
 
-TEST(CustomKernelThunkTest, RecordFailsWithoutInitialize) {
-  TF_ASSERT_OK_AND_ASSIGN(std::string platform_name,
-                          PlatformUtil::CanonicalPlatformName("gpu"));
+// Zeroed-output coverage for CustomKernelThunk.
+//
+// AddI32 computes c = a + b and overwrites c, so marking c as zeroed would
+// prove nothing. Mark input b instead: nothing requires a zeroed index to be an
+// output (the thunk just zeroes args_[index].slice), so this exercises the
+// mechanism with an unambiguous signal -- zeroing honoured gives c == 1,
+// zeroing dropped gives c == 3.
+TEST(CustomKernelThunkTest, ExecuteOnStreamZeroed) {
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
   auto name = absl::AsciiStrToUpper(platform_name);
   if (name == "ROCM" || name == "SYCL") {
     GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm or oneAPI.";
   }
-  TF_ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  se::DeviceAddress<int32_t> a_dev = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> b_dev = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> c_dev = executor->AllocateArray<int32_t>(1, 0);
+
+  int32_t val_a = 1, val_b = 2;
+  ASSERT_OK(stream->Memcpy(&a_dev, &val_a, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&b_dev, &val_b, sizeof(int32_t)));
+  ASSERT_OK(stream->MemZero(&c_dev, sizeof(int32_t)));
+
+  std::vector<BufferAllocation> allocs = {
+      BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
+      BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),
+      BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),
+  };
+  ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs, {1}));
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
+
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = executor;
+  init_params.buffer_allocations = &buffer_allocations;
+  init_params.stream = stream.get();
+  ASSERT_OK(thunk->Initialize(init_params));
+
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  auto execute_params = Thunk::ExecuteParams::Create(
+      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
+      nullptr, {});
+
+  ASSERT_OK(thunk->ExecuteOnStream(execute_params));
+
+  int32_t result = 0;
+  ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_EQ(result, 1);  // b zeroed before the launch.
+}
+
+TEST(CustomKernelThunkTest, RecordCommandBufferZeroed) {
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
+  auto name = absl::AsciiStrToUpper(platform_name);
+  if (name == "ROCM" || name == "SYCL") {
+    GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm or oneAPI.";
+  }
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  se::DeviceAddress<int32_t> a_dev = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> b_dev = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> c_dev = executor->AllocateArray<int32_t>(1, 0);
+
+  int32_t val_a = 1, val_b = 2;
+  ASSERT_OK(stream->Memcpy(&a_dev, &val_a, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&b_dev, &val_b, sizeof(int32_t)));
+  ASSERT_OK(stream->MemZero(&c_dev, sizeof(int32_t)));
+
+  std::vector<BufferAllocation> allocs = {
+      BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
+      BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),
+      BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),
+  };
+  ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs, {1}));
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
+
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = executor;
+  init_params.buffer_allocations = &buffer_allocations;
+  init_params.stream = stream.get();
+  ASSERT_OK(thunk->Initialize(init_params));
+
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  auto execute_params = Thunk::ExecuteParams::Create(
+      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
+      nullptr, {});
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd,
+                       thunk->Record(execute_params, record_params,
+                                     Command::RecordCreate{/*dependencies=*/{}},
+                                     command_buffer.get()));
+  ASSERT_NE(cmd, nullptr);
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
+
+  int32_t result = 0;
+  ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_EQ(result, 1);
+}
+
+TEST(CustomKernelThunkTest, RecordCommandBufferUpdateZeroed) {
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
+  auto name = absl::AsciiStrToUpper(platform_name);
+  if (name == "ROCM" || name == "SYCL") {
+    GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm or oneAPI.";
+  }
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  se::DeviceAddress<int32_t> a_dev = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> b_dev = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> c_dev = executor->AllocateArray<int32_t>(1, 0);
+
+  int32_t val_a = 1, val_b = 2;
+  ASSERT_OK(stream->Memcpy(&a_dev, &val_a, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&b_dev, &val_b, sizeof(int32_t)));
+  ASSERT_OK(stream->MemZero(&c_dev, sizeof(int32_t)));
+
+  std::vector<BufferAllocation> allocs = {
+      BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
+      BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),
+      BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),
+  };
+  ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs, {1}));
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
+
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = executor;
+  init_params.buffer_allocations = &buffer_allocations;
+  init_params.stream = stream.get();
+  ASSERT_OK(thunk->Initialize(init_params));
+
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  auto execute_params = Thunk::ExecuteParams::Create(
+      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
+      nullptr, {});
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd,
+                       thunk->Record(execute_params, record_params,
+                                     Command::RecordCreate{/*dependencies=*/{}},
+                                     command_buffer.get()));
+  ASSERT_NE(cmd, nullptr);
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
+
+  int32_t result = 0;
+  ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_EQ(result, 1) << "RecordCreate";
+
+  // Dirty b again and update; the memset must be re-recorded, not dropped.
+  ASSERT_OK(stream->Memcpy(&b_dev, &val_b, sizeof(int32_t)));
+  ASSERT_OK(command_buffer->Update());
+  ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* updated_cmd,
+      thunk->Record(execute_params, record_params, Command::RecordUpdate{cmd},
+                    command_buffer.get()));
+  EXPECT_EQ(updated_cmd, cmd);
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
+
+  result = 0;
+  ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_EQ(result, 1) << "RecordUpdate";
+}
+
+// One thunk recorded twice into the same command buffer, then both recordings
+// updated against moved buffers: the shape an unrolled while loop produces.
+// Both recordings share one command-state entry, so each update has to reach
+// the memset recorded alongside its own node. If it reaches the other one, the
+// first recording reads an unzeroed b and c == 3.
+TEST(CustomKernelThunkTest, RecordCommandBufferTwoRecordingsZeroed) {
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
+  auto name = absl::AsciiStrToUpper(platform_name);
+  if (name == "ROCM" || name == "SYCL") {
+    GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm or oneAPI.";
+  }
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  // One operand set per recording, plus a fresh b buffer for each so that the
+  // update genuinely moves the memset destinations.
+  se::DeviceAddress<int32_t> a0 = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> b0 = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> c0 = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> a1 = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> b1 = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> c1 = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> b0_new = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> b1_new = executor->AllocateArray<int32_t>(1, 0);
+
+  int32_t val_a = 1, val_b = 2;
+  for (se::DeviceAddress<int32_t>* a : {&a0, &a1}) {
+    ASSERT_OK(stream->Memcpy(a, &val_a, sizeof(int32_t)));
+  }
+  for (se::DeviceAddress<int32_t>* b : {&b0, &b1, &b0_new, &b1_new}) {
+    ASSERT_OK(stream->Memcpy(b, &val_b, sizeof(int32_t)));
+  }
+  for (se::DeviceAddress<int32_t>* c : {&c0, &c1}) {
+    ASSERT_OK(stream->MemZero(c, sizeof(int32_t)));
+  }
+
+  std::vector<BufferAllocation> allocs = {
+      BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
+      BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),
+      BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),
+  };
+  ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs, {1}));
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations allocations_0({a0, b0, c0}, 0, &allocator);
+  BufferAllocations allocations_1({a1, b1, c1}, 0, &allocator);
+  BufferAllocations allocations_0_new({a0, b0_new, c0}, 0, &allocator);
+  BufferAllocations allocations_1_new({a1, b1_new, c1}, 0, &allocator);
+
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = executor;
+  init_params.buffer_allocations = &allocations_0;
+  init_params.stream = stream.get();
+  ASSERT_OK(thunk->Initialize(init_params));
+
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  auto params_for = [&](const BufferAllocations& allocations) {
+    return Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                        nullptr, nullptr, nullptr, nullptr, {});
+  };
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd_0,
+                       thunk->Record(params_for(allocations_0), record_params,
+                                     Command::RecordCreate{/*dependencies=*/{}},
+                                     command_buffer.get()));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd_1,
+                       thunk->Record(params_for(allocations_1), record_params,
+                                     Command::RecordCreate{/*dependencies=*/{}},
+                                     command_buffer.get()));
+  ASSERT_NE(cmd_0, nullptr);
+  ASSERT_NE(cmd_1, nullptr);
+  ASSERT_NE(cmd_0, cmd_1);
+
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
+
+  int32_t result_0 = 0, result_1 = 0;
+  ASSERT_OK(stream->Memcpy(&result_0, c0, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&result_1, c1, sizeof(int32_t)));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_EQ(result_0, 1) << "first recording, RecordCreate";
+  EXPECT_EQ(result_1, 1) << "second recording, RecordCreate";
+
+  // Point both recordings at their new b buffers. Each update must reach the
+  // memset recorded alongside its own node.
+  ASSERT_OK(command_buffer->Update());
+  ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* updated_0,
+      thunk->Record(params_for(allocations_0_new), record_params,
+                    Command::RecordUpdate{cmd_0}, command_buffer.get()));
+  ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* updated_1,
+      thunk->Record(params_for(allocations_1_new), record_params,
+                    Command::RecordUpdate{cmd_1}, command_buffer.get()));
+  EXPECT_EQ(updated_0, cmd_0);
+  EXPECT_EQ(updated_1, cmd_1);
+  ASSERT_OK(command_buffer->Finalize());
+
+  for (se::DeviceAddress<int32_t>* c : {&c0, &c1}) {
+    ASSERT_OK(stream->MemZero(c, sizeof(int32_t)));
+  }
+  ASSERT_OK(command_buffer->Submit(stream.get()));
+
+  result_0 = 0;
+  result_1 = 0;
+  ASSERT_OK(stream->Memcpy(&result_0, c0, sizeof(int32_t)));
+  ASSERT_OK(stream->Memcpy(&result_1, c1, sizeof(int32_t)));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_EQ(result_0, 1) << "first recording, RecordUpdate";
+  EXPECT_EQ(result_1, 1) << "second recording, RecordUpdate";
+}
+
+TEST(CustomKernelThunkTest, RecordFailsWithoutInitialize) {
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
+  auto name = absl::AsciiStrToUpper(platform_name);
+  if (name == "ROCM" || name == "SYCL") {
+    GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm or oneAPI.";
+  }
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   se::DeviceAddress<int32_t> a_dev = executor->AllocateArray<int32_t>(1, 0);
   se::DeviceAddress<int32_t> b_dev = executor->AllocateArray<int32_t>(1, 0);
@@ -487,7 +843,7 @@ TEST(CustomKernelThunkTest, RecordFailsWithoutInitialize) {
       BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),
       BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),
   };
-  TF_ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs));
+  ASSERT_OK_AND_ASSIGN(auto thunk, MakeAddI32CustomKernelThunk(allocs));
   // Intentionally skip Initialize().
 
   se::StreamExecutorAddressAllocator allocator(executor);
@@ -501,7 +857,7 @@ TEST(CustomKernelThunkTest, RecordFailsWithoutInitialize) {
   CommandStateManager state;
   Command::RecordParams record_params = {state};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
   auto status = thunk->Record(execute_params, record_params,
@@ -510,6 +866,70 @@ TEST(CustomKernelThunkTest, RecordFailsWithoutInitialize) {
   EXPECT_FALSE(status.ok());
   EXPECT_THAT(status.status().message(),
               ::testing::HasSubstr("Custom kernel not loaded"));
+}
+
+TEST(CustomKernelThunkTest, ExecuteFailsWithoutInitialize) {
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
+  auto name = absl::AsciiStrToUpper(platform_name);
+  if (name == "ROCM" || name == "SYCL") {
+    GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm or oneAPI.";
+  }
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  se::DeviceAddress<int32_t> a_dev = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> b_dev = executor->AllocateArray<int32_t>(1, 0);
+  se::DeviceAddress<int32_t> c_dev = executor->AllocateArray<int32_t>(1, 0);
+
+  int32_t sentinel = 99;
+  ASSERT_OK(stream->Memcpy(&c_dev, &sentinel, sizeof(int32_t)));
+
+  std::vector<BufferAllocation> allocs = {
+      BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
+      BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),
+      BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),
+  };
+  absl::string_view ptx =
+      se::gpu::GetAddI32PtxKernelSpec().cuda_ptx_in_memory().value().ptx;
+  ASSERT_OK_AND_ASSIGN(
+      CustomKernel kernel,
+      kernel::GetPtxCustomKernel(/*kernel_name=*/"AddI32", ptx, /*num_args=*/3,
+                                 /*block_dim=*/se::BlockDim(1, 1, 1),
+                                 /*thread_dim=*/se::ThreadDim(1, 1, 1)));
+  emitters::KernelArgument arg_a(ShapeUtil::MakeShape(S32, {1}),
+                                 BufferAllocation::Slice(&allocs[0], 0, 4));
+  emitters::KernelArgument arg_b(ShapeUtil::MakeShape(S32, {1}),
+                                 BufferAllocation::Slice(&allocs[1], 0, 4));
+  emitters::KernelArgument arg_c(ShapeUtil::MakeShape(S32, {1}),
+                                 BufferAllocation::Slice(&allocs[2], 0, 4));
+  arg_a.set_written(false);
+  arg_b.set_written(false);
+  arg_c.set_written(true);
+
+  CustomKernelThunk thunk(Thunk::ThunkInfo(), std::move(kernel),
+                          emitters::KernelArguments({arg_a, arg_b, arg_c}),
+                          /*devices_in_process=*/1,
+                          /*use_pdl=*/false,
+                          /*zeroed_output_buffer_indices=*/{2});
+  // Intentionally skip Initialize().
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  auto execute_params = Thunk::ExecuteParams::Create(
+      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
+      nullptr, {});
+
+  auto status = thunk.ExecuteOnStream(execute_params);
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(),
+              ::testing::HasSubstr("Custom kernel not loaded"));
+
+  int32_t observed = 0;
+  ASSERT_OK(stream->Memcpy(&observed, c_dev, sizeof(int32_t)));
+  EXPECT_EQ(observed, sentinel);
 }
 
 }  // namespace

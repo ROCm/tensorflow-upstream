@@ -1370,6 +1370,22 @@ TEST(CommonShapeFnsTest, AvgPool2DShapeTest) {
   set_op({1, 1, 1, 1}, {1, 1, 1, 1}, "VALID", "NHWC");
   INFER_OK(op, "[1,2,2,1]", "[d0_0,2,2,d0_3]");
 
+  // A window one larger than the input produces an empty spatial dimension.
+  set_op({1, 1, 1, 1}, {1, 2, 2, 1}, "VALID", "NHWC");
+  INFER_OK(op, "[1,1,2,3]", "[d0_0,0,1,d0_3]");
+  // Integer division also truncates a small negative numerator to zero.
+  set_op({1, 2, 1, 1}, {1, 4, 2, 1}, "VALID", "NHWC");
+  INFER_OK(op, "[1,1,2,3]", "[d0_0,0,1,d0_3]");
+  // A substantially larger window still has a negative output size.
+  set_op({1, 1, 1, 1}, {1, 3, 2, 1}, "VALID", "NHWC");
+  INFER_ERROR("Negative dimension size", op, "[1,1,2,3]");
+
+  // Empty inputs follow the same window-size rules as the runtime kernel.
+  set_op({1, 1, 1, 1}, {1, 1, 2, 1}, "VALID", "NHWC");
+  INFER_OK(op, "[1,0,10,3]", "[d0_0,0,9,d0_3]");
+  set_op({1, 1, 1, 1}, {1, 2, 2, 1}, "VALID", "NHWC");
+  INFER_ERROR("Negative dimension size", op, "[1,0,10,3]");
+
   // 4x4 input, 2x1 ksize, 1x2 stride
   set_op({1, 1, 2, 1}, {1, 2, 1, 1}, "VALID", "NHWC");
   INFER_OK(op, "[1,4,4,1]", "[d0_0,3,2,d0_3]");
@@ -1496,6 +1512,59 @@ TEST(CommonShapeFnsTest, Pool3DShapeTest) {
   // Test partially known dimensions
   set_op({1, 1, 3, 4, 1}, {1, 1, 1, 1, 1}, "VALID");
   INFER_OK(op, "[1,?,24,24,1]", "[d0_0,?,8,6,d0_4]");
+}
+
+TEST(CommonShapeFnsTest, AvgPool3DShapeTest) {
+  ShapeInferenceTestOp op("AvgPool3D");
+  auto set_op = [&op](const std::vector<int32_t>& strides,
+                      const std::vector<int32_t>& ksizes,
+                      const std::string& padding,
+                      const std::string& data_format) {
+    TF_CHECK_OK(NodeDefBuilder("test", "AvgPool3D")
+                    .Input("input", 0, DT_FLOAT)
+                    .Attr("strides", strides)
+                    .Attr("ksize", ksizes)
+                    .Attr("padding", padding)
+                    .Attr("data_format", data_format)
+                    .Finalize(&op.node_def));
+  };
+
+  // VALID padding with a window slightly larger than the input infers an empty
+  // output, matching the runtime kernel.
+  set_op({1, 4, 4, 4, 1}, {1, 4, 4, 4, 1}, "VALID", "NDHWC");
+  INFER_OK(op, "[1,3,3,3,2]", "[d0_0,0,0,0,d0_4]");
+  set_op({1, 1, 1, 1, 1}, {1, 4, 1, 1, 1}, "VALID", "NDHWC");
+  INFER_OK(op, "[1,3,5,5,2]", "[d0_0,0,5,5,d0_4]");
+
+  // Same behavior for NCDHW.
+  set_op({1, 1, 4, 4, 4}, {1, 1, 4, 4, 4}, "VALID", "NCDHW");
+  INFER_OK(op, "[1,2,3,3,3]", "[d0_0,d0_1,0,0,0]");
+
+  // Windows that are too large still produce a negative dimension error.
+  set_op({1, 1, 1, 1, 1}, {1, 4, 1, 1, 1}, "VALID", "NDHWC");
+  INFER_ERROR("Negative dimension size", op, "[1,1,5,5,2]");
+
+  // Exact thresholds and zero-sized inputs.
+  set_op({1, 2, 1, 1, 1}, {1, 4, 1, 1, 1}, "VALID", "NDHWC");
+  INFER_OK(op, "[1,1,5,5,2]", "[d0_0,0,5,5,d0_4]");
+  set_op({1, 2, 1, 1, 1}, {1, 5, 1, 1, 1}, "VALID", "NDHWC");
+  INFER_ERROR("Negative dimension size", op, "[1,1,5,5,2]");
+  set_op({1, 1, 1, 1, 1}, {1, 1, 1, 1, 1}, "VALID", "NDHWC");
+  INFER_OK(op, "[1,0,5,5,2]", "[d0_0,0,5,5,d0_4]");
+
+  // Windows that fit are unaffected.
+  set_op({1, 2, 2, 2, 1}, {1, 2, 2, 2, 1}, "VALID", "NDHWC");
+  INFER_OK(op, "[1,4,4,4,1]", "[d0_0,2,2,2,d0_4]");
+
+  // MaxPool3D keeps rejecting oversized windows (Pool3DShape is unchanged).
+  ShapeInferenceTestOp max_op("MaxPool3D");
+  TF_CHECK_OK(NodeDefBuilder("test", "MaxPool3D")
+                  .Input("input", 0, DT_FLOAT)
+                  .Attr("strides", {1, 4, 4, 4, 1})
+                  .Attr("ksize", {1, 4, 4, 4, 1})
+                  .Attr("padding", "VALID")
+                  .Finalize(&max_op.node_def));
+  INFER_ERROR("Negative dimension size", max_op, "[1,3,3,3,2]");
 }
 
 TEST(CommonShapeFnsTest, UnknownShapeTest) {

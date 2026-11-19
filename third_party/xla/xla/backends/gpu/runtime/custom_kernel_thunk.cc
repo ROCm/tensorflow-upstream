@@ -24,31 +24,35 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/kernel_thunk_utils.h"
+#include "xla/backends/gpu/runtime/per_device_state.h"
 #include "xla/backends/gpu/runtime/print_buffer_contents.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/zeroed_outputs.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/shaped_slice.h"
+#include "xla/service/shaped_slice.pb.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/kernel_metadata.h"
+#include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/tensor_map.h"
@@ -59,51 +63,53 @@ namespace gpu {
 
 CustomKernelThunk::CustomKernelThunk(
     Thunk::ThunkInfo thunk_info, CustomKernel custom_kernel,
-    const emitters::KernelArguments& kernel_arguments, bool use_pdl,
-    std::vector<int64_t> zeroed_output_buffer_indices,
+    const emitters::KernelArguments& kernel_arguments, int devices_in_process,
+    bool use_pdl, std::vector<int64_t> zeroed_output_buffer_indices,
     stream_executor::gpu::TmaMetadata tma_metadata)
     : Command(Kind::kCustomKernel, std::move(thunk_info)),
       args_(kernel_arguments.GetArgumentShapedSlices()),
       written_(kernel_arguments.GetArgumentOutputFlags()),
       custom_kernel_(std::move(custom_kernel)),
       zeroed_output_buffer_indices_(std::move(zeroed_output_buffer_indices)),
-      tma_metadata_(tma_metadata),
-      use_pdl_(use_pdl) {}
+      tma_metadata_(std::move(tma_metadata)),
+      use_pdl_(use_pdl),
+      device_states_(devices_in_process) {}
 
 std::string CustomKernelThunk::ToString(int indent) const {
-  return custom_kernel_.ToString();
+  return KernelThunkToString(custom_kernel_.name(),
+                             thunk_info().profile_annotation,
+                             LaunchDimensions(custom_kernel_.block_dims(),
+                                              custom_kernel_.thread_dims()),
+                             custom_kernel_.cluster_dims(),
+                             custom_kernel_.shared_memory_bytes(), use_pdl_);
 }
 
 absl::Status CustomKernelThunk::Initialize(const InitializeParams& params) {
-  absl::MutexLock lock(mutex_);
-
-  if (!kernel_cache_.contains(params.executor)) {
-    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
-                     params.executor->LoadKernel(custom_kernel_.kernel_spec()));
-    se::KernelMetadata m = kernel->metadata();
-    m.set_shared_memory_bytes(custom_kernel_.shared_memory_bytes());
-    kernel->set_metadata(m);
-    kernel->set_use_pdl(use_pdl_);
-    kernel_cache_.emplace(params.executor, std::move(kernel));
-  }
-
-  return absl::OkStatus();
+  return device_states_.GetOrCreateAndInitialize(
+      params.executor->device_ordinal(),
+      [&](KernelState* state) -> absl::Status {
+        ABSL_ASSIGN_OR_RETURN(
+            std::unique_ptr<se::Kernel> kernel,
+            params.executor->LoadKernel(custom_kernel_.kernel_spec()));
+        se::KernelMetadata m = kernel->metadata();
+        m.set_shared_memory_bytes(custom_kernel_.shared_memory_bytes());
+        kernel->set_metadata(m);
+        kernel->set_use_pdl(use_pdl_);
+        state->kernel = std::move(kernel);
+        return absl::OkStatus();
+      });
 }
 
 absl::StatusOr<CustomKernelThunk::KernelWithArgs>
 CustomKernelThunk::GetKernelAndArgs(const BufferAllocations& buffer_allocations,
                                     se::StreamExecutor* executor) const {
-  se::Kernel* kernel;
-  {
-    absl::MutexLock lock(mutex_);
-    auto it = kernel_cache_.find(executor);
-    if (it == kernel_cache_.end() || it->second == nullptr) {
-      return absl::InternalError(
-          absl::StrCat("Custom kernel not loaded (Initialize() not called): ",
-                       custom_kernel_.name()));
-    }
-    kernel = it->second.get();
+  KernelState* state = device_states_.Find(executor->device_ordinal());
+  if (state == nullptr || state->kernel == nullptr) {
+    return absl::InternalError(
+        absl::StrCat("Custom kernel not loaded (Initialize() not called): ",
+                     custom_kernel_.name()));
   }
+  se::Kernel* kernel = state->kernel.get();
 
   absl::InlinedVector<se::KernelArg, 4> kernel_args;
   kernel_args.reserve(args_.size());
@@ -131,15 +137,15 @@ absl::Status CustomKernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   se::Stream* stream = params.stream;
   se::StreamExecutor* executor = params.stream->parent();
 
+  ABSL_ASSIGN_OR_RETURN(auto kernel_with_args,
+                   GetKernelAndArgs(*params.buffer_allocations, executor));
+  auto& [kernel, buffer_args] = kernel_with_args;
+
   for (int64_t index : zeroed_output_buffer_indices_) {
     se::DeviceAddressBase address =
         params.buffer_allocations->GetDeviceAddress(args_[index].slice);
     ABSL_RETURN_IF_ERROR(stream->MemZero(&address, address.size()));
   }
-
-  ABSL_ASSIGN_OR_RETURN(auto kernel_with_args,
-                   GetKernelAndArgs(*params.buffer_allocations, executor));
-  auto& [kernel, buffer_args] = kernel_with_args;
 
   XLA_VLOG_DEVICE(3, executor->device_ordinal())
       << "Launching " << custom_kernel_.ToString() << " as device kernel "
@@ -172,11 +178,27 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomKernelThunk::Record(
   auto kernel_args =
       se::PackKernelArgs(buffer_args, custom_kernel_.shared_memory_bytes());
 
+  std::vector<se::DeviceAddressBase> zeroed_outputs;
+  zeroed_outputs.reserve(zeroed_output_buffer_indices_.size());
+  for (int64_t index : zeroed_output_buffer_indices_) {
+    zeroed_outputs.push_back(
+        execute_params.buffer_allocations->GetDeviceAddress(
+            args_[index].slice));
+  }
+  ABSL_ASSIGN_OR_RETURN(ZeroedOutputs zeroed,
+                   RecordZeroedOutputs(this, record_params, record_action,
+                                       command_buffer, zeroed_outputs));
+
   if (auto* create = std::get_if<RecordCreate>(&record_action)) {
-    return command_buffer->CreateLaunch(
-        custom_kernel_.thread_dims(), custom_kernel_.block_dims(),
-        custom_kernel_.cluster_dims(), *kernel, *kernel_args,
-        create->dependencies, priority());
+    ABSL_ASSIGN_OR_RETURN(
+        const se::CommandBuffer::Command* command,
+        command_buffer->CreateLaunch(
+            custom_kernel_.thread_dims(), custom_kernel_.block_dims(),
+            custom_kernel_.cluster_dims(), *kernel, *kernel_args,
+            zeroed.dependencies(create->dependencies), priority()));
+    ABSL_RETURN_IF_ERROR(AttachZeroedOutputs(this, record_params, command_buffer,
+                                        command, std::move(zeroed)));
+    return command;
   }
   if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
     ABSL_RETURN_IF_ERROR(command_buffer->UpdateLaunch(
@@ -207,14 +229,16 @@ CustomKernelThunk::CustomKernelThunk(
     Thunk::ThunkInfo thunk_info, CustomKernel custom_kernel,
     std::vector<ShapedSlice> args, std::vector<bool> written,
     std::vector<int64_t> zeroed_output_buffer_indices,
-    stream_executor::gpu::TmaMetadata tma_metadata, bool use_pdl)
+    stream_executor::gpu::TmaMetadata tma_metadata, bool use_pdl,
+    int devices_in_process)
     : Command(Kind::kCustomKernel, std::move(thunk_info)),
       args_(std::move(args)),
       written_(std::move(written)),
       custom_kernel_(std::move(custom_kernel)),
       zeroed_output_buffer_indices_(std::move(zeroed_output_buffer_indices)),
-      tma_metadata_(tma_metadata),
-      use_pdl_(use_pdl) {}
+      tma_metadata_(std::move(tma_metadata)),
+      use_pdl_(use_pdl),
+      device_states_(devices_in_process) {}
 
 absl::StatusOr<ThunkProto> CustomKernelThunk::ToProto() const {
   ThunkProto thunk_proto;
@@ -243,6 +267,7 @@ absl::StatusOr<ThunkProto> CustomKernelThunk::ToProto() const {
 absl::StatusOr<std::unique_ptr<CustomKernelThunk>> CustomKernelThunk::FromProto(
     ThunkInfo thunk_info, const CustomKernelThunkProto& proto,
     absl::Span<const BufferAllocation> buffer_allocations,
+    int devices_in_process,
     const std::optional<se::KernelLoaderSpec::SymbolResolver>&
         symbol_resolver) {
   ABSL_ASSIGN_OR_RETURN(
@@ -265,9 +290,9 @@ absl::StatusOr<std::unique_ptr<CustomKernelThunk>> CustomKernelThunk::FromProto(
       stream_executor::gpu::TmaMetadata::FromProto(proto.tma_metadata()));
 
   return absl::WrapUnique(new CustomKernelThunk(
-      std::move(thunk_info), std::move(custom_kernel), args, std::move(written),
-      std::move(zeroed_output_buffer_indices), std::move(tma_metadata),
-      proto.use_pdl()));
+      std::move(thunk_info), std::move(custom_kernel), std::move(args),
+      std::move(written), std::move(zeroed_output_buffer_indices),
+      std::move(tma_metadata), proto.use_pdl(), devices_in_process));
 }
 
 }  // namespace gpu

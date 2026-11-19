@@ -21,14 +21,28 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/service/gpu_topology.pb.h"
 
 namespace xla {
+
+// System-level configuration for a known GPU platform, combining the target
+// chip model with default host and NVLink domain geometry and known runtime
+// device description strings.
+struct GpuPlatformConfig {
+  std::string platform_name;
+  std::string short_name;
+  gpu::GpuModel gpu_model;
+  std::optional<int32_t> devices_per_host;
+  std::optional<int32_t> nvlink_domain_size;
+  std::vector<std::string> device_descriptions;
+};
 
 class GpuTopology {
  public:
@@ -106,10 +120,23 @@ class GpuTopology {
   const gpu::GpuTargetConfig& gpu_target_config() const {
     return *gpu_target_config_;
   }
+  int32_t locality_domain_count() const {
+    return gpu_target_config_.has_value()
+               ? gpu_target_config_->device_description.locality_domain_count()
+               : 0;
+  }
 
   const std::optional<cpu::TargetMachineOptions>& host_target_machine_options()
       const {
     return host_target_machine_options_;
+  }
+
+  bool confidential_computing_enabled() const {
+    if (has_gpu_target_config()) {
+      return gpu_target_config()
+          .device_description.confidential_computing_enabled();
+    }
+    return false;
   }
 
  private:
@@ -127,15 +154,46 @@ class GpuTopology {
   }
 };
 
+// Returns all registered GPU platform configurations.
+absl::Span<const GpuPlatformConfig> GetSupportedGpuPlatformConfigs();
+
+// Looks up a `GpuPlatformConfig` by canonical platform name (e.g.,
+// "nvidia_h100", "oberon_b300"), short name (e.g., "h100", "gb300"), or
+// embedded device description string (e.g., "NVIDIA H100 80GB HBM3").
+// The returned pointer refers to an entry in the static registry returned by
+// `GetSupportedGpuPlatformConfigs()` and remains valid for the program
+// lifetime.
+absl::StatusOr<const GpuPlatformConfig*> GetGpuPlatformConfig(
+    absl::string_view platform_or_device_name);
+
 absl::StatusOr<GpuTopology> GetGpuTopologyForPlatform(
     absl::string_view platform_version, int32_t num_partitions,
     int32_t num_hosts_per_partition, int32_t num_devices_per_host);
+
+// Constructs a `GpuTopology` for `platform_or_short_name` and a slice
+// specification of the form "<num_devices>" (single-host) or
+// "<devices_per_host>x<num_hosts>" (multi-host), validating multi-host
+// `devices_per_host` and deriving `(num_partitions, num_hosts_per_partition)`
+// from the platform's NVLink domain size.
+absl::StatusOr<GpuTopology> GetGpuTopologyForSliceSpec(
+    absl::string_view platform_or_short_name, absl::string_view slice_spec);
+
+// Returns the human-readable device kind string (e.g.,
+// "NVIDIA H100 80GB HBM3") for `gpu_topology_proto`.
+std::string GetGpuDeviceKind(const GpuTopologyProto& gpu_topology_proto);
 
 GpuTopology GetSingleDeviceGpuTopology(
     absl::string_view platform_version,
     const gpu::GpuTargetConfig& gpu_target_config,
     const std::optional<cpu::TargetMachineOptions>&
         host_target_machine_options = std::nullopt);
+
+// Parses a `GpuTopology` from either an inline topology specification
+// (`[<platform_version>:]<num_partitions>x<num_hosts_per_partition>x<num_devices_per_host>`
+// or `[<platform_version>:]<num_hosts_per_partition>x<num_devices_per_host>`)
+// or a `GpuTopologyProto` textproto file at `topology_spec_or_filename`.
+absl::StatusOr<GpuTopology> ParseGpuTopology(
+    absl::string_view topology_spec_or_filename);
 
 }  // namespace xla
 

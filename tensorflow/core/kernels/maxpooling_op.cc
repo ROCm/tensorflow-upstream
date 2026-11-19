@@ -15,10 +15,13 @@ limitations under the License.
 
 // See docs in ../ops/nn_ops.cc.
 
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #define EIGEN_USE_THREADS
 
+#include <cstdint>
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -40,6 +43,7 @@ limitations under the License.
 #include "tensorflow/core/lib/gtl/array_slice.h"
 #include "tensorflow/core/util/determinism.h"
 #include "tensorflow/core/util/env_var.h"
+#include "tensorflow/core/util/overflow.h"
 #include "tensorflow/core/util/padding.h"
 #include "tensorflow/core/util/tensor_format.h"
 #include "tensorflow/core/util/use_cudnn.h"
@@ -742,6 +746,7 @@ class MaxPoolingGradGradOp<Eigen::GpuDevice, T> : public OpKernel {
     OP_REQUIRES(
         context, out_grad_backprop.dims() == 4,
         absl::InvalidArgumentError("out_grad_backprop must be 4-dimensional"));
+    OP_REQUIRES_OK(context, ValidateGpuInputSize(tensor_in));
 
     Tensor* output = nullptr;
     OP_REQUIRES_OK(context,
@@ -1024,6 +1029,9 @@ class MaxPoolingWithArgmaxOp : public OpKernel {
         absl::InvalidArgumentError("tensor_in must be 4-dimensional (2)"));
     OP_REQUIRES(context, tensor_in.NumElements() > 0,
                 absl::InvalidArgumentError("tensor_in must not be empty (2)"));
+    if constexpr (std::is_same_v<Device, GPUDevice>) {
+      OP_REQUIRES_OK(context, ValidateGpuInputSize(tensor_in));
+    }
 
     PoolParameters params{context,
                           ksize_,
@@ -1056,11 +1064,11 @@ class MaxPoolingWithArgmaxOp : public OpKernel {
   bool include_batch_in_index_;
 };
 
-template <typename Device, typename T>
+template <typename Device, typename T, typename Targmax>
 struct LaunchMaxPoolingGradWithArgmax;
 
-template <typename T>
-struct LaunchMaxPoolingGradWithArgmax<CPUDevice, T> {
+template <typename T, typename Targmax>
+struct LaunchMaxPoolingGradWithArgmax<CPUDevice, T, Targmax> {
   typedef Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
       EigenMatrixMap;
 
@@ -1080,7 +1088,7 @@ struct LaunchMaxPoolingGradWithArgmax<CPUDevice, T> {
 
       {
         auto grad_out_flat = grad_out->flat<T>();
-        auto argmax_flat = argmax.flat<int64_t>();
+        auto argmax_flat = argmax.flat<Targmax>();
         auto grad_in_flat = grad_in.flat<T>();
 
         const int64_t output_start = start * output_size_per_batch;
@@ -1116,14 +1124,13 @@ struct LaunchMaxPoolingGradWithArgmax<CPUDevice, T> {
   }
 };
 
-// TODO(b/175733711): Support int32 argmax type in MaxPoolGradWithArgmax op.
-template <typename Device, typename T>
+template <typename Device, typename T, typename Targmax>
 class MaxPoolingGradWithArgmaxOp : public OpKernel {
  public:
   explicit MaxPoolingGradWithArgmaxOp(OpKernelConstruction* context)
       : OpKernel(context) {
     std::string data_format_str;
-    if (std::is_same<Device, GPUDevice>::value) {
+    if (std::is_same_v<Device, GPUDevice>) {
       OP_REQUIRES(context, !tensorflow::OpDeterminismRequired(),
                   absl::UnimplementedError("Determinism is not yet supported "
                                            "for MaxPoolGradWithArgmax."));
@@ -1162,6 +1169,9 @@ class MaxPoolingGradWithArgmaxOp : public OpKernel {
     const Tensor& tensor_in = context->input(0);
     const Tensor& grad_in = context->input(1);
     const Tensor& argmax = context->input(2);
+    if constexpr (std::is_same_v<Device, GPUDevice>) {
+      OP_REQUIRES_OK(context, ValidateGpuInputSize(tensor_in));
+    }
 
     PoolParameters params{context,
                           ksize_,
@@ -1195,7 +1205,7 @@ class MaxPoolingGradWithArgmaxOp : public OpKernel {
 
     if (out_shape.num_elements() == 0) return;  // nothing to be done
 
-    LaunchMaxPoolingGradWithArgmax<Device, T>::launch(
+    LaunchMaxPoolingGradWithArgmax<Device, T, Targmax>::launch(
         context, params, grad_in, argmax, grad_out, include_batch_in_index_);
   }
 
@@ -1235,6 +1245,9 @@ class MaxPoolingGradGradWithArgmaxOp : public OpKernel {
     const Tensor& tensor_in = context->input(0);
     const Tensor& grad_in = context->input(1);
     const Tensor& argmax = context->input(2);
+    if constexpr (std::is_same_v<Device, GPUDevice>) {
+      OP_REQUIRES_OK(context, ValidateGpuInputSize(tensor_in));
+    }
 
     PoolParameters params{context,
                           ksize_,
@@ -1264,6 +1277,8 @@ class MaxPoolingGradGradWithArgmaxOp : public OpKernel {
     Tensor* grad_out = nullptr;
     OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
                                 {0}, 0, out_shape, &grad_out));
+
+    if (out_shape.num_elements() == 0) return;
 
     LaunchMaxPoolingGradGradWithArgmax<Device, T>::launch(
         context, params, grad_in, argmax, grad_out, include_batch_in_index_);
@@ -1340,7 +1355,7 @@ class MaxPoolingNoMaskOp<GPUDevice, T> : public OpKernel {
     }
 
     // Assuming qint8 <--> NCHW_VECT_C (int8x4) here.
-    constexpr bool is_int8x4 = std::is_same<T, qint8>::value;
+    constexpr bool is_int8x4 = std::is_same_v<T, qint8>;
     OP_REQUIRES(context, (is_int8x4 == (data_format_ == FORMAT_NCHW_VECT_C)),
                 absl::InvalidArgumentError(
                     "qint8 should be used with data_format NCHW_VECT_C."));
@@ -1363,6 +1378,7 @@ class MaxPoolingNoMaskOp<GPUDevice, T> : public OpKernel {
                   errors::Unimplemented("Explicit padding is not supported ",
                                         "when CUDNN is not enabled."));
 #endif
+      OP_REQUIRES_OK(context, ValidateGpuInputSize(tensor_in));
       Tensor* output = nullptr;
       OP_REQUIRES_OK(context, context->allocate_output(0, out_shape, &output));
       if (is_int8x4) {
@@ -1425,6 +1441,9 @@ class MaxPoolingNoMaskV2Op<GPUDevice, T> : public OpKernel {
 
   void Compute(OpKernelContext* context) override {
     const Tensor& tensor_in = context->input(0);
+    if (data_format_ == FORMAT_NHWC) {
+      OP_REQUIRES_OK(context, ValidateGpuInputSize(tensor_in));
+    }
 
     std::vector<int32_t> ksize = ksize_;
     std::vector<int32_t> stride = stride_;
@@ -1529,14 +1548,29 @@ struct LaunchMaxPoolingWithArgmax<Eigen::GpuDevice, T, int64_t> {
 };
 
 template <typename T>
-struct LaunchMaxPoolingGradWithArgmax<Eigen::GpuDevice, T> {
+struct LaunchMaxPoolingGradWithArgmax<Eigen::GpuDevice, T, int64_t> {
   static void launch(OpKernelContext* context, const PoolParameters& params,
                      const Tensor& grad_in, const Tensor& argmax,
                      Tensor* grad_out, const bool include_batch_in_index) {
-    const int input_size = params.tensor_in_batch * params.tensor_in_rows *
-                           params.tensor_in_cols * params.depth;
-    const int output_size = params.tensor_in_batch * params.out_height *
-                            params.out_width * params.depth;
+    const int64_t input_size_64 = MultiplyWithoutOverflow(
+        MultiplyWithoutOverflow(MultiplyWithoutOverflow(params.tensor_in_batch,
+                                                        params.tensor_in_rows),
+                                params.tensor_in_cols),
+        params.depth);
+    const int64_t output_size_64 = MultiplyWithoutOverflow(
+        MultiplyWithoutOverflow(
+            MultiplyWithoutOverflow(params.tensor_in_batch, params.out_height),
+            params.out_width),
+        params.depth);
+    OP_REQUIRES(context,
+                input_size_64 >= 0 &&
+                    input_size_64 <= std::numeric_limits<int32_t>::max() &&
+                    output_size_64 >= 0 &&
+                    output_size_64 <= std::numeric_limits<int32_t>::max(),
+                absl::InvalidArgumentError("MaxPoolGradWithArgmax: input or "
+                                           "output size exceeds int32 bounds"));
+    const int input_size = input_size_64;
+    const int output_size = output_size_64;
     const int top_offset = params.out_height * params.out_width * params.depth;
     const int bottom_offset =
         params.tensor_in_rows * params.tensor_in_cols * params.depth;
@@ -1556,10 +1590,26 @@ struct LaunchMaxPoolingGradGradWithArgmax<Eigen::GpuDevice, T> {
   static void launch(OpKernelContext* context, const PoolParameters& params,
                      const Tensor& grad_in, const Tensor& argmax,
                      Tensor* grad_out, const bool include_batch_in_index) {
-    const int input_size = params.tensor_in_batch * params.tensor_in_rows *
-                           params.tensor_in_cols * params.depth;
-    const int output_size = params.tensor_in_batch * params.out_height *
-                            params.out_width * params.depth;
+    const int64_t input_size_64 = MultiplyWithoutOverflow(
+        MultiplyWithoutOverflow(MultiplyWithoutOverflow(params.tensor_in_batch,
+                                                        params.tensor_in_rows),
+                                params.tensor_in_cols),
+        params.depth);
+    const int64_t output_size_64 = MultiplyWithoutOverflow(
+        MultiplyWithoutOverflow(
+            MultiplyWithoutOverflow(params.tensor_in_batch, params.out_height),
+            params.out_width),
+        params.depth);
+    OP_REQUIRES(
+        context,
+        input_size_64 >= 0 &&
+            input_size_64 <= std::numeric_limits<int32_t>::max() &&
+            output_size_64 >= 0 &&
+            output_size_64 <= std::numeric_limits<int32_t>::max(),
+        absl::InvalidArgumentError("MaxPoolGradGradWithArgmax: input or output "
+                                   "size exceeds int32 bounds"));
+    const int input_size = input_size_64;
+    const int output_size = output_size_64;
     const int top_offset =
         params.tensor_in_rows * params.tensor_in_cols * params.depth;
     const int bottom_offset =
@@ -1605,21 +1655,26 @@ struct LaunchMaxPoolingGradGradWithArgmax<Eigen::GpuDevice, T> {
                               .Device(DEVICE_##D)                        \
                               .TypeConstraint<T>("T")                    \
                               .TypeConstraint<int64_t>("Targmax"),       \
-                          MaxPoolingGradWithArgmaxOp<D##Device, T>);
+                          MaxPoolingGradWithArgmaxOp<D##Device, T, int64_t>);
 
 // Below kernels implemented only for CPU device.
-#define REGISTER_CPU_ONLY_POOL_KERNELS(T)                          \
-  REGISTER_KERNEL_BUILDER(                                         \
-      Name("MaxPool").Device(DEVICE_CPU).TypeConstraint<T>("T"),   \
-      MaxPoolingOp<CPUDevice, T>);                                 \
-  REGISTER_KERNEL_BUILDER(                                         \
-      Name("MaxPoolV2").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
-      MaxPoolingV2Op<CPUDevice, T>);                               \
-  REGISTER_KERNEL_BUILDER(Name("MaxPoolWithArgmax")                \
-                              .Device(DEVICE_CPU)                  \
-                              .TypeConstraint<int32>("Targmax")    \
-                              .TypeConstraint<T>("T"),             \
-                          MaxPoolingWithArgmaxOp<CPUDevice, T, int32>);
+#define REGISTER_CPU_ONLY_POOL_KERNELS(T)                               \
+  REGISTER_KERNEL_BUILDER(                                              \
+      Name("MaxPool").Device(DEVICE_CPU).TypeConstraint<T>("T"),        \
+      MaxPoolingOp<CPUDevice, T>);                                      \
+  REGISTER_KERNEL_BUILDER(                                              \
+      Name("MaxPoolV2").Device(DEVICE_CPU).TypeConstraint<T>("T"),      \
+      MaxPoolingV2Op<CPUDevice, T>);                                    \
+  REGISTER_KERNEL_BUILDER(Name("MaxPoolWithArgmax")                     \
+                              .Device(DEVICE_CPU)                       \
+                              .TypeConstraint<int32>("Targmax")         \
+                              .TypeConstraint<T>("T"),                  \
+                          MaxPoolingWithArgmaxOp<CPUDevice, T, int32>); \
+  REGISTER_KERNEL_BUILDER(Name("MaxPoolGradWithArgmax")                 \
+                              .Device(DEVICE_CPU)                       \
+                              .TypeConstraint<T>("T")                   \
+                              .TypeConstraint<int32>("Targmax"),        \
+                          MaxPoolingGradWithArgmaxOp<CPUDevice, T, int32>);
 TF_CALL_REAL_NUMBER_TYPES(REGISTER_CPU_ONLY_POOL_KERNELS);
 #undef REGISTER_CPU_ONLY_POOL_KERNELS
 

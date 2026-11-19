@@ -38,6 +38,8 @@ limitations under the License.
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_module_config.h"
@@ -48,8 +50,6 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -681,6 +681,132 @@ TEST_F(ConvFusionRewriterUnitTest, GroupedConvEpilogueNotFused) {
           m::Op()));
 }
 
+TEST_F(ConvFusionRewriterUnitTest, SumReduceEpilogueNotFused) {
+  // The cuDNN fusion compiler can only emit AMAX reductions, so a reduce
+  // with a different reducer has to stay outside the fusion.
+  RunAndMatch(
+      R"(
+    HloModule Test
+
+    add {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT c = f32[] add(a, b)
+    }
+
+    ENTRY Test {
+      x = f32[4,5,5,2] parameter(0)
+      w = f32[3,3,3,2] parameter(1)
+      conv = f32[4,3,3,3] convolution(x, w), window={size=3x3},
+               dim_labels=b01f_o01i->b01f
+      zero = f32[] constant(0)
+      ROOT sum = f32[] reduce(conv, zero), dimensions={0,1,2,3}, to_apply=add
+    })",
+      m::Reduce(m::Fusion(m::Parameter(0), m::Parameter(1))
+                    .WithFusionKind(HloInstruction::FusionKind::kCustom),
+                m::Constant()));
+}
+
+TEST_F(ConvFusionRewriterUnitTest, MaxReduceWithoutAbsNotFused) {
+  RunAndMatch(
+      R"(
+    HloModule Test
+
+    max {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT c = f32[] maximum(a, b)
+    }
+
+    ENTRY Test {
+      x = f32[4,5,5,2] parameter(0)
+      w = f32[3,3,3,2] parameter(1)
+      conv = f32[4,3,3,3] convolution(x, w), window={size=3x3},
+               dim_labels=b01f_o01i->b01f
+      init = f32[] constant(-inf)
+      ROOT max = f32[] reduce(conv, init), dimensions={0,1,2,3}, to_apply=max
+    })",
+      m::Reduce(m::Fusion(m::Parameter(0), m::Parameter(1))
+                    .WithFusionKind(HloInstruction::FusionKind::kCustom),
+                m::Constant()));
+}
+
+TEST_F(ConvFusionRewriterUnitTest, AmaxReduceWithPositiveInitNotFused) {
+  RunAndMatch(
+      R"(
+    HloModule Test
+
+    max {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT c = f32[] maximum(a, b)
+    }
+
+    ENTRY Test {
+      x = f32[4,5,5,2] parameter(0)
+      w = f32[3,3,3,2] parameter(1)
+      conv = f32[4,3,3,3] convolution(x, w), window={size=3x3},
+               dim_labels=b01f_o01i->b01f
+      abs = f32[4,3,3,3] abs(conv)
+      init = f32[] constant(1)
+      ROOT amax = f32[] reduce(abs, init), dimensions={0,1,2,3}, to_apply=max
+    })",
+      m::Reduce(m::Fusion(m::Parameter(0), m::Parameter(1))
+                    .WithFusionKind(HloInstruction::FusionKind::kCustom),
+                m::Constant()));
+}
+
+TEST_F(ConvFusionRewriterUnitTest, AmaxReduceBf16NotFused) {
+  // The fusion compiler computes AMAX in f32; a bf16 amax does not compile.
+  RunAndMatch(
+      R"(
+    HloModule Test
+
+    max {
+      a = bf16[] parameter(0)
+      b = bf16[] parameter(1)
+      ROOT c = bf16[] maximum(a, b)
+    }
+
+    ENTRY Test {
+      x = bf16[4,5,5,2] parameter(0)
+      w = bf16[3,3,3,2] parameter(1)
+      conv = bf16[4,3,3,3] convolution(x, w), window={size=3x3},
+               dim_labels=b01f_o01i->b01f
+      abs = bf16[4,3,3,3] abs(conv)
+      init = bf16[] constant(-inf)
+      ROOT amax = bf16[] reduce(abs, init), dimensions={0,1,2,3}, to_apply=max
+    })",
+      m::Reduce(m::Fusion(m::Parameter(0), m::Parameter(1))
+                    .WithFusionKind(HloInstruction::FusionKind::kCustom),
+                m::Constant()));
+}
+
+TEST_F(ConvFusionRewriterUnitTest, AmaxReduceFused) {
+  RunAndMatch(
+      R"(
+    HloModule Test
+
+    max {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT c = f32[] maximum(a, b)
+    }
+
+    ENTRY Test {
+      x = f32[4,5,5,2] parameter(0)
+      w = f32[3,3,3,2] parameter(1)
+      conv = f32[4,3,3,3] convolution(x, w), window={size=3x3},
+               dim_labels=b01f_o01i->b01f
+      abs = f32[4,3,3,3] abs(conv)
+      init = f32[] constant(-inf)
+      ROOT amax = f32[] reduce(abs, init), dimensions={0,1,2,3}, to_apply=max
+    })",
+      m::Fusion(m::Parameter(0), m::Parameter(1))
+          .WithFusionKind(HloInstruction::FusionKind::kCustom)
+          .WithShape(F32, {}));
+}
+
 TEST_F(ConvFusionRewriterUnitTest, StrengthReduceF32ToF16) {
   RunAndMatch(R"(
     HloModule Test
@@ -787,7 +913,7 @@ class ConvFusionRewriterIntegrationTest
     absl::StatusOr<std::unique_ptr<HloModule>> module_or_status =
         GetOptimizedModule(hlo_string, config);
     if (!module_or_status.ok()) {
-      TF_EXPECT_OK(module_or_status.status());
+      EXPECT_OK(module_or_status.status());
       return "";
     }
     std::unique_ptr<HloModule> module = std::move(module_or_status.value());
@@ -2484,6 +2610,168 @@ TEST_F(ConvFusionRewriterUnitTest, EpilogueNotFusedOnPreAmpere) {
                   .WithFusionKind(HloInstruction::FusionKind::kCustom)
                   .WithShape(F16, {1, 16, 16, 32}),
               /*run_algebraic_simplifier=*/false, ampere_device);
+}
+
+TEST_F(ConvFusionRewriterUnitTest, NonChannel1DBroadcastNotFusedIntoCudnn) {
+  const char* const hlo_string = R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = f32[4,8,8,32] parameter(0)
+      filter = f32[3,3,3,32] parameter(1)
+      conv = f32[4,8,8,3] convolution(input, filter),
+               window={size=3x3 pad=1_1x1_1},
+               dim_labels=b01f_o01i->b01f
+      scale = f32[4] parameter(2)
+      bcast = f32[4,8,8,3] broadcast(scale), dimensions={0}
+      ROOT mul = f32[4,8,8,3] multiply(conv, bcast)
+    })";
+
+  se::DeviceDescription ampere_device;
+  ampere_device.set_gpu_compute_capability(se::CudaComputeCapability::Ampere());
+
+  RunAndMatch(
+      hlo_string,
+      m::Fusion(m::Parameter(0), m::Parameter(1), m::Broadcast(m::Parameter(2)))
+          .WithFusionKind(HloInstruction::FusionKind::kCustom)
+          .WithShape(F32, {4, 8, 8, 3}),
+      /*run_algebraic_simplifier=*/false, ampere_device);
+}
+
+TEST_F(ConvFusionRewriterIntegrationTest,
+       ConvEpilogueWithNonChannel1DBroadcasts) {
+  MAYBE_SKIP_TEST("F32");
+  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
+    GTEST_SKIP() << "Conv fusion epilogue requires Ampere+.";
+  }
+
+  auto run_case = [&](absl::string_view name, absl::string_view hlo_text) {
+    SCOPED_TRACE(name);
+    EXPECT_THAT(GetOptimizedHlo(hlo_text), HasSubstr(kCuDnnFusionKind));
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+    DebugOptions debug_opts = module->config().debug_options();
+    debug_opts.set_xla_gpu_use_runtime_fusion(true);
+    debug_opts.set_xla_gpu_experimental_enable_conv_fusion(true);
+    module->mutable_config().set_debug_options(debug_opts);
+    EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{1e-2, 1e-2}));
+  };
+
+  run_case("BatchBroadcastC3", R"(
+    HloModule BatchBroadcastC3
+    ENTRY e {
+      x = f32[4,8,8,32] parameter(0)
+      w = f32[3,3,3,32] parameter(1)
+      conv = f32[4,8,8,3] convolution(x, w),
+               window={size=3x3 pad=1_1x1_1},
+               dim_labels=b01f_o01i->b01f
+      s = f32[4] parameter(2)
+      sb = f32[4,8,8,3] broadcast(s), dimensions={0}
+      ROOT out = f32[4,8,8,3] multiply(conv, sb)
+    })");
+
+  run_case("BatchBroadcastC8", R"(
+    HloModule BatchBroadcastC8
+    ENTRY e {
+      x = f32[2,4,4,8] parameter(0)
+      w = f32[8,3,3,8] parameter(1)
+      conv = f32[2,4,4,8] convolution(x, w),
+               window={size=3x3 pad=1_1x1_1},
+               dim_labels=b01f_o01i->b01f
+      s = f32[2] parameter(2)
+      sb = f32[2,4,4,8] broadcast(s), dimensions={0}
+      ROOT out = f32[2,4,4,8] multiply(conv, sb)
+    })");
+
+  run_case("SpatialBroadcastH", R"(
+    HloModule SpatialBroadcastH
+    ENTRY e {
+      x = f32[2,4,4,8] parameter(0)
+      w = f32[8,3,3,8] parameter(1)
+      conv = f32[2,4,4,8] convolution(x, w),
+               window={size=3x3 pad=1_1x1_1},
+               dim_labels=b01f_o01i->b01f
+      s = f32[4] parameter(2)
+      sb = f32[2,4,4,8] broadcast(s), dimensions={1}
+      ROOT out = f32[2,4,4,8] multiply(conv, sb)
+    })");
+
+  run_case("ChannelBiasAndBatchBroadcastEpilogue", R"(
+    HloModule ChannelBiasAndBatchBroadcastEpilogue
+    ENTRY e {
+      p0 = f32[4,8,8,32] parameter(0)
+      p1 = f32[3,3,3,32] parameter(1)
+      p2 = f32[3] parameter(2)
+      p3 = f32[4] parameter(3)
+      p4 = f32[4,8,8,3] parameter(4)
+      p5_raw = f32[4] parameter(5)
+      c2 = f32[] constant(2.0)
+      c2b = f32[4] broadcast(c2), dimensions={}
+      p5 = f32[4] add(p5_raw, c2b)
+      p6 = f32[4] parameter(6)
+      p7 = f32[4] parameter(7)
+
+      b7 = f32[4,8,8,3] broadcast(p7), dimensions={0}
+      mul1 = f32[4,8,8,3] multiply(b7, p4)
+      b6 = f32[4,8,8,3] broadcast(p6), dimensions={0}
+      conv = f32[4,8,8,3] convolution(p0, p1),
+               window={size=3x3 pad=1_1x1_1},
+               dim_labels=b01f_o01i->b01f
+      b2 = f32[4,8,8,3] broadcast(p2), dimensions={3}
+      add0 = f32[4,8,8,3] add(conv, b2)
+      b3 = f32[4,8,8,3] broadcast(p3), dimensions={0}
+      mul2 = f32[4,8,8,3] multiply(add0, b3)
+      sub0 = f32[4,8,8,3] subtract(mul2, p4)
+      b5 = f32[4,8,8,3] broadcast(p5), dimensions={0}
+      div0 = f32[4,8,8,3] divide(sub0, b5)
+      mul3 = f32[4,8,8,3] multiply(b6, div0)
+      ROOT out = f32[4,8,8,3] add(mul1, mul3)
+    })");
+}
+
+TEST_F(ConvFusionRewriterIntegrationTest, ScalarReduceEpiloguesAfterConv) {
+  MAYBE_SKIP_TEST("F32");
+  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
+    GTEST_SKIP() << "Conv fusion epilogue requires Ampere+.";
+  }
+
+  // x = -1 and w = 1 make every conv output -18, so sum (-1944), max (0, the
+  // init) and min (-18) are exact and all differ from max(abs(conv)) = 18.
+  Literal x = LiteralUtil::CreateFull<float>({4, 5, 5, 2}, -1.0f);
+  Literal w = LiteralUtil::CreateFull<float>({3, 3, 3, 2}, 1.0f);
+
+  auto run_case = [&](absl::string_view reducer) {
+    SCOPED_TRACE(reducer);
+    const std::string hlo_text = absl::StrReplaceAll(R"(
+    HloModule Test
+
+    reducer {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT c = f32[] $reducer(a, b)
+    }
+
+    ENTRY e {
+      x = f32[4,5,5,2] parameter(0)
+      w = f32[3,3,3,2] parameter(1)
+      conv = f32[4,3,3,3] convolution(x, w), window={size=3x3},
+               dim_labels=b01f_o01i->b01f
+      init = f32[] constant(0)
+      ROOT r = f32[] reduce(conv, init), dimensions={0,1,2,3}, to_apply=reducer
+    })",
+                                                     {{"$reducer", reducer}});
+    EXPECT_THAT(GetOptimizedHlo(hlo_text), HasSubstr(kCuDnnFusionKind));
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+    DebugOptions debug_opts = module->config().debug_options();
+    debug_opts.set_xla_gpu_use_runtime_fusion(true);
+    debug_opts.set_xla_gpu_experimental_enable_conv_fusion(true);
+    module->mutable_config().set_debug_options(debug_opts);
+    EXPECT_TRUE(
+        RunAndCompare(std::move(module), {&x, &w}, ErrorSpec{1e-3, 1e-3}));
+  };
+
+  run_case("add");
+  run_case("maximum");
+  run_case("minimum");
 }
 
 }  // namespace

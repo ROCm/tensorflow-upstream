@@ -19,23 +19,20 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/FormatVariadic.h"
-#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Value.h"
-#include "mlir/IR/ValueRange.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/mosaic/dialect/tpu/tpu_dialect.h"
 
 namespace mlir::tpu {
 
-FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
+FailureOr<SmallVector<int64_t>> computeSqueezedDimsChecked(
     Operation* op, ArrayRef<int64_t> source_shape,
     ArrayRef<int64_t> target_shape) {
-  SmallVector<int> squeezed;
-  int source_index = source_shape.size() - 1;
-  int target_index = target_shape.size() - 1;
+  SmallVector<int64_t> squeezed;
+  int64_t source_index = source_shape.size() - 1;
+  int64_t target_index = target_shape.size() - 1;
 
   while (source_index >= 0 || target_index >= 0) {
     int64_t target_dim = (target_index >= 0) ? target_shape[target_index] : -1;
@@ -79,15 +76,6 @@ bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space,
     return false;
   }
   return !type.has_value() || memory_space.getCoreType() == type;
-}
-
-SmallVector<Value> fillPositions(ValueRange values, ArrayRef<int32_t> positions,
-                                 int size, Value missing) {
-  SmallVector<Value> result(size, missing);
-  for (const auto [value, position] : llvm::zip(values, positions)) {
-    result[position] = value;
-  }
-  return result;
 }
 
 }  // namespace mlir::tpu

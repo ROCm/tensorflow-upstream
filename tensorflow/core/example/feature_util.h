@@ -133,11 +133,6 @@ limitations under the License.
 #include "tensorflow/core/platform/protobuf.h"
 #include "tensorflow/core/platform/stringpiece.h"
 
-// Must come after the import for absl::string_view.
-#ifdef ABSL_HAVE_STD_STRING_VIEW
-#include <string_view>
-#endif
-
 namespace tensorflow {
 namespace internal {
 
@@ -178,24 +173,21 @@ template <typename ValueType, class Enable = void>
 struct FeatureTrait;
 
 template <typename ValueType>
-struct FeatureTrait<ValueType, typename std::enable_if<
-                                   std::is_integral<ValueType>::value>::type> {
+struct FeatureTrait<ValueType,
+                    std::enable_if_t<std::is_integral_v<ValueType>>> {
   using Type = protobuf_int64;
 };
 
 template <typename ValueType>
-struct FeatureTrait<
-    ValueType,
-    typename std::enable_if<std::is_floating_point<ValueType>::value>::type> {
+struct FeatureTrait<ValueType,
+                    std::enable_if_t<std::is_floating_point_v<ValueType>>> {
   using Type = float;
 };
 
 template <typename T>
-struct is_string
-    : public std::integral_constant<
-          bool,
-          std::is_same<char*, typename std::decay<T>::type>::value ||
-              std::is_same<const char*, typename std::decay<T>::type>::value> {
+struct is_string : public std::integral_constant<
+                       bool, std::is_same_v<char*, std::decay_t<T>> ||
+                                 std::is_same_v<const char*, std::decay_t<T>>> {
 };
 
 template <>
@@ -208,57 +200,9 @@ template <>
 struct is_string<tstring> : std::true_type {};
 
 template <typename ValueType>
-struct FeatureTrait<
-    ValueType, typename std::enable_if<is_string<ValueType>::value>::type> {
+struct FeatureTrait<ValueType, std::enable_if_t<is_string<ValueType>::value>> {
   using Type = std::string;
 };
-
-// Port of the C++20 `requires` expressions.
-template <typename... T, typename F>
-constexpr bool Requires(F) {
-  return std::is_invocable<F, T...>::value;
-}
-
-struct NoneSuch {};
-
-// True if the Feature map in a tf.Example supports heterogenous lookup.
-// See https://abseil.io/tips/144.
-// TODO(b/365531379): this cannot be replaced by a lambda because it exposes a
-// Clang bug when used in modules.
-struct CheckFindFunctor {
-  template <class Container>
-  auto operator()(Container&& c) -> decltype(c.find(NoneSuch{})) {}
-};
-inline constexpr bool kFeatureMapHasHeterogeneousLookup =
-    Requires<decltype(Features::default_instance().feature())>(
-        CheckFindFunctor());
-
-// Converts an `absl::string_view` into a string-type compatible for use in the
-// protobuf library (e.g. as lookup keys in `proto2::Map` or as elements addable
-// to a `proto2::RepeatedPtrField`) depending on the BUILD mode.
-//
-// NOTE: While the newest versions of `proto2::Map` support heterogenous lookup,
-// it does so through `std::string_view`. If the type is just an alias (as noted
-// by `ABSL_USES_STD_STRING_VIEW`) then nothing more needs to be done; however,
-// when the type is not an alias an explicit conversion to is necessary.
-//
-// NOTE: This conversion is only necessary until the migration for protobuf to
-// take a dependency on ABSL is complete.
-inline auto ProtoMapKey(absl::string_view str) {
-  if constexpr (kFeatureMapHasHeterogeneousLookup) {
-#ifdef ABSL_USES_STD_STRING_VIEW
-    return str;
-#else
-#ifdef ABSL_HAVE_STD_STRING_VIEW
-    return std::string_view(str.data(), str.size());
-#else
-    return std::string(str);
-#endif
-#endif
-  } else {
-    return std::string(str);
-  }
-}
 
 }  //  namespace internal
 
@@ -281,8 +225,8 @@ struct TypeHasFeatures<Features> : std::true_type {};
 // A family of template functions to return mutable Features proto from a
 // container proto. Supported ProtoTypes: SequenceExample, Example, Features.
 template <typename ProtoType>
-typename std::enable_if<TypeHasFeatures<ProtoType>::value, Features*>::type
-GetFeatures(ProtoType* proto);
+std::enable_if_t<TypeHasFeatures<ProtoType>::value, Features*> GetFeatures(
+    ProtoType* proto);
 
 template <>
 Features* GetFeatures<Features>(Features* proto);
@@ -292,8 +236,7 @@ template <>
 Features* GetFeatures<SequenceExample>(SequenceExample* proto);
 
 template <typename ProtoType>
-typename std::enable_if<TypeHasFeatures<ProtoType>::value,
-                        const Features&>::type
+std::enable_if_t<TypeHasFeatures<ProtoType>::value, const Features&>
 GetFeatures(const ProtoType& proto);
 
 template <>
@@ -328,8 +271,7 @@ const protobuf::RepeatedPtrField<std::string>& GetFeatureValues<std::string>(
 template <typename FeatureType, typename ProtoType>
 const typename internal::RepeatedFieldTrait<FeatureType>::Type&
 GetFeatureValues(absl::string_view key, const ProtoType& proto) {
-  return GetFeatureValues<FeatureType>(
-      GetFeatures(proto).feature().at(internal::ProtoMapKey(key)));
+  return GetFeatureValues<FeatureType>(GetFeatures(proto).feature().at(key));
 }
 
 // Returns a mutable repeated field of a feature values.
@@ -356,7 +298,7 @@ template <typename FeatureType, typename ProtoType>
 typename internal::RepeatedFieldTrait<FeatureType>::Type* GetFeatureValues(
     absl::string_view key, ProtoType* proto) {
   ::tensorflow::Feature& feature =
-      (*GetFeatures(proto)->mutable_feature())[internal::ProtoMapKey(key)];
+      (*GetFeatures(proto)->mutable_feature())[key];
   return GetFeatureValues<FeatureType>(&feature);
 }
 
@@ -365,7 +307,7 @@ typename internal::RepeatedFieldTrait<FeatureType>::Type* GetFeatureValues(
 // SequenceExample, Example, Features.
 template <typename ProtoType>
 const Feature& GetFeature(absl::string_view key, const ProtoType& proto) {
-  return GetFeatures(proto).feature().at(internal::ProtoMapKey(key));
+  return GetFeatures(proto).feature().at(key);
 }
 
 // Returns a read-only Feature proto for the specified key, returns nullptr
@@ -375,7 +317,7 @@ template <typename ProtoType>
 const Feature* MaybeGetFeature(absl::string_view key, const ProtoType& proto) {
   const protobuf::Map<std::string, Feature>& feature_map =
       GetFeatures(proto).feature();
-  auto it = feature_map.find(internal::ProtoMapKey(key));
+  auto it = feature_map.find(key);
 
   if (it == feature_map.end()) {
     return nullptr;
@@ -420,7 +362,7 @@ MaybeGetFeatureValues(absl::string_view key, const ProtoType& proto) {
 // necessary. Supported types for the proto: SequenceExample, Example, Features.
 template <typename ProtoType>
 Feature* GetFeature(absl::string_view key, ProtoType* proto) {
-  return &(*GetFeatures(proto)->mutable_feature())[internal::ProtoMapKey(key)];
+  return &(*GetFeatures(proto)->mutable_feature())[key];
 }
 
 // Returns a repeated field with features corresponding to a feature_list key.

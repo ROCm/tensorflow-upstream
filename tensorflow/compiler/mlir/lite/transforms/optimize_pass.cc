@@ -44,6 +44,7 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Dialect/Quant/IR/QuantTypes.h"  // from @llvm-project
 #include "mlir/Dialect/Traits.h"  // from @llvm-project
+#include "mlir/IR/AsmState.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributeInterfaces.h"  // from @llvm-project
@@ -62,13 +63,13 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 #include "tensorflow/compiler/mlir/lite/quantization/common/quantization_lib/quantization_utils.h"
 #include "tensorflow/compiler/mlir/lite/transforms/optimize_pass_options.h"
+#include "tensorflow/compiler/mlir/lite/transforms/resource_constant_fold_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/attribute_utils.h"
-#include "tensorflow/compiler/mlir/lite/utils/constant_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/convert_type.h"
+#include "tensorflow/compiler/mlir/lite/utils/shape_and_size_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/validators.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
-#include "tensorflow/compiler/mlir/tensorflow/utils/dynamic_shape_utils.h"
 
 namespace mlir::TFL {
 
@@ -123,21 +124,37 @@ bool L2NormalizeReduceAxis(Value sq_op, DenseElementsAttr axis) {
   if (axis.getNumElements() == 0) {
     return false;
   }
-  if (mlir::cast<ShapedType>(sq_op.getType()).getRank() - 1 ==
-          *axis.getValues<int>().begin() ||
-      *axis.getValues<int>().begin() == -1) {
-    return true;
-  }
-  if (mlir::cast<ShapedType>(sq_op.getType()).getRank() !=
-      axis.getNumElements()) {
+
+  auto shape = mlir::dyn_cast<ShapedType>(sq_op.getType());
+  if (!shape || !shape.hasRank() || shape.getRank() < 1) {
     return false;
   }
-  auto shape = mlir::cast<ShapedType>(sq_op.getType());
-  SmallVector<int, 4> elems{axis.getValues<int>().begin(),
-                            axis.getValues<int>().end()};
-  for (int i = 0; i < shape.getRank(); ++i) {
-    if (i != elems[i]) return false;
+
+  const int64_t rank = shape.getRank();
+  if (axis.getNumElements() == 1) {
+    const int reduce_axis = *axis.getValues<int>().begin();
+    return reduce_axis == rank - 1 || reduce_axis == -1;
   }
+
+  if (!shape.hasStaticShape() || shape.getNumElements() == 0) {
+    return false;
+  }
+  if (axis.getNumElements() != rank) {
+    return false;
+  }
+
+  int expected_axis = 0;
+  for (int reduce_axis : axis.getValues<int>()) {
+    if (reduce_axis != expected_axis++) return false;
+  }
+
+  // Reducing across all dimensions is only equivalent to TFL L2 normalization
+  // (which reduces along the trailing dimension) if all leading dimensions
+  // have size 1.
+  for (int i = 0; i < rank - 1; ++i) {
+    if (shape.getDimSize(i) != 1) return false;
+  }
+
   return true;
 }
 
@@ -823,18 +840,102 @@ Value Get1DShapeValue(OpBuilder& builder, Value value) {
                          DenseIntElementsAttr::get(output_type, num_elements));
 }
 
-Type GetEmbeddingLookupShape(Value lookup, Value value) {
-  auto lookup_type = mlir::cast<ShapedType>(lookup.getType());
-  if (!lookup_type.hasStaticShape()) {
-    return nullptr;
+// Builds the replacement for
+//   FullyConnected(OneHot(indices, depth, on=1, off=0, axis=-1), filter)
+// as an EmbeddingLookup into the transposed `filter`.
+//
+// OneHot yields an all-zero row for indices outside `[0, depth)`, so the FC
+// result for such an index is zero, whereas EmbeddingLookup rejects
+// out-of-range indices at runtime. To preserve the OneHot semantics, the
+// indices are clamped into range for the lookup, and the rows whose original
+// index was out of range are replaced with zeros:
+//   clamped = min(max(indices, 0), depth - 1)
+//   result = select(clamped == indices, lookup(clamped, filter^T), 0)
+// The filter itself is not modified, so no copy of the table is created.
+Value BuildOneHotLookup(OpBuilder& builder, Value fc_output, Value indices,
+                        Value filter) {
+  const Location loc = fc_output.getLoc();
+  auto filter_type = mlir::cast<RankedTensorType>(filter.getType());
+  const int64_t units = filter_type.getDimSize(0);
+  const int64_t depth = filter_type.getDimSize(1);
+  const Type element_type = filter_type.getElementType();
+  const Type i32 = builder.getI32Type();
+  const auto scalar_i32_type = RankedTensorType::get({}, i32);
+
+  // Flatten the indices to 1D.
+  auto indices_type = mlir::cast<ShapedType>(indices.getType());
+  Value flat_indices = indices;
+  if (indices_type.getRank() != 1) {
+    flat_indices = ReshapeOp::create(
+        builder, loc,
+        RankedTensorType::get({indices_type.getNumElements()}, i32), indices,
+        Get1DShapeValue(builder, indices));
   }
-  auto value_type = mlir::cast<ShapedType>(value.getType());
-  if (!value_type.hasStaticShape() || value_type.getRank() != 2) {
-    return nullptr;
+  auto flat_type = mlir::cast<RankedTensorType>(flat_indices.getType());
+  const int64_t num_indices = flat_type.getDimSize(0);
+
+  // Clamp the indices into `[0, depth)` and record which ones were in range.
+  Value zero_index = arith::ConstantOp::create(
+      builder, loc, DenseIntElementsAttr::get(scalar_i32_type, 0));
+  Value max_index = arith::ConstantOp::create(
+      builder, loc,
+      DenseIntElementsAttr::get(scalar_i32_type,
+                                static_cast<int32_t>(depth - 1)));
+  Value clamped = MinimumOp::create(
+      builder, loc, flat_type,
+      MaximumOp::create(builder, loc, flat_type, flat_indices, zero_index),
+      max_index);
+  Value in_range =
+      EqualOp::create(builder, loc, flat_type.clone(builder.getI1Type()),
+                      clamped, flat_indices);
+
+  // Look up the clamped indices in the transposed filter.
+  Value perm = arith::ConstantOp::create(
+      builder, loc,
+      DenseIntElementsAttr::get(RankedTensorType::get({2}, i32),
+                                llvm::ArrayRef<int32_t>{1, 0}));
+  Value table = TransposeOp::create(
+      builder, loc, RankedTensorType::get({depth, units}, element_type), filter,
+      perm);
+  auto lookup_type = RankedTensorType::get({num_indices, units}, element_type);
+  Value lookup =
+      EmbeddingLookupOp::create(builder, loc, lookup_type, clamped, table);
+
+  // Zero the rows of out-of-range indices.
+  auto mask_shape_type = RankedTensorType::get({2}, i32);
+  Value mask_shape = arith::ConstantOp::create(
+      builder, loc,
+      DenseIntElementsAttr::get(
+          mask_shape_type,
+          llvm::ArrayRef<int32_t>{ShapedType::isDynamic(num_indices)
+                                      ? -1
+                                      : static_cast<int32_t>(num_indices),
+                                  1}));
+  Value mask = ReshapeOp::create(
+      builder, loc,
+      RankedTensorType::get({num_indices, 1}, builder.getI1Type()), in_range,
+      mask_shape);
+  Value zero_value = arith::ConstantOp::create(
+      builder, loc,
+      builder.getZeroAttr(RankedTensorType::get({}, element_type)));
+  Value result =
+      SelectV2Op::create(builder, loc, lookup_type, mask, lookup, zero_value);
+
+  if (result.getType() == fc_output.getType()) return result;
+  auto output_type = mlir::cast<ShapedType>(fc_output.getType());
+  SmallVector<int32_t> output_shape;
+  for (int64_t dim : output_type.getShape()) {
+    output_shape.push_back(
+        ShapedType::isDynamic(dim) ? -1 : static_cast<int32_t>(dim));
   }
-  SmallVector<int64_t> new_shape = {lookup_type.getNumElements(),
-                                    value_type.getDimSize(0)};
-  return value_type.clone(new_shape);
+  Value output_shape_value = arith::ConstantOp::create(
+      builder, loc,
+      DenseIntElementsAttr::get(
+          RankedTensorType::get({static_cast<int64_t>(output_shape.size())},
+                                i32),
+          llvm::ArrayRef<int32_t>(output_shape)));
+  return ReshapeOp::create(builder, loc, output_type, result,
+                           output_shape_value);
 }
 
 // Creates FullyConnected op from params and returns the output.
@@ -1417,8 +1518,8 @@ struct Convert2DUpscalingToResizeNearestNeighor
 
     auto reshape_op = TFL::ReshapeOp::create(
         rewriter, gather_nd_first->getLoc(),
-        tensorflow::GetTypeFromTFTensorShape(reshape_shape_in_int64,
-                                             result_type.getElementType()),
+        mlir::TFL::GetTypeFromTFLiteShape(reshape_shape_in_int64,
+                                          result_type.getElementType()),
         params_value, reshape_shape_const_op.getResult());
 
     // Add TFL::resize_nearest_neighor op for 2x upscaling.
@@ -1931,12 +2032,24 @@ struct FuseFullyConnectedAndMul : public OpRewritePattern<TFL::MulOp> {
                            /*fusedActivationFunction=*/
                            rewriter.getStringAttr("NONE"))
             .getOutput();
-    // If bias isn't None, it needs to be multiplied as well.
+    // If bias isn't None, it needs to be multiplied as well. Use the
+    // multiplier flattened to 1-D: `cst` may have leading unit dims (e.g.
+    // [1, 1, 1, C]), and multiplying the 1-D bias by it directly would
+    // broadcast the bias to that rank.
     if (!mlir::isa<NoneType>(bias.getType())) {
-      bias = TFL::MulOp::create(rewriter, mul_op.getLoc(), bias, constant_val,
-                                /*fusedActivationFunction=*/
-                                rewriter.getStringAttr("NONE"))
-                 .getOutput();
+      Value bias_multiplier = constant_val;
+      auto bias_type = mlir::dyn_cast<RankedTensorType>(bias.getType());
+      if (bias_type && bias_type.getRank() == 1 && shape.size() != 1) {
+        auto flat_cst = cst.reshape(RankedTensorType::get(
+            {element_size}, cst.getType().getElementType()));
+        bias_multiplier = arith::ConstantOp::create(
+            rewriter, mul_op.getLoc(), flat_cst.getType(), flat_cst);
+      }
+      bias =
+          TFL::MulOp::create(rewriter, mul_op.getLoc(), bias, bias_multiplier,
+                             /*fusedActivationFunction=*/
+                             rewriter.getStringAttr("NONE"))
+              .getOutput();
     }
 
     auto fc = TFL::FullyConnectedOp::create(
@@ -2158,20 +2271,20 @@ struct FuseBinaryOpToFollowingAffineOp : public OpRewritePattern<AffineOpType> {
     // Affine op.
     Value filter = fc_op.getFilter();
     Value bias = fc_op.getBias();
-    DenseFPElementsAttr filter_cst, bias_cst;
-    if (!matchPattern(filter, m_Constant(&filter_cst))) {
+    ElementsAttr filter_attr, bias_attr;
+    if (!matchPattern(filter, m_Constant(&filter_attr))) {
       // The filter maybe quantized, then we should set it to the real constant.
       auto dq = llvm::dyn_cast_or_null<DequantizeOp>(filter.getDefiningOp());
       if (!dq) return failure();
       auto q =
           llvm::dyn_cast_or_null<QuantizeOp>(dq.getInput().getDefiningOp());
-      if (!q || !matchPattern(q.getInput(), m_Constant(&filter_cst))) {
+      if (!q || !matchPattern(q.getInput(), m_Constant(&filter_attr))) {
         return failure();
       }
       filter = q.getInput();
     }
     if (!mlir::isa<NoneType>(bias.getType()) &&
-        !matchPattern(bias, m_Constant(&bias_cst)))
+        !matchPattern(bias, m_Constant(&bias_attr)))
       return failure();
     auto binary_op_activation_func =
         binary_op->template getAttrOfType<StringAttr>(
@@ -2179,6 +2292,15 @@ struct FuseBinaryOpToFollowingAffineOp : public OpRewritePattern<AffineOpType> {
     if (!binary_op_activation_func ||
         binary_op_activation_func.getValue() != "NONE")
       return failure();
+
+    auto filter_cst = mlir::dyn_cast<DenseFPElementsAttr>(filter_attr);
+    auto bias_cst = mlir::dyn_cast_or_null<DenseFPElementsAttr>(bias_attr);
+    if (!filter_cst || (bias_attr && !bias_cst)) {
+      // Not all-dense weights: try the DenseResourceElementsAttr path, which
+      // requires a resource filter (the bias may be none, dense or resource).
+      return RewriteWithResourceFilter(fc_op, binary_op, cst_value, filter,
+                                       filter_attr, bias, bias_attr, rewriter);
+    }
     ShapedType filter_type = filter_cst.getType();
 
     if (llvm::isa<AddOp, SubOp>(binary_op)) {
@@ -2259,6 +2381,139 @@ struct FuseBinaryOpToFollowingAffineOp : public OpRewritePattern<AffineOpType> {
   }
 
  private:
+  // Returns the f32 values of `attr`, read directly from its blob, or nullopt
+  // if it is not an f32 resource with a well-formed blob.
+  static std::optional<ArrayRef<float>> GetF32ResourceValues(
+      DenseResourceElementsAttr attr) {
+    ShapedType type = attr.getType();
+    if (!type.getElementType().isF32() || !type.hasStaticShape()) {
+      return std::nullopt;
+    }
+    AsmResourceBlob* blob = GetResourceBlob(attr);
+    if (!blob) return std::nullopt;
+    ArrayRef<char> data = blob->getData();
+    const size_t num_elements = type.getNumElements();
+    if (data.size() != num_elements * sizeof(float) ||
+        reinterpret_cast<uintptr_t>(data.data()) % alignof(float) != 0) {
+      return std::nullopt;
+    }
+    return ArrayRef<float>(reinterpret_cast<const float*>(data.data()),
+                           num_elements);
+  }
+
+  // The rewrite of `matchAndRewrite` for an f32 filter held in a
+  // DenseResourceElementsAttr. The filter is read from its blob and a scaled
+  // filter is written to a new blob, so large weights are never materialized
+  // as DenseElementsAttr. The arithmetic uses APFloat, element by element in
+  // the same order as the dense path, so both paths give the same values.
+  static LogicalResult RewriteWithResourceFilter(
+      AffineOpType fc_op, Operation* binary_op, APFloat cst_value, Value filter,
+      ElementsAttr filter_attr, Value bias, ElementsAttr bias_attr,
+      PatternRewriter& rewriter) {
+    auto filter_res = mlir::dyn_cast<DenseResourceElementsAttr>(filter_attr);
+    if (!filter_res) return failure();
+    if (&cst_value.getSemantics() != &APFloat::IEEEsingle()) return failure();
+    std::optional<ArrayRef<float>> filter_values =
+        GetF32ResourceValues(filter_res);
+    if (!filter_values) return failure();
+    ShapedType filter_type = filter_res.getType();
+    constexpr auto kRounding = APFloat::rmNearestTiesToEven;
+
+    if (llvm::isa<AddOp, SubOp>(binary_op)) {
+      auto padding = fc_op->template getAttrOfType<StringAttr>("padding");
+      if (padding && padding.getValue() != "VALID") return failure();
+
+      // w * (x + c) + b => w * x + (w * c + b)
+      if (llvm::isa<SubOp>(binary_op)) cst_value.changeSign();
+
+      auto [bias_size, slice_size] =
+          GetBiasDimAndSliceSize(filter_type.getShape(), fc_op);
+
+      SmallVector<float> new_bias;
+      if (!bias_attr) {  // none bias, a list of zeros
+        new_bias.assign(bias_size, 0.0f);
+      } else if (!bias_attr.getElementType().isF32()) {
+        return failure();
+      } else if (auto dense = mlir::dyn_cast<DenseFPElementsAttr>(bias_attr)) {
+        new_bias.assign(dense.value_begin<float>(), dense.value_end<float>());
+      } else if (auto res =
+                     mlir::dyn_cast<DenseResourceElementsAttr>(bias_attr)) {
+        std::optional<ArrayRef<float>> values = GetF32ResourceValues(res);
+        if (!values) return failure();
+        new_bias.assign(values->begin(), values->end());
+      } else {
+        return failure();
+      }
+      if (new_bias.size() == 1) {  // scalar bias, broadcast it
+        new_bias.assign(bias_size, new_bias.front());
+      } else if (static_cast<int64_t>(new_bias.size()) != bias_size) {
+        return failure();
+      }
+
+      SmallVector<APFloat> acc;
+      acc.reserve(bias_size);
+      for (float value : new_bias) acc.emplace_back(value);
+      const int64_t num_filter_elements = filter_values->size();
+      for (int64_t i = 0; i < num_filter_elements; ++i) {
+        const int64_t bias_index = (i / slice_size) % bias_size;
+        APFloat product((*filter_values)[i]);
+        product.multiply(cst_value, kRounding);
+        acc[bias_index].add(product, kRounding);
+      }
+      for (int64_t i = 0; i < bias_size; ++i) {
+        new_bias[i] = acc[i].convertToFloat();
+      }
+
+      auto new_bias_type =
+          RankedTensorType::get({bias_size}, filter_type.getElementType());
+      auto new_bias_op = ConstOp::create(
+          rewriter, fc_op.getLoc(), new_bias_type,
+          DenseFPElementsAttr::get(new_bias_type, ArrayRef<float>(new_bias)));
+      rewriter.modifyOpInPlace(fc_op, [&] {
+        fc_op.setOperand(0, binary_op->getOperand(0));
+        fc_op.setOperand(2, new_bias_op);
+      });
+      return success();
+    }
+
+    if (llvm::isa<MulOp, DivOp>(binary_op)) {
+      // A quantized filter (through quantize and dequantize ops) would also
+      // need its quantization parameters rescaled, which is not done here.
+      if (fc_op.getFilter() != filter) return failure();
+      // w * (x ' c) + b => (w ' c) x + b
+      const bool is_mul = llvm::isa<MulOp>(binary_op);
+      // The source blob is not released here: other constants, possibly in
+      // other functions, may still reference it.
+      AsmResourceBlob blob = HeapAsmResourceBlob::allocate(
+          filter_values->size() * sizeof(float), /*align=*/64,
+          /*dataIsMutable=*/true);
+      float* out = reinterpret_cast<float*>(blob.getMutableData().data());
+      for (size_t i = 0; i < filter_values->size(); ++i) {
+        APFloat value((*filter_values)[i]);
+        if (is_mul) {
+          value.multiply(cst_value, kRounding);
+        } else {
+          value.divide(cst_value, kRounding);
+        }
+        out[i] = value.convertToFloat();
+      }
+      auto new_filter = DenseResourceElementsAttr::get(
+          filter_type,
+          (filter_res.getRawHandle().getKey() + (is_mul ? "_mul" : "_div"))
+              .str(),
+          std::move(blob));
+      // A new constant, in case the original one is shared by other ops.
+      auto new_filter_op = ConstOp::create(rewriter, fc_op.getLoc(),
+                                           filter.getType(), new_filter);
+      rewriter.modifyOpInPlace(fc_op, [&] {
+        fc_op.setOperand(0, binary_op->getOperand(0));
+        fc_op.setOperand(1, new_filter_op);
+      });
+      return success();
+    }
+    return failure();
+  }
+
   // Returns the dimension length of the channel dimension and also the slide
   // size by each position in the channel dimension accordingly. tfl.conv2d and
   // tfl.fully_connected has heading channel dimension, but tfl.depthwise_conv2d
@@ -3319,8 +3574,31 @@ struct FullyConnectedSwapOperandsWhenLHSIsConst
     auto input = fc.getInput();
     auto filter = fc.getFilter();
 
-    if (!matchPattern(input, m_Constant()) ||
-        matchPattern(filter, m_Constant()))
+    auto is_const_or_qconst = [](Value v) {
+      return matchPattern(v, m_Constant()) ||
+             llvm::isa_and_nonnull<TFL::QConstOp, TFL::SparseConstOp,
+                                   TFL::SparseQConstOp>(v.getDefiningOp());
+    };
+    // Guard against swapping operands if the filter is already a constant or
+    // a dequantize of a 4- or 8-bit quantized constant that the constant folder
+    // will fold. Dequantized constants that the folder cannot fold (such as f16
+    // or i16 weights) are left to swap so the filter slot receives a real
+    // constant for downstream legalization (e.g. DarwiNN).
+    auto is_foldable_dequant_qconst = [](Value v) {
+      auto dequant = v.getDefiningOp<TFL::DequantizeOp>();
+      if (!dequant) return false;
+      auto qconst = dequant.getInput().getDefiningOp<TFL::QConstOp>();
+      if (!qconst) return false;
+      auto shaped_type = mlir::dyn_cast<ShapedType>(qconst.getType());
+      if (!shaped_type) return false;
+      auto quant_type =
+          mlir::dyn_cast<quant::QuantizedType>(shaped_type.getElementType());
+      if (!quant_type) return false;
+      unsigned bit_width = quant_type.getStorageTypeIntegralWidth();
+      return bit_width == 4 || bit_width == 8;
+    };
+    if (!matchPattern(input, m_Constant()) || is_const_or_qconst(filter) ||
+        is_foldable_dequant_qconst(filter))
       return failure();
 
     auto input_type = mlir::dyn_cast<RankedTensorType>(input.getType());

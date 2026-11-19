@@ -59,10 +59,12 @@ do_external_licenses_check(){
 @platforms//os
 @ml_dtypes_py//ml_dtypes
 @ruy//
+@rules_cc//
 @rules_java_builtin//toolchains
 @rules_ml_toolchain//
 @rules_python//
 @stablehlo//stablehlo/experimental
+@.*org_brotli//
 EOF
 
   # grep patterns for targets which are allowed to be extra licenses
@@ -89,6 +91,10 @@ EOF
 @ml_dtypes_py//
 @ruy//
 @rules_ml_toolchain//
+@curl//
+@platforms//host
+@png//
+@snappy//
 EOF
 
   license_query "attr('licenses', 'notice', deps($BUILD_TARGET))" > $BATS_TEST_TMPDIR/expected_licenses

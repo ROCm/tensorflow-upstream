@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -53,10 +54,23 @@ class CudaDeviceAllocator : public MemoryAllocator {
 
     // Whether to mark allocations as GPUDirect RDMA capable.
     bool enable_rdma = false;
+
+    // Whether to use CUDA Virtual Memory Management (VMM) APIs. If false,
+    // falls back to legacy cuMemAlloc / cuMemFree APIs.
+    bool use_vmm = true;
+
+    // If set, place physical memory on this locality domain (die) of the
+    // device. Requires CUDA 13.4 or newer. Unset requests ordinary
+    // whole-device memory.
+    std::optional<int> locality_domain_id;
   };
 
+  // Validates `options` and creates an allocator. Returns an error if the
+  // locality-domain options are invalid or unsupported by this CUDA build.
+  static absl::StatusOr<std::unique_ptr<CudaDeviceAllocator>> Create(
+      StreamExecutor* executor, Options options);
+
   explicit CudaDeviceAllocator(StreamExecutor* executor);
-  CudaDeviceAllocator(StreamExecutor* executor, Options options);
 
   absl::StatusOr<std::unique_ptr<MemoryAllocation>> Allocate(
       uint64_t size) final;
@@ -67,6 +81,8 @@ class CudaDeviceAllocator : public MemoryAllocator {
   static void ExitStreamCapture(StreamExecutor* executor);
 
  private:
+  CudaDeviceAllocator(StreamExecutor* executor, Options options);
+
   StreamExecutor* executor_;
   Options options_;
 };
@@ -91,13 +107,43 @@ class CudaDeviceMemoryAllocation : public MemoryAllocation {
   CUmemGenericAllocationHandle handle_;
 };
 
+// Builds the VMM allocation properties for `device`. If `locality_domain_id`
+// is set (and CUDA >= 13.4), the physical allocation is placed on that
+// locality domain (die) of the device via
+// CU_MEM_LOCATION_TYPE_DEVICE_LOCALITY_DOMAIN; otherwise it is a normal
+// whole-device allocation.
 CUmemAllocationProp BuildVmmAllocationProp(
-    CUdevice device, const CudaDeviceAllocator::Options& options);
+    CUdevice device, const CudaDeviceAllocator::Options& options,
+    std::optional<int> locality_domain_id = std::nullopt);
 
 // Probes device allocator options supported by CUDA VMM; falls back through
 // simpler handle-type combinations if the device rejects the strongest one.
 absl::StatusOr<CudaDeviceAllocator::Options> QueryDeviceAllocatorOptions(
     CUdevice device);
+
+// The handle types the driver accepted for a granularity query, and the
+// recommended mapping granularity for them.
+struct VmmGranularityProbe {
+  CudaDeviceAllocator::Options options;
+  size_t granularity = 0;
+};
+
+// Queries the recommended VMM allocation granularity for `options`. Drivers can
+// reject the query itself for unsupported handle types, so this falls back the
+// same way CreateVmmPhysicalAllocation does (FABRIC+POSIX_FD -> POSIX_FD ->
+// NONE) and returns `options` with the handle types that were accepted. The
+// caller must have activated the device context.
+absl::StatusOr<VmmGranularityProbe> ProbeVmmGranularity(
+    CUdevice device, CudaDeviceAllocator::Options options);
+
+// Creates a physical VMM allocation of `padded_size` bytes with cuMemCreate,
+// falling back through simpler handle types (FABRIC+POSIX_FD -> POSIX_FD ->
+// NONE) when the driver reports NOT_PERMITTED, NOT_SUPPORTED or INVALID_VALUE.
+// The returned handle may therefore carry fewer handle types than `properties`
+// requested; callers that computed `padded_size` from the original properties
+// accept that. The caller must have activated the device context.
+absl::StatusOr<CUmemGenericAllocationHandle> CreateVmmPhysicalAllocation(
+    CUmemAllocationProp properties, uint64_t padded_size);
 
 }  // namespace stream_executor::gpu
 

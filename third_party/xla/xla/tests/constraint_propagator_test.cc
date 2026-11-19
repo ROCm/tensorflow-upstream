@@ -157,10 +157,8 @@ ENTRY main {
   auto y_int = states[module->entry_computation()->parameter_instruction(1)]
                    .GetConstraintInterval();
 
-  EXPECT_TRUE(x_int.IsPositive());
-  EXPECT_FALSE(x_int.exclude_zero);
-  EXPECT_TRUE(y_int.IsNegative());
-  EXPECT_FALSE(y_int.exclude_zero);
+  EXPECT_EQ(x_int, ConstraintInterval::Positive());
+  EXPECT_EQ(y_int, ConstraintInterval::Negative());
 }
 
 TEST_F(ConstraintPropagatorTest, SubtractNegative) {
@@ -183,10 +181,8 @@ ENTRY main {
   auto y_int = states[module->entry_computation()->parameter_instruction(1)]
                    .GetConstraintInterval();
 
-  EXPECT_TRUE(x_int.IsNegative());
-  EXPECT_FALSE(x_int.exclude_zero);
-  EXPECT_TRUE(y_int.IsPositive());
-  EXPECT_FALSE(y_int.exclude_zero);
+  EXPECT_EQ(x_int, ConstraintInterval::Negative());
+  EXPECT_EQ(y_int, ConstraintInterval::Positive());
 }
 
 TEST_F(ConstraintPropagatorTest, RsqrtMulForcedNegative) {
@@ -961,9 +957,11 @@ ENTRY main {
   auto p1_int = states[module->entry_computation()->parameter_instruction(1)]
                     .GetConstraintInterval();
   EXPECT_FALSE(p0_int.IsEmpty());
-  EXPECT_LE(p0_int.max, 0.0);
+  EXPECT_DOUBLE_EQ(p0_int.min, -4.0);
+  EXPECT_DOUBLE_EQ(p0_int.max, 0.0);
   EXPECT_FALSE(p1_int.IsEmpty());
-  EXPECT_GE(p1_int.min, 0.0);
+  EXPECT_DOUBLE_EQ(p1_int.min, 0.0);
+  EXPECT_DOUBLE_EQ(p1_int.max, 4.0);
 }
 
 // Tests that for Power(base, exp) with base in (0, 1) (decay schedule, e.g.
@@ -1579,6 +1577,176 @@ ENTRY %fusion.30343 (parameter.0: f32[2,6], parameter.1: f32[2,6]) -> f32[2,6] {
   EXPECT_TRUE(p0_int.IsNegativeStrict());
   EXPECT_DOUBLE_EQ(p0_int.min, -4.0);
   EXPECT_TRUE(p1_int.IsPositiveStrict());
+}
+
+TEST_F(ConstraintPropagatorTest, UnmaskedSoftmaxExpSubtract) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule UnmaskedSoftmaxExpSubtract
+
+ENTRY main {
+  logits = bf16[8,16] parameter(0)
+  row_max = bf16[8] parameter(1)
+  b_row_max = bf16[8,16] broadcast(row_max), dimensions={0}
+  sub = bf16[8,16] subtract(logits, b_row_max)
+  ROOT exp = bf16[8,16] exponential(sub)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(auto states, ConstraintPropagator::Run(*module));
+
+  const auto* entry = module->entry_computation();
+  auto logits_int =
+      states[entry->parameter_instruction(0)].GetConstraintInterval();
+  auto row_max_int =
+      states[entry->parameter_instruction(1)].GetConstraintInterval();
+
+  EXPECT_FALSE(logits_int.IsUnconstrained());
+  EXPECT_DOUBLE_EQ(logits_int.min, -1.25);
+  EXPECT_DOUBLE_EQ(logits_int.max, 1.25);
+
+  EXPECT_FALSE(row_max_int.IsUnconstrained());
+  EXPECT_DOUBLE_EQ(row_max_int.min, -1.25);
+  EXPECT_DOUBLE_EQ(row_max_int.max, 1.25);
+}
+
+TEST_F(ConstraintPropagatorTest, TransitiveAddSubtractExp) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule TransitiveAddSubtractExp
+
+ENTRY main {
+  x = bf16[8,16] parameter(0)
+  y = bf16[8,16] parameter(1)
+  add = bf16[8,16] add(x, y)
+  z = bf16[8,16] parameter(2)
+  sub = bf16[8,16] subtract(add, z)
+  ROOT exp = bf16[8,16] exponential(sub)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(auto states, ConstraintPropagator::Run(*module));
+
+  const auto* entry = module->entry_computation();
+  auto x_int = states[entry->parameter_instruction(0)].GetConstraintInterval();
+  auto y_int = states[entry->parameter_instruction(1)].GetConstraintInterval();
+  auto z_int = states[entry->parameter_instruction(2)].GetConstraintInterval();
+
+  // Exp seeds sub to [-2.5, 2.5].
+  // Subtract splits symmetrically: add gets [-1.25, 1.25], z gets
+  // [-1.25, 1.25]. Add splits symmetrically: x and y get [-0.625, 0.625].
+  EXPECT_DOUBLE_EQ(z_int.min, -1.25);
+  EXPECT_DOUBLE_EQ(z_int.max, 1.25);
+
+  EXPECT_DOUBLE_EQ(x_int.min, -0.625);
+  EXPECT_DOUBLE_EQ(x_int.max, 0.625);
+
+  EXPECT_DOUBLE_EQ(y_int.min, -0.625);
+  EXPECT_DOUBLE_EQ(y_int.max, 0.625);
+}
+
+TEST_F(ConstraintPropagatorTest,
+       AddSubFusionAndConvolutionInTupleFusionPropagatesBounds) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule AddSubFusionAndConvolution
+
+%copy_fusion_0 (input_0: bf16[2,8192,8192]) -> bf16[2,8192,8192] {
+  %input_0 = bf16[2,8192,8192] parameter(0)
+  ROOT %copy_0 = bf16[2,8192,8192] copy(%input_0)
+}
+
+%copy_fusion_1 (input_1: bf16[2,8192,16384]) -> bf16[2,8192,16384] {
+  %input_1 = bf16[2,8192,16384] parameter(0)
+  ROOT %copy_1 = bf16[2,8192,16384] copy(%input_1)
+}
+
+%bitcast_fusion_2 (input_2: bf16[1,16384,8192]) -> bf16[16384,8192,1] {
+  %input_2 = bf16[1,16384,8192] parameter(0)
+  ROOT %bitcast_2 = bf16[16384,8192,1] bitcast(%input_2)
+}
+
+%add_reducer (a: f32[], b: f32[]) -> f32[] {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %sum = f32[] add(%a, %b)
+}
+
+%fused_computation (param_0: bf16[2,8192,8192], param_1: bf16[2,8192,16384], param_2: bf16[1,16384,8192]) -> (f32[2,8192], bf16[2,8192,8192]) {
+  %param_0 = bf16[2,8192,8192] parameter(0)
+  %sub_fusion_0 = bf16[2,8192,8192] fusion(%param_0), kind=kLoop, calls=%copy_fusion_0
+  %param_1 = bf16[2,8192,16384] parameter(1)
+  %sub_fusion_1 = bf16[2,8192,16384] fusion(%param_1), kind=kLoop, calls=%copy_fusion_1
+  %param_2 = bf16[1,16384,8192] parameter(2)
+  %sub_fusion_2 = bf16[16384,8192,1] fusion(%param_2), kind=kLoop, calls=%bitcast_fusion_2
+  %conv = bf16[2,8192,8192] convolution(%sub_fusion_1, %sub_fusion_2), window={size=1}, dim_labels=0bf_io0->0bf
+  %add = bf16[2,8192,8192] add(%sub_fusion_0, %conv)
+  %conv_f32 = f32[2,8192,8192] convert(%add)
+  %square = f32[2,8192,8192] multiply(%conv_f32, %conv_f32)
+  %zero = f32[] constant(0)
+  %reduce = f32[2,8192] reduce(%square, %zero), dimensions={2}, to_apply=%add_reducer
+  %copy_out = bf16[2,8192,8192] copy(%add)
+  ROOT %tuple_inner = (f32[2,8192], bf16[2,8192,8192]) tuple(%reduce, %copy_out)
+}
+
+ENTRY %main (p0: bf16[2,8192,8192], p1: bf16[2,8192,16384], p2: bf16[1,16384,8192]) -> (f32[2,8192], bf16[2,8192,8192]) {
+  %p0 = bf16[2,8192,8192] parameter(0)
+  %p1 = bf16[2,8192,16384] parameter(1)
+  %p2 = bf16[1,16384,8192] parameter(2)
+  %fusion = (f32[2,8192], bf16[2,8192,8192]) fusion(%p0, %p1, %p2), kind=kOutput, calls=%fused_computation
+  %gte0 = f32[2,8192] get-tuple-element(%fusion), index=0
+  %copy0 = f32[2,8192] copy(%gte0)
+  %gte1 = bf16[2,8192,8192] get-tuple-element(%fusion), index=1
+  ROOT %tuple = (f32[2,8192], bf16[2,8192,8192]) tuple(%copy0, %gte1)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(auto states, ConstraintPropagator::Run(*module));
+
+  const auto* entry = module->entry_computation();
+  auto p0_int = states[entry->parameter_instruction(0)].GetConstraintInterval();
+  auto p1_int = states[entry->parameter_instruction(1)].GetConstraintInterval();
+  auto p2_int = states[entry->parameter_instruction(2)].GetConstraintInterval();
+
+  // Root tuple element 1 is bf16, seeded with [-65504.0, 65504.0].
+  // Add splits symmetrically to [-32752.0, 32752.0] for p0 and conv.
+  // Conv with K = 16384 bounds p1 and p2 to [-sqrt(32752.0 / 16384.0),
+  // sqrt(32752.0 / 16384.0)] ≈ [-1.4139, 1.4139].
+  EXPECT_DOUBLE_EQ(p0_int.min, -32752.0);
+  EXPECT_DOUBLE_EQ(p0_int.max, 32752.0);
+
+  EXPECT_NEAR(p1_int.min, -1.4139, 1e-4);
+  EXPECT_NEAR(p1_int.max, 1.4139, 1e-4);
+  EXPECT_NEAR(p2_int.min, -1.4139, 1e-4);
+  EXPECT_NEAR(p2_int.max, 1.4139, 1e-4);
+}
+
+TEST_F(ConstraintPropagatorTest, DirectTupleFusionEntryRootSeeds16BitElement) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule DirectTupleFusionRoot
+
+%fused_computation (param_0: bf16[8], param_1: bf16[8]) -> (f32[8], bf16[8]) {
+  %param_0 = bf16[8] parameter(0)
+  %param_1 = bf16[8] parameter(1)
+  %add = bf16[8] add(%param_0, %param_1)
+  %conv_f32 = f32[8] convert(%add)
+  ROOT %tuple_inner = (f32[8], bf16[8]) tuple(%conv_f32, %add)
+}
+
+ENTRY %main (p0: bf16[8], p1: bf16[8]) -> (f32[8], bf16[8]) {
+  %p0 = bf16[8] parameter(0)
+  %p1 = bf16[8] parameter(1)
+  ROOT %fusion = (f32[8], bf16[8]) fusion(%p0, %p1), kind=kOutput, calls=%fused_computation
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(auto states, ConstraintPropagator::Run(*module));
+
+  const auto* entry = module->entry_computation();
+  auto p0_int = states[entry->parameter_instruction(0)].GetConstraintInterval();
+  auto p1_int = states[entry->parameter_instruction(1)].GetConstraintInterval();
+
+  EXPECT_DOUBLE_EQ(p0_int.min, -32752.0);
+  EXPECT_DOUBLE_EQ(p0_int.max, 32752.0);
+  EXPECT_DOUBLE_EQ(p1_int.min, -32752.0);
+  EXPECT_DOUBLE_EQ(p1_int.max, 32752.0);
 }
 
 }  // namespace

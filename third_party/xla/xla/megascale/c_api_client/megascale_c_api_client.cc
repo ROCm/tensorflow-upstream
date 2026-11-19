@@ -695,7 +695,7 @@ CreateMegascaleCollectives(
 }
 
 typedef absl::AnyInvocable<void(
-    const runtime::MegaScaleRuntimeErrorOverlay& error)>
+    const runtime::external::MegaScaleRuntimeError& error)>
     MegaScaleErrorHandler;
 
 static absl::Mutex megascale_error_handlers_mutex(absl::kConstInit);
@@ -718,7 +718,7 @@ absl::Status RegisterMegascaleErrorHandler(absl::string_view handler_name,
   args.handler_name_size = handler_name.size();
   args.handler = +[](const char* serialized_error, size_t serialized_error_size,
                      void* user_data) {
-    runtime::MegaScaleRuntimeErrorOverlay error;
+    runtime::external::MegaScaleRuntimeError error;
     error.ParseFromString(
         absl::string_view(serialized_error, serialized_error_size));
     MegaScaleErrorHandler* handler =
@@ -815,11 +815,12 @@ GetInterfaceAddressesHelper(absl::string_view megascale_port_name,
   return addresses;
 }
 
-absl::StatusOr<std::tuple<runtime::MegaScaleRuntimeErrorOverlay, bool>>
+absl::StatusOr<std::tuple<runtime::external::MegaScaleRuntimeError, bool>>
 GetOrCreateRuntimeError(
-    runtime::MegaScaleRuntimeErrorOverlay::ErrorType error_type,
+    runtime::external::MegaScaleRuntimeError::ErrorType error_type,
     absl::Time start_time, const absl::Status& status, int32_t launch_id,
-    std::optional<runtime::MegaScaleRuntimeErrorOverlay::UnrecoverableErrorType>
+    std::optional<
+        runtime::external::MegaScaleRuntimeError::UnrecoverableErrorType>
         unrecoverable_error_type) {
   ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
   ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
@@ -849,15 +850,184 @@ GetOrCreateRuntimeError(
   };
 
   CHECK_NOTNULL(args.serialized_error);
-  runtime::MegaScaleRuntimeErrorOverlay error;
+  runtime::external::MegaScaleRuntimeError error;
   if (!error.ParseFromString(absl::string_view(args.serialized_error,
                                                args.serialized_error_size))) {
     return absl::InternalError(
-        "Failed to parse MegaScaleRuntimeErrorOverlay proto from serialized "
+        "Failed to parse MegaScaleRuntimeError proto from serialized "
         "error.");
   }
 
   return std::make_tuple(std::move(error), args.is_new_error);
+}
+
+absl::StatusOr<std::unique_ptr<const xla::MultiSliceConfig>> DiscoverSlices(
+    std::shared_ptr<CApiPjRtClientContext> megascale_client_ctx) {
+  if (megascale_client_ctx == nullptr) {
+    return absl::InvalidArgumentError("Megascale client context is null.");
+  }
+  const PJRT_Api* c_api = megascale_client_ctx->c_api();
+  const PJRT_Megascale_Extension* extension = megascale_client_ctx->extension();
+  ABSL_ASSIGN_OR_RETURN(PJRT_MultiSlice_Extension * multi_slice_extension,
+                   GetMultiSliceExtension(c_api));
+
+  if (extension->base.struct_size <
+          PJRT_STRUCT_SIZE(PJRT_Megascale_Extension, discover_slices) ||
+      extension->discover_slices == nullptr) {
+    return absl::UnimplementedError(
+        "PJRT Megascale extension does not implement discover_slices.");
+  }
+
+  PJRT_Megascale_DiscoverSlices_Args args{};
+  args.struct_size = PJRT_Megascale_DiscoverSlices_Args_STRUCT_SIZE;
+  args.client_context = megascale_client_ctx->get();
+  args.multi_slice_config = nullptr;
+
+  RETURN_STATUS_IF_PJRT_ERROR(extension->discover_slices(&args), c_api);
+
+  if (args.multi_slice_config == nullptr) {
+    return absl::InternalError(
+        "discover_slices returned null multi_slice_config.");
+  }
+  return std::make_unique<pjrt::PjRtCApiMultiSliceConfig>(
+      args.multi_slice_config, c_api, multi_slice_extension);
+}
+
+absl::StatusOr<std::unique_ptr<const xla::MultiSliceConfig>>
+DiscoverSlicesFromClient(xla::PjRtClient* client) {
+  ABSL_ASSIGN_OR_RETURN(std::shared_ptr<CApiPjRtClientContext> client_ctx,
+                   MegaScaleClientContextFromClient(client));
+  return DiscoverSlices(client_ctx);
+}
+
+absl::StatusOr<int64_t> GetIncarnationId(
+    const pjrt::PjRtCApiMultiSliceConfig& config) {
+  ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
+  ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
+                   GetMegascaleExtension(c_api));
+  if (extension->base.struct_size <
+          PJRT_STRUCT_SIZE(PJRT_Megascale_Extension,
+                           multi_slice_config_get_incarnation_id) ||
+      extension->multi_slice_config_get_incarnation_id == nullptr) {
+    return absl::UnimplementedError(
+        "PJRT Megascale extension does not implement "
+        "multi_slice_config_get_incarnation_id.");
+  }
+  PJRT_Megascale_MultiSliceConfig_GetIncarnationId_Args args{};
+  args.struct_size =
+      PJRT_Megascale_MultiSliceConfig_GetIncarnationId_Args_STRUCT_SIZE;
+  args.config = config.get();
+  RETURN_STATUS_IF_PJRT_ERROR(
+      extension->multi_slice_config_get_incarnation_id(&args), c_api);
+  return args.incarnation_id;
+}
+
+absl::StatusOr<int64_t> GetIncarnationId(const xla::MultiSliceConfig& config) {
+  const auto* capi_config =
+      dynamic_cast<const pjrt::PjRtCApiMultiSliceConfig*>(&config);
+  if (capi_config != nullptr) {
+    return GetIncarnationId(*capi_config);
+  }
+  return absl::InvalidArgumentError(
+      "MultiSliceConfig is not a PjRtCApiMultiSliceConfig.");
+}
+
+absl::StatusOr<int32_t> GetLocalHostId(
+    const pjrt::PjRtCApiMultiSliceConfig& config) {
+  ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
+  ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
+                   GetMegascaleExtension(c_api));
+  if (extension->base.struct_size <
+          PJRT_STRUCT_SIZE(PJRT_Megascale_Extension,
+                           multi_slice_config_get_local_host_id) ||
+      extension->multi_slice_config_get_local_host_id == nullptr) {
+    return absl::UnimplementedError(
+        "PJRT Megascale extension does not implement "
+        "multi_slice_config_get_local_host_id.");
+  }
+  PJRT_Megascale_MultiSliceConfig_GetLocalHostId_Args args{};
+  args.struct_size =
+      PJRT_Megascale_MultiSliceConfig_GetLocalHostId_Args_STRUCT_SIZE;
+  args.config = config.get();
+  RETURN_STATUS_IF_PJRT_ERROR(
+      extension->multi_slice_config_get_local_host_id(&args), c_api);
+  return args.host_id;
+}
+
+absl::StatusOr<int32_t> GetLocalHostId(const xla::MultiSliceConfig& config) {
+  const auto* capi_config =
+      dynamic_cast<const pjrt::PjRtCApiMultiSliceConfig*>(&config);
+  if (capi_config != nullptr) {
+    return GetLocalHostId(*capi_config);
+  }
+  return absl::InvalidArgumentError(
+      "MultiSliceConfig is not a PjRtCApiMultiSliceConfig.");
+}
+
+absl::StatusOr<int32_t> GetNumHosts(
+    const pjrt::PjRtCApiMultiSliceConfig& config) {
+  ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
+  ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
+                   GetMegascaleExtension(c_api));
+  if (extension->base.struct_size <
+          PJRT_STRUCT_SIZE(PJRT_Megascale_Extension,
+                           multi_slice_config_get_num_hosts) ||
+      extension->multi_slice_config_get_num_hosts == nullptr) {
+    return absl::UnimplementedError(
+        "PJRT Megascale extension does not implement "
+        "multi_slice_config_get_num_hosts.");
+  }
+  PJRT_Megascale_MultiSliceConfig_GetNumHosts_Args args{};
+  args.struct_size =
+      PJRT_Megascale_MultiSliceConfig_GetNumHosts_Args_STRUCT_SIZE;
+  args.config = config.get();
+  RETURN_STATUS_IF_PJRT_ERROR(
+      extension->multi_slice_config_get_num_hosts(&args), c_api);
+  return args.num_hosts;
+}
+
+absl::StatusOr<int32_t> GetNumHosts(const xla::MultiSliceConfig& config) {
+  const auto* capi_config =
+      dynamic_cast<const pjrt::PjRtCApiMultiSliceConfig*>(&config);
+  if (capi_config != nullptr) {
+    return GetNumHosts(*capi_config);
+  }
+  return absl::InvalidArgumentError(
+      "MultiSliceConfig is not a PjRtCApiMultiSliceConfig.");
+}
+
+absl::Status GlobalBarrier(const pjrt::PjRtCApiMultiSliceConfig& config,
+                           absl::string_view barrier_id,
+                           absl::Duration timeout) {
+  ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
+  ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
+                   GetMegascaleExtension(c_api));
+  if (extension->base.struct_size <
+          PJRT_STRUCT_SIZE(PJRT_Megascale_Extension, global_barrier) ||
+      extension->global_barrier == nullptr) {
+    return absl::UnimplementedError(
+        "PJRT Megascale extension does not implement global_barrier.");
+  }
+  PJRT_Megascale_GlobalBarrier_Args args{};
+  args.struct_size = PJRT_Megascale_GlobalBarrier_Args_STRUCT_SIZE;
+  args.config = config.get();
+  args.barrier_id = barrier_id.data();
+  args.barrier_id_size = barrier_id.size();
+  args.timeout_in_ms = absl::ToInt64Milliseconds(timeout);
+  RETURN_STATUS_IF_PJRT_ERROR(extension->global_barrier(&args), c_api);
+  return absl::OkStatus();
+}
+
+absl::Status GlobalBarrier(const xla::MultiSliceConfig& config,
+                           absl::string_view barrier_id,
+                           absl::Duration timeout) {
+  const auto* capi_config =
+      dynamic_cast<const pjrt::PjRtCApiMultiSliceConfig*>(&config);
+  if (capi_config != nullptr) {
+    return GlobalBarrier(*capi_config, barrier_id, timeout);
+  }
+  return absl::InvalidArgumentError(
+      "MultiSliceConfig is not a PjRtCApiMultiSliceConfig.");
 }
 
 }  // namespace c_api_client

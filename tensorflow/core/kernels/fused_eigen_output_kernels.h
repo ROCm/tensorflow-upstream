@@ -28,6 +28,9 @@ limitations under the License.
 
 #include <type_traits>
 
+#include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -124,15 +127,12 @@ struct Sigmoid {
 // Applies `Elu` to the passed input expression.
 struct Elu {
   template <typename XprType>
-  static auto apply(XprType expr) -> decltype(
-      (expr < std::declval<typename XprType::Scalar>())
-          .select(expr.exp() -
-                      expr.constant(std::declval<typename XprType::Scalar>()),
-                  expr)) {
+  // Use expm1 (exp(x) - 1) to avoid catastrophic cancellation for small x.
+  static auto apply(XprType expr)
+      -> decltype((expr < std::declval<typename XprType::Scalar>())
+                      .select(expr.expm1(), expr)) {
     return (expr < static_cast<typename XprType::Scalar>(0))
-        .select(expr.exp() -
-                    expr.constant(static_cast<typename XprType::Scalar>(1)),
-                expr);
+        .select(expr.expm1(), expr);
   };
 };
 
@@ -411,12 +411,23 @@ using WithFusedBatchNormAndLeakyRelu = FusedBatchNormOutputKernel<T, LeakyRelu>;
 template <typename T>
 absl::Status InitBiasAddArgs(OpKernelContext* context, BiasAddArgs<T>* args,
                              const float* leakyrelu_alpha = nullptr) {
-  // Bias of the following dimensions: [ output_depth ]
+  // Bias of the following dimensions: [ output_depth ] or [1, ..., 1,
+  // output_depth]
   const Tensor& bias = context->input(2);
 
-  if (bias.dims() != 1)
+  if (bias.dims() < 1) {
     return absl::InvalidArgumentError(
-        absl::StrCat("bias must be 1-dimensional", bias.shape().DebugString()));
+        absl::StrCat("bias must be at least 1-dimensional, got: ",
+                     bias.shape().DebugString()));
+  }
+  for (int i = 0; i < bias.dims() - 1; ++i) {
+    if (bias.dim_size(i) != 1) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("For bias_dims > 1, all except the last dimension "
+                       "must be 1, got: ",
+                       bias.shape().DebugString()));
+    }
+  }
 
   const auto data_ptr = [](const Tensor& tensor) -> const T* {
     return reinterpret_cast<const T*>(tensor.tensor_data().data());
