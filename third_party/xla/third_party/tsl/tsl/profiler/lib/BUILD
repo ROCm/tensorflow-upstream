@@ -345,9 +345,9 @@ tsl_cc_test(
         "//tsl/platform",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:test",
         "@xla//xla/tsl/platform:test_benchmark",
+        "@xla//xla/tsl/platform:test_main",
     ],
 )
 
@@ -367,7 +367,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:macros",
-        "@xla//xla/tsl/platform:types",
         "@xla//xla/tsl/profiler/utils:no_init",
     ] + if_not_android([
         "@xla//xla/tsl/profiler/backends/cpu:traceme_recorder",
@@ -429,9 +428,9 @@ tsl_cc_test(
     deps = [
         ":scoped_annotation",
         "@com_google_absl//absl/strings",
-        "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:test",
         "@xla//xla/tsl/platform:test_benchmark",
+        "@xla//xla/tsl/platform:test_main",
         "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
         "@xla//xla/tsl/profiler/backends/cpu:annotation_stack_impl",
     ],
@@ -478,6 +477,18 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+tsl_cc_test(
+    name = "scoped_memory_debug_annotation_test",
+    size = "small",
+    srcs = ["scoped_memory_debug_annotation_test.cc"],
+    deps = [
+        ":scoped_memory_debug_annotation",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@xla//xla/tsl/platform:test",
     ],
 )
 

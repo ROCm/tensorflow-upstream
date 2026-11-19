@@ -1308,10 +1308,9 @@ TEST(PjRtCpuClientTest, CopyRawToHost) {
             absl::string_view(raw_data_result, raw_data_size));
 }
 
-TEST(PjRtCpuClientTest, GetExternalDmaInfoIsUnimplemented) {
+TEST(PjRtCpuClientTest, AcquireExternalDmaAccessIsUnimplemented) {
   // The CPU backend does not expose its memory as a dma-buf, so the default
-  // PjRtRawBuffer hook (reached through the C function table) must report
-  // Unimplemented.
+  // PjRtRawBuffer implementation must report Unimplemented.
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
   Literal literal = LiteralUtil::CreateR1<int32_t>({1, 2, 3, 4});
   TF_ASSERT_OK_AND_ASSIGN(
@@ -1320,8 +1319,9 @@ TEST(PjRtCpuClientTest, GetExternalDmaInfoIsUnimplemented) {
   TF_ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw_buffer,
                           PjRtRawBuffer::CreateRawAliasOfBuffer(buffer.get()));
 
-  EXPECT_THAT(raw_buffer->GetExternalDmaInfo(),
-              StatusIs(absl::StatusCode::kUnimplemented));
+  auto access = raw_buffer->AcquireExternalDmaAccess();
+  ASSERT_TRUE(access.IsError());
+  EXPECT_THAT(access.GetError(), StatusIs(absl::StatusCode::kUnimplemented));
 }
 
 TEST(PjRtCpuClientTest, SubByteLiteralToBufferRoundtrip) {
@@ -2344,8 +2344,9 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
                        GetXlaPjrtCpuClient(options));
 
-  auto* raw_client = absl::down_cast<PjRtCpuRawClient*>(
-      absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+  auto* raw_client = absl::down_cast<CommonPjRtClient*>(client.get())
+                         ->raw_client()
+                         ->down_cast<PjRtCpuRawClient>();
   EXPECT_EQ(raw_client->eigen_intraop_device(), &custom_device);
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,

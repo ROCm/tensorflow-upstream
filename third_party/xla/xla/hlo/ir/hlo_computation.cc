@@ -71,6 +71,7 @@ limitations under the License.
 #include "xla/shape_layout.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
+#include "xla/side_effect_util.h"
 #include "xla/sort_json.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
@@ -1395,6 +1396,8 @@ void HloComputation::ToProto(HloComputationProto* proto,
          "computation is inside a module before dumping it.";
   proto->set_id(unique_id_);
   proto->set_name(name_);
+  proto->mutable_instructions()->Reserve(proto->instructions_size() +
+                                         instruction_count());
   for (const HloInstruction* instruction : MakeInstructionPostOrder()) {
     instruction->ToProto(proto->add_instructions(), options);
   }
@@ -2122,7 +2125,7 @@ absl::StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
   // no-op is forwarded to its operand): that operand is computed upstream and
   // may feed other users.
   if (preserve_frontend_attributes &&
-      new_instruction->frontend_attributes().map().empty() &&
+      !new_instruction->has_frontend_attributes() &&
       !absl::c_linear_search(old_instruction->operands(), new_instruction)) {
     new_instruction->set_frontend_attributes(
         old_instruction->frontend_attributes());
@@ -2569,6 +2572,25 @@ bool HloComputation::CanExpandIntoSingleInstruction() const {
       instructions(), [root = root_instruction()](const HloInstruction* instr) {
         return root == instr || instr->opcode() == HloOpcode::kParameter;
       });
+}
+
+namespace {
+
+bool IsCollectivesGroupComputation(const HloComputation* computation) {
+  auto maybe_caller = computation->GetUniqueCaller(HloOpcode::kAsyncStart);
+  if (!maybe_caller.has_value()) {
+    return false;
+  }
+  return (*maybe_caller)
+      ->get_frontend_attribute(kCollectiveGroupMarkerAttr)
+      .has_value();
+}
+
+}  // namespace
+
+bool HloComputation::IsRestrictedAsyncComputation() const {
+  return IsAsyncComputation() && IsMainThread() &&
+         !IsCollectivesGroupComputation(this);
 }
 
 bool HloComputation::IsFusionComputation() const {

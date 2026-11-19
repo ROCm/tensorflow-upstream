@@ -210,6 +210,7 @@ cc_library(
         ":xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
     ],
@@ -398,6 +399,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
+        "@highway//:hwy",
         "@ml_dtypes_py//ml_dtypes:float8",
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:ml_dtypes",
@@ -1380,7 +1382,6 @@ cc_library(
             "@com_google_absl//absl/strings:string_view",
             "@com_google_absl//absl/time",
             "@com_google_protobuf//:protobuf",
-            "@tsl//tsl/platform:platform_port",
         ],
 )
 
@@ -1737,7 +1738,8 @@ bzl_library(
         ":native_test_bzl",
         ":platform_native_rule_bzl",
         "//xla/tests:build_defs_bzl",
-        "@rules_cc//cc/common",
+        "@rules_cc//cc/common",  # copybara:comment
+        # copybara:uncomment "@rules_cc//cc/common:cc_info",
         # copybara:uncomment "@rules_python//python:defs_bzl",
         "@bazel_skylib//lib:paths",
         "//xla/tsl:package_groups_bzl",

@@ -46,6 +46,7 @@ limitations under the License.
 #include "tensorflow/compiler/tf2xla/shape_util.h"
 #include "tensorflow/compiler/tf2xla/xla_compiler.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
+#include "tensorflow/compiler/tf2xla/xla_op_registry.h"
 #include "tensorflow/compiler/tf2xla/xla_resource.h"
 #include "xla/client/local_client.h"
 #include "xla/future.h"
@@ -56,10 +57,10 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/plugin/xla_cpu/cpu_execute_options.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/executable.h"
-#include "xla/service/maybe_owning_device_address.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
 #include "xla/shape.h"
@@ -639,24 +640,6 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
   return out;
 }
 
-namespace {
-const PjRtTensorBuffer* GetPjRtTensorBuffer(const Tensor* tensor) {
-  const TensorBuffer* buf = DMAHelper::buffer(tensor);
-  if (buf == nullptr) {
-    return nullptr;
-  }
-  if (const auto* pjrt_buf = dynamic_cast<const PjRtTensorBuffer*>(buf)) {
-    return pjrt_buf;
-  }
-  const TensorBuffer* root_buf = const_cast<TensorBuffer*>(buf)->root_buffer();
-  if (root_buf != buf && root_buf != nullptr &&
-      root_buf->data() == buf->data() && root_buf->size() == buf->size()) {
-    return dynamic_cast<const PjRtTensorBuffer*>(root_buf);
-  }
-  return nullptr;
-}
-}  // namespace
-
 // TODO(b/289002708) Create a unit test to cover use_pjrt_tensor_buffer=true.
 absl::Status PreparePjRtExecutableArguments(
     int num_missing_prefix_ctx_inputs, const std::vector<int>& input_mapping,
@@ -694,8 +677,10 @@ absl::Status PreparePjRtExecutableArguments(
             "If use_pjrt_tensor_buffer is set, the input tensor should not "
             "contain an AsyncValueTensor.");
       }
-      const PjRtTensorBuffer* pjrt_tensor_buffer = GetPjRtTensorBuffer(tensor);
-      if (pjrt_tensor_buffer != nullptr &&
+      const PjRtTensorBufferUtil::LookupResult pjrt_lookup =
+          PjRtTensorBufferUtil::FindPjRtTensorBuffer(tensor);
+      const PjRtTensorBuffer* pjrt_tensor_buffer = pjrt_lookup.buffer;
+      if (pjrt_tensor_buffer != nullptr && pjrt_lookup.is_full_buffer &&
           pjrt_tensor_buffer->pjrt_buffer()->device() == pjrt_device &&
           (pjrt_client->platform_id() != xla::CpuId() ||
            pjrt_tensor_buffer->pjrt_buffer()->dimensions().size() ==
@@ -914,7 +899,8 @@ absl::Status PopulateCtxOutputsFromPjRtExecutableOutputs(
 
 xla::ExecuteOptions GetPjRtExecuteOptions(
     const DeviceType& device_type,
-    absl::flat_hash_set<int> non_donatable_input_indices) {
+    absl::flat_hash_set<int> non_donatable_input_indices,
+    xla::ExecuteContext* execute_context) {
   xla::ExecuteOptions options;
   // Hardcode run id to always be one: TF distributed strategy
   // differentiates between subsequent runs using dependency edges. This
@@ -933,6 +919,7 @@ xla::ExecuteOptions GetPjRtExecuteOptions(
   // tensorflow/compiler/xla/pjrt/pjrt_c_api_client.cc;l=923-927;rcl=519286815
   options.use_major_to_minor_data_layout_for_callbacks = true;
   options.non_donatable_input_indices = std::move(non_donatable_input_indices);
+  options.context = execute_context;
   return options;
 }
 
@@ -972,8 +959,13 @@ absl::Status RunPjRtExecutable(
           : accelerator_device_info->use_pjrt_tensor_buffer;
 
   const DeviceType& device_type = GetDeviceType(ctx);
-  const int pjrt_device_id =
-      tsl::GetDeviceIdFromDeviceParsedName(ctx->device()->parsed_name());
+  int pjrt_device_id = 0;
+  if (device_type == DEVICE_CPU || device_type == DEVICE_XLA_CPU) {
+    pjrt_device_id = 0;
+  } else {
+    pjrt_device_id =
+        tsl::GetDeviceIdFromDeviceParsedName(ctx->device()->parsed_name());
+  }
   TF_ASSIGN_OR_RETURN(
       xla::PjRtDevice * device,
       pjrt_client->LookupAddressableDevice(xla::LocalDeviceId(pjrt_device_id)));
@@ -997,12 +989,17 @@ absl::Status RunPjRtExecutable(
                         executable->FingerprintExecutable());
     device_selector_resource->selector()->Enqueue(pjrt_device_id, fingerprint);
   }
+  const Eigen::ThreadPoolDevice* intra_op_thread_pool = nullptr;
+  if (ctx != nullptr && ctx->device() != nullptr &&
+      ctx->device()->has_eigen_cpu_device()) {
+    intra_op_thread_pool = ctx->device()->eigen_cpu_device();
+  }
   TF_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<xla::PjRtBuffer>> execute_outputs,
       RunPjRtExecutable(num_missing_prefix_ctx_inputs, inputs,
                         variable_snapshots, updated_variables, device_type,
                         use_pjrt_tensor_buffer, compilation_result, device,
-                        pjrt_client, executable));
+                        pjrt_client, executable, intra_op_thread_pool));
   if (device_selector_resource != nullptr) {
     device_selector_resource->selector()->Completed(pjrt_device_id,
                                                     /*had_error=*/false);
@@ -1021,7 +1018,8 @@ absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtBuffer>>> RunPjRtExecutable(
     const DeviceType& device_type, bool use_pjrt_tensor_buffer,
     const XlaCompiler::CompilationResult& compilation_result,
     xla::PjRtDevice* device, xla::PjRtClient* pjrt_client,
-    xla::PjRtLoadedExecutable* executable) {
+    xla::PjRtLoadedExecutable* executable,
+    const Eigen::ThreadPoolDevice* intra_op_thread_pool) {
   std::vector<xla::PjRtBuffer*> executable_args;
   executable_args.reserve(compilation_result.input_mapping.size());
   std::vector<std::unique_ptr<xla::PjRtBuffer>> owned_executable_args;
@@ -1034,26 +1032,38 @@ absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtBuffer>>> RunPjRtExecutable(
 
   std::vector<std::unique_ptr<xla::PjRtBuffer>> execute_outputs;
   std::optional<tsl::Future<void>> future;
+
+  std::unique_ptr<xla::CpuExecuteContext> cpu_execute_context;
+  if (pjrt_client->platform_id() == xla::CpuId() &&
+      intra_op_thread_pool != nullptr) {
+    cpu_execute_context = std::make_unique<xla::CpuExecuteContext>();
+    cpu_execute_context->set_intra_op_thread_pool(intra_op_thread_pool);
+  }
+  xla::ExecuteOptions execute_options =
+      GetPjRtExecuteOptions(device_type, std::move(non_donatable_input_indices),
+                            cpu_execute_context.get());
+
+  const bool fill_future = cpu_execute_context != nullptr;
   if (executable->num_replicas() != 1 || executable->num_partitions() != 1) {
     TF_ASSIGN_OR_RETURN(
         execute_outputs,
-        executable->ExecuteSharded(
-            executable_args, device,
-            GetPjRtExecuteOptions(device_type,
-                                  std::move(non_donatable_input_indices)),
-            future));
+        executable->ExecuteSharded(executable_args, device, execute_options,
+                                   future, fill_future));
   } else {
     TF_ASSIGN_OR_RETURN(
         execute_outputs,
-        executable->ExecutePortable(
-            executable_args, device,
-            GetPjRtExecuteOptions(device_type,
-                                  std::move(non_donatable_input_indices)),
-            future));
+        executable->ExecutePortable(executable_args, device, execute_options,
+                                    future, fill_future));
   }
 
+  // Ensure `cpu_execute_context` lives until CPU execution is complete.
   // Underlying device memory for `owned_executable_args` is retained by PJRT's
   // raw buffer and usage events until device execution completes.
+  if (cpu_execute_context != nullptr && future.has_value()) {
+    future->OnReady([cpu_execute_context =
+                         std::move(cpu_execute_context)](absl::Status s) {});
+  }
+
   return execute_outputs;
 }
 

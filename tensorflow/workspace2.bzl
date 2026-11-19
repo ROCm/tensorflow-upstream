@@ -87,6 +87,7 @@ load("//third_party/coremltools:workspace.bzl", coremltools = "repo")
 load("//third_party/cython:workspace.bzl", cython = "repo")
 load("//third_party/fft2d:workspace.bzl", fft2d = "repo")
 load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
+load("//third_party/fpnge:workspace.bzl", fpnge = "repo")
 load("//third_party/gif:workspace.bzl", gif = "repo")
 load("//third_party/git:git_configure.bzl", "git_configure")
 load("//third_party/googleapis:workspace.bzl", googleapis = "repo")
@@ -137,6 +138,7 @@ def _initialize_third_party():
     farmhash()
     flatbuffers()
     fmt()
+    fpnge()
     gemmlowp()
     hexagon_nn()
     highwayhash()
@@ -269,9 +271,9 @@ def _tf_repositories():
     # XNNPack dependency.
     tf_http_archive(
         name = "KleidiAI",
-        sha256 = "17f5b233b9afa3abe873da40e6832a98423aa0de8c66205d09197ca5fbfa3135",
-        strip_prefix = "kleidiai-0e1439fe30a039880b3633252ae8390fd301a125",
-        urls = tf_mirror_urls("https://gitlab.arm.com/kleidi/kleidiai/-/archive/0e1439fe30a039880b3633252ae8390fd301a125/kleidiai-0e1439fe30a039880b3633252ae8390fd301a125.zip"),
+        sha256 = "0119fa3e386c27a10c8b4bb5673eec1c4e32a1c09943e8d84cdda2c6660fb79c",
+        strip_prefix = "kleidiai-0ec849c4ee7eecc8e79e6808d20bcdd10e8d137f",
+        urls = tf_mirror_urls("https://gitlab.arm.com/kleidi/kleidiai/-/archive/0ec849c4ee7eecc8e79e6808d20bcdd10e8d137f/kleidiai-0ec849c4ee7eecc8e79e6808d20bcdd10e8d137f.zip"),
     )
 
     FXdiv()

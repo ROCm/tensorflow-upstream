@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// LLVM-based compiler backend.
 #ifndef XLA_SERVICE_GPU_LLVM_GPU_BACKEND_AMDGPU_BACKEND_H_
 #define XLA_SERVICE_GPU_LLVM_GPU_BACKEND_AMDGPU_BACKEND_H_
 
+<<<<<<< HEAD
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -54,5 +54,9 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
 std::vector<std::string> GetAMDGPUBackendOptions(
     const DebugOptions& debug_options);
 }  // namespace xla::gpu::amdgpu
+=======
+// IWYU pragma: private, include "xla/backends/gpu/target_lowering/amdgpu_backend.h"
+#include "xla/backends/gpu/target_lowering/amdgpu_backend.h"  // IWYU pragma: export // INLINER_FORWARD_TO
+>>>>>>> upstream/master
 
 #endif  // XLA_SERVICE_GPU_LLVM_GPU_BACKEND_AMDGPU_BACKEND_H_

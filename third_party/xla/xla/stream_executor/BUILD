@@ -305,7 +305,6 @@ cc_library(
         "//xla/hlo/testlib:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -365,6 +364,7 @@ cc_library(
         ":stream",
         ":stream_executor_h",
         "//xla/service:device_assignment",
+        "//xla/stream_executor/gpu:locality_domain_memory",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -719,7 +719,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:platform_port",
     ],
 )
@@ -1352,6 +1351,7 @@ xla_cc_test(
         "//xla/stream_executor/host:host_platform",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",

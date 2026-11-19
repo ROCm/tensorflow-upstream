@@ -55,6 +55,7 @@ do_external_licenses_check(){
 @com_github_googlecloudplatform_google_cloud_cpp//google
 @grpc//src/compiler
 @com_google_protobuf//upb_generator
+@llvm-project//libc/src/__support/math
 @llvm-project//third-party/siphash
 @platforms//os
 @ml_dtypes_py//ml_dtypes
@@ -64,6 +65,7 @@ do_external_licenses_check(){
 @rules_ml_toolchain//
 @rules_python//
 @stablehlo//stablehlo/experimental
+@.*org_brotli//
 EOF
 
   # grep patterns for targets which are allowed to be extra licenses
@@ -78,6 +80,7 @@ EOF
 @com_google_absl//
 @com_google_protobuf//
 @internal_platforms_do_not_use//host
+@fpnge//
 @jpegxl//
 @pybind11_abseil//pybind11_abseil
 //external
@@ -90,6 +93,10 @@ EOF
 @ml_dtypes_py//
 @ruy//
 @rules_ml_toolchain//
+@curl//
+@platforms//host
+@png//
+@snappy//
 EOF
 
   license_query "attr('licenses', 'notice', deps($BUILD_TARGET))" > $BATS_TEST_TMPDIR/expected_licenses

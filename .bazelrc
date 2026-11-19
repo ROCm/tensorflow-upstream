@@ -77,13 +77,9 @@
 
 common --incompatible_default_to_explicit_init_py
 
-# Use a downloader config to mirror GitHub and Python package downloads.
+# Use a downloader config to mirror GitHub, Python package, and BCR downloads.
 # We use the experimental_ name for better compatibility with different Bazel versions.
-build --experimental_downloader_config=bazel_downloader.cfg
-test --experimental_downloader_config=bazel_downloader.cfg
-fetch --experimental_downloader_config=bazel_downloader.cfg
-sync --experimental_downloader_config=bazel_downloader.cfg
-query --experimental_downloader_config=bazel_downloader.cfg
+common --experimental_downloader_config=bazel_downloader.cfg
 
 # For projects which use TensorFlow as part of a Bazel build process, putting
 # nothing in a bazelrc will default to a monolithic build. The following line
@@ -154,9 +150,12 @@ common --experimental_link_static_libraries_once=false
 # TODO: enable this flag after fixing the visibility violations
 # common --incompatible_config_setting_private_default_visibility
 
-# TODO: Enable Bzlmod
-common --noenable_bzlmod
-common --enable_workspace
+# Enable Bzlmod by default
+common --enable_bzlmod
+common --noenable_workspace
+
+# Retry downloading external repositories to avoid flaky network failures in CI.
+common --experimental_repository_downloader_retries=5
 
 # Turn off empty glob check (flipped in Bazel 8).
 common --incompatible_disallow_empty_glob=false
@@ -167,13 +166,6 @@ common --legacy_external_runfiles=true
 
 common --incompatible_enable_cc_toolchain_resolution
 common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
-
-# external_include_paths feature forces passing external repositories headers
-# via -isystem alters how Clang resolves their file paths. This feature with
-# old versions of rules_cc triggering errors.
-# Following lines can be removed after rules_cc will be updated to >= 0.2.22
-common --features=-external_include_paths
-common --host_features=-external_include_paths
 
 # TODO: Migrate for https://github.com/bazelbuild/bazel/issues/7260
 common:clang_local --noincompatible_enable_cc_toolchain_resolution
@@ -226,8 +218,8 @@ test --test_env="GTEST_INSTALL_FAILURE_SIGNAL_HANDLER=1"
 
 # Default options should come above this line.
 
-# Enable bzlmod
-common:bzlmod --enable_bzlmod --noenable_workspace
+# Enable WORKSPACE on Linux/macOS (Windows requires Bzlmod; retain until downstream consumers migrate to Bzlmod)
+common:workspace --noenable_bzlmod --enable_workspace
 
 # Android configs. Bazel needs to have --cpu and --fat_apk_cpu both set to the
 # target CPU to build transient dependencies correctly. See
@@ -441,6 +433,9 @@ common:android --copt=-w
 common:ios --copt=-w
 common:linux --host_copt=-w
 common:macos --copt=-w
+common:macos --host_copt=-w
+common:macos --features=-layering_check
+common:macos --host_features=-layering_check
 common:windows --copt=/W0
 common:windows --host_copt=/W0
 
@@ -507,6 +502,9 @@ startup --windows_enable_symlinks
 common:windows --enable_runfiles
 common:windows --nobuild_python_zip
 common:windows --dynamic_mode=off
+# Disable the Bazel 8 local repository contents cache on Windows so external
+# repositories keep stable paths without extra directory junctions.
+common:windows --repo_contents_cache=
 
 # Default paths for TF_SYSTEM_LIBS
 common:linux --define=PREFIX=/usr
@@ -522,8 +520,8 @@ common:ios --cxxopt=-std=c++17
 common:ios --host_cxxopt=-std=c++17
 common:linux --cxxopt=-std=c++20
 common:linux --host_cxxopt=-std=c++20
-common:macos --cxxopt=-std=c++17
-common:macos --host_cxxopt=-std=c++17
+common:macos --cxxopt=-std=c++20
+common:macos --host_cxxopt=-std=c++20
 common:windows --cxxopt=/std:c++17
 common:windows --host_cxxopt=/std:c++17
 
@@ -554,10 +552,6 @@ common:windows --host_linkopt=/OPT:ICF
 
 # Verbose failure logs when something goes wrong
 common:windows --verbose_failures
-
-# Work around potential issues with large command lines on windows.
-# See: https://github.com/bazelbuild/bazel/issues/5163
-common:windows --features=compiler_param_file
 
 # Use old toolchains for Windows builds.
 common:windows --config=clang_local
@@ -654,6 +648,7 @@ common:rbe_base --spawn_strategy=remote,worker,standalone,local
 # Attempt to minimize the amount of data transfer between bazel and the remote
 # workers:
 common:rbe_base --remote_download_toplevel
+common:rbe_base --nobuild_runfile_links
 test:rbe_base --test_env=USER=anon
 
 # TODO(kanglan): Check if we want to merge rbe_linux into rbe_linux_cpu.
@@ -954,7 +949,7 @@ test:linux_cuda_wheel_test --repo_env=HERMETIC_CUDA_UMD_VERSION=13.1.1 --@xla//t
 test:linux_cuda_13_wheel_test_filters --test_tag_filters=gpu,requires-gpu,-no_gpu,-no_oss,-tf_tosa,-oss_excluded,-oss_serial,-benchmark-test,-no_cuda11,-no_cuda12,-no_oss_py310,-no_oss_py313
 test:linux_cuda_13_wheel_test_filters --build_tag_filters=gpu,requires-gpu,-no_gpu,-no_oss,-tf_tosa,-oss_excluded,-oss_serial,-benchmark-test,-no_cuda11,-no_cuda12,-no_oss_py310,-no_oss_py313
 test:linux_cuda_13_wheel_test_filters --test_lang_filters=py --test_size_filters=small,medium
-test:linux_cuda_13_wheel_test --config=cuda13_version --repo_env=HERMETIC_CUDA_UMD_VERSION=13.1.1 --@local_config_cuda//cuda:override_include_cuda_libs=true --test_env=LD_LIBRARY_PATH=external/local_config_cuda/cuda/cuda/lib/:external/cuda_cupti/lib/:external/cuda_nvrtc/lib/ --@xla//third_party/py:wheel_dependency=true --config=linux_cuda_13_wheel_test_filters -- //tensorflow/... //tensorflow/tools/pip_package:prebuilt_wheel_import_api_packages_test_gpu -//tensorflow/compiler/tf2tensorrt/... -//tensorflow/core/tpu/... -//tensorflow/lite/... -//tensorflow/tools/toolchains/... -//tensorflow/compiler/mlir/tools/kernel_gen/... -//tensorflow/core/kernels/mlir_generated/...
+test:linux_cuda_13_wheel_test --config=cuda13_version --repo_env=HERMETIC_CUDA_UMD_VERSION=13.1.1 --@local_config_cuda//cuda:override_include_cuda_libs=true --test_env=LD_LIBRARY_PATH=external/rules_ml_toolchain++cuda_configure_ext+local_config_cuda/cuda/cuda/lib/:external/rules_ml_toolchain++cuda_redist_init_ext+cuda_cupti/lib/:external/rules_ml_toolchain++cuda_redist_init_ext+cuda_nvrtc/lib/:external/local_config_cuda/cuda/cuda/lib/:external/cuda_cupti/lib/:external/cuda_nvrtc/lib/ --@xla//third_party/py:wheel_dependency=true --config=linux_cuda_13_wheel_test_filters -- //tensorflow/... //tensorflow/tools/pip_package:prebuilt_wheel_import_api_packages_test_gpu -//tensorflow/compiler/tf2tensorrt/... -//tensorflow/core/tpu/... -//tensorflow/lite/... -//tensorflow/tools/toolchains/... -//tensorflow/compiler/mlir/tools/kernel_gen/... -//tensorflow/core/kernels/mlir_generated/...
 test:linux_cuda_13_nvcc_wheel_test --config=linux_cuda_13_wheel_test
 
 # ARM64 WHEEL

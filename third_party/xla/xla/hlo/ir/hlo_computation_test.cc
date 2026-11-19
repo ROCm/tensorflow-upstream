@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -799,6 +800,118 @@ ENTRY entry {
   EXPECT_THAT(cloned_gte->operands(), ::testing::ElementsAre(cloned_t1));
 }
 
+TEST_F(HLOComputationTest,
+       ToProtoSerializesAllComputationsInstructionsAndOperands) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+
+sub {
+  sp0 = f32[4] parameter(0)
+  ROOT sneg = f32[4] negate(sp0)
+}
+
+ENTRY entry {
+  p0 = f32[4] parameter(0)
+  p1 = f32[4] parameter(1)
+  called = f32[4] call(p0), to_apply=sub
+  ROOT t = (f32[4], f32[4], f32[4]) tuple(p0, p1, called)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* p0 = entry->parameter_instruction(0);
+  const HloInstruction* p1 = entry->parameter_instruction(1);
+  const HloInstruction* called = entry->GetInstructionWithName("called");
+  const HloInstruction* t = entry->root_instruction();
+
+  HloModuleProto module_proto = module->ToProto();
+  ASSERT_EQ(module_proto.computations_size(), module->computation_count());
+  const HloComputationProto& entry_proto =
+      module_proto.computations(module_proto.computations_size() - 1);
+  EXPECT_EQ(entry_proto.id(), entry->unique_id());
+  ASSERT_EQ(entry_proto.instructions_size(), entry->instruction_count());
+  const HloInstructionProto& root_proto =
+      entry_proto.instructions(entry_proto.instructions_size() - 1);
+  EXPECT_EQ(root_proto.id(), t->unique_id());
+  EXPECT_THAT(root_proto.operand_ids(),
+              ::testing::ElementsAre(p0->unique_id(), p1->unique_id(),
+                                     called->unique_id()));
+
+  HloInstructionProto inst_proto;
+  inst_proto.add_operand_ids(999999);
+  t->ToProto(&inst_proto);
+  EXPECT_THAT(inst_proto.operand_ids(),
+              ::testing::ElementsAre(999999, p0->unique_id(), p1->unique_id(),
+                                     called->unique_id()));
+}
+
+TEST_F(HLOComputationTest, IsRestrictedAsyncComputation) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+
+main_thread_comp {
+  main_param = f32[4] parameter(0)
+  ROOT main_neg = f32[4] negate(main_param)
+}
+
+barrier_comp {
+  barrier_param = (f32[4]) parameter(0)
+  barrier_gte = f32[4] get-tuple-element(barrier_param), index=0
+  ROOT barrier_tuple = (f32[4]) tuple(barrier_gte)
+}
+
+parallel_thread_comp {
+  parallel_param = f32[4] parameter(0)
+  ROOT parallel_neg = f32[4] negate(parallel_param)
+}, execution_thread="parallel"
+
+collectives_group_comp {
+  group_param = f32[4] parameter(0)
+  ROOT group_neg = f32[4] negate(group_param)
+}
+
+ENTRY non_async_comp {
+  p0 = f32[4] parameter(0)
+  main_start = ((f32[4]), f32[4], s32[]) async-start(p0), calls=main_thread_comp
+  main_done = f32[4] async-done(main_start)
+  
+  barrier_in = (f32[4]) tuple(main_done)
+  barrier_start = (((f32[4])), (f32[4]), s32[]) async-start(barrier_in), calls=barrier_comp
+  barrier_done = (f32[4]) async-done(barrier_start)
+  
+  barrier_out = f32[4] get-tuple-element(barrier_done), index=0
+  parallel_start = ((f32[4]), f32[4], s32[]) async-start(barrier_out), calls=parallel_thread_comp, async_execution_thread="parallel"
+  parallel_done = f32[4] async-done(parallel_start)
+  
+  group_start = ((f32[4]), f32[4], s32[]) async-start(parallel_done), calls=collectives_group_comp, frontend_attributes={_collectives_group=""}
+  ROOT group_done = f32[4] async-done(group_start)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  // Sync computations are not restricted.
+  EXPECT_FALSE(module->GetComputationWithName("non_async_comp")
+                   ->IsRestrictedAsyncComputation());
+
+  // Main thread async computations are restricted.
+  EXPECT_TRUE(module->GetComputationWithName("main_thread_comp")
+                  ->IsRestrictedAsyncComputation());
+
+  // Async barriers are restricted.
+  EXPECT_TRUE(module->GetComputationWithName("barrier_comp")
+                  ->IsRestrictedAsyncComputation());
+
+  // Non-main thread async computations are not restricted.
+  EXPECT_FALSE(module->GetComputationWithName("parallel_thread_comp")
+                   ->IsRestrictedAsyncComputation());
+
+  // Collective group computations are not restricted.
+  EXPECT_FALSE(module->GetComputationWithName("collectives_group_comp")
+                   ->IsRestrictedAsyncComputation());
+}
+
 std::unique_ptr<HloComputation> MakeAddChainComputation(
     int num_instructions, absl::string_view name = "add_chain") {
   const Shape shape = ShapeUtil::MakeShape(F32, {4});
@@ -836,6 +949,17 @@ void BM_CloneComputation(::testing::benchmark::State& state) {
 }
 // NOLINTNEXTLINE(misc-include-cleaner)
 BENCHMARK(BM_CloneComputation)->Arg(16)->Arg(1024);
+
+void BM_ModuleToProto(::testing::benchmark::State& state) {
+  HloModule module("bm_to_proto", HloModuleConfig());
+  module.AddEntryComputation(MakeAddChainComputation(state.range(0), "entry"));
+  for (auto s : state) {
+    HloModuleProto proto = module.ToProto();
+    tsl::testing::DoNotOptimize(proto);
+  }
+}
+// NOLINTNEXTLINE(misc-include-cleaner)
+BENCHMARK(BM_ModuleToProto)->Arg(16)->Arg(1024);
 
 void BM_Defuse(::testing::benchmark::State& state) {
   const Shape shape = ShapeUtil::MakeShape(F32, {4});
@@ -876,6 +1000,33 @@ void BM_Defuse(::testing::benchmark::State& state) {
 }
 // NOLINTNEXTLINE(misc-include-cleaner)
 BENCHMARK(BM_Defuse)->Arg(16)->Arg(1024);
+
+void BM_ReplaceAllUsesWithDifferentShape(::testing::benchmark::State& state) {
+  const int num_users = state.range(0);
+  const Shape shape0 = ShapeUtil::MakeShape(F32, {4});
+  const Shape shape1 = ShapeUtil::MakeShape(F32, {2, 2});
+  HloComputation::Builder builder("bm_replace_uses");
+  HloInstruction* p0 =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape0, "p0"));
+  HloInstruction* p1 =
+      builder.AddInstruction(HloInstruction::CreateParameter(1, shape1, "p1"));
+  std::vector<HloInstruction*> users;
+  users.reserve(num_users);
+  for (int i = 0; i < num_users; ++i) {
+    users.push_back(builder.AddInstruction(
+        HloInstruction::CreateUnary(shape0, HloOpcode::kNegate, p0)));
+  }
+  HloInstruction* root =
+      builder.AddInstruction(HloInstruction::CreateTuple(users));
+  std::unique_ptr<HloComputation> comp = builder.Build(root);
+
+  for (auto s : state) {
+    CHECK_OK(p0->ReplaceAllUsesWithDifferentShape(p1));
+    std::swap(p0, p1);
+  }
+}
+// NOLINTNEXTLINE(misc-include-cleaner)
+BENCHMARK(BM_ReplaceAllUsesWithDifferentShape)->Arg(4)->Arg(16);
 
 }  // namespace
 }  // namespace xla

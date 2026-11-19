@@ -3466,6 +3466,51 @@ class ResizeImagesV2Test(test_util.TensorFlowTestCase, parameterized.TestCase):
                                        image_ops.ResizeMethod.BILINEAR)
         _ = self.evaluate(v)
 
+  @test_util.run_in_graph_and_eager_modes
+  def testImageResizeAntialiasUpsample(self):
+    img = np.array([[[1.0], [2.0]], [[3.0], [4.0]]], dtype=np.float32)
+    img = img[np.newaxis, ...]
+    up_no_anti = self.evaluate(
+        image_ops.resize_images_v2(
+            img,
+            [10, 10],
+            method=image_ops.ResizeMethod.BILINEAR,
+            antialias=False,
+        )
+    )
+    up_anti = self.evaluate(
+        image_ops.resize_images_v2(
+            img,
+            [10, 10],
+            method=image_ops.ResizeMethod.BILINEAR,
+            antialias=True,
+        )
+    )
+    self.assertAllClose(up_no_anti, up_anti, atol=1e-05)
+
+  @test_util.run_in_graph_and_eager_modes
+  def testImageResizeAntialiasDownsample(self):
+    checkerboard = (np.indices((8, 8)).sum(axis=0) % 2).astype(np.float32)
+    checkerboard = checkerboard[np.newaxis, ..., np.newaxis]
+    down_no_anti = self.evaluate(
+        image_ops.resize_images_v2(
+            checkerboard,
+            [3, 3],
+            method=image_ops.ResizeMethod.BILINEAR,
+            antialias=False,
+        )
+    )
+    down_anti = self.evaluate(
+        image_ops.resize_images_v2(
+            checkerboard,
+            [3, 3],
+            method=image_ops.ResizeMethod.BILINEAR,
+            antialias=True,
+        )
+    )
+    self.assertAllClose(down_anti, np.full((1, 3, 3, 1), 0.5), atol=0.05)
+    self.assertNotAllClose(down_no_anti, np.full((1, 3, 3, 1), 0.5), atol=0.05)
+
 
 class ResizeImagesTest(test_util.TensorFlowTestCase,
                        parameterized.TestCase):
@@ -5492,6 +5537,20 @@ class ConvertImageTest(test_util.TensorFlowTestCase):
       # int16, uint16
       self._convert([0, 255 * 256], dtypes.uint16, dtypes.int16, [0, 255 * 128])
       self._convert([0, 255 * 128], dtypes.int16, dtypes.uint16, [0, 255 * 256])
+
+  def testConvertFloatToInt(self):
+    # Verify float-to-integer scaling maps [0.0, 0.5, 1.0] to
+    # [0, max // 2, max] for 8-bit and 16-bit integer targets.
+    for src_dtype in [dtypes.float16, dtypes.bfloat16, dtypes.float32]:
+      for dst_dtype in [dtypes.uint8, dtypes.int8, dtypes.uint16, dtypes.int16]:
+        for saturate in [False, True]:
+          with self.subTest(src=src_dtype, dst=dst_dtype, saturate=saturate):
+            x = constant_op.constant([0.0, 0.5, 1.0], dtype=src_dtype)
+            y = image_ops.convert_image_dtype(x, dst_dtype, saturate=saturate)
+            self.assertEqual(dst_dtype, y.dtype)
+            self.assertAllEqual(
+                [0, dst_dtype.max // 2, dst_dtype.max], self.evaluate(y)
+            )
 
 
 class TotalVariationTest(test_util.TensorFlowTestCase):
