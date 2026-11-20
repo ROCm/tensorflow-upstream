@@ -260,6 +260,13 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   // Platform-dependent hook to determine if convolution `conv` is lowerable.
   virtual bool ConvIsLowerable(HloInstruction* conv) const { return true; }
 
+  // Backend hook to decide whether `broadcast` may be sunk after `user` in
+  // TryToSinkBroadcastAfterElementwiseOps.
+  virtual bool ShouldSinkBroadcastAfterUser(const HloInstruction* broadcast,
+                                            const HloInstruction* user) const {
+    return true;
+  }
+
   // A method that allows various backends to specialize the propagation of
   // various attributes to the new instruction.
   virtual void SetupDerivedInstruction(HloInstruction* old_inst,
@@ -284,6 +291,11 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   absl::Status RewriteBatchPlusContractingAsReduce(
       HloDotInstruction* dot, HloInstruction* lhs, HloInstruction* rhs,
       const DotDimensionNumbers& dnums);
+
+  // Swap the operands of dots, if one operand is "parameter-like" (i.e. a
+  // parameter, or a pointwise transformation of a parameter), so the
+  // "parameter-like" operand (e.g. a weight tensor) is placed on the RHS.
+  virtual absl::StatusOr<bool> MoveDotParamToRhs(HloDotInstruction* dot);
 
  private:
   // Returns an operand of a chain of reshapes and copies that is bit-wise
@@ -356,11 +368,6 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   //   LHS [batch dims..., non-contracting dim, contracting dim]
   //   RHS [batch dims..., contracting dim, non-contracting dim].
   absl::StatusOr<bool> RemoveTransposesFromDotOperands(HloDotInstruction* dot);
-
-  // Swap the operands of dots, if one operand is "parameter-like" (i.e. a
-  // parameter, or a pointwise transformation of a parameter), so the
-  // "parameter-like" operand (e.g. a weight tensor) is placed on the RHS.
-  absl::StatusOr<bool> MoveDotParamToRhs(HloDotInstruction* dot);
 
   // Helper method to perform and add reduction on a list of dimensions.
   HloInstruction* AddReduce(HloInstruction* hlo, absl::Span<const int64_t> dims,

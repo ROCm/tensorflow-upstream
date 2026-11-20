@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
+#include "xla/backends/gpu/runtime/thunk_test_utils.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 #include "xla/error_spec.h"
 #include "xla/executable_run_options.h"
@@ -234,14 +235,14 @@ void GpuBlasLtMatmulThunkTest::CreateExecuteThunksFromHLO(
   ServiceExecutableRunOptions run_options;
 
   auto thread_func = [&](se::Stream* stream) -> absl::Status {
-    auto thunk_params = Thunk::ExecuteParams::Create(
-        run_options, *allocs, stream, stream, nullptr, nullptr, nullptr);
-
-    Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
+    TestThunkParams thunk_params(executor, allocs.get(), stream);
+    thunk_params.WithRunOptions(&run_options)
+        .WithCommandBufferTraceStream(stream);
+    Thunk::ExecuteParams execute_params = thunk_params.ExecuteParams();
+    Thunk::InitializeParams init_params = thunk_params.InitializeParams();
     for (auto& thunk : gemm_thunks) {
-      ABSL_RETURN_IF_ERROR(
-          thunk->Initialize({executor, source, allocs.get(), stream, stream}));
-      ABSL_RETURN_IF_ERROR(thunk->ExecuteOnStream(thunk_params));
+      ABSL_RETURN_IF_ERROR(thunk->Initialize(init_params));
+      ABSL_RETURN_IF_ERROR(thunk->ExecuteOnStream(execute_params));
     }
     ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
     return absl::OkStatus();
@@ -970,13 +971,15 @@ class CublasLtMatmulThunkCmdBufTest : public ::testing::Test {
         {a_buf_, b_buf_, c_buf_, d_buf_, workspace_buf_}, 0, allocator_.get()));
 
     Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-    ASSERT_OK(thunk_->Initialize(
-        {executor_, source, allocations_.get(), stream_.get()}));
+    thunk_params_.WithExecutor(executor_)
+        .WithBufferAllocations(allocations_.get())
+        .WithStream(stream_.get())
+        .WithRunOptions(&run_options_)
+        .WithExecutableSource(source)
+        .WithCommandBufferTraceStream(trace_stream_.get());
+    ASSERT_OK(thunk_->Initialize(thunk_params_.InitializeParams()));
 
-    params_.emplace(Thunk::ExecuteParams::Create(
-        run_options_, *allocations_, stream_.get(), trace_stream_.get(),
-        /*collective_params=*/nullptr, /*collective_cliques=*/nullptr,
-        /*collective_memory=*/nullptr));
+    params_.emplace(thunk_params_.ExecuteParams());
   }
 
   se::StreamExecutor* executor_ = nullptr;
@@ -998,8 +1001,9 @@ class CublasLtMatmulThunkCmdBufTest : public ::testing::Test {
   std::unique_ptr<se::StreamExecutorAddressAllocator> allocator_;
   std::unique_ptr<BufferAllocations> allocations_;
   ServiceExecutableRunOptions run_options_;
-  // params_ must be declared last: it holds references to allocations_,
-  // stream_, and trace_stream_, all of which must outlive it.
+  TestThunkParams thunk_params_;
+  // params_ must be declared last: it holds references to thunk_params_,
+  // allocations_, stream_, and trace_stream_, all of which must outlive it.
   std::optional<Thunk::ExecuteParams> params_;
 };
 
@@ -1085,6 +1089,38 @@ TEST_F(CublasLtMatmulThunkCmdBufTest, BufferUses) {
             BufferUse::Scratch(
                 BufferAllocation::Slice(&alloc_workspace_, 0, kWorkspaceLength),
                 ShapeUtil::MakeShape(U8, {1024, 1024})));
+}
+
+// Command buffers decide whether a recorded command is stale based on the
+// allocations reported by buffer_uses(), so it must list every buffer that
+// ExecuteOnStream reads, including the group sizes of a grouped matmul.
+TEST(CublasLtGroupedMatmulThunkTest, BufferUsesIncludeGroupSizes) {
+  BufferAllocation alloc_a(/*index=*/0, /*size=*/32, /*color=*/0);
+  BufferAllocation alloc_b(/*index=*/1, /*size=*/48, /*color=*/0);
+  BufferAllocation alloc_d(/*index=*/2, /*size=*/48, /*color=*/0);
+  BufferAllocation alloc_group_sizes(/*index=*/3, /*size=*/8, /*color=*/0);
+
+  ShapedSlice a{BufferAllocation::Slice(&alloc_a, 0, 32),
+                ShapeUtil::MakeShape(F32, {4, 2})};
+  ShapedSlice b{BufferAllocation::Slice(&alloc_b, 0, 48),
+                ShapeUtil::MakeShape(F32, {2, 2, 3})};
+  ShapedSlice d{BufferAllocation::Slice(&alloc_d, 0, 48),
+                ShapeUtil::MakeShape(F32, {4, 3})};
+  ShapedSlice group_sizes{BufferAllocation::Slice(&alloc_group_sizes, 0, 8),
+                          ShapeUtil::MakeShape(S32, {2})};
+
+  CublasLtMatmulThunk thunk(
+      Thunk::ThunkInfo(), /*canonical_hlo=*/"", se::gpu::GroupedGemmConfig{},
+      se::gpu::BlasLt::Epilogue::kDefault, /*algorithm_idx=*/0,
+      /*autotune_workspace_size=*/0, a, b, /*c=*/d, d, group_sizes,
+      /*bias=*/std::nullopt, /*aux=*/std::nullopt, /*a_scale=*/std::nullopt,
+      /*b_scale=*/std::nullopt, /*c_scale=*/std::nullopt,
+      /*d_scale=*/std::nullopt, /*d_amax=*/std::nullopt,
+      /*workspace=*/std::nullopt);
+
+  ASSERT_TRUE(thunk.is_grouped());
+  EXPECT_THAT(thunk.buffer_uses(), ::testing::Contains(BufferUse::Read(
+                                       group_sizes.slice, group_sizes.shape)));
 }
 
 TEST_F(CublasLtMatmulThunkCmdBufTest,

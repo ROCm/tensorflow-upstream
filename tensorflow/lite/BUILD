@@ -440,6 +440,7 @@ cc_library(
 #         "@tsl//tsl/profiler/lib:scoped_memory_debug_annotation",
 #         "@tsl//tsl/profiler/lib:traceme",
 #         "@tsl//tsl/profiler/lib:traceme_encode",
+#         "//third_party/tcmalloc:malloc_hook",
 #         "@com_google_absl//absl/base",
 #         "@com_google_absl//absl/base:core_headers",
 #         "@com_google_absl//absl/debugging:stacktrace",
@@ -1260,6 +1261,19 @@ cc_test(
     name = "checked_int_test",
     size = "small",
     srcs = ["checked_int_test.cc"],
+    deps = [
+        ":checked_int",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# Runs the same tests with the implementation used by compilers that don't
+# provide builtins.
+cc_test(
+    name = "checked_int_without_builtins_test",
+    size = "small",
+    srcs = ["checked_int_test.cc"],
+    local_defines = ["TFLITE_HAS_OVERFLOW_BUILTINS=0"],
     deps = [
         ":checked_int",
         "@com_google_googletest//:gtest_main",

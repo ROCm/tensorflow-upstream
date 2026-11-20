@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -26,6 +27,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
@@ -81,9 +83,7 @@ constexpr CommunicationStreamId kPipelinedP2PStreamId1(2);
 // Maps pipelined P2P ops to CommunicationStreamId(1) and (2), running them
 // on separate streams to avoid cyclic deadlocks.
 ExecutionStreamId GetP2PStreamId(const HloInstruction* instruction) {
-  const auto& fe_map = instruction->frontend_attributes().map();
-  auto it = fe_map.find(kSendRecvPipelineAttr);
-  if (it != fe_map.end() && it->second == "1") {
+  if (instruction->get_frontend_attribute(kSendRecvPipelineAttr) == "1") {
     return ExecutionStreamId(kPipelinedP2PStreamId1);
   }
   return ExecutionStreamId(kPipelinedP2PStreamId0);
@@ -226,8 +226,7 @@ std::optional<ExecutionScopeKind> IsExecutionScopeStart(
   if (auto* start = DynCast<HloAsyncStartInstruction>(hlo)) {
     // Collective operations run on communication streams.
     if (IsWrappedCollective(start) || IsCustomCollectiveOp(start) ||
-        start->frontend_attributes().map().contains(
-            kCollectiveGroupMarkerAttr)) {
+        start->has_frontend_attribute(kCollectiveGroupMarkerAttr)) {
       return ExecutionScopeKind::kCommunication;
     }
     // Host↔device memcpy (DUS/DS wrapping host memory) runs on dedicated
@@ -270,12 +269,23 @@ std::optional<ExecutionScopeKind> IsExecutionScopeStart(
 // Check if instruction has explicit stream assignment via the attributes.
 std::optional<ExecutionStreamId> FindAssignedStreamId(
     const HloInstruction* instr, ExecutionScopeKind kind) {
-  auto& attrs = instr->frontend_attributes().map();
-  if (auto it = attrs.find(kXlaStreamAnnotationAttr);
-      it != attrs.end() &&
-      !absl::EqualsIgnoreCase(it->second, kXlaCollectiveStreamAnnotation)) {
+  if (std::optional<std::string> annotation =
+          instr->get_frontend_attribute(kXlaStreamAnnotationAttr);
+      annotation.has_value() &&
+      !absl::EqualsIgnoreCase(*annotation, kXlaCollectiveStreamAnnotation)) {
+    if (absl::StartsWith(*annotation, "locality_domain")) {
+      CHECK(kind == ExecutionScopeKind::kCompute)
+          << "Locality-domain stream annotation cannot be assigned to a "
+          << kind << " execution scope: " << instr->name();
+      // ExplicitStreamAnnotationAsyncWrapper rejects malformed annotations
+      // with an error status before stream assignment runs.
+      absl::StatusOr<LocalityDomainStreamId> domain_id =
+          ParseLocalityDomainStreamAnnotation(*annotation);
+      CHECK_OK(domain_id.status());
+      return ExecutionStreamId(*domain_id);
+    }
     int32_t assigned_stream_id;
-    CHECK(absl::SimpleAtoi(it->second, &assigned_stream_id));  // Crash OK
+    CHECK(absl::SimpleAtoi(*annotation, &assigned_stream_id));  // Crash OK
     switch (kind) {
       case ExecutionScopeKind::kCompute:
         return ExecutionStreamId(ComputationStreamId(assigned_stream_id));

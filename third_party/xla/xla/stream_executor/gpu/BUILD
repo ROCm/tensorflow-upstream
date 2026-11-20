@@ -85,6 +85,7 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:fingerprint",
     ],
@@ -362,7 +363,7 @@ xla_test(
     deps = [
         ":asm_compiler",
         "//xla:debug_options_flags",
-        "//xla/service/gpu/llvm_gpu_backend:amdgpu_backend",
+        "//xla/backends/gpu/target_lowering:amdgpu_backend",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
@@ -801,6 +802,7 @@ xla_test(
     srcs = ["gpu_executor_test.cc"],
     backends = ["gpu"],
     deps = [
+        ":gpu_executor_header",
         "//xla/service:platform_util",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",

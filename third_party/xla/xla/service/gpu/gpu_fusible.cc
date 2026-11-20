@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/instruction_fusion.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
@@ -48,7 +49,6 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/reduction_utils.h"
-#include "xla/service/instruction_fusion.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/side_effect_util.h"
@@ -1014,12 +1014,18 @@ std::vector<const HloInstruction*> GetFusionRoots(
 bool IsGenericTritonFusion(const HloInstruction& instr) {
   // Note that we don't accept kTritonNestedGemmFusionKind here as they should
   // not be fused with anything else.
-  return instr.opcode() == HloOpcode::kFusion &&
-         instr.fusion_kind() == HloInstruction::FusionKind::kCustom &&
-         instr.backend_config<GpuBackendConfig>().ok() &&
-         instr.backend_config<GpuBackendConfig>()
-                 ->fusion_backend_config()
-                 .kind() == kTritonFusionKind;
+  if (instr.opcode() != HloOpcode::kFusion ||
+      instr.fusion_kind() != HloInstruction::FusionKind::kCustom ||
+      !instr.backend_config<GpuBackendConfig>().ok() ||
+      instr.backend_config<GpuBackendConfig>()
+              ->fusion_backend_config()
+              .kind() != kTritonFusionKind) {
+    return false;
+  }
+  // Ragged-dot XTile fusions are built by GemmRewriter with a fixed shape: the
+  // emitter resolves the ragged-dot operands to buffer arguments of the
+  // fusion, so they must not be fused with anything else either.
+  return !IsRaggedDotTritonFusion(instr);
 }
 
 bool MayCausePerformanceDropIfUnrolled(const HloFusionAdaptor& fusion) {
@@ -1061,7 +1067,7 @@ bool MayCausePerformanceDropIfUnrolled(const HloFusionAdaptor& fusion) {
 
 bool IsStreamAnnotatedComputation(const HloInstruction* instr) {
   return instr->opcode() == HloOpcode::kCall &&
-         instr->frontend_attributes().map().contains(kXlaStreamAnnotationAttr);
+         instr->has_frontend_attribute(kXlaStreamAnnotationAttr);
 }
 
 std::vector<HloComputation*> GetFusibleComputations(
@@ -1095,25 +1101,48 @@ std::vector<HloComputation*> GetFusibleComputations(
   return result;
 }
 
-int ComputeLoopFusionConfig(const HloFusionAnalysis& analysis) {
-  return ComputeLoopFusionConfig(analysis, analysis.first_result_shape());
+int ComputeLoopFusionConfig(const HloFusionAnalysis& analysis,
+                            bool unroll_small_inputs) {
+  return ComputeLoopFusionConfig(analysis, analysis.first_result_shape(),
+                                 unroll_small_inputs);
 }
 
 int ComputeLoopFusionConfig(const HloFusionAnalysis& analysis,
-                            const Shape& element_shape) {
+                            const Shape& element_shape,
+                            bool unroll_small_inputs) {
   int unroll_factor = 1;
   // Unrolling is good to read large inputs with small elements
   // due to vector loads, but increases the register pressure when one
   // thread has to produce multiple output elements.
   // Therefore for fusions with small outputs prefer to use one thread
-  // per output element = no unroll.
+  // per output element = no unroll, unless `unroll_small_inputs` opts in
+  // (e.g. for block specialized fusions where packing more work per thread
+  // reduces block count).
   // Call 'small' fusions that use less threads than the GPU has.
   int64_t num_elements = ShapeUtil::ElementsIn(element_shape);
   int64_t n_threads_max = analysis.device_info().threads_per_core_limit() *
                           analysis.device_info().core_count();
-  if (num_elements >= n_threads_max &&
-      !MayCausePerformanceDropIfUnrolled(analysis.fusion())) {
-    unroll_factor = std::gcd(num_elements, MaxUnrollFactor(&analysis));
+  if (!MayCausePerformanceDropIfUnrolled(analysis.fusion())) {
+    if ((unroll_small_inputs && num_elements > 0) ||
+        num_elements >= n_threads_max) {
+      unroll_factor = std::gcd(num_elements, MaxUnrollFactor(&analysis));
+    } else {
+      int64_t max_reduce_input_elements =
+          GetMaxReduceInputElements(analysis.fusion()).value_or(0);
+      // Require at least 4 warps per core after unrolling so small outputs
+      // still maintain enough wave occupancy to hide memory latency.
+      constexpr int64_t kMinWarpsPerCore = 4;
+      int64_t min_threads = kMinWarpsPerCore *
+                            analysis.device_info().threads_per_warp() *
+                            analysis.device_info().core_count();
+      if (max_reduce_input_elements >= n_threads_max && min_threads > 0 &&
+          num_elements >= min_threads) {
+        int64_t max_unroll = std::min<int64_t>(
+            MaxUnrollFactor(&analysis),
+            absl::bit_floor(static_cast<uint64_t>(num_elements / min_threads)));
+        unroll_factor = std::gcd(num_elements, max_unroll);
+      }
+    }
   }
   // CHECK that unroll_factor is a power-of-2, as needed by the logic below.
   CHECK(absl::has_single_bit(static_cast<uint64_t>(unroll_factor)));
@@ -1243,6 +1272,23 @@ std::optional<int64_t> GetMinReduceInputElements(
     return MinReduceInputElementsNoCache(instr);
   }
   return cache->GetMinReduceInputElements(instr);
+}
+
+std::optional<int64_t> GetMaxReduceInputElements(
+    const HloFusionAdaptor& fusion) {
+  std::optional<int64_t> max_reduce_input_elements;
+  fusion.ForEach([&](HloInstructionAdaptor node) {
+    if (node.opcode() == HloOpcode::kReduce) {
+      const Shape& shape = node.GetOperand(0).shape();
+      if (!shape.IsArray() || shape.is_unbounded_dynamic()) {
+        return;
+      }
+      int64_t elements = ShapeUtil::ElementsIn(shape);
+      max_reduce_input_elements =
+          std::max(max_reduce_input_elements.value_or(elements), elements);
+    }
+  });
+  return max_reduce_input_elements;
 }
 
 }  // namespace gpu

@@ -241,7 +241,9 @@ cc_library(
     deps = [
         ":file_util",
         ":flexbuffers_util",
+        ":mmap_handle",
         ":moe_delegate_kernel",
+        ":qsa_delegate_kernel",
         ":quantization_util",
         ":tflite_with_xnnpack_dynamic_fully_connected",  # buildcleaner: keep
         ":tflite_with_xnnpack_logging",  # buildcleaner: keep
@@ -293,7 +295,9 @@ cc_library(
     deps = [
         ":file_util",
         ":flexbuffers_util",
+        ":mmap_handle",
         ":moe_delegate_kernel",
+        ":qsa_delegate_kernel",
         ":quantization_util",
         ":weight_cache",
         "//tensorflow/compiler/mlir/lite/kernels/internal:compatibility_macros",
@@ -1374,6 +1378,43 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "qsa_delegate_kernel",
+    srcs = ["qsa_delegate_kernel.cc"],
+    hdrs = ["qsa_delegate_kernel.h"],
+    compatible_with = get_compatible_with_portable(),
+    copts = tflite_copts() + ["-DFLATBUFFERS_LOCALE_INDEPENDENT=0"],
+    deps = [
+        "//tensorflow/lite:builtin_ops",
+        "//tensorflow/lite/core/c:common",
+        "//tensorflow/lite/kernels:kernel_util",
+        "//tensorflow/lite/kernels/internal:tensor_ctypes",
+        "@FP16",
+        "@XNNPACK",
+        "@flatbuffers//:runtime_cc",
+        "@pthreadpool",
+    ],
+)
+
+cc_test(
+    name = "qsa_delegate_kernel_test",
+    srcs = ["qsa_delegate_kernel_test.cc"],
+    linkopts = select({
+        "//tensorflow:emscripten": EMSCRIPTEN_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":test_main",
+        ":xnnpack_delegate",
+        "//tensorflow/lite:builtin_ops",
+        "//tensorflow/lite:framework",
+        "//tensorflow/lite:util",
+        "//tensorflow/lite/core/c:common",
+        "@com_google_googletest//:gtest",
+        "@flatbuffers//:runtime_cc",
+    ],
+)
+
 cc_test(
     name = "moe_delegate_kernel_test",
     srcs = ["moe_delegate_kernel_test.cc"],
@@ -1388,6 +1429,7 @@ cc_test(
         "//tensorflow/lite:framework",
         "//tensorflow/lite/core:framework",
         "//tensorflow/lite/core/c:common",
+        "@XNNPACK",
         "@com_google_googletest//:gtest",
         "@flatbuffers//:runtime_cc",
     ],

@@ -523,6 +523,68 @@ TEST_F(TilingSpaceTest, VariadicAllGatherGetsPerOutputDimensions) {
   )"));
 }
 
+TEST_F(TilingSpaceTest, AllGatherTwoShotBoundsRootTileToShardSize) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    f {
+      p0 = f32[2,16] parameter(0)
+      ROOT ag = f32[8,16] all-gather(p0),
+        replica_groups={{0,1,2,3}}, dimensions={0},
+        backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_TWO_SHOT"}}
+    }
+
+    ENTRY e {
+      p0 = f32[2,16] parameter(0)
+      ROOT fusion = f32[8,16] fusion(p0), kind=kCustom, calls=f
+    }
+  )");
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
+  ASSERT_OK_AND_ASSIGN(auto tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+  constexpr absl::string_view kExpected = R"(
+    Dimensions:
+        0 type: parallel size: 8 dim ID:0
+          hlo: %ag = f32[8,16]{1,0} all-gather(%p0), replica_groups={{0,1,2,3}}, dimensions={0}, backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_TWO_SHOT"}}
+        1 type: parallel size: 16 dim ID:1
+          hlo: %ag = f32[8,16]{1,0} all-gather(%p0), replica_groups={{0,1,2,3}}, dimensions={0}, backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_TWO_SHOT"}}
+        2 type: replica size: 4 dim ID:2
+          hlo: %ag = f32[8,16]{1,0} all-gather(%p0), replica_groups={{0,1,2,3}}, dimensions={0}, backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_TWO_SHOT"}}
+    Root tiles:
+      0 root tile:
+           offsets [tid_0 * ts_0, tid_1 * ts_1]
+           sizes [ts_0, ts_1]
+           strides [1, 1]
+           upper bounds [2, 16]
+  )";
+  EXPECT_THAT(*tiling_space, MatchString(kExpected));
+
+  mlir::MLIRContext cloned_ctx;
+  std::unique_ptr<TilingSpace> cloned = tiling_space->Clone(&cloned_ctx);
+  EXPECT_THAT(*cloned, MatchString(kExpected));
+}
+
+TEST_F(TilingSpaceTest, AllGatherTwoShotWithNonElementwiseEpilogueIsRejected) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    f {
+      p0 = f32[2,16] parameter(0)
+      ag = f32[8,16] all-gather(p0),
+        replica_groups={{0,1,2,3}}, dimensions={0},
+        backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_TWO_SHOT"}}
+      ROOT transpose = f32[16,8] transpose(ag), dimensions={1,0}
+    }
+
+    ENTRY e {
+      p0 = f32[2,16] parameter(0)
+      ROOT fusion = f32[16,8] fusion(p0), kind=kCustom, calls=f
+    }
+  )");
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
+  EXPECT_THAT(TilingSpace::Create(*fusion_adaptor, &mlir_context_),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("could not be located in the tiling space")));
+}
+
 TEST_F(TilingSpaceTest,
        InteriorVariadicAllGatherPropagatesDimensionsFromRoots) {
   HloInstruction* root = ParseAndGetRoot(R"(
@@ -1128,6 +1190,12 @@ TEST_F(TilingSpaceTest, GetPowerOf2TileSizesInRange) {
               IsOkAndHolds(ElementsAre(16, 32, 64, 128, 192)));
   EXPECT_THAT(GetPowerOf2TileSizesInRange(192, /*min_tile_size=*/192),
               IsOkAndHolds(ElementsAre(192)));
+  EXPECT_THAT(GetPowerOf2TileSizesInRange(1024, /*min_tile_size=*/2,
+                                          /*max_tile_size=*/256),
+              IsOkAndHolds(ElementsAre(2, 4, 8, 16, 32, 64, 128, 256, 1024)));
+  EXPECT_THAT(GetPowerOf2TileSizesInRange(256, /*min_tile_size=*/2,
+                                          /*max_tile_size=*/256),
+              IsOkAndHolds(ElementsAre(2, 4, 8, 16, 32, 64, 128, 256)));
   EXPECT_THAT(GetPowerOf2TileSizesInRange(-5),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        "Dimension size must be non-negative."));
@@ -1278,6 +1346,72 @@ TEST_F(TilingSpaceTest, ScanWithNonElementwiseEpilogueIsRejected) {
   EXPECT_THAT(TilingSpace::Create(*fusion_adaptor, &mlir_context_),
               StatusIs(absl::StatusCode::kUnimplemented,
                        HasSubstr("could not be located in the tiling space")));
+}
+
+TEST_F(TilingSpaceTest, GatherSingleIndexedDimCreatesRTVar) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      operand = bf16[200,64] parameter(0)
+      indices = s32[32,1] parameter(1)
+      ROOT gather = bf16[32,8,16] gather(operand, indices),
+        offset_dims={1,2}, collapsed_slice_dims={}, start_index_map={0},
+        index_vector_dim=1, slice_sizes={8,16}
+    }
+  )");
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
+  ASSERT_OK_AND_ASSIGN(auto tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+  EXPECT_THAT(*tiling_space, MatchString(R"(
+    Dimensions:
+        0 type: parallel size: 32 dim ID:0
+          hlo: %gather = bf16[32,8,16]{2,1,0} gather(%operand, %indices), offset_dims={1,2}, collapsed_slice_dims={}, start_index_map={0}, index_vector_dim=1, slice_sizes={8,16}
+        1 type: parallel size: 8 dim ID:1
+          hlo: %gather = bf16[32,8,16]{2,1,0} gather(%operand, %indices), offset_dims={1,2}, collapsed_slice_dims={}, start_index_map={0}, index_vector_dim=1, slice_sizes={8,16}
+        2 type: parallel size: 16 dim ID:2
+          hlo: %gather = bf16[32,8,16]{2,1,0} gather(%operand, %indices), offset_dims={1,2}, collapsed_slice_dims={}, start_index_map={0}, index_vector_dim=1, slice_sizes={8,16}
+    Runtime variables:
+        0 bounds: [0, 192] hlo: %indices = s32[32,1]{1,0} parameter(1)
+    Root tiles:
+        0 root tile:  offsets [tid_0 * ts_0, tid_1 * ts_1, tid_2 * ts_2] sizes [ts_0, ts_1, ts_2] strides [1, 1, 1] upper bounds [32, 8, 16]
+  )"));
+}
+
+TEST_F(TilingSpaceTest, GatherMultiIndexedDimIsRejected) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      operand = bf16[128,64] parameter(0)
+      indices = s32[32,2] parameter(1)
+      ROOT gather = bf16[32,1,16] gather(operand, indices),
+        offset_dims={1,2}, collapsed_slice_dims={}, start_index_map={0,1},
+        index_vector_dim=1, slice_sizes={1,16}
+    }
+  )");
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
+  EXPECT_THAT(
+      TilingSpace::Create(*fusion_adaptor, &mlir_context_),
+      StatusIs(absl::StatusCode::kUnimplemented,
+               HasSubstr("Only gather with a single indexed dimension")));
+}
+
+TEST_F(TilingSpaceTest, GatherBatchingDimsIsRejected) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      operand = bf16[8,128,64] parameter(0)
+      indices = s32[8,32,1] parameter(1)
+      ROOT gather = bf16[8,32,16] gather(operand, indices),
+        offset_dims={2}, collapsed_slice_dims={1},
+        operand_batching_dims={0}, start_indices_batching_dims={0},
+        start_index_map={1}, index_vector_dim=2, slice_sizes={1,1,16}
+    }
+  )");
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
+  EXPECT_THAT(
+      TilingSpace::Create(*fusion_adaptor, &mlir_context_),
+      StatusIs(absl::StatusCode::kUnimplemented,
+               HasSubstr("Only gather with a single indexed dimension")));
 }
 }  // namespace
 }  // namespace xla::gpu

@@ -79,6 +79,7 @@ extern const char kXlaBufferPlacementParam[];
 // XLA frontend attribute for stream annotation.
 extern const char kXlaStreamAnnotationAttr[];
 extern const char kXlaCollectiveStreamAnnotation[];
+extern const char kXlaLocalityDomainStreamAnnotationPrefix[];
 
 // XLA frontend attribute for selecting a collective communication domain.
 extern const char kCollectiveCommunicationDomainAttr[];
@@ -100,6 +101,13 @@ extern const char kXlaMultiRecvCountAttr[];
 extern const char kXlaSchedulingGroupIdAttr[];
 // XLA frontend attribute value for a group that will not actually be scheduled.
 extern const char kXlaNoOpSchedulingGroup[];
+// XLA frontend attribute that puts the scheduling group of an instruction in
+// deep pipelining mode (value "true"). Data-dependent members of such a group
+// (e.g. a collective and the computation consuming its result) may be merged
+// into a single deep-pipelined operation by the backend, so the group may
+// contain data dependencies. The mode applies to the whole group as soon as
+// one member carries it.
+extern const char kXlaSchedulingGroupDeepPipelineAttr[];
 
 // XLA frontend attributes for specifying fusion directives.
 // MUST_FUSE: all ops labeled so should form as single fusion,

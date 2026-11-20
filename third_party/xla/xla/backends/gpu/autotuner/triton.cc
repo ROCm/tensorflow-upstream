@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/triton/cost_model_config_optimization.h"
 #include "xla/backends/gpu/autotuner/triton/dot_search_space.h"
 #include "xla/backends/gpu/autotuner/triton/triton_configs.h"
+#include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
@@ -47,6 +48,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/instruction_fusion.h"
 #include "xla/hlo/transforms/simplifiers/float_normalization.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_traversal.h"
@@ -57,7 +59,6 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/service/instruction_fusion.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
@@ -260,7 +261,7 @@ absl::StatusOr<std::vector<TritonGemmConfig>>
 TritonBackend::GetOverriddenConfigs(const HloInstruction* instr) {
   std::vector<TritonGemmConfig> configs;
   const std::string& override_file =
-      debug_options().xla_gpu_gemm_autotuner_override_file();
+      debug_options().xla_gpu_override_triton_configs_file();
   if (!override_file.empty()) {
     std::string file_content;
     ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(), override_file,
@@ -278,10 +279,10 @@ TritonBackend::GetOverriddenConfigs(const HloInstruction* instr) {
       configs.push_back(config);
     }
   }
-  if (!debug_options().xla_gpu_override_gemm_autotuner().empty()) {
+  if (!debug_options().xla_gpu_override_triton_config().empty()) {
     AutotuneResult::TritonGemmKey gemm_config;
     CHECK(tsl::protobuf::TextFormat::ParseFromString(
-        debug_options().xla_gpu_override_gemm_autotuner(), &gemm_config));
+        debug_options().xla_gpu_override_triton_config(), &gemm_config));
     ABSL_ASSIGN_OR_RETURN(TritonGemmConfig config,
                      TritonGemmConfig::FromProto(gemm_config));
     configs.push_back(config);
@@ -374,11 +375,23 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
     return false;
   }
 
-  // cuDNN scaled dot fusions take pre-swizzled scales and must not be retuned.
-  if (backend_config.kind() != kTritonGemmFusionKind &&
-      hlo_query::ContainsInstrWithOpcode(instr.fused_instructions_computation(),
-                                         {HloOpcode::kScaledDot})) {
-    return false;
+  if (const HloInstruction* scaled_dot =
+          hlo_query::GetFirstInstructionWithOpcode(
+              *instr.fused_instructions_computation(), HloOpcode::kScaledDot)) {
+    // cuDNN scaled dot fusions take pre-swizzled scales and must not be
+    // retuned.
+    if (backend_config.kind() != kTritonGemmFusionKind) {
+      return false;
+    }
+    // GemmFusion also wraps scaled dots that only CUDNN_FISSION or
+    // CUBLASLT_FISSION support.
+    if (!debug_options().xla_gpu_experimental_scaled_dot_with_triton() ||
+        !IsTritonSupportedInstruction(
+             *scaled_dot,
+             target_config().device_description.gpu_compute_capability())
+             .IsAllowed()) {
+      return false;
+    }
   }
 
   // TODO: b/487920266 - sometimes we create fusions that can't be tiled.

@@ -22,6 +22,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -326,6 +327,11 @@ TEST(JpegMemTest, CropAndDecodeJpegWithInvalidCropWindow) {
   CheckInvalidCropWindowFailed(temp, fsize, /*x=*/w - 10, 11, 11, 11);
   // Invalid crop window height: y + crop_height= h + 1 > h
   CheckInvalidCropWindowFailed(temp, fsize, 11, /*y=*/h - 10, 11, 11);
+
+  // Crop window offset + size must not overflow int.
+  constexpr int kIntMax = std::numeric_limits<int>::max();
+  CheckInvalidCropWindowFailed(temp, fsize, /*x=*/kIntMax, 11, /*w=*/1, 11);
+  CheckInvalidCropWindowFailed(temp, fsize, 11, /*y=*/kIntMax, 11, /*h=*/1);
 }
 
 TEST(JpegMemTest, Jpeg2) {
@@ -700,7 +706,9 @@ TEST(JpegMemTest, PartialReadBlackFillAvoidsStrideOverflow) {
          static_cast<uint8_t>(two_mcu_jpeg[cut2 - 1]) == 0xff) {
     ++cut2;
   }
-  std::string suspended_row8(two_mcu_jpeg.data(), cut2);
+  std::string suspended_row8(
+      absl::string_view(two_mcu_jpeg.data(), two_mcu_jpeg.size())
+          .substr(0, cut2));
   suspended_row8.push_back(static_cast<char>(0xff));
 
   UncompressFlags flags8;

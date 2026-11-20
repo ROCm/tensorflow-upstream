@@ -52,6 +52,8 @@ limitations under the License.
 #include "xla/runtime/chip_id.h"
 #include "xla/runtime/device_id.h"
 #include "xla/runtime/process_id.h"
+#include "xla/service/device_assignment.h"
+#include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/fingerprint.h"
@@ -125,8 +127,6 @@ class PjRtCompiler;
 using PjRtCompilerFactory =
     std::function<absl::StatusOr<std::unique_ptr<PjRtCompiler>>()>;
 
-using PjRtCompilerVariantPicker = std::function<absl::StatusOr<std::string>()>;
-
 // A key type for the compiler registry.
 struct PjRtCompilerType {
   std::string platform_name;
@@ -166,15 +166,6 @@ class PjRtCompilerRegistry {
                                absl::string_view variant_name,
                                PjRtCompilerFactory factory);
 
-  // Registers a compiler variant picker for a specific platform.
-  void RegisterVariantPicker(absl::string_view platform_name,
-                             PjRtCompilerVariantPicker picker,
-                             bool is_weak = false);
-
-  // Retrieves the variant picker for a platform, if any.
-  std::optional<PjRtCompilerVariantPicker> GetVariantPicker(
-      absl::string_view platform_name);
-
   // Registers a compiler instance for a specific platform and variant.
   absl::Status RegisterCompiler(absl::string_view platform_name,
                                 absl::string_view variant_name,
@@ -211,13 +202,6 @@ class PjRtCompilerRegistry {
   absl::flat_hash_map<PjRtCompilerType, std::unique_ptr<PjRtCompiler>>
       compilers_ ABSL_GUARDED_BY(compiler_mutex_);
 
-  struct VariantPickerEntry {
-    PjRtCompilerVariantPicker picker;
-    bool is_weak = false;
-  };
-  absl::flat_hash_map<std::string, VariantPickerEntry> variant_pickers_
-      ABSL_GUARDED_BY(compiler_mutex_);
-
   absl::flat_hash_map<PjRtCompilerType, PjRtCompilerFactory> factories_
       ABSL_GUARDED_BY(factory_mutex_);
 };
@@ -238,11 +222,6 @@ absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(
 void PjRtRegisterCompilerFactory(absl::string_view platform_name,
                                  absl::string_view variant_name,
                                  PjRtCompilerFactory factory);
-
-// Registers a compiler variant picker for a specific platform.
-void PjRtRegisterCompilerVariantPicker(absl::string_view platform_name,
-                                       PjRtCompilerVariantPicker picker,
-                                       bool is_weak = false);
 
 // A compiler variant is a string used to distinguish between different
 // compiler implementations registered for the same platform, such as a remote
@@ -672,6 +651,14 @@ class PjRtCompiler {
 // REQUIRES: No default compiler has been registered for the platform.
 void PjRtRegisterDefaultCompiler(absl::string_view platform_name,
                                  std::unique_ptr<PjRtCompiler> compiler);
+
+// Returns an unowned pointer to the compiler for `topology`, respecting
+// `topology.compiler()` if present and falling back to the global compiler
+// registry otherwise. The returned PjRtCompiler pointer is owned by topology,
+// and therefore must not outlive it.
+absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(
+    const PjRtTopologyDescription& topology,
+    std::optional<PjRtCompilerVariant> variant = std::nullopt);
 
 // Compiles a 'computation' and generates a 'PjRtExecutable' using the compiler
 // registered for the platform using PjRtRegisterCompiler. The returned

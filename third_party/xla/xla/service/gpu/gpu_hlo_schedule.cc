@@ -39,6 +39,10 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/gpu/cost_model/analytical_latency_estimator.h"
+#include "xla/backends/gpu/cost_model/gpu_hlo_cost_analysis.h"
+#include "xla/backends/gpu/cost_model/hlo_op_profiles.h"
+#include "xla/backends/gpu/cost_model/sol_latency_estimator.h"
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
@@ -53,6 +57,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/collectives/async_collective_creator.h"
+#include "xla/hlo/transforms/collectives/p2p_schedule_preparation.h"
+#include "xla/hlo/transforms/hlo_scheduling/latency_hiding_scheduler.h"
+#include "xla/hlo/transforms/hlo_scheduling/profile_guided_latency_estimator.h"
+#include "xla/hlo/transforms/legalize_scheduling_annotations.h"
+#include "xla/hlo/transforms/scheduler_memory_fencing.h"
 #include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/layout.h"
@@ -64,17 +73,9 @@ limitations under the License.
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/model/analytical_latency_estimator.h"
-#include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
-#include "xla/service/gpu/model/sol_latency_estimator.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_profiling_utils.h"
-#include "xla/service/latency_hiding_scheduler.h"
-#include "xla/service/legalize_scheduling_annotations.h"
-#include "xla/service/p2p_schedule_preparation.h"
-#include "xla/service/profile_guided_latency_estimator.h"
-#include "xla/service/scheduler_memory_fencing.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -489,13 +490,16 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
   if (profile.has_value()) {
     std::unique_ptr<LatencyEstimator> base_estimator;
     if (SolLatencyEstimator::IsSupportedForModule(module, gpu_device_info)) {
-      auto cost_analysis =
-          std::make_unique<GpuHloCostAnalysis>(GpuHloCostAnalysis::Options{
+      // Default op profile, device warp size.
+      auto cost_analysis = std::make_unique<GpuHloCostAnalysis>(
+          GpuHloCostAnalysis::Options{
               ShapeSizeBytesFunction(pointer_size),
               /*per_second_rates=*/{},
               /*min_latencies_seconds=*/{},
               /*count_multiple_input_accesses=*/true,
-          });
+          },
+          HloOpProfiles::Singleton().GetDefaultProfile(),
+          gpu_device_info.threads_per_warp());
       if (absl::Status status =
               module.entry_computation()->Accept(cost_analysis.get());
           status.ok()) {
@@ -536,13 +540,16 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
 
   if (SolLatencyEstimator::IsSupportedForModule(module, gpu_device_info)) {
     VLOG(1) << "Using unified latency estimator";
-    auto cost_analysis =
-        std::make_unique<GpuHloCostAnalysis>(GpuHloCostAnalysis::Options{
+    // Default op profile, device warp size.
+    auto cost_analysis = std::make_unique<GpuHloCostAnalysis>(
+        GpuHloCostAnalysis::Options{
             ShapeSizeBytesFunction(pointer_size),
             /*per_second_rates=*/{},
             /*min_latencies_seconds=*/{},
             /*count_multiple_input_accesses=*/true,
-        });
+        },
+        HloOpProfiles::Singleton().GetDefaultProfile(),
+        gpu_device_info.threads_per_warp());
     if (absl::Status status =
             module.entry_computation()->Accept(cost_analysis.get());
         !status.ok()) {
@@ -594,7 +601,10 @@ LegalizeSchedulingAnnotations::Config SchedulingAnnotationsConfig() {
       return true;
     }
     if (hlo->opcode() == HloOpcode::kFusion) {
-      return IsGpuFusionKind(*hlo, kTritonGemmFusionKind);
+      // Ragged-dot XTile fusions carry the generic Triton fusion kind, but are
+      // matmuls like the Triton GEMM fusions.
+      return IsGpuFusionKind(*hlo, kTritonGemmFusionKind) ||
+             IsRaggedDotTritonFusion(*hlo);
     }
     return false;
   };

@@ -30,9 +30,10 @@ else:
 # file, instead config is injected by lit.py. The structure is common for lit
 # tests and intended to only persist temporarily (b/136126535).
 # pylint: disable=undefined-variable
-config.llvm_tools_dir = os.path.join(external_srcdir, 'llvm-project', 'llvm')
+llvm_repo_name = os.environ.get('LLVM_CANONICAL_REPO_NAME', 'llvm-project')
+config.llvm_tools_dir = os.path.join(external_srcdir, llvm_repo_name, 'llvm')
 config.mlir_obj_root = os.path.join(real_test_srcdir)
-config.mlir_tools_dir = os.path.join(external_srcdir, 'llvm-project', 'mlir')
+config.mlir_tools_dir = os.path.join(external_srcdir, llvm_repo_name, 'mlir')
 # TODO(jpienaar): Replace with suffices in build rule.
 config.suffixes = ['.td', '.mlir', '.pbtxt']
 

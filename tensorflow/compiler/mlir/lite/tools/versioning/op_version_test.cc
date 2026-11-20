@@ -218,6 +218,12 @@ TEST(OpVersionTest, VersioningLessEqualTest) {
 
 TEST(OpVersionTest, VersioningGreaterTest) {
   SimpleVersioningTest(BuiltinOperator_GREATER);
+
+  OpSignature fake_op_sig = {
+      .op = BuiltinOperator_GREATER,
+      .inputs = CreateOpSignatureTensorSpecs(kTfLiteFloat16),
+  };
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 3);
 }
 
 TEST(OpVersionTest, VersioningGreaterEqualTest) {
@@ -419,7 +425,29 @@ TEST(OpVersionTest, VersioningSliceTest) {
 }
 
 TEST(OpVersionTest, VersioningLogisticTest) {
-  SimpleVersioningTest(BuiltinOperator_SPACE_TO_DEPTH);
+  OpSignature fake_op_sig = {
+      .op = BuiltinOperator_LOGISTIC,
+      .inputs = CreateOpSignatureTensorSpecs(kTfLiteInt16),
+      .outputs = CreateOpSignatureTensorSpecs(kTfLiteInt16),
+  };
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 3);
+
+  fake_op_sig.inputs = CreateOpSignatureTensorSpecs(kTfLiteInt8);
+  fake_op_sig.outputs = CreateOpSignatureTensorSpecs(kTfLiteInt8);
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 2);
+
+  fake_op_sig.inputs = CreateOpSignatureTensorSpecs(kTfLiteUInt8);
+  fake_op_sig.outputs = CreateOpSignatureTensorSpecs(kTfLiteUInt8);
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 1);
+
+  fake_op_sig.inputs = CreateOpSignatureTensorSpecs(kTfLiteFloat32);
+  fake_op_sig.outputs = CreateOpSignatureTensorSpecs(kTfLiteFloat32);
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 1);
+
+  // The float16 kernel (like TANH's) shipped at version 1.
+  fake_op_sig.inputs = CreateOpSignatureTensorSpecs(kTfLiteFloat16);
+  fake_op_sig.outputs = CreateOpSignatureTensorSpecs(kTfLiteFloat16);
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 1);
 }
 
 TEST(OpVersionTest, VersioningL2NormTest) {
@@ -751,6 +779,69 @@ TEST(OpVersionTest, VersioningFullyConnectedTest) {
       .builtin_data = reinterpret_cast<void*>(&fully_connected_params),
   };
   EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 14);
+
+  // An N-D blockwise quantized weight is version 16 regardless of its type.
+  for (TfLiteType weight_type : {kTfLiteInt2, kTfLiteInt4, kTfLiteUInt4,
+                                 kTfLiteInt8, kTfLiteUInt8, kTfLiteInt16}) {
+    fully_connected_params = {};
+    fake_op_sig = {
+        .op = BuiltinOperator_FULLY_CONNECTED,
+        .inputs = CreateOpSignatureTensorSpecs(
+            std::vector<TfLiteType>{kTfLiteInt8, weight_type, kTfLiteInt32}),
+        .outputs = CreateOpSignatureTensorSpecs(kTfLiteInt8),
+        .builtin_data = reinterpret_cast<void*>(&fully_connected_params),
+    };
+    fake_op_sig.ext_options.fully_connected.is_weight_blockwise_quantized =
+        true;
+    EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 16);
+
+    // The dynamic range variant (float32 or float16 input and output) is
+    // version 17.
+    for (TfLiteType float_type : {kTfLiteFloat32, kTfLiteFloat16}) {
+      fully_connected_params = {};
+      fake_op_sig = {
+          .op = BuiltinOperator_FULLY_CONNECTED,
+          .inputs = CreateOpSignatureTensorSpecs(
+              std::vector<TfLiteType>{float_type, weight_type, float_type}),
+          .outputs = CreateOpSignatureTensorSpecs(float_type),
+          .builtin_data = reinterpret_cast<void*>(&fully_connected_params),
+      };
+      fake_op_sig.ext_options.fully_connected.is_weight_blockwise_quantized =
+          true;
+      EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 17);
+    }
+  }
+}
+
+TEST(OpVersionTest, VersioningEmbeddingLookupTest) {
+  OpSignature fake_op_sig = {
+      .op = BuiltinOperator_EMBEDDING_LOOKUP,
+      .inputs = CreateOpSignatureTensorSpecs(
+          std::vector<TfLiteType>{kTfLiteInt32, kTfLiteFloat32}),
+      .outputs = CreateOpSignatureTensorSpecs(kTfLiteFloat32),
+  };
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 1);
+
+  fake_op_sig.inputs = CreateOpSignatureTensorSpecs(
+      std::vector<TfLiteType>{kTfLiteInt32, kTfLiteInt4});
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 4);
+
+  fake_op_sig.inputs = CreateOpSignatureTensorSpecs(
+      std::vector<TfLiteType>{kTfLiteInt32, kTfLiteInt2});
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 5);
+
+  // An N-D blockwise quantized table is version 6 regardless of its type.
+  for (TfLiteType table_type : {kTfLiteInt2, kTfLiteInt4, kTfLiteUInt4,
+                                kTfLiteInt8, kTfLiteUInt8, kTfLiteInt16}) {
+    fake_op_sig = {
+        .op = BuiltinOperator_EMBEDDING_LOOKUP,
+        .inputs = CreateOpSignatureTensorSpecs(
+            std::vector<TfLiteType>{kTfLiteInt32, table_type}),
+        .outputs = CreateOpSignatureTensorSpecs(kTfLiteFloat32),
+    };
+    fake_op_sig.ext_options.embedding_lookup.is_blockwise_quantized = true;
+    EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 6);
+  }
 }
 
 TEST(OpVersionTest, VersioningDequantizeTest) {
@@ -828,6 +919,19 @@ TEST(OpVersionTest, VersioningQuantizeTest) {
 
   fake_op_sig.outputs = CreateOpSignatureTensorSpecs(kTfLiteUInt4);
   EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 5);
+
+  // Float16 inputs keep the version of their output type.
+  fake_op_sig.inputs = CreateOpSignatureTensorSpecs(kTfLiteFloat16);
+  fake_op_sig.outputs = CreateOpSignatureTensorSpecs(kTfLiteInt4);
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 4);
+  fake_op_sig.outputs = CreateOpSignatureTensorSpecs(kTfLiteUInt4);
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 5);
+  fake_op_sig.outputs = CreateOpSignatureTensorSpecs(kTfLiteInt8);
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 1);
+  fake_op_sig.outputs = CreateOpSignatureTensorSpecs(kTfLiteInt16);
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 2);
+  fake_op_sig.ext_options.quantize.is_per_channel_quantized = true;
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 3);
 }
 
 TEST(OpVersionTest, VersioningConv2DTest) {
@@ -1457,6 +1561,13 @@ TEST(OpVersionTest, VersioningBroadcastToTest) {
       .outputs = CreateOpSignatureTensorSpecs(kTfLiteInt16),
   };
   EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 3);
+
+  fake_op_sig = {
+      .op = BuiltinOperator_BROADCAST_TO,
+      .inputs = CreateOpSignatureTensorSpecs(kTfLiteFloat16),
+      .outputs = CreateOpSignatureTensorSpecs(kTfLiteFloat16),
+  };
+  EXPECT_EQ(GetBuiltinOperatorVersion(fake_op_sig), 5);
 }
 
 TEST(OpVersionTest, VersioningGeluTest) {

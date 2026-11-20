@@ -64,6 +64,15 @@ xla_cc_test(
     ],
 )
 
+# Decides whether the GPU client may create the experimental VMM allocator.
+# Only the GPU client and its tests in this package should depend on it.
+cc_library(
+    name = "vmm_allocator_gate",
+    srcs = ["vmm_allocator_gate.cc"],
+    hdrs = ["vmm_allocator_gate.h"],
+    deps = ["@tsl//tsl/platform"],
+)
+
 cc_library(
     name = "gpu_helpers",
     srcs = ["gpu_helpers.cc"],
@@ -159,6 +168,7 @@ cc_library(
         ":se_gpu_pjrt_cross_host_transfer_proto_cc",
         ":se_gpu_pjrt_runtime_abi_version",
         ":se_gpu_topology_description",
+        ":vmm_allocator_gate",
         "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:future",
@@ -426,6 +436,7 @@ xla_test(
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_client_test_lib",
         ":se_gpu_topology_description",
+        ":vmm_allocator_gate",
         "//xla:debug_options_flags",
         "//xla:future",
         "//xla:literal",
@@ -466,10 +477,12 @@ xla_test(
         "//xla/runtime:device_id",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
+        "//xla/service:hlo_proto_cc",
         "//xla/service:platform_util",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
@@ -539,6 +552,7 @@ xla_test(
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_client_test_lib",
         ":se_gpu_topology_description",
+        ":vmm_allocator_gate",
         "//xla:debug_options_flags",
         "//xla:future",
         "//xla:literal",
@@ -568,8 +582,10 @@ xla_test(
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/profiling:device_time_measurement",
         "//xla/pjrt/proto:compile_options_proto_cc",
+        "//xla/pjrt/se:event_pool",
         "//xla/pjrt/se:local_device_state",
         "//xla/pjrt/se:pjrt_stream_executor_client",
+        "//xla/runtime:chip_id",
         "//xla/runtime:device_id",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
@@ -580,6 +596,7 @@ xla_test(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:memory_space",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/concurrency:async_value",
@@ -598,6 +615,7 @@ xla_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",

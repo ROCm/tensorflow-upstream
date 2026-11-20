@@ -17,7 +17,12 @@ limitations under the License.
 #define XLA_PYTHON_VERSION_H_
 
 // An increasing version number to protect jax code against breaking changes.
-// In JAX, reference this via jax._src.lib.ifrt_version.
-#define JAX_IFRT_VERSION_NUMBER 84  // Mosaic reduce_index keeps reduced dim
+// In JAX, reference this via jax._src.lib.xla_version.
+#define JAX_XLA_VERSION_NUMBER \
+  90  // Rename xla::ifrt::Client::HostBuffer::on_done to hold
+
+// TODO(phawkins): Remove JAX_IFRT_VERSION_NUMBER once JAX no longer references
+// it.
+#define JAX_IFRT_VERSION_NUMBER JAX_XLA_VERSION_NUMBER
 
 #endif  // XLA_PYTHON_VERSION_H_

@@ -510,6 +510,7 @@ cc_library(
     hdrs = ["config_runner.h"],
     deps = [
         ":autotuning_proto_cc",
+        ":backends_proto_cc",
         ":codegen_backend",
         ":codegen_orchestrator",
         ":profiler",
@@ -534,6 +535,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
         "@com_google_protobuf//:any_cc_proto",
     ],
 )
@@ -543,6 +545,7 @@ xla_cc_test(
     srcs = ["config_runner_test.cc"],
     deps = [
         ":autotuning_proto_cc",
+        ":backends_proto_cc",
         ":config_runner",
         ":mock_codegen_backend",
         ":profiler",

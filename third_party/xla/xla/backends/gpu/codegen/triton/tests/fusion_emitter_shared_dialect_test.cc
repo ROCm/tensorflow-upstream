@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -924,6 +923,39 @@ ENTRY e {
     CHECK: %[[EPILOGUE:.*]] = stablehlo.add %{{.*}}, %[[SCAN_OUT]]
     CHECK: xtile.insert %[[EPILOGUE]] into %arg1
     CHECK: scf.yield %[[NEW_CARRY]]
+  )"));
+}
+
+TEST_F(XTileDialectTest, PredParametersAndOutputsStayI1InXTile) {
+  constexpr absl::string_view kHloText = R"(
+HloModule t
+
+pred_fusion {
+  p0 = pred[16] parameter(0)
+  p1 = pred[16] parameter(1)
+  ROOT out = pred[16] and(p0, p1)
+}
+
+ENTRY e {
+  p0 = pred[16] parameter(0)
+  p1 = pred[16] parameter(1)
+  ROOT fusion = pred[16] fusion(p0, p1), kind=kCustom,
+    calls=pred_fusion,
+    backend_config={"fusion_backend_config": {kind: "__triton"}}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{4}};
+  EXPECT_OK(CreateXTileIrAndFileCheck(
+      *module->GetComputationWithName("pred_fusion"), block_level_parameters,
+      R"(
+    CHECK: xtile.entry_func @xtile_dialect_fn(%[[P0:[^:]+]]: memref<16xi1>, %[[P1:[^:]+]]: memref<16xi1>, %[[OUT:[^:]+]]: memref<16xi1>, %{{[^:]+}}: index
+    CHECK-NOT: i8
+    CHECK: %[[T0:.*]] = xtile.extract %[[P0]][%{{.*}}] [4] [1] : memref<16xi1> -> tensor<4xi1>
+    CHECK: %[[T1:.*]] = xtile.extract %[[P1]][%{{.*}}] [4] [1] : memref<16xi1> -> tensor<4xi1>
+    CHECK: %[[AND:.*]] = stablehlo.and %[[T0]], %[[T1]] : tensor<4xi1>
+    CHECK: xtile.insert %[[AND]] into %[[OUT]][%{{.*}}] [4] [1] : tensor<4xi1> -> memref<16xi1>
   )"));
 }
 
