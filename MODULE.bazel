@@ -148,9 +148,9 @@ bazel_dep(name = "rules_ml_toolchain")
 
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-7eqXGrr59MzfuhUzAwznbG/NDe51oyNMSlxRQZgSQ64=",
-    strip_prefix = "rules_ml_toolchain-9114bb1c3abf4f1a5889ef8fd7ae5a72b1351db3",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/9114bb1c3abf4f1a5889ef8fd7ae5a72b1351db3.tar.gz"],
+    integrity = "sha256-/1briGaZkaD0h8Tsh0vp8TCLwHClrYDDjXyP9792gds=",
+    strip_prefix = "rules_ml_toolchain-9ff8598c6dfa182f4fd49f9af761c67bc2e50abd",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/9ff8598c6dfa182f4fd49f9af761c67bc2e50abd.tar.gz"],
 )
 
 bazel_dep(name = "xla", repo_name = "xla")
