@@ -14,6 +14,7 @@
 """Lit runner configuration."""
 
 import os
+import pathlib
 import platform
 import sys
 import lit.formats
@@ -68,5 +69,14 @@ tool_names = [
 ]
 tools = [ToolSubst(s, unresolved='ignore') for s in tool_names]
 llvm_config.add_tool_substitutions(tools, tool_dirs)
-llvm_config.with_environment('LD_LIBRARY_PATH', config.test_exec_root + "/local_config_rocm/rocm/rocm_dist/lib/", append_path=True)
+# Under Bzlmod the repository directory is canonicalized (e.g.
+# 'xla++rocm_configure_ext+local_config_rocm')
+_runfiles = pathlib.Path(config.test_exec_root)
+for _repo in [_runfiles / 'local_config_rocm'] + sorted(
+    _runfiles.glob('*+local_config_rocm')):
+  _rocm_lib_dir = _repo / 'rocm' / 'rocm_dist' / 'lib'
+  if _rocm_lib_dir.is_dir():
+    llvm_config.with_environment(
+        'LD_LIBRARY_PATH', str(_rocm_lib_dir), append_path=True)
+    break
 # pylint: enable=undefined-variable
