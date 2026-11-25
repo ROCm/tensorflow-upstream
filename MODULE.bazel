@@ -111,7 +111,11 @@ bazel_dep(name = "googletest", version = "1.18.0", repo_name = "com_google_googl
 single_version_override(
     module_name = "googletest",
     patch_strip = 1,
-    patches = ["//third_party/googletest:remove_alwayslink.patch"],
+    patches = [
+        "//third_party/googletest:0001-Add-ASSERT_OK-EXPECT_OK-ASSERT_OK_AND_ASSIGN-macros.patch",
+        "//third_party/googletest:googletest.patch",
+        "//third_party/googletest:remove_alwayslink.patch",
+    ],
     version = "1.18.0",
 )
 
