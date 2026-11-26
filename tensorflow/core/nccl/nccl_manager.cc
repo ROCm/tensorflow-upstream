@@ -72,12 +72,7 @@ struct NcclManager::NcclStream : public core::RefCounted {
 
   // The stream on which to run the nccl collective.
   // This is a different stream than the tensorflow compute stream.
-#if TENSORFLOW_USE_ROCM
-  // On ROCm, we borrow the nccl stream from the device context.
-  se::Stream* stream = nullptr;
-#else
   std::unique_ptr<se::Stream> stream;
-#endif
 
   // `mu` protects access to `pending_launches_`, which is the list of
   // collectives ready but whose kernels are yet to be launched.  When the
@@ -338,12 +333,8 @@ absl::Status NcclManager::GetCommunicator(
     if (nccl_stream == nullptr) {
       nccl_stream = new NcclStream();
       nccl_stream->executor = executor;
-#if TENSORFLOW_USE_ROCM
-      nccl_stream->stream = collective->participants[i]->context->nccl_stream();
-#else
       TF_ASSIGN_OR_RETURN(auto stream, executor->CreateStream());
       nccl_stream->stream = std::move(stream);
-#endif
 
       streams.emplace_back(nccl_stream);
       used_streams.insert(nccl_stream);
@@ -704,11 +695,7 @@ size_t ComputeBufferSize(const NcclManager::Participant* p,
 }  // namespace
 
 void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
-#if TENSORFLOW_USE_ROCM
-  se::Stream* comm_stream = nccl_stream->stream;
-#else
   se::Stream* comm_stream = nccl_stream->stream.get();
-#endif
   std::unique_ptr<se::ActivateContext> scoped_context =
       nccl_stream->executor->Activate();
   cudaStream_t cu_stream = reinterpret_cast<cudaStream_t>(

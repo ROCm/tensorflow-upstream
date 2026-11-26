@@ -36,6 +36,7 @@ cc_library(
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",
         "-Wno-error=unused-result",
+        "-std=c++17",
     ],
     linkstatic = True,
     visibility = ["//visibility:private"],
@@ -70,6 +71,7 @@ cc_library(
     copts = [
         "-fvisibility-inlines-hidden",
         "-Wno-error=unused-result",
+        "-std=c++17",
     ],
     linkopts = [
         "-ldl",

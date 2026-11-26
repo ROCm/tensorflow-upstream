@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/resource_loader.h"
 #include "xla/tsl/platform/test.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
@@ -120,9 +121,8 @@ absl::StatusOr<std::vector<uint8_t>> GetGpuTestKernelsFatbin(
         absl::StrCat("Unsupported GPU platform: ", platform_name));
   }
 
-  std::string file_path =
-      tsl::io::JoinPath("external", "xla", "xla", "stream_executor",
-                         archive_filename);
+  std::string file_path = tsl::GetDataDependencyFilepath(tsl::io::JoinPath(
+      "external", "xla", "xla", "stream_executor", archive_filename));
 
   return GetFatbinFromArchive(file_path, fatbin_prefix);
 }

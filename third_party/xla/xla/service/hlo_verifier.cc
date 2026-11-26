@@ -197,6 +197,59 @@ absl::Status ShapeVerifier::HandleCopy(HloInstruction* copy) {
   return CheckUnaryShape(copy);
 }
 
+namespace {
+
+// Checks that the block scale of operand `values_idx` has the rank of the
+// operand. Without explicit block sizes each scale dimension must evenly divide
+// the operand's; explicit block sizes must be positive, one per dimension.
+absl::Status VerifyBlockScaleShape(
+    const HloInstruction* hlo, int64_t values_idx,
+    const BlockScalingConfig::TensorBlockScalingConfig& config) {
+  const Shape& values = hlo->operand(values_idx)->shape();
+  const Shape& scale = hlo->operand(config.scale_idx())->shape();
+  if (!values.IsArray()) {
+    return InvalidArgument(
+        "Expected array operand %d for block scaling, got %s in %s", values_idx,
+        ShapeUtil::HumanString(values), hlo->ToString());
+  }
+  const int64_t rank = values.dimensions().size();
+  if (scale.dimensions().size() != rank) {
+    return InvalidArgument(
+        "Block scale %s must have the same rank as operand %d %s in %s",
+        ShapeUtil::HumanString(scale), values_idx,
+        ShapeUtil::HumanString(values), hlo->ToString());
+  }
+  absl::Span<const int64_t> block_sizes = config.block_sizes();
+  if (!block_sizes.empty() && block_sizes.size() != rank) {
+    return InvalidArgument(
+        "Block scaling block_sizes for operand %d must have %d entries, got %d "
+        "in %s",
+        values_idx, rank, block_sizes.size(), hlo->ToString());
+  }
+  for (int64_t d = 0; d < rank; ++d) {
+    const int64_t scale_dim = scale.dimensions(d);
+    const int64_t values_dim = values.dimensions(d);
+    if (block_sizes.empty()) {
+      if (scale_dim <= 0 || values_dim % scale_dim != 0) {
+        return InvalidArgument(
+            "Block scale dimension %d (size %d) must evenly divide operand %d "
+            "dimension %d (size %d) in %s",
+            d, scale_dim, values_idx, d, values_dim, hlo->ToString());
+      }
+      continue;
+    }
+    if (block_sizes[d] <= 0 || scale_dim <= 0) {
+      return InvalidArgument(
+          "Block scaling block size %d and scale size %d for operand %d "
+          "dimension %d must be positive in %s",
+          block_sizes[d], scale_dim, values_idx, d, hlo->ToString());
+    }
+  }
+  return absl::OkStatus();
+}
+
+}  // namespace
+
 absl::Status VerifySparsityAndBlockScaling(const HloInstruction* hlo) {
   if (hlo->operand_count() < 2) {
     return InvalidArgument("%s must have at least 2 operands, got %d",
@@ -252,7 +305,27 @@ absl::Status VerifySparsityAndBlockScaling(const HloInstruction* hlo) {
         "block_scaling_config, but %d were referenced",
         hlo->operand_count() - 2, seen_count);
   }
-
+  // Indices are validated above, so the scale operands can be inspected.
+  const BlockScalingConfig& block_scaling = hlo->block_scaling_config();
+  const BlockScalingConfig::TensorBlockScalingConfig* sides[] = {
+      block_scaling.has_lhs() ? &block_scaling.lhs() : nullptr,
+      block_scaling.has_rhs() ? &block_scaling.rhs() : nullptr};
+  for (int64_t values_idx = 0; values_idx < 2; ++values_idx) {
+    if (sides[values_idx] == nullptr) {
+      continue;
+    }
+    const BlockScalingConfig::TensorBlockScalingConfig& config =
+        *sides[values_idx];
+    ABSL_RETURN_IF_ERROR(VerifyBlockScaleShape(hlo, values_idx, config));
+    if (config.has_zero_idx() &&
+        !ShapeUtil::SameDimensions(hlo->operand(config.zero_idx())->shape(),
+                                   hlo->operand(config.scale_idx())->shape())) {
+      return InvalidArgument(
+          "Block scaling zero point and scale for operand %d must have the "
+          "same dimensions in %s",
+          values_idx, hlo->ToString());
+    }
+  }
   return absl::OkStatus();
 }
 
@@ -265,6 +338,29 @@ absl::Status ShapeVerifier::HandleDot(HloInstruction* dot) {
                        /*preferred_element_type=*/dot->shape().element_type(),
                        dot->sparsity_config()));
 
+  return CheckShape(dot, expected);
+}
+
+absl::Status ShapeVerifier::HandleDotGeneral(HloInstruction* dot) {
+  // A plain dot must use kDot; dot-general always carries extra operands.
+  if (dot->operand_count() <= 2) {
+    return InvalidArgument(
+        "dot-general must have sparsity or block scaling operands: %s",
+        dot->ToString());
+  }
+  // Only the lhs and rhs have precisions.
+  if (dot->precision_config().operand_precision_size() != 2) {
+    return InvalidArgument(
+        "dot-general must have exactly 2 operand precisions, got %d: %s",
+        dot->precision_config().operand_precision_size(), dot->ToString());
+  }
+  ABSL_RETURN_IF_ERROR(VerifySparsityAndBlockScaling(dot));
+  ABSL_ASSIGN_OR_RETURN(const Shape expected,
+                   ShapeInference::InferDotOpShape(
+                       dot->operand(0)->shape(), dot->operand(1)->shape(),
+                       dot->dot_dimension_numbers(),
+                       /*preferred_element_type=*/dot->shape().element_type(),
+                       dot->sparsity_config()));
   return CheckShape(dot, expected);
 }
 
@@ -1280,12 +1376,12 @@ absl::Status ShapeVerifier::HandleSort(HloInstruction* hlo) {
   }
 
   // Verify the sort_dimension.
-  if (sort->sort_dimension() >=
-      static_cast<int64_t>(sort->operand(0)->shape().dimensions().size())) {
+  const int64_t rank = sort->operand(0)->shape().dimensions().size();
+  if (sort->sort_dimension() < 0 || sort->sort_dimension() >= rank) {
     return Internal(
-        "Expected the sort_dimension %d of sort to be smaller than the rank %d "
-        "of the operand(s).",
-        sort->sort_dimension(), sort->shape().dimensions().size());
+        "Expected the sort_dimension %d of sort to be non-negative and smaller "
+        "than the rank %d of the operand(s).",
+        sort->sort_dimension(), rank);
   }
 
   return CheckVariadicShape(sort);
@@ -1338,11 +1434,20 @@ absl::Status ShapeVerifier::HandleGetTupleElement(
 }
 
 namespace {
+// Checks that each operand of `instruction` has the same element type as its
+// corresponding `to_apply` parameter (used by reduce, map, reduce_window, and
+// scatter). `skip_operand_index` skips an operand with no `to_apply` parameter,
+// such as `scatter_indices` in scatter.
 absl::Status SameElementTypesForOperandsAndToApplyParameters(
-    const HloInstruction& instruction, int64_t num_operands_to_check) {
+    const HloInstruction& instruction, int64_t num_operands_to_check,
+    std::optional<int64_t> skip_operand_index = std::nullopt) {
   const ProgramShape& to_apply = instruction.to_apply()->ComputeProgramShape();
-  for (int i = 0; i < num_operands_to_check; ++i) {
-    const Shape& parameter_shape = to_apply.parameters(i);
+  int64_t parameter_idx = 0;
+  for (int64_t i = 0; i < num_operands_to_check; ++i) {
+    if (i == skip_operand_index) {
+      continue;
+    }
+    const Shape& parameter_shape = to_apply.parameters(parameter_idx++);
     const Shape& operand_shape = instruction.operands()[i]->shape();
     if (!ShapeUtil::SameElementType(parameter_shape, operand_shape)) {
       return InvalidArgument(
@@ -1665,9 +1770,18 @@ absl::Status ShapeVerifier::HandleDynamicReshape(
 absl::Status ShapeVerifier::HandleReshape(HloInstruction* reshape) {
   // Check for mixed precision.
   const Shape& operand_shape = reshape->operand(0)->shape();
+  TF_RET_CHECK(reshape->shape().IsArray() && operand_shape.IsArray());
   TF_RET_CHECK(SameElementType(reshape->shape(), operand_shape));
   TF_RET_CHECK(ShapeUtil::ElementsIn(reshape->shape()) ==
                ShapeUtil::ElementsIn(operand_shape));
+  const int64_t inferred_dimension = reshape->inferred_dimension();
+  const int64_t rank = reshape->shape().dimensions().size();
+  if (inferred_dimension < -1 || inferred_dimension >= rank) {
+    return InvalidArgument(
+        "Expected inferred_dimension of reshape to be -1 or in [0, %d), got "
+        "%d: %s",
+        rank, inferred_dimension, reshape->ToString());
+  }
   return absl::OkStatus();
 }
 
@@ -1764,28 +1878,29 @@ absl::Status ShapeVerifier::CheckCompositeCall(const HloInstruction* call) {
   }
   TF_RET_CHECK(call->has_frontend_attributes())
       << "A composite call op must have frontend attributes";
-  auto map = call->frontend_attributes().map();
-  if (auto name = map.find("composite.name");
-      name == map.end() || name->second.empty()) {
+  if (std::optional<std::string> name =
+          call->get_frontend_attribute("composite.name");
+      !name.has_value() || name->empty()) {
     return InvalidArgument(
         "A composite call op must have frontend attributes with key "
         "composite.name whose value is non-empty");
   }
-  if (auto attributes = map.find("composite.attributes");
-      attributes != map.end() && attributes->second.empty()) {
+  if (std::optional<std::string> attributes =
+          call->get_frontend_attribute("composite.attributes");
+      attributes.has_value() && attributes->empty()) {
     return InvalidArgument(
         "A composite call op must have frontend attributes with key "
         "composite.attributes whose value is default: {} or non-empty");
   }
-  if (auto version_str = map.find("composite.version");
-      version_str != map.end()) {
+  if (std::optional<std::string> version_str =
+          call->get_frontend_attribute("composite.version")) {
     int64_t version = 0;
-    if (!absl::SimpleAtoi(version_str->second, &version) || version < 0) {
+    if (!absl::SimpleAtoi(*version_str, &version) || version < 0) {
       return InvalidArgument(
           "A composite call op must have frontend attributes with a "
           "composite.version whose value is a non-negative integer but got: "
           "%s",
-          version_str->second);
+          *version_str);
     }
   }
   return absl::OkStatus();
@@ -1835,7 +1950,7 @@ absl::Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
         << "Invalid aliasing operand shape index.";
     TF_RET_CHECK(ShapeUtil::IndexIsValid(custom_call->shape(), pair.first))
         << "Invalid aliasing output shape index.";
-    if (custom_call->frontend_attributes().map().contains(
+    if (custom_call->has_frontend_attribute(
             "xla_skip_custom_call_alias_shape_check")) {
       return absl::OkStatus();
     }
@@ -2563,6 +2678,7 @@ absl::Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
     case HloOpcode::kConstant:
     case HloOpcode::kConvolution:
     case HloOpcode::kDot:
+    case HloOpcode::kDotGeneral:
     case HloOpcode::kRaggedDot:
     case HloOpcode::kScaledDot:
     case HloOpcode::kAllReduce:
@@ -2590,6 +2706,7 @@ absl::Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
     case HloOpcode::kRecvDone:
     case HloOpcode::kReducePrecision:
     case HloOpcode::kReduceWindow:
+    case HloOpcode::kScatter:
     case HloOpcode::kSend:
     case HloOpcode::kSendDone:
     case HloOpcode::kSort:
@@ -2638,10 +2755,17 @@ absl::Status ShapeVerifier::HandleScatter(HloInstruction* scatter) {
   for (const HloInstruction* operand : scatter->operands()) {
     arg_shapes.push_back(&operand->shape());
   }
-  return CheckShape(scatter,
-                    ShapeInference::InferScatterShape(
-                        arg_shapes, scatter->to_apply()->ComputeProgramShape(),
-                        scatter->scatter_dimension_numbers()));
+  ABSL_RETURN_IF_ERROR(CheckShape(
+      scatter, ShapeInference::InferScatterShape(
+                   arg_shapes, scatter->to_apply()->ComputeProgramShape(),
+                   scatter->scatter_dimension_numbers())));
+  if (opts_.allow_mixed_precision) {
+    return absl::OkStatus();
+  }
+  const int64_t indices_operand_index =
+      Cast<HloScatterInstruction>(scatter)->scatter_operand_count();
+  return SameElementTypesForOperandsAndToApplyParameters(
+      *scatter, scatter->operand_count(), indices_operand_index);
 }
 
 absl::Status ShapeVerifier::HandleAfterAll(HloInstruction* token) {
@@ -3400,8 +3524,7 @@ absl::StatusOr<bool> ShouldSkipDeadlockCheck(const T* instruction) {
   // For now we will skip checks for instructions annotated with
   // _xla_send_recv_pipeline, since they introduce extra constraints that have
   // not been modeled by this function.
-  if (instruction->frontend_attributes().map().contains(
-          kSendRecvPipelineAttr)) {
+  if (instruction->has_frontend_attribute(kSendRecvPipelineAttr)) {
     return true;
   }
   // Check that the instruction itself does not have conflicting
@@ -4002,17 +4125,7 @@ absl::Status CheckElementwiseInstruction(HloInstruction* instruction) {
   return absl::OkStatus();
 }
 
-bool IsCollectivesGroupComputation(HloComputation* computation) {
-  auto maybe_caller = computation->GetUniqueCaller(HloOpcode::kAsyncStart);
-  if (!maybe_caller.has_value()) {
-    return false;
-  }
-  return (*maybe_caller)
-      ->get_frontend_attribute(kCollectiveGroupMarkerAttr)
-      .has_value();
-}
-
-bool IsAsyncBarrierComputation(HloComputation* computation) {
+bool IsAsyncBarrierComputation(const HloComputation* computation) {
   return absl::c_all_of(
       computation->instructions(),
       [root = computation->root_instruction()](const HloInstruction* instr) {
@@ -4531,9 +4644,9 @@ absl::Status VerifyBuffers(const HloModule& module, bool layout_sensitive) {
       continue;
     }
     for (auto* inst : comp->instructions()) {
-      if (inst->IsAsynchronous() || (inst->opcode() == HloOpcode::kCall &&
-                                     inst->frontend_attributes().map().contains(
-                                         kXlaStreamAnnotationAttr))) {
+      if (inst->IsAsynchronous() ||
+          (inst->opcode() == HloOpcode::kCall &&
+           inst->has_frontend_attribute(kXlaStreamAnnotationAttr))) {
         // No need for additional buffer verification on start/update as the
         // correctness of buffer usage is guaranteed through consistency with
         // the wrapped computation and buffer verification inside it. For
@@ -4637,6 +4750,60 @@ absl::Status InstructionVerifier::HandleBitcastConvert(HloInstruction* c) {
   return absl::OkStatus();
 }
 
+// Every `dynamic_variables` entry must set both init and step or neither
+// ("writers set both or neither"). Additionally, `known_init_step` is
+// authoritative for the induction variable, so a `dynamic_variables` entry for
+// it may repeat its init/step but must not contradict them. Loops whose backend
+// config is not a WhileLoopBackendConfig (e.g. one attached by another
+// backend) are not checked.
+static absl::Status VerifyWhileLoopBackendConfig(
+    const HloInstruction* xla_while) {
+  if (!xla_while->has_backend_config()) {
+    return absl::OkStatus();
+  }
+  absl::StatusOr<WhileLoopBackendConfig> config =
+      xla_while->backend_config<WhileLoopBackendConfig>();
+  if (!config.ok()) {
+    return absl::OkStatus();
+  }
+  for (const WhileLoopBackendConfig::DynamicVariable& entry :
+       config->dynamic_variables()) {
+    if (entry.has_init() != entry.has_step()) {
+      return FailedPrecondition(
+          "Dynamic variable entry at tuple index %d must set both init and "
+          "step or neither (init=%s, step=%s): %s",
+          entry.tuple_index(),
+          entry.has_init() ? absl::StrCat(entry.init()) : "unset",
+          entry.has_step() ? absl::StrCat(entry.step()) : "unset",
+          xla_while->ToString());
+    }
+  }
+  if (!config->has_known_induction_variable() ||
+      !config->has_known_init_step()) {
+    return absl::OkStatus();
+  }
+  const WhileLoopBackendConfig::KnownInitStep& init_step =
+      config->known_init_step();
+  int64_t tuple_index = config->known_induction_variable().tuple_index();
+  for (const WhileLoopBackendConfig::DynamicVariable& entry :
+       config->dynamic_variables()) {
+    if (entry.tuple_index() != tuple_index) {
+      continue;
+    }
+    if ((entry.has_init() && entry.init() != init_step.init()) ||
+        (entry.has_step() && entry.step() != init_step.step())) {
+      return FailedPrecondition(
+          "Dynamic variable entry for the induction variable at tuple index "
+          "%d (init=%s, step=%s) disagrees with known_init_step (init=%d, "
+          "step=%d): %s",
+          tuple_index, entry.has_init() ? absl::StrCat(entry.init()) : "unset",
+          entry.has_step() ? absl::StrCat(entry.step()) : "unset",
+          init_step.init(), init_step.step(), xla_while->ToString());
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::Status InstructionVerifier::HandleWhile(HloInstruction* xla_while) {
   auto* while_cond = xla_while->while_condition();
   auto* while_body = xla_while->while_body();
@@ -4665,7 +4832,7 @@ absl::Status InstructionVerifier::HandleWhile(HloInstruction* xla_while) {
                   xla_while->while_body()->parameter_instruction(0),
                   xla_while->while_condition()->parameter_instruction(0)}));
 
-  return absl::OkStatus();
+  return VerifyWhileLoopBackendConfig(xla_while);
 }
 
 absl::Status InstructionVerifier::HandleCall(HloInstruction* call) {
@@ -4996,10 +5163,7 @@ absl::StatusOr<bool> HloVerifier::RunImpl(
       ABSL_RETURN_IF_ERROR(computation->Accept(&instruction_verifier));
       // Verify that async computations contain a single instruction unless
       // they are explicitly marked as a collectives group or async barrier.
-      if (computation->IsAsyncComputation() &&
-          computation->execution_thread() ==
-              HloInstruction::kMainExecutionThread &&
-          !IsCollectivesGroupComputation(computation) &&
+      if (computation->IsRestrictedAsyncComputation() &&
           !IsAsyncBarrierComputation(computation)) {
         ABSL_RETURN_IF_ERROR(VerifyAsyncComputation(computation));
       }

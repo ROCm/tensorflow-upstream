@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
 
-#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -24,6 +23,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_computation_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -46,11 +46,7 @@ bool IsNonInlineableCall(const HloInstruction* instruction) {
   if (instruction->opcode() != HloOpcode::kCall) {
     return false;
   }
-  auto it = instruction->frontend_attributes().map().find("inlineable");
-  if (it == instruction->frontend_attributes().map().end()) {
-    return false;
-  }
-  return it->second == "xla_late";
+  return instruction->get_frontend_attribute("inlineable") == "xla_late";
 }
 
 // Pure read-only predicate returning true if `computation` is itself an async
@@ -223,24 +219,12 @@ absl::StatusOr<bool> FlattenCallGraph::RunImpl(
         }
       }
 
-      auto clone_callee = [&](HloComputation* callee) {
-        if (!module->has_schedule() ||
-            !module->schedule().is_computation_scheduled(callee)) {
-          return module->AddEmbeddedComputation(callee->Clone());
-        }
-
-        auto [clone, clone_sequence] = callee->CloneWithSchedule();
-        HloComputation* clone_ptr =
-            module->AddEmbeddedComputation(std::move(clone));
-        module->schedule().set_sequence(clone_ptr, clone_sequence);
-        return clone_ptr;
-      };
-
       changed = true;
       std::vector<HloComputation*> worklist;
       caller->ReplaceCalledComputations([&](HloComputation* callee) {
         if (callee == computation && !skip_cloning_handler_(*callee)) {
-          HloComputation* clone = clone_callee(callee);
+          HloComputation* clone =
+              hlo_computation_utils::CloneComputation(callee);
           worklist.push_back(clone);
           return clone;
         }
@@ -260,7 +244,8 @@ absl::StatusOr<bool> FlattenCallGraph::RunImpl(
             if (skip_cloning_handler_(*callee)) {
               return callee;
             }
-            HloComputation* clone = clone_callee(callee);
+            HloComputation* clone =
+                hlo_computation_utils::CloneComputation(callee);
             worklist.push_back(clone);
             return clone;
           });

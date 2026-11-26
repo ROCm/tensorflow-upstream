@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tools/xla_compile_lib.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/resource_loader.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/protobuf/error_codes.pb.h"
 #include "xla/tsl/protobuf/status.pb.h"
@@ -52,9 +53,9 @@ using ::testing::Not;
 class XlaCompileLibTest : public HloTestBase {
  protected:
   void SetUp() override {
-    const std::string hlo_path = tsl::io::JoinPath(tsl::testing::XlaSrcRoot(),
-                                                   "../external/xla/xla",
-						   "tools", "data", "add.hlo");
+    const std::string hlo_path = tsl::GetDataDependencyFilepath(
+        tsl::io::JoinPath("external", "xla", "xla", "tools", "data",
+                          "add.hlo"));
     std::string hlo;
     ASSERT_OK(tsl::ReadFileToString(tsl::Env::Default(), hlo_path, &hlo));
     ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo));
@@ -98,11 +99,10 @@ TEST_F(XlaCompileLibTest, CompilesForGpuWithoutDevice) {
     }
     return "h100_sxm.txtpb";
   }();
-  auto path = tsl::testing::XlaSrcRoot();
-  path = path.erase(path.length() - 4);
   const std::string target_config_path =
-      tsl::io::JoinPath(path, "external/xla/xla",
-                        "backends/gpu/target_config/specs", spec_file);
+      tsl::GetDataDependencyFilepath(tsl::io::JoinPath(
+          "external", "xla", "xla", "backends/gpu/target_config/specs",
+          spec_file));
   stream_executor::GpuTargetConfigProto target_config_proto;
   ASSERT_OK(tsl::ReadTextProto(tsl::Env::Default(), target_config_path,
                                &target_config_proto));
@@ -129,10 +129,10 @@ TEST_F(XlaCompileLibTest, ErrorForIncorrectPlatformAOTCompile) {
     }
     return "bmg_g21.txtpb";
   }();
-  const std::string target_config_path = tsl::io::JoinPath(
-      tsl::testing::XlaSrcRoot(), "../external/xla/xla",
-      "backends/gpu/target_config/specs",
-      incorrect_spec_file);
+  const std::string target_config_path =
+      tsl::GetDataDependencyFilepath(tsl::io::JoinPath(
+          "external", "xla", "xla", "backends/gpu/target_config/specs",
+          incorrect_spec_file));
   stream_executor::GpuTargetConfigProto target_config_proto;
   ASSERT_OK(tsl::ReadTextProto(tsl::Env::Default(), target_config_path,
                                &target_config_proto));

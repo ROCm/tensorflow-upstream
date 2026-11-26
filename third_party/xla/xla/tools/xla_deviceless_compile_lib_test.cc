@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/tools/xla_compile_lib.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/resource_loader.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla.pb.h"
@@ -61,11 +62,10 @@ absl::StatusOr<Compiler::GpuTargetConfig> GetGpuTargetConfig() {
     }
     return "h100_sxm.txtpb";
   }();
-  auto tmp_path = tsl::testing::XlaSrcRoot();
-  tmp_path = tmp_path.erase(tmp_path.length() - 4);
   const std::string target_config_path =
-      tsl::io::JoinPath(tmp_path, "external/xla/xla/",
-                        "backends/gpu/target_config/specs", spec_file);
+      tsl::GetDataDependencyFilepath(tsl::io::JoinPath(
+          "external", "xla", "xla", "backends/gpu/target_config/specs",
+          spec_file));
   stream_executor::GpuTargetConfigProto target_config_proto;
   ABSL_RETURN_IF_ERROR(tsl::ReadTextProto(tsl::Env::Default(), target_config_path,
                                      &target_config_proto));

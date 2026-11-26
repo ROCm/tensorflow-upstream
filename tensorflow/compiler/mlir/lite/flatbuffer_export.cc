@@ -102,6 +102,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/experimental/remat/metadata_util.h"
 #include "tensorflow/compiler/mlir/lite/flatbuffer_operator.h"
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
+#include "tensorflow/compiler/mlir/lite/ir/tfl_types.h"
 #include "tensorflow/compiler/mlir/lite/metrics/converter_error_data.pb.h"
 #include "tensorflow/compiler/mlir/lite/metrics/error_collector_inst.h"
 #include "tensorflow/compiler/mlir/lite/quantization/ir/QuantOps.h"
@@ -113,13 +114,13 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/tools/versioning/runtime_version.h"
 #include "tensorflow/compiler/mlir/lite/utils/const_tensor_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/control_edges.h"
-#include "tensorflow/compiler/mlir/lite/utils/convert_type.h"
 #include "tensorflow/compiler/mlir/lite/utils/low_bit_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/metadata_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/mlir_module_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/region_isolation.h"
 #include "tensorflow/compiler/mlir/lite/utils/stateful_ops_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/string_utils.h"
+#include "tensorflow/compiler/mlir/lite/utils/tf_convert_type.h"
 #include "tensorflow/compiler/mlir/lite/version.h"
 #include "tensorflow/compiler/mlir/op_or_arg_name_mapper.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_dialect.h"
@@ -223,9 +224,9 @@ static StatusOr<tflite::TensorType> GetTFLiteType(Type type,
     return tflite::TensorType_FLOAT8_E4M3FN;
   } else if (mlir::isa<mlir::Float8E5M2Type>(type)) {
     return tflite::TensorType_FLOAT8_E5M2;
-  } else if (mlir::isa<mlir::TF::StringType>(type)) {
+  } else if (mlir::isa<mlir::TF::StringType, mlir::TFL::StringType>(type)) {
     return tflite::TensorType_STRING;
-  } else if (mlir::isa<mlir::TF::Quint8Type>(type)) {
+  } else if (mlir::isa<mlir::TF::Quint8Type, mlir::TFL::Quint8Type>(type)) {
     return tflite::TensorType_UINT8;
   } else if (auto complex_type = mlir::dyn_cast<mlir::ComplexType>(type)) {
     auto ftype = complex_type.getElementType();
@@ -278,9 +279,9 @@ static StatusOr<tflite::TensorType> GetTFLiteType(Type type,
   } else if (auto blockwise_type =
                  mlir::dyn_cast<mlir::TFL::BlockwiseQuantType>(type)) {
     return GetTFLiteType(blockwise_type.getStorageType());
-  } else if (mlir::isa<mlir::TF::ResourceType>(type)) {
+  } else if (mlir::isa<mlir::TF::ResourceType, mlir::TFL::ResourceType>(type)) {
     return tflite::TensorType_RESOURCE;
-  } else if (mlir::isa<mlir::TF::VariantType>(type)) {
+  } else if (mlir::isa<mlir::TF::VariantType, mlir::TFL::VariantType>(type)) {
     return tflite::TensorType_VARIANT;
   }
   // TFLite export fills FLOAT32 for unknown data types. Returning an error
@@ -482,13 +483,15 @@ static bool AllUsersAreStreamingCasts(Operation* op) {
 static bool IsTFResourceOp(Operation* op) {
   for (const auto& operand : op->getOperands()) {
     auto elementType = getElementTypeOrSelf(operand.getType());
-    if (mlir::isa<mlir::TF::ResourceType>(elementType)) {
+    if (mlir::isa<mlir::TF::ResourceType, mlir::TFL::ResourceType>(
+            elementType)) {
       return true;
     }
   }
   for (const auto& result : op->getResults()) {
     auto elementType = getElementTypeOrSelf(result.getType());
-    if (mlir::isa<mlir::TF::ResourceType>(elementType)) {
+    if (mlir::isa<mlir::TF::ResourceType, mlir::TFL::ResourceType>(
+            elementType)) {
       return true;
     }
   }
@@ -649,7 +652,8 @@ static bool IsValidTFLiteMlirModule(ModuleOp module) {
     for (auto arg : bb.getArguments()) {
       if (!HasValidTFLiteType(arg, fn)) {
         auto elementType = getElementTypeOrSelf(arg.getType());
-        if (mlir::isa<mlir::TF::VariantType>(elementType)) {
+        if (mlir::isa<mlir::TF::VariantType, mlir::TFL::VariantType>(
+                elementType)) {
           return fn.emitError(
                      "function argument uses variant type. Currently, the "
                      "variant type is not natively supported in TFLite. Please "
@@ -671,7 +675,8 @@ static bool IsValidTFLiteMlirModule(ModuleOp module) {
         if (mlir::isa<mlir::TFL::ControlType>(result.getType())) continue;
         if (!HasValidTFLiteType(result, inst)) {
           auto elementType = getElementTypeOrSelf(result.getType());
-          if (mlir::isa<mlir::TF::VariantType>(elementType)) {
+          if (mlir::isa<mlir::TF::VariantType, mlir::TFL::VariantType>(
+                  elementType)) {
             return inst.emitError(
                        "operand result uses variant type. Currently, the "
                        "variant type is not natively supported in TFLite. "
@@ -856,6 +861,282 @@ class ExportBufferStorage {
   absl::flat_hash_map<KeyT, std::unique_ptr<ExportBuffer>> buffers_;
 };
 
+absl::string_view ToAbslStringView(llvm::StringRef ref) {
+  return absl::string_view(ref.data(), ref.size());
+}
+
+// Returns true if `loc` represents a Python traceback frame NameLoc, i.e., a
+// NameLoc whose name is a non-hierarchical function/node identifier (no `/`)
+// and whose immediate child is a FileLineColLoc (as emitted by JAX's
+// traceback_to_location).
+bool IsFrameNameLoc(mlir::Location loc) {
+  auto name_loc = mlir::dyn_cast<mlir::NameLoc>(loc);
+  return name_loc && mlir::isa<mlir::FileLineColLoc>(name_loc.getChildLoc()) &&
+         !name_loc.getName().strref().contains('/');
+}
+
+// Unwraps leading JAX op-type NameLoc wrappers (whose name ends with ':', e.g.
+// "composite:", "pjit:", "dot_general:") so the underlying scope NameLoc is
+// visible.
+mlir::Location StripOpTypeWrappers(mlir::Location loc) {
+  while (auto name_loc = mlir::dyn_cast<mlir::NameLoc>(loc)) {
+    if (IsFrameNameLoc(name_loc)) {
+      break;
+    }
+    llvm::StringRef name = name_loc.getName().strref().split('@').first;
+    if (!name.ends_with(":")) {
+      break;
+    }
+    loc = name_loc.getChildLoc();
+  }
+  return loc;
+}
+
+// Strips JAX's internal `@api.jit def _where` wrapper (`jit(_where)`) when the
+// callee already carries an op name (such as `select_n`), so multiple
+// `jnp.where` calls in the same module scope stay distinct leaf ops rather
+// than grouping into a shared `jit(_where)` sub-scope.
+llvm::StringRef StripInternalJitWrapper(llvm::StringRef caller_scope,
+                                        llvm::StringRef callee_scope) {
+  if (callee_scope.empty()) {
+    return caller_scope;
+  }
+  constexpr llvm::StringLiteral kJitWhere = "jit(_where)";
+  constexpr llvm::StringLiteral kSlashJitWhere = "/jit(_where)";
+  if (caller_scope == kJitWhere) {
+    return llvm::StringRef();
+  }
+  if (caller_scope.ends_with(kSlashJitWhere)) {
+    return caller_scope.drop_back(kSlashJitWhere.size());
+  }
+  return caller_scope;
+}
+
+std::string CombineCallerAndCalleeScopes(llvm::StringRef caller_scope,
+                                         llvm::StringRef callee_scope) {
+  caller_scope = StripInternalJitWrapper(caller_scope, callee_scope);
+  if (caller_scope.empty()) {
+    return std::string(callee_scope);
+  }
+  if (callee_scope.empty() || caller_scope.ends_with(";")) {
+    return std::string(caller_scope);
+  }
+  return absl::StrCat(ToAbslStringView(caller_scope), "/",
+                      ToAbslStringView(callee_scope));
+}
+
+std::string ExtractCallerScope(mlir::Location loc) {
+  loc = StripOpTypeWrappers(loc);
+  if (auto name_loc = mlir::dyn_cast<mlir::NameLoc>(loc)) {
+    if (IsFrameNameLoc(name_loc)) {
+      return "";
+    }
+    return std::string(name_loc.getName().strref().split('@').first);
+  }
+  if (auto call_loc = mlir::dyn_cast<mlir::CallSiteLoc>(loc)) {
+    std::string caller_scope = ExtractCallerScope(call_loc.getCaller());
+    std::string callee_scope = ExtractCallerScope(call_loc.getCallee());
+    return CombineCallerAndCalleeScopes(caller_scope, callee_scope);
+  }
+  return "";
+}
+
+llvm::StringRef GetCompositeReplacementName(mlir::Operation* op) {
+  if (op == nullptr) {
+    return llvm::StringRef();
+  }
+  if (auto vhlo_comp = mlir::dyn_cast<mlir::vhlo::CompositeOpV1>(op)) {
+    if (auto name_attr = mlir::dyn_cast_or_null<mlir::vhlo::StringV1Attr>(
+            vhlo_comp.getName())) {
+      return name_attr.getValue();
+    }
+  }
+  if (auto stablehlo_comp = mlir::dyn_cast<mlir::stablehlo::CompositeOp>(op)) {
+    return stablehlo_comp.getName();
+  }
+  if (auto custom_op = mlir::dyn_cast<mlir::TFL::CustomOp>(op)) {
+    return custom_op.getCustomCode();
+  }
+  return op->getName().stripDialect();
+}
+
+std::string EnrichCompositeScope(llvm::StringRef scope,
+                                 llvm::StringRef composite_name) {
+  if (composite_name.empty()) {
+    return std::string(scope);
+  }
+  constexpr llvm::StringLiteral kComposite = "composite";
+  constexpr llvm::StringLiteral kSlashComposite = "/composite";
+  if (scope == kComposite) {
+    return std::string(composite_name);
+  }
+  if (scope.ends_with(kSlashComposite)) {
+    llvm::StringRef prefix = scope.drop_back(kComposite.size());
+    return absl::StrCat(ToAbslStringView(prefix),
+                        ToAbslStringView(composite_name));
+  }
+  return std::string(scope);
+}
+
+void CollectLeafLocNames(mlir::Location loc,
+                         llvm::StringRef inherited_caller_scope,
+                         llvm::StringRef composite_replacement_name,
+                         llvm::SmallVectorImpl<std::string>& out) {
+  mlir::Location unwrapped = StripOpTypeWrappers(loc);
+  if (auto fused_loc = mlir::dyn_cast<mlir::FusedLoc>(unwrapped)) {
+    for (mlir::Location sub_loc : fused_loc.getLocations()) {
+      CollectLeafLocNames(sub_loc, inherited_caller_scope,
+                          composite_replacement_name, out);
+    }
+    return;
+  }
+  if (auto call_loc = mlir::dyn_cast<mlir::CallSiteLoc>(unwrapped)) {
+    std::string local_caller = ExtractCallerScope(call_loc.getCaller());
+    std::string combined_caller =
+        CombineCallerAndCalleeScopes(inherited_caller_scope, local_caller);
+    CollectLeafLocNames(call_loc.getCallee(), combined_caller,
+                        composite_replacement_name, out);
+    return;
+  }
+  llvm::StringRef leaf_name;
+  if (auto name_loc = mlir::dyn_cast<mlir::NameLoc>(unwrapped)) {
+    leaf_name = name_loc.getName().strref().split('@').first;
+  }
+  std::string combined =
+      CombineCallerAndCalleeScopes(inherited_caller_scope, leaf_name);
+  out.push_back(EnrichCompositeScope(combined, composite_replacement_name));
+}
+
+// Returns true if any `NameLoc` in `loc` contains `;` (the PyTorch
+// hierarchy-delimiter convention emitted by `litert_torch`), so JAX-specific
+// location cleanup leaves PyTorch locations untouched.
+bool HasSemicolonNameLoc(mlir::Location loc) {
+  if (auto name_loc = mlir::dyn_cast<mlir::NameLoc>(loc)) {
+    if (name_loc.getName().strref().contains(';')) {
+      return true;
+    }
+    return HasSemicolonNameLoc(name_loc.getChildLoc());
+  }
+  if (auto call_loc = mlir::dyn_cast<mlir::CallSiteLoc>(loc)) {
+    return HasSemicolonNameLoc(call_loc.getCallee()) ||
+           HasSemicolonNameLoc(call_loc.getCaller());
+  }
+  if (auto fused_loc = mlir::dyn_cast<mlir::FusedLoc>(loc)) {
+    for (mlir::Location sub_loc : fused_loc.getLocations()) {
+      if (HasSemicolonNameLoc(sub_loc)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+llvm::StringRef ExtractDirectoryPrefix(llvm::StringRef name) {
+  size_t last_slash = name.rfind('/');
+  if (last_slash == llvm::StringRef::npos || last_slash == 0) {
+    return llvm::StringRef();
+  }
+  return name.substr(0, last_slash);
+}
+
+// Formats an op or value's `mlir::Location` into a FlatBuffer tensor name
+// without mutating any IR `Location` attributes:
+// - Unwraps JAX op-type `NameLoc` wrappers (e.g. `"composite:"`, `"pjit:"`).
+// - Combines caller and callee scopes across inlined `CallSiteLoc`s (stripping
+//   internal `jit(_where)` wrappers).
+// - Enriches trailing `"composite"` leaf scopes with the op's composite name.
+// - Filters cross-scope CSE outlier locations from `FusedLoc`s.
+std::string GetHierarchicalNameFromLoc(mlir::Location loc,
+                                       mlir::Operation* op) {
+  llvm::SmallVector<std::string, 8> leaf_names;
+  CollectLeafLocNames(loc, /*inherited_caller_scope=*/llvm::StringRef(),
+                      GetCompositeReplacementName(op), leaf_names);
+  bool has_nonempty = llvm::any_of(
+      leaf_names, [](const std::string& name) { return !name.empty(); });
+  if (!has_nonempty) {
+    return "";
+  }
+  if (leaf_names.size() > 1 && !HasSemicolonNameLoc(loc)) {
+    llvm::SmallVector<std::pair<llvm::StringRef, int>, 4> dir_counts;
+    llvm::SmallVector<llvm::StringRef, 8> elem_dirs;
+    elem_dirs.reserve(leaf_names.size());
+    for (const std::string& name : leaf_names) {
+      llvm::StringRef dir = ExtractDirectoryPrefix(name);
+      elem_dirs.push_back(dir);
+      if (dir.empty()) {
+        continue;
+      }
+      auto it = llvm::find_if(
+          dir_counts, [&](const auto& entry) { return entry.first == dir; });
+      if (it != dir_counts.end()) {
+        ++it->second;
+      } else {
+        dir_counts.emplace_back(dir, 1);
+      }
+    }
+    if (dir_counts.size() > 1) {
+      llvm::StringRef primary_dir = dir_counts[0].first;
+      int best_count = dir_counts[0].second;
+      for (size_t i = 1; i < dir_counts.size(); ++i) {
+        if (dir_counts[i].second > best_count) {
+          primary_dir = dir_counts[i].first;
+          best_count = dir_counts[i].second;
+        }
+      }
+      llvm::SmallVector<absl::string_view, 8> kept;
+      for (size_t i = 0; i < leaf_names.size(); ++i) {
+        if (elem_dirs[i] == primary_dir) {
+          kept.push_back(leaf_names[i]);
+        }
+      }
+      if (!kept.empty()) {
+        std::string joined = absl::StrJoin(kept, ";");
+        absl::c_replace(joined, ',', '_');
+        return joined;
+      }
+    }
+  }
+  std::string joined = absl::StrJoin(leaf_names, ";");
+  if (!HasSemicolonNameLoc(loc)) {
+    absl::c_replace(joined, ',', '_');
+  }
+  return joined;
+}
+
+bool ShouldPreserveHierarchicalOutputName(mlir::Value operand,
+                                          llvm::StringRef output_name) {
+  if (output_name.contains('/')) {
+    return false;
+  }
+  mlir::Operation* def_op = operand.getDefiningOp();
+  if (def_op == nullptr || HasSemicolonNameLoc(def_op->getLoc())) {
+    return false;
+  }
+  std::string loc_name = GetHierarchicalNameFromLoc(def_op->getLoc(), def_op);
+  return llvm::StringRef(loc_name).trim().contains('/');
+}
+
+class TfliteOpOrArgLocNameMapper : public tensorflow::OpOrArgLocNameMapper {
+ protected:
+  std::string GetName(tensorflow::OpOrVal op_or_val) override {
+    if (auto* op = llvm::dyn_cast_if_present<mlir::Operation*>(op_or_val)) {
+      std::string name = GetHierarchicalNameFromLoc(op->getLoc(), op);
+      if (!name.empty()) {
+        return name;
+      }
+      return tensorflow::OpOrArgLocNameMapper::GetName(op_or_val);
+    }
+    if (auto val = llvm::dyn_cast_if_present<mlir::Value>(op_or_val)) {
+      std::string name =
+          GetHierarchicalNameFromLoc(val.getLoc(), val.getDefiningOp());
+      if (!name.empty()) {
+        return name;
+      }
+    }
+    return tensorflow::OpOrArgLocNameMapper::GetName(op_or_val);
+  }
+};
+
 // Translates an MLIR module in TFLite dialect to TFLite FlatBuffer.
 class Translator {
  public:
@@ -955,9 +1236,11 @@ class Translator {
   std::optional<BufferOffset<tflite::Tensor>> BuildTensorFromType(
       mlir::Type type, const std::string& name);
 
-  // Builds TF::VariantType from the given element type. Returns std::nullopt if
-  // failure. Returns empty vector if the element type is not TF::VariantType or
-  // there is empty TensorType in the TF::VariantType.
+  // Builds the variant subtypes of a TF or TFLite variant element type.
+  // Returns std::nullopt on failure (more than one subtype, an unsupported
+  // subtype element type, or a `!tfl.variant` subtype dimension outside the
+  // int32 range). Returns an empty vector if the element type is not a variant
+  // type or has no subtypes.
   std::optional<std::vector<BufferOffset<tflite::VariantSubType>>>
   BuildTFVariantType(mlir::Type element_type);
 
@@ -1208,15 +1491,12 @@ class Translator {
       const_buffer_storage_;
   absl::flat_hash_map<mlir::AsmResourceBlob*, int> resource_ref_counts_;
 
-  // Maps custom options data to corresponding node
-  // Key is set to be the list of input tensor indices and list of output tensor
-  // indices
-  // in the idx map, the value is a pair of offset and size
-  absl::flat_hash_map<std::pair<std::vector<int32_t>, std::vector<int32_t>>,
-                      std::pair<uint64_t, uint64_t>>
+  // Maps custom options data to corresponding node.
+  // Keyed by the MLIR custom op; value is the (offset, size) of its large
+  // custom options in the exported buffer.
+  absl::flat_hash_map<mlir::Operation*, std::pair<uint64_t, uint64_t>>
       custom_op_idx_map_;
-  ExportBufferStorage<std::pair<std::vector<int32_t>, std::vector<int32_t>>,
-                      mlir::TFL::ConstBytesAttr>
+  ExportBufferStorage<mlir::Operation*, mlir::TFL::ConstBytesAttr>
       custom_op_buffer_storage_;
 
   // Points to TensorFlow and TFLite dialects, respectively. nullptr if the
@@ -1259,6 +1539,11 @@ class Translator {
 
   // Decide if we convert stablehlo ops in flatbuffer
   bool convert_stablehlo_ = true;
+
+  // Decide if hierarchical defining-op location names should be preserved on
+  // entry-function output tensors instead of flat `tf.entry_function` output
+  // placeholders.
+  bool preserve_hierarchical_output_names_ = false;
 
   // Decide if the debug metadata is serialized.
   bool serialize_debug_metadata_ = false;
@@ -1480,6 +1765,24 @@ std::optional<BufferOffset<tflite::Buffer>> Translator::BuildBuffer(
 
   auto type = mlir::cast<TensorType>(value.getType());
 
+  // Constants of the TFLite element types are serialized by the default
+  // applier below. Reject unsupported storage here, since errors returned by
+  // the applier don't fail the export in all modes.
+  if (mlir::isa<mlir::TFL::StringType>(type.getElementType()) &&
+      !mlir::isa<mlir::DenseStringElementsAttr>(attr)) {
+    inst->emitError("unsupported storage for a !tfl.string constant");
+    return std::nullopt;
+  }
+  if (mlir::isa<mlir::TFL::Quint8Type>(type.getElementType())) {
+    auto res_attr = mlir::dyn_cast<mlir::DenseResourceElementsAttr>(attr);
+    mlir::AsmResourceBlob* blob = res_attr ? GetBlob(res_attr) : nullptr;
+    if (!blob ||
+        blob->getData().size() != static_cast<size_t>(type.getNumElements())) {
+      inst->emitError("unsupported storage for a !tfl.quint8 constant");
+      return std::nullopt;
+    }
+  }
+
   if (can_be_deduplicated) {
     auto& dedup_map = is_streaming_cast ? cast_attribute_to_buffer_map_
                                         : const_attribute_to_buffer_map_;
@@ -1667,6 +1970,55 @@ std::optional<BufferOffset<tflite::Buffer>> Translator::BuildBuffer(
                       blob->getData().size()));
                 }
               }
+            }
+
+            // The TFLite element types aren't known to TensorFlow's
+            // conversion below, so serialize their constants directly.
+            if (shaped_type && mlir::isa<mlir::TFL::StringType>(
+                                   shaped_type.getElementType())) {
+              auto string_attr =
+                  mlir::dyn_cast<mlir::DenseStringElementsAttr>(attr);
+              if (!string_attr) {
+                std::string error_message =
+                    "unsupported storage for a !tfl.string constant";
+                inst->emitError(Twine(error_message));
+                return absl::InvalidArgumentError(error_message);
+              }
+              ::mlir::TFL::SimpleDynamicBuffer dynamic_buffer;
+              for (llvm::StringRef str :
+                   string_attr.getValues<llvm::StringRef>()) {
+                if (!dynamic_buffer.AddString(str.data(), str.size())) {
+                  std::string error_message =
+                      "failed to add string to dynamic buffer";
+                  inst->emitError(Twine(error_message));
+                  return absl::InvalidArgumentError(error_message);
+                }
+              }
+              char* tensor_buffer;
+              int bytes = dynamic_buffer.WriteToBuffer(&tensor_buffer);
+              auto apply_result =
+                  apply(absl::string_view(tensor_buffer, bytes));
+              free(tensor_buffer);
+              return apply_result;
+            }
+            if (shaped_type && mlir::isa<mlir::TFL::Quint8Type>(
+                                   shaped_type.getElementType())) {
+              // quint8 is stored like uint8: one byte per element.
+              if (auto res_attr =
+                      mlir::dyn_cast<mlir::DenseResourceElementsAttr>(attr)) {
+                mlir::AsmResourceBlob* blob = GetBlob(res_attr);
+                if (blob &&
+                    blob->getData().size() ==
+                        static_cast<size_t>(shaped_type.getNumElements())) {
+                  return apply(absl::string_view(
+                      reinterpret_cast<const char*>(blob->getData().data()),
+                      blob->getData().size()));
+                }
+              }
+              std::string error_message =
+                  "unsupported storage for a !tfl.quint8 constant";
+              inst->emitError(Twine(error_message));
+              return absl::InvalidArgumentError(error_message);
             }
 
             // Fallback Path: use TensorFlow's conversion for compatibility.
@@ -1865,30 +2217,49 @@ int Translator::GetOperatorDebugMetadataIndex(Operation* inst) {
 std::optional<std::vector<BufferOffset<tflite::VariantSubType>>>
 Translator::BuildTFVariantType(mlir::Type element_type) {
   std::vector<BufferOffset<tflite::VariantSubType>> variant_params;
-  auto variant_type = mlir::dyn_cast<mlir::TF::VariantType>(element_type);
-  if (!variant_type) {
+  llvm::ArrayRef<mlir::TensorType> subtypes;
+  if (auto variant_type = mlir::dyn_cast<mlir::TF::VariantType>(element_type)) {
+    subtypes = variant_type.getSubtypes();
+  } else if (auto tfl_variant_type =
+                 mlir::dyn_cast<mlir::TFL::VariantType>(element_type)) {
+    subtypes = tfl_variant_type.getSubtypes();
+  } else {
     return variant_params;
   }
 
-  // We only support up to one nested type in tf_type.variant_type.
-  if (variant_type.getSubtypes().size() > 1) {
+  // We only support up to one nested type in the variant type.
+  if (subtypes.size() > 1) {
     return std::nullopt;
   }
-  if (variant_type.getSubtypes().empty()) {
+  if (subtypes.empty()) {
     return variant_params;
   }
-  mlir::TensorType tensor_type = variant_type.getSubtypes().front();
-  tflite::TensorType tflite_element_type =
-      GetTFLiteType(tensor_type.getElementType()).value();
+  mlir::TensorType tensor_type = subtypes.front();
+  absl::StatusOr<tflite::TensorType> tflite_element_type =
+      GetTFLiteType(tensor_type.getElementType());
+  if (!tflite_element_type.ok()) {
+    return std::nullopt;
+  }
   std::vector<int32_t> shape;
   if (tensor_type.hasRank()) {
     llvm::ArrayRef<int64_t> shape_ref = tensor_type.getShape();
-    shape = std::vector<int32_t>(shape_ref.begin(), shape_ref.end());
+    if (mlir::isa<mlir::TFL::VariantType>(element_type)) {
+      // Dynamic dimensions are written as -1.
+      for (int64_t dim : shape_ref) {
+        if (dim > std::numeric_limits<int32_t>::max()) return std::nullopt;
+        shape.push_back(
+            mlir::ShapedType::isDynamic(dim) ? -1 : static_cast<int32_t>(dim));
+      }
+    } else {
+      // Kept as is for the TF variant type so that the TF converter output is
+      // unchanged (a dynamic dimension, kDynamic, truncates to 0 here).
+      shape = std::vector<int32_t>(shape_ref.begin(), shape_ref.end());
+    }
   }
 
-  variant_params.push_back(
-      tflite::CreateVariantSubType(builder_, builder_.CreateVector(shape),
-                                   tflite_element_type, tensor_type.hasRank()));
+  variant_params.push_back(tflite::CreateVariantSubType(
+      builder_, builder_.CreateVector(shape), *tflite_element_type,
+      tensor_type.hasRank()));
   return variant_params;
 }
 
@@ -2013,6 +2384,8 @@ std::optional<BufferOffset<tflite::Tensor>> Translator::BuildTensor(
   std::optional<std::vector<BufferOffset<tflite::VariantSubType>>>
       variant_params = BuildTFVariantType(element_type);
   if (!variant_params.has_value()) {
+    emitError(value.getLoc(), "unsupported variant subtypes in ")
+        << element_type;
     return std::nullopt;
   }
 
@@ -2255,8 +2628,7 @@ BufferOffset<tflite::Operator> Translator::BuildNumericVerifyOperator(
 BufferOffset<tflite::Operator> Translator::BuildCustomOperator(
     Operation* inst, mlir::TFL::CustomOp op,
     const std::vector<int32_t>& operands, const std::vector<int32_t>& results) {
-  ExportBufferStorage<std::pair<std::vector<int32_t>, std::vector<int32_t>>,
-                      mlir::TFL::ConstBytesAttr>::ExportBuffer
+  ExportBufferStorage<mlir::Operation*, mlir::TFL::ConstBytesAttr>::ExportBuffer
       export_buffer(
           op.getCustomOption(),
           [](const mlir::TFL::ConstBytesAttr& attr, auto apply) {
@@ -2269,7 +2641,7 @@ BufferOffset<tflite::Operator> Translator::BuildCustomOperator(
       GetOpcodeIndex(op.getCustomCode().str(), tflite::BuiltinOperator_CUSTOM);
   if (use_buffer_offset_) {
     custom_op_buffer_storage_.Insert(
-        std::make_pair(operands, results),
+        inst,
         std::make_unique<decltype(export_buffer)>(std::move(export_buffer)));
     return tflite::CreateOperator(
         builder_, opcode_index, builder_.CreateVector(operands),
@@ -3944,7 +4316,12 @@ void Translator::InitializeNamesFromAttribute(FuncOp fn, bool* has_input_attr) {
       return;
     }
     for (const auto& it : llvm::enumerate(term->getOperands())) {
-      name_mapper_.InitOpName(it.value(), output_names[it.index()].trim());
+      llvm::StringRef output_name = output_names[it.index()].trim();
+      if (preserve_hierarchical_output_names_ &&
+          ShouldPreserveHierarchicalOutputName(it.value(), output_name)) {
+        continue;
+      }
+      name_mapper_.InitOpName(it.value(), output_name);
     }
   }
 }
@@ -4718,11 +5095,6 @@ constexpr absl::string_view kFlatbufferSizeLimitExceededError =
 absl::Status Translator::Translate(
     ModuleOp module, const tflite::FlatbufferExportOptions& options,
     llvm::raw_pwrite_stream& export_stream) {
-  OpOrArgNameMapper* op_or_arg_name_mapper = options.op_or_arg_name_mapper;
-  OpOrArgLocNameMapper default_op_or_arg_name_mapper;
-  if (!op_or_arg_name_mapper) {
-    op_or_arg_name_mapper = &default_op_or_arg_name_mapper;
-  }
   if (!UpdateEntryFunction(module)) {
     LOG(ERROR) << "No entry function found in the module.";
     return absl::InvalidArgumentError("No entry function found.");
@@ -4746,12 +5118,18 @@ absl::Status Translator::Translate(
   }
 
   auto translate = [&]() {
+    TfliteOpOrArgLocNameMapper default_op_or_arg_name_mapper;
+    OpOrArgNameMapper* op_or_arg_name_mapper =
+        options.op_or_arg_name_mapper ? options.op_or_arg_name_mapper
+                                      : &default_op_or_arg_name_mapper;
     Translator translator(module, export_stream, converter_flags,
                           options.saved_model_tags, op_or_arg_name_mapper,
                           options.metadata, options.custom_option_alignment,
                           options.disable_buffer_deduping,
                           options.attribute_buffer_applier_factories);
     translator.convert_stablehlo_ = options.serialize_stablehlo_ops;
+    translator.preserve_hierarchical_output_names_ =
+        (options.op_or_arg_name_mapper == nullptr);
     return translator.TranslateInternal();
   };
 
@@ -5134,35 +5512,37 @@ bool Translator::UpdateBufferOffsets(tflite::Model* mutable_model) {
     return ret;
   }
 
+  size_t updated_custom_ops = 0;
   auto mutable_subgraphs = mutable_model->mutable_subgraphs();
-  for (auto msubgraph : *mutable_subgraphs) {
+  for (uint32_t sg_idx = 0; sg_idx < mutable_subgraphs->size(); ++sg_idx) {
+    if (sg_idx >= subgraph_op_inst_map_.size()) {
+      ret = false;
+      break;
+    }
+    auto msubgraph = mutable_subgraphs->GetMutableObject(sg_idx);
     auto operators = msubgraph->mutable_operators();
-    for (auto op : *operators) {
+    for (uint32_t op_idx = 0; op_idx < operators->size(); ++op_idx) {
+      if (op_idx >= subgraph_op_inst_map_[sg_idx].size()) {
+        ret = false;
+        break;
+      }
+      auto op = operators->GetMutableObject(op_idx);
       auto opcode_idx = op->opcode_index();
       auto opcodes = mutable_model->operator_codes();
       auto opcode = (*opcodes)[opcode_idx]->builtin_code();
       if (opcode == tflite::BuiltinOperator_CUSTOM) {
-        std::vector<int32_t> inputs(op->inputs()->begin(), op->inputs()->end());
-        std::vector<int32_t> outputs(op->outputs()->begin(),
-                                     op->outputs()->end());
-        for (auto& custom_op : custom_op_idx_map_) {
-          std::vector<int32_t> key_inputs = custom_op.first.first;
-          std::vector<int32_t> key_outputs = custom_op.first.second;
-          // TODO(b/287306548): we need more rigorous check to make sure the
-          // node we're updating is the right one for now we're just ensuring
-          // they have the same number of input, output and first output is
-          // the same
-          if (key_inputs.size() == inputs.size() &&
-              key_outputs.size() == outputs.size() &&
-              key_outputs[0] == outputs[0]) {
-            ret &=
-                op->mutate_large_custom_options_offset(custom_op.second.first);
-            ret &=
-                op->mutate_large_custom_options_size(custom_op.second.second);
-          }
+        if (auto it =
+                custom_op_idx_map_.find(subgraph_op_inst_map_[sg_idx][op_idx]);
+            it != custom_op_idx_map_.end()) {
+          ret &= op->mutate_large_custom_options_offset(it->second.first);
+          ret &= op->mutate_large_custom_options_size(it->second.second);
+          ++updated_custom_ops;
         }
       }
     }
+  }
+  if (updated_custom_ops < custom_op_idx_map_.size()) {
+    ret = false;
   }
   if (!ret) LOG(ERROR) << "failed to update custom op offsets\n";
 

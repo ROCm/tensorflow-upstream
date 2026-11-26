@@ -214,11 +214,11 @@ cc_library(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/transforms:call_inliner",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt/c:pjrt_c_api_custom_partitioner_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
-        "//xla/service:call_inliner",
         "//xla/service:custom_call_sharding_helper",
         "//xla/service/spmd:spmd_partitioner",
         "//xla/tsl/platform:errors",
@@ -281,11 +281,11 @@ nanobind_pywrap_extension(
     visibility = [":friends"],
     deps = [
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms:call_inliner",
         "//xla/hlo/transforms/simplifiers:flatten_call_graph",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/hlo/transforms/simplifiers:tuple_simplifier",
         "//xla/pjrt:status_casters",
-        "//xla/service:call_inliner",
         "@nanobind",
     ],
 )
@@ -395,6 +395,7 @@ nanobind_pywrap_extension(
         "//xla/pjrt:status_casters",
         "//xla/service:hlo_graph_dumper",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_proto_cc",
         "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_import",
         "//xla/tsl/lib/strings:proto_serialization",
         "//xla/tsl/platform:env",
@@ -578,6 +579,7 @@ nanobind_pywrap_extension(
     deps = [
         "//xla/tsl/profiler/backends/gpu:ondevice_event_receiver",
         "//xla/tsl/profiler/backends/gpu:ondevice_trace_event",
+        "@com_google_absl//absl/strings:string_view",
         "@nanobind",
     ],
 )

@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/pass/hlo_pass_options.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/literal.h"
 #include "xla/service/call_graph.h"
@@ -82,7 +83,7 @@ struct SpmdPartitionerOptions {
   bool bidirectional_windowed_einsum = false;
 
   // Whether the entry computations' signature could change after partitioning.
-  bool allow_module_signature_change = false;
+  bool allow_module_signature_change = true;
 
   // Whether the entry computations' layout signature could change after
   // partitioning.
@@ -149,6 +150,9 @@ struct SpmdPartitionerOptions {
   // instructions have compatible sharding across all operands and results.
   bool need_resolve_conflicts = true;
 };
+
+SpmdPartitionerOptions SpmdPartitionerOptionsFromHloPassOptions(
+    const HloPassOptions& options);
 
 // Class to wrap the computation builder to capture information during SPMD
 // transformation.
@@ -401,7 +405,8 @@ class SpmdPartitioner : public HloModulePass {
       }
     }
     return hlo->opcode() == HloOpcode::kInfeed ||
-           hlo->opcode() == HloOpcode::kOutfeed;
+           hlo->opcode() == HloOpcode::kOutfeed ||
+           hlo->opcode() == HloOpcode::kRngGetAndUpdateState;
   }
 
   // Preprocesses the graph to simplify some communication patterns. E.g., merge
@@ -761,6 +766,7 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   absl::Status HandleReshape(HloInstruction* hlo) override;
   absl::Status HandleReverse(HloInstruction* hlo) override;
   absl::Status HandleRng(HloInstruction* hlo) override;
+  absl::Status HandleRngGetAndUpdateState(HloInstruction* hlo) override;
   absl::Status HandleScan(HloInstruction* hlo) override;
   absl::Status HandleScatter(HloInstruction* hlo) override;
   absl::Status HandleSelectAndScatter(HloInstruction* hlo) override;

@@ -44,10 +44,10 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test_helpers.h"
+#include "xla/hlo/transforms/layout_assignment.h"
 #include "xla/layout.h"
 #include "xla/literal_util.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/layout_assignment.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -1053,6 +1053,225 @@ TEST_F(HloVerifierTest, DotUnreferencedExtraOperandsNotAllowed) {
 
   EXPECT_THAT(verifier().Run(module.get()).status().message(),
               HasSubstr("Expected all 2 extra operands to be referenced"));
+}
+
+static const char* const kDotGeneralHloString = R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  rhs_scale = f8e8m0fnu[4,64] parameter(3)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale, rhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2} rhs={scale_idx=3}}
+})";
+
+TEST_F(HloVerifierTest, DotGeneralBlockScaled) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(kDotGeneralHloString));
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HloVerifierTest, DotGeneralUnreferencedExtraOperandNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(kDotGeneralHloString));
+  HloInstruction* dot = module->entry_computation()->root_instruction();
+  BlockScalingConfig config = dot->block_scaling_config();
+  config.clear_rhs();
+  dot->set_block_scaling_config(config);
+  EXPECT_THAT(
+      verifier().Run(module.get()).status(),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("Expected all 2 extra operands to be referenced")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralScaleRankMismatchNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[256] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must have the same rank")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralScaleNotDividingOperandNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,3] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must evenly divide")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralWithoutExtraOperandsNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f32[8,16] parameter(0)
+  rhs = f32[16,4] parameter(1)
+  ROOT dot = f32[8,4] dot-general(lhs, rhs), lhs_contracting_dims={1},
+    rhs_contracting_dims={0}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must have sparsity or block scaling")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralPrecisionForExtraOperandNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    operand_precision={high,high,high},
+    block_scaling_config={lhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("exactly 2 operand precisions, got 3")));
+}
+
+TEST_F(HloVerifierTest, BlockScaledConvolutionScaleRankMismatchNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  input = f8e4m3fn[8,128] parameter(0)
+  filter = f8e4m3fn[128,16] parameter(1)
+  scale = f8e8m0fnu[64] parameter(2)
+  ROOT conv = f32[8,16] convolution(input, filter, scale),
+    dim_labels=bf_io->bf, block_scaling_config={rhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must have the same rank")));
+}
+
+TEST_F(HloVerifierTest, BlockScaledDotScaleNotDividingOperandNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,3] parameter(2)
+  ROOT dot = f32[64,64] dot(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must evenly divide")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralPaddedScaleWithBlockSizes) {
+  // 100 values in blocks of 32 need 4 scales; the last block is partial.
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,100] parameter(0)
+  rhs = f8e4m3fn[100,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2 block_sizes=1x32}}
+})"));
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HloVerifierTest, DotGeneralNonPositiveBlockSizeNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2 block_sizes=1x0}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must be positive")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralEmptyScaleWithBlockSizesNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,0] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2 block_sizes=1x32}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must be positive")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralNonArrayOperandNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = (f8e4m3fn[64,128]) parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Expected array operand 0")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralBlockSizesRankMismatchNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2 block_sizes=32}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must have 2 entries, got 1")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralSparseShape) {
+  // A 1:4 sparse rhs stores K / 4 values along its contracting dimension.
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,256] parameter(0)
+  rhs = f8e4m3fn[64,64] parameter(1)
+  rhs_indices = u8[64,64] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, rhs_indices),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    sparsity_config={rhs={sparsity=1x4 dimension=0 stride=1 idx=2}}
+})"));
+  EXPECT_OK(verifier().Run(module.get()).status());
 }
 
 static const char* const kAddWithLayoutChangeHlo = R"(
@@ -2589,6 +2808,57 @@ TEST_F(HloVerifierTest, IotaPredResultNotAllowed) {
   auto status = verifier().Run(module.get()).status();
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(), HasSubstr("got PRED"));
+}
+
+TEST_F(HloVerifierTest, SortNegativeDimension) {
+  const char* const hlo_string = R"(
+  HloModule SortNegativeDimension
+
+  compare {
+    p.0.lhs = f32[] parameter(0)
+    p.0.rhs = f32[] parameter(1)
+    ROOT lt = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+  }
+
+  ENTRY main {
+    x = f32[4,8] parameter(0)
+    ROOT sorted = f32[4,8] sort(x), dimensions={-1}, to_apply=compare
+  }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("Expected the sort_dimension -1 of sort to be "
+                                 "non-negative and smaller than the rank 2")));
+}
+
+TEST_F(HloVerifierTest, SortKeyValueDimensionOutOfRange) {
+  const char* const hlo_string = R"(
+  HloModule SortKeyValueDimensionOutOfRange
+
+  compare {
+    p.0.lhs = f32[] parameter(0)
+    p.0.rhs = f32[] parameter(1)
+    p.1.lhs = s32[] parameter(2)
+    p.1.rhs = s32[] parameter(3)
+    ROOT lt = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+  }
+
+  ENTRY main {
+    keys = f32[4,8] parameter(0)
+    values = s32[4,8] parameter(1)
+    ROOT sorted = (f32[4,8], s32[4,8]) sort(keys, values), dimensions={2}, to_apply=compare
+  }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("Expected the sort_dimension 2 of sort to be "
+                                 "non-negative and smaller than the rank 2")));
 }
 
 static const char* const kMapOperandComputationMismatchHlo = R"(
@@ -4250,6 +4520,35 @@ ENTRY main {
                 .status());
 }
 
+TEST_F(HloVerifierTest, ReshapeInferredDimensionOutOfRange) {
+  auto make_hlo = [](int64_t inferred_dimension) {
+    return absl::StrCat(R"(
+HloModule ReshapeInferredDimensionOutOfRange
+
+ENTRY main {
+  p = f32[<=6,4] parameter(0)
+  ROOT r = f32[<=3,2,4] reshape(p), inferred_dimension=)",
+                        inferred_dimension, R"(
+}
+)");
+  };
+
+  ASSERT_OK_AND_ASSIGN(auto valid_module,
+                       ParseAndReturnUnverifiedModule(make_hlo(0)));
+  EXPECT_THAT(verifier().Run(valid_module.get()), IsOkAndHolds(false));
+
+  for (int64_t bad_dim : {int64_t{3}, int64_t{-2}}) {
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseAndReturnUnverifiedModule(make_hlo(bad_dim)));
+    EXPECT_THAT(
+        verifier().Run(module.get()),
+        StatusIs(
+            absl::StatusCode::kInvalidArgument,
+            HasSubstr("Expected inferred_dimension of reshape to be -1 or in "
+                      "[0, 3)")));
+  }
+}
+
 TEST_F(HloVerifierTest, VerifyCustomCallThread) {
   const char* const hlo = R"(
     HloModule module
@@ -4457,6 +4756,86 @@ TEST_F(HloVerifierTest, InconsistentWhileSharding) {
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(),
               HasSubstr("Inconsistent while sharding among instructions"));
+}
+
+// A while loop whose induction variable is tuple index 0 with init=2, step=3,
+// and the given `dynamic_variables` entries.
+std::string WhileWithDynamicVariablesHlo(absl::string_view dynamic_variables) {
+  return absl::StrCat(R"(
+    HloModule While
+
+    body {
+      p0 = (s32[], f32[4]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      data = f32[4] get-tuple-element(p0), index=1
+      c3 = s32[] constant(3)
+      next_ivar = s32[] add(ivar, c3)
+      ROOT result = (s32[], f32[4]) tuple(next_ivar, data)
+    }
+
+    condition {
+      p0 = (s32[], f32[4]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      c8 = s32[] constant(8)
+      ROOT cmp = pred[] compare(ivar, c8), direction=LT
+    }
+
+    ENTRY main {
+      data = f32[4] parameter(0)
+      c2 = s32[] constant(2)
+      tuple = (s32[], f32[4]) tuple(c2, data)
+      ROOT while = (s32[], f32[4]) while(tuple), condition=condition, body=body,
+          backend_config={"known_trip_count":{"n":"2"},
+                          "known_init_step":{"init":"2","step":"3"},
+                          "known_induction_variable":{"tuple_index":"0"},
+                          "dynamic_variables":[)",
+                      dynamic_variables, "]}\n    }");
+}
+
+TEST_F(HloVerifierTest, WhileInductionVariableEntryAgreeingWithInitStep) {
+  for (absl::string_view entries :
+       {"", R"({"init":"2","step":"3","tuple_index":"0"})",
+        R"({"tuple_index":"0"})",
+        R"({"init":"0","step":"1","tuple_index":"1"})"}) {
+    SCOPED_TRACE(entries);
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        ParseAndReturnUnverifiedModule(WhileWithDynamicVariablesHlo(entries)));
+    EXPECT_THAT(verifier().Run(module.get()), absl_testing::IsOk());
+  }
+}
+
+TEST_F(HloVerifierTest, WhileInductionVariableEntryContradictingInitStep) {
+  for (absl::string_view entries :
+       {R"({"init":"0","step":"3","tuple_index":"0"})",
+        R"({"init":"2","step":"1","tuple_index":"0"})"}) {
+    SCOPED_TRACE(entries);
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        ParseAndReturnUnverifiedModule(WhileWithDynamicVariablesHlo(entries)));
+    EXPECT_THAT(
+        verifier().Run(module.get()),
+        absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
+                               HasSubstr("disagrees with known_init_step")));
+  }
+}
+
+TEST_F(HloVerifierTest, WhileDynamicVariableEntryWithOnlyInitOrStep) {
+  // Half-populated entries violate the "set both or neither" contract, for the
+  // induction variable (index 0) and any other variable (index 1) alike.
+  for (absl::string_view entries : {R"({"step":"3","tuple_index":"0"})",
+                                    R"({"init":"2","tuple_index":"0"})",
+                                    R"({"step":"1","tuple_index":"1"})",
+                                    R"({"init":"0","tuple_index":"1"})"}) {
+    SCOPED_TRACE(entries);
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        ParseAndReturnUnverifiedModule(WhileWithDynamicVariablesHlo(entries)));
+    EXPECT_THAT(verifier().Run(module.get()),
+                absl_testing::StatusIs(
+                    absl::StatusCode::kFailedPrecondition,
+                    HasSubstr("must set both init and step or neither")));
+  }
 }
 
 TEST_F(HloVerifierTest, InconsistentConditionSharding) {
@@ -7908,6 +8287,65 @@ TEST_F(HloVerifierTest, FmaValidAndInvalid) {
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("Expected element type in shape to be "
                                  "floating for fma operation; got S32.")));
+}
+
+TEST_F(HloVerifierTest, VariadicScatterDifferentFloatPrecisionsAllowed) {
+  constexpr absl::string_view kHlo = R"(
+  HloModule variadic_scatter_mixed_floats
+
+  comb {
+    a0 = f32[] parameter(0)
+    a1 = bf16[] parameter(1)
+    b0 = f32[] parameter(2)
+    b1 = bf16[] parameter(3)
+    sum0 = f32[] add(a0, b0)
+    sum1 = bf16[] add(a1, b1)
+    ROOT t = (f32[], bf16[]) tuple(sum0, sum1)
+  }
+
+  ENTRY main {
+    x0 = f32[8,16] parameter(0)
+    x1 = bf16[8,16] parameter(1)
+    idx = s32[4,1] parameter(2)
+    up0 = f32[4,16] parameter(3)
+    up1 = bf16[4,16] parameter(4)
+    ROOT s = (f32[8,16], bf16[8,16]) scatter(x0, x1, idx, up0, up1),
+        update_window_dims={1},
+        inserted_window_dims={0},
+        scatter_dims_to_operand_dims={0},
+        index_vector_dim=1,
+        to_apply=comb
+  })";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HloVerifierTest, ScatterSlotPrecisionMismatchRejected) {
+  constexpr absl::string_view kHlo = R"(
+  HloModule scatter_slot_precision_mismatch
+
+  comb {
+    a0 = f32[] parameter(0)
+    b0 = f32[] parameter(1)
+    ROOT s0 = f32[] add(a0, b0)
+  }
+
+  ENTRY main {
+    x0 = f32[8,16] parameter(0)
+    idx = s32[4,1] parameter(1)
+    up0 = bf16[4,16] parameter(2)
+    ROOT s = f32[8,16] scatter(x0, idx, up0),
+        update_window_dims={1},
+        inserted_window_dims={0},
+        scatter_dims_to_operand_dims={0},
+        index_vector_dim=1,
+        to_apply=comb
+  })";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Shape mismatch between to_apply computation "
+                                 "parameter and operand 2")));
 }
 
 }  // namespace

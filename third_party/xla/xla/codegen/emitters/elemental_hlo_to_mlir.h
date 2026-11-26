@@ -76,11 +76,18 @@ absl::Status SubgraphToMlirFunction(
     const CallTargetProvider& call_target_provider,
     mlir::MLIRContext* mlir_context);
 
-// Creates an `apply_indexing` op for the given map.
-llvm::SmallVector<mlir::Value, 3> ApplyIndexing(IndexingMap map,
-                                                mlir::ValueRange dims,
-                                                mlir::ValueRange symbols,
-                                                mlir::ImplicitLocOpBuilder& b);
+// Creates `apply_indexing` ops for the given map.
+//
+// When `preserve_result_ranges` is true (only valid when `map`'s domain and
+// constraints are guaranteed to hold at `b`'s insertion point), each variable
+// result with a constrained range under `map` is emitted as an
+// `ApplyIndexingOp` annotated with that range as `xla.range`. The op is only
+// folded to its SSA operand if `GetRange` of the operand is known and contained
+// in that range; otherwise (unknown operand range, or a range that is wider or
+// only partially overlaps) the unfolded op is kept.
+llvm::SmallVector<mlir::Value, 3> ApplyIndexing(
+    IndexingMap map, mlir::ValueRange dims, mlir::ValueRange symbols,
+    mlir::ImplicitLocOpBuilder& b, bool preserve_result_ranges = false);
 
 // Checks all the constraints and dimension ranges in the map.
 mlir::Value CheckConstraints(const IndexingMap& map, mlir::ValueRange dims,
@@ -140,6 +147,16 @@ mlir::Value ClampIndex(mlir::Value index, bool is_unsigned, int64_t high,
 mlir::SmallVector<mlir::Value, 2> InlineBlock(mlir::OpBuilder& builder,
                                               mlir::Block& src_block,
                                               mlir::ValueRange mapped_args);
+
+// Emits an `xla.atomic_store` when the scatter combiner `to_apply` / `reducer`
+// ignores its first argument (the current destination element), or an
+// `xla.atomic_rmw` otherwise.
+mlir::Value EmitScatterAtomicUpdate(mlir::ImplicitLocOpBuilder& b,
+                                    const HloComputation* to_apply,
+                                    mlir::func::FuncOp reducer,
+                                    mlir::Value update_elem,
+                                    mlir::Value output_tensor,
+                                    mlir::ValueRange indices);
 
 // Populates `lbs`, `ubs` and `steps` with the loop bounds from `indexing_map`.
 void GetLoopBoundsFromIndexingMap(mlir::ImplicitLocOpBuilder& b,

@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/resource_loader.h"
 #include "xla/tsl/platform/test.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
@@ -44,13 +45,11 @@ TEST(EmbeddedTargetConfigTest, DeviceInfoMatches) {
         "v100", "mi200", "rtx6000pro", "gb200", "gb300", "vr_nvl72"}) {
     GpuTargetConfigProto proto;
     std::string spec_string;
-    auto path = tsl::testing::XlaSrcRoot();
-    path = path.erase(path.length() - 4);
     ASSERT_OK(tsl::ReadFileToString(
         tsl::Env::Default(),
-        tsl::io::JoinPath(path, "external/xla/xla",
-                          "backends/gpu/target_config/specs",
-                          absl::StrCat(file_name, ".txtpb")),
+        tsl::GetDataDependencyFilepath(tsl::io::JoinPath(
+            "external", "xla", "xla", "backends/gpu/target_config/specs",
+            absl::StrCat(file_name, ".txtpb"))),
         &spec_string));
     ASSERT_TRUE(
         tsl::protobuf::TextFormat::ParseFromString(spec_string, &proto));

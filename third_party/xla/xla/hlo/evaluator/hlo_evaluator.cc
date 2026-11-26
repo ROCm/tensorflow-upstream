@@ -4964,6 +4964,11 @@ ReturnT ApplyBinaryOp(HloOpcode opcode, ReturnT a, ReturnT b) {
       return static_cast<ReturnT>(
           ElementwiseT(ToArithmeticSafeType(lhs) * ToArithmeticSafeType(rhs)));
     case HloOpcode::kMaximum:
+      if constexpr (std::is_same_v<ReturnT, tsl::float8_e8m0fnu>) {
+        return Eigen::numext::isnan(a)
+                   ? a
+                   : (Eigen::numext::isnan(b) ? b : std::max(a, b));
+      }
       if constexpr (!is_complex_v<ElementwiseT>) {
         if constexpr (std::numeric_limits<ElementwiseT>::has_quiet_NaN) {
           if (std::isnan(lhs)) {
@@ -4977,6 +4982,11 @@ ReturnT ApplyBinaryOp(HloOpcode opcode, ReturnT a, ReturnT b) {
       }
       break;
     case HloOpcode::kMinimum:
+      if constexpr (std::is_same_v<ReturnT, tsl::float8_e8m0fnu>) {
+        return Eigen::numext::isnan(a)
+                   ? a
+                   : (Eigen::numext::isnan(b) ? b : std::min(a, b));
+      }
       if constexpr (!is_complex_v<ElementwiseT>) {
         if constexpr (std::numeric_limits<ElementwiseT>::has_quiet_NaN) {
           if (std::isnan(lhs)) {
@@ -5598,7 +5608,7 @@ Shape HloEvaluator::GetShapeWithLayout(const Shape& shape) {
 }
 
 absl::Status HloEvaluator::RunElementwiseUnaryOp(
-    const HloInstruction* instruction,
+    const HloInstruction* instruction, PrimitiveType operand_type,
     absl::FunctionRef<absl::Status(
         Literal& result, const Literal& operand_literal, bool same_layout)>
         populate) {
@@ -5607,6 +5617,9 @@ absl::Status HloEvaluator::RunElementwiseUnaryOp(
   TF_RET_CHECK(ShapeUtil::SameDimensions(shape, operand->shape()));
 
   const Literal& operand_literal = GetEvaluatedLiteralFor(operand);
+  // `populate` reads the operand as `operand_type`.
+  TF_RET_CHECK(operand_literal.shape().element_type() == operand_type)
+      << "operand element type mismatch: " << instruction->ToString();
   Literal result(shape);
   bool same_layout =
       LayoutUtil::Equal(operand->shape().layout(), shape.layout());
@@ -5629,6 +5642,10 @@ absl::Status HloEvaluator::RunElementwiseBinaryOp(
 
   const Literal& lhs_literal = GetEvaluatedLiteralFor(lhs);
   const Literal& rhs_literal = GetEvaluatedLiteralFor(rhs);
+  // `populate` reads both operands as the element type of the result.
+  TF_RET_CHECK(lhs_literal.shape().element_type() == shape.element_type() &&
+               rhs_literal.shape().element_type() == shape.element_type())
+      << "operand element type mismatch: " << instruction->ToString();
 
   Literal result(shape);
 
@@ -5662,6 +5679,11 @@ absl::Status HloEvaluator::RunElementwiseTernaryOp(
   const Literal& lhs_literal = GetEvaluatedLiteralFor(lhs);
   const Literal& rhs_literal = GetEvaluatedLiteralFor(rhs);
   const Literal& ehs_literal = GetEvaluatedLiteralFor(ehs);
+  // `populate` reads all operands as the element type of the result.
+  TF_RET_CHECK(lhs_literal.shape().element_type() == shape.element_type() &&
+               rhs_literal.shape().element_type() == shape.element_type() &&
+               ehs_literal.shape().element_type() == shape.element_type())
+      << "operand element type mismatch: " << instruction->ToString();
 
   Literal result(shape);
 
@@ -6842,6 +6864,11 @@ absl::Status HloEvaluator::HandleRaggedDot(const HloInstruction* dot) {
       },
       elementwise_type));
   return finish();
+}
+
+absl::Status HloEvaluator::HandleDotGeneral(const HloInstruction* dot) {
+  return Unimplemented("dot-general evaluation is not supported: %s",
+                       dot->ToString());
 }
 
 absl::Status HloEvaluator::HandleScaledDot(const HloInstruction* dot) {

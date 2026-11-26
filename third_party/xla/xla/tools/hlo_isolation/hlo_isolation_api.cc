@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/defuser.h"
 #include "xla/hlo/transforms/despecializer.h"
@@ -98,6 +99,8 @@ namespace {
 
 constexpr absl::string_view kResultsFilename =
     "hlo_isolation_test_results.pbtxt";
+
+constexpr absl::string_view kSparseCoreThread = "sparsecore";
 
 absl::Status InitIsolatorOptions(ModuleIsolationOptions& options) {
   if (!options.run_module_fn) {
@@ -642,7 +645,60 @@ bool RetryWithoutExcessPrecision(const HloModule& module,
       .ok();
 }
 
+bool IsRoutingOpcode(HloOpcode opcode) {
+  switch (opcode) {
+    case HloOpcode::kParameter:
+    case HloOpcode::kConstant:
+    case HloOpcode::kCall:
+    case HloOpcode::kAsyncStart:
+    case HloOpcode::kAsyncUpdate:
+    case HloOpcode::kAsyncDone:
+    case HloOpcode::kTuple:
+    case HloOpcode::kGetTupleElement:
+    case HloOpcode::kBitcast:
+      return true;
+    default:
+      return false;
+  }
+}
+
 }  // namespace
+
+bool IsSparseCoreModule(const HloModule& module) {
+  for (const HloComputation* computation :
+       module.computations({HloInstruction::kMainExecutionThread})) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      if (instruction->opcode() == HloOpcode::kAsyncStart &&
+          instruction->async_execution_thread() == kSparseCoreThread) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+std::optional<std::string> SparseCoreOffloadSkipReason(
+    const HloModule& module) {
+  bool found_work = false;
+  for (const HloComputation* computation : module.computations()) {
+    if (ComputationHasRng(computation)) {
+      return "CONTAINS_RNG";
+    }
+    if (computation->execution_thread() != kSparseCoreThread) {
+      continue;
+    }
+    for (const HloInstruction* instr : computation->instructions()) {
+      if (instr->IsCustomCall("tpu_custom_call")) {
+        return "CONTAINS_MOSAIC_KERNEL";
+      }
+      found_work |= !IsRoutingOpcode(instr->opcode());
+    }
+  }
+  if (!found_work) {
+    return "NO_WORK_IN_SPARSECORE_OFFLOAD";
+  }
+  return std::nullopt;
+}
 
 std::vector<HloOutputCallback> CreateDumpHloOutputCallbacks(
     HloModule* module, std::shared_ptr<ExpectedLiteralsMap> expected_literals,
@@ -653,10 +709,7 @@ std::vector<HloOutputCallback> CreateDumpHloOutputCallbacks(
   for (auto* computation : module->computations()) {
     for (auto* instruction : computation->instructions()) {
       int64_t hlo_id = next_id++;
-      xla::FrontendAttributes frontend_attributes =
-          instruction->frontend_attributes();
-      (*frontend_attributes.mutable_map())["_xla_tag"] = std::to_string(hlo_id);
-      instruction->set_frontend_attributes(frontend_attributes);
+      instruction->set_frontend_attribute("_xla_tag", std::to_string(hlo_id));
 
       HloOutputCallback hlo_cb;
       hlo_cb.callback_id = hlo_id;
@@ -722,13 +775,10 @@ std::vector<HloOutputCallback> CreateComparisonHloOutputCallbacks(
 
   const HloInstruction* entry_root =
       test_module_clone->entry_computation()->root_instruction();
-  xla::FrontendAttributes frontend_attributes;
   for (auto* computation : test_module_clone->computations()) {
     for (auto* instruction : computation->instructions()) {
       int64_t hlo_id = next_hlo_id++;
-      frontend_attributes.Clear();
-      (*frontend_attributes.mutable_map())["_xla_tag"] = std::to_string(hlo_id);
-      instruction->add_frontend_attributes(frontend_attributes);
+      instruction->add_frontend_attribute("_xla_tag", std::to_string(hlo_id));
 
       // Inputs and pass through ops carry no computation of their own, so a
       // match on them is not reported as verified.
@@ -885,7 +935,7 @@ absl::StatusOr<Literal> RunModule(std::unique_ptr<HloModule> module,
                                   absl::Span<const Literal> input_data,
                                   const RunModuleOptions& options) {
   if (!options.run_hlo_passes && !module->has_schedule()) {
-    ABSL_RETURN_IF_ERROR(HloTrivialScheduler().Run(module.get()).status());
+    ABSL_RETURN_IF_ERROR(ScheduleIsolatedModule(module.get()));
   }
 
   absl::FlagSaver flag_saver;
@@ -1026,21 +1076,27 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
   // the fusion under test. When that (or a timeout) happens the defused
   // reference is simply unavailable for this module; it is not evidence of a
   // miscompile, so fall through to the interpreter reference instead.
-  std::unique_ptr<HloModule> defused_module = module.Clone("defused");
-  ABSL_RETURN_IF_ERROR(DefuseModule(defused_module.get()));
-  defused_output =
-      run_module(std::move(defused_module), test_runner, input_data);
-  if (!defused_output.ok()) {
-    if (!absl::IsResourceExhausted(defused_output.status()) &&
-        !absl::IsDeadlineExceeded(defused_output.status())) {
-      return fail_runner("DEFUSED_TEST_RUNNER_FAILURE",
-                         "Test runner failed for defused module: ",
-                         defused_output.status(), module.name());
+  //
+  // SparseCore can not lower arbitrary unfused ops, so a SparseCore module is
+  // never defused; the interpreter is its only reference.
+  const bool is_sc_module = IsSparseCoreModule(module);
+  if (!is_sc_module) {
+    std::unique_ptr<HloModule> defused_module = module.Clone("defused");
+    ABSL_RETURN_IF_ERROR(DefuseModule(defused_module.get()));
+    defused_output =
+        run_module(std::move(defused_module), test_runner, input_data);
+    if (!defused_output.ok()) {
+      if (!absl::IsResourceExhausted(defused_output.status()) &&
+          !absl::IsDeadlineExceeded(defused_output.status())) {
+        return fail_runner("DEFUSED_TEST_RUNNER_FAILURE",
+                           "Test runner failed for defused module: ",
+                           defused_output.status(), module.name());
+      }
+      LOG(WARNING) << "Skipping the defused reference for module "
+                   << module.name()
+                   << " because the defused module could not be run: "
+                   << defused_output.status();
     }
-    LOG(WARNING) << "Skipping the defused reference for module "
-                 << module.name()
-                 << " because the defused module could not be run: "
-                 << defused_output.status();
   }
 
   // Potentially skip reference run.
@@ -1100,10 +1156,16 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
   // TODO(b/524252856): with a pre-flight peak-memory estimate for the defused
   // module we could tell "too big for HBM but fine on the host" apart from
   // "too big for anything" and still use the interpreter for the former.
-  if (!defused_output.ok()) {
+  if (!is_sc_module && !defused_output.ok()) {
     LOG(WARNING) << "No usable reference for module: " << module.name();
     result.set_state(State::SKIPPED);
     result.set_reason("DEFUSED_REFERENCE_UNAVAILABLE");
+    return result;
+  }
+  if (is_sc_module && reference_runner == nullptr) {
+    LOG(WARNING) << "No reference for SparseCore module: " << module.name();
+    result.set_state(State::SKIPPED);
+    result.set_reason("REFERENCE_UNAVAILABLE");
     return result;
   }
 
@@ -1118,6 +1180,14 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
     absl::StatusOr<Literal> reference_output = run_module(
         std::move(despecialized_module), reference_runner, input_data);
     if (!reference_output.ok()) {
+      if (is_sc_module && (absl::IsUnimplemented(reference_output.status()) ||
+                           absl::IsNotFound(reference_output.status()))) {
+        LOG(WARNING) << "Reference unimplemented for SparseCore module "
+                     << module.name() << ": " << reference_output.status();
+        result.set_state(State::SKIPPED);
+        result.set_reason("REFERENCE_UNIMPLEMENTED");
+        return result;
+      }
       return fail_runner("REFERENCE_RUNNER_FAILURE",
                          "Reference runner failed: ", reference_output.status(),
                          despecialized_module_name);
@@ -1133,7 +1203,8 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
       return result;
     }
 
-    if (options.enable_fusion_debugger) {
+    // TODO(b/527142533): Enable fusion debugger for SparseCore modules.
+    if (options.enable_fusion_debugger && !is_sc_module) {
       // If there was a mismatch then we should re-run the failing HLO module
       // with the fusion debugger enabled - to isolate the mismatch.
       // Run the reference runner again with despecialization to dump reference
@@ -1235,7 +1306,12 @@ absl::StatusOr<std::vector<HloIsolationTestResult>> RunIsolationPipeline(
               if (a->name() != b->name()) {
                 return a->name() < b->name();
               }
-              return a->GetFingerprint128() < b->GetFingerprint128();
+              HloPrintOptions print_options =
+                  HloPrintOptions::ModuleFingerprint();
+              print_options.set_print_backend_config(
+                  IsSparseCoreOffloadUnit(*a) || IsSparseCoreOffloadUnit(*b));
+              return a->GetFingerprint128(print_options) <
+                     b->GetFingerprint128(print_options);
             });
 
   std::vector<HloIsolationTestResult> pipeline_results;
@@ -1296,6 +1372,22 @@ absl::StatusOr<std::vector<HloIsolationTestResult>> RunIsolationPipeline(
         continue;
       }
       filtered_module_index++;
+    }
+
+    if (IsSparseCoreModule(*module)) {
+      if (std::optional<std::string> reason =
+              SparseCoreOffloadSkipReason(*module);
+          reason.has_value()) {
+        LOG(INFO) << "SparseCore module " << module->name()
+                  << " skipped: " << *reason;
+        HloIsolationTestResult skipped_result;
+        skipped_result.set_module_name(module->name());
+        skipped_result.set_state(State::SKIPPED);
+        skipped_result.set_reason(*reason);
+        pipeline_results.push_back(std::move(skipped_result));
+        WriteResults(pipeline_results);
+        continue;
+      }
     }
 
     // Execute module

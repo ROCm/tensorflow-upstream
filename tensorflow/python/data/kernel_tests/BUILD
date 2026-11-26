@@ -1171,7 +1171,7 @@ tf_py_strict_test(
     name = "shuffle_test",
     size = "medium",
     srcs = ["shuffle_test.py"],
-    shard_count = 8,
+    shard_count = 16,
     tags = ["requires-mem:16g"],
     deps = [
         ":checkpoint_test_base",
@@ -1206,7 +1206,7 @@ tf_py_strict_test(
     name = "skip_test",
     size = "medium",
     srcs = ["skip_test.py"],
-    shard_count = 8,
+    shard_count = 16,
     deps = [
         ":checkpoint_test_base",
         ":test_base",

@@ -72,6 +72,8 @@ const char kXlaCollectiveStreamAnnotation[] = "collective";
 const char kCollectiveCommunicationDomainAttr[] =
     "collective_communication_domain";
 
+const char kXlaLocalityDomainStreamAnnotationPrefix[] = "locality_domain:";
+
 const char kXlaCollectiveMatmulAttr[] = "_xla_collective_matmul";
 
 const char kXlaCollectiveMatmulLhsAg[] = "lhs_ag";
@@ -87,6 +89,9 @@ const char kXlaMultiRecvCountAttr[] = "_xla_multi_recv_count";
 const char kXlaSchedulingGroupIdAttr[] = "_scheduling_group_id";
 
 const char kXlaNoOpSchedulingGroup[] = "noop";
+
+const char kXlaSchedulingGroupDeepPipelineAttr[] =
+    "_scheduling_group_deep_pipeline";
 
 const char kMustFuseAttr[] = "MUST_FUSE";
 

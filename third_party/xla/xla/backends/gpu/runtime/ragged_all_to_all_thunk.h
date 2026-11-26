@@ -83,6 +83,12 @@ struct RaggedAllToAllConfig {
 
   // Whether the GXL backend is enabled for this ragged all-to-all operation.
   bool enable_gxl = false;
+
+  // Empirical weight applied to the (hbm_bw / fabric_bw) ratio when
+  // computing remote-peer cost for per-CTA scheduling in the device kernel.
+  // Higher value => higher remote-write cost => more CTAs on remote work.
+  // 0 (default) uses the arch-fitted value in RaggedAllToAllComputeCostWeights.
+  float fabric_cost_weight = 0.0f;
 };
 
 // Contains the values that are passed between host threads with rendezvous.
@@ -247,7 +253,10 @@ class RaggedAllToAllThunk : public CollectiveThunk {
   GpuDeviceCommunicator::Requirements DeviceKernelLsaDevCommRequirements(
       int core_count) const {
     GpuDeviceCommunicator::Requirements requirements;
-    requirements.lsa_barrier_count = device_kernel_barrier_count(core_count);
+    const int32_t c = device_kernel_barrier_count(core_count);
+    requirements.lsa_barrier_count = c;
+    requirements.cft_caps = GpuDeviceCommunicator::kGpuCftCapUnicast;
+    requirements.cft_barrier_count = c;
     return requirements;
   }
 
@@ -260,6 +269,8 @@ class RaggedAllToAllThunk : public CollectiveThunk {
     requirements.rail_gin_barrier_count = c;
     requirements.gin_signal_count = c;
     requirements.gin_connection_full = true;
+    requirements.cft_caps = GpuDeviceCommunicator::kGpuCftCapUnicast;
+    requirements.cft_barrier_count = c;
     return requirements;
   }
 

@@ -37,6 +37,8 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/Location.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -99,14 +101,16 @@ class EmitterContext {
                  const HloFusionInstruction* fusion, mlir::Value pid,
                  mlir::Value tid, gpu::Schedule schedule,
                  xtile::EntryFuncOp entry_func,
-                 const gpu::TiledHloComputation& tiled_computation)
+                 const gpu::TiledHloComputation& tiled_computation,
+                 bool is_cpu = false)
       : b_(b),
         pid_(pid),
         tid_(tid),
         schedule_(std::move(schedule)),
         fusion_(fusion),
         entry_func_(entry_func),
-        tiled_computation_(tiled_computation) {}
+        tiled_computation_(tiled_computation),
+        is_cpu_(is_cpu) {}
 
   mlir::ImplicitLocOpBuilder& b() { return b_; }
   mlir::Value pid() const { return pid_; }
@@ -116,6 +120,7 @@ class EmitterContext {
   const gpu::TiledHloComputation& tiled_computation() const {
     return tiled_computation_;
   }
+  bool is_cpu() const { return is_cpu_; }
 
   // Returns the single result of `tiled_hlo`. Multi-result instructions (e.g.
   // variadic collectives) must be addressed with an explicit result index.
@@ -180,7 +185,8 @@ class EmitterContext {
 
   // Evaluates tiling parameters for the given affine expressions, e.g. offsets.
   absl::StatusOr<mlir::SmallVector<mlir::Value>> EvaluateTilingParameters(
-      mlir::ArrayRef<SymbolicExpr> exprs);
+      mlir::ArrayRef<SymbolicExpr> exprs,
+      mlir::ArrayRef<std::pair<SymbolicExpr, Interval>> tile_constraints = {});
 
   // A tiled scan leaves its `scf.for` over the scan dimension open, so that
   // the epilogue and the writes of the output tiles are emitted inside the
@@ -211,6 +217,7 @@ class EmitterContext {
   const HloFusionInstruction* fusion_ = nullptr;
   xtile::EntryFuncOp entry_func_;
   const gpu::TiledHloComputation& tiled_computation_;
+  bool is_cpu_ = false;
   SequentialDimValueMap sequential_dim_id_to_value_;
   std::optional<ScopedSequentialDimBinding> open_scan_binding_;
   mlir::scf::ForOp open_scan_loop_;
@@ -256,8 +263,7 @@ class TileInfo {
     return replica_id_bounds_;
   }
 
-  // The storage type of the tensor. This could be different from the element
-  // type. e.g. predicates are stored as i8 instead of i1.
+  // Element type of the tensor in XTile SSA tiles.
   mlir::Type storage_type() const { return storage_type_; }
 
  private:
@@ -304,8 +310,35 @@ absl::StatusOr<mlir::Type> PrimitiveTypeToMlirType(
 // MLIR type -> XLA type conversions.
 absl::StatusOr<PrimitiveType> GetPrimitiveType(mlir::Type t);
 
+// Element type used for `t` in XTile SSA tiles.
 mlir::Type StorageType(mlir::Type t);
+
+// Byte-addressable element type used for `elem_type` in memory.
+mlir::Type MemoryStorageType(mlir::Type elem_type);
+
+bool IsI1MemRef(mlir::Type type);
+bool HasUnlegalizedI1Storage(mlir::Operation* op);
+
+// Converts `storage_value` from its `MemoryStorageType` representation to
+// `logical_elem_type`.
+TensorValue UnpackFromMemoryStorage(mlir::OpBuilder& b, mlir::Location loc,
+                                    TensorValue storage_value,
+                                    mlir::Type logical_elem_type);
+
+// Converts `logical_value` to its `MemoryStorageType` representation.
+TensorValue PackToMemoryStorage(mlir::OpBuilder& b, mlir::Location loc,
+                                TensorValue logical_value);
+
 mlir::Type GetSignlessType(mlir::Type t);
+
+// Returns whether the scan `combiner` computes a running sum: it has two
+// parameters `p0` and `p1` of the output element type, and its root is
+// `tuple(x, x)`, where `x` is `add(p0, p1)` or, as produced by
+// FloatNormalization, `convert(add(convert(p0), convert(p1)))`, with the add
+// operands in either order. Both tuple elements must be the same instruction
+// because `LowerScan` (xtile_lower_to_triton.cc) derives the carry from the
+// output.
+bool IsAdditiveScanCombiner(const HloComputation& combiner);
 
 // Triton tt.dot_scaled takes scale operands only for low-precision lhs/rhs
 // value dtypes that it interprets through a dot-scaled element-type attribute.
@@ -520,24 +553,18 @@ absl::StatusOr<mlir::Type> GetMlirType(
     mlir::ImplicitLocOpBuilder& b, PrimitiveType type,
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc);
 
-// Visitor to determine tile based requirements while iterating over the fusion
-// instructions.
-struct DefaultTileRequirementsVisitor {
-  DefaultTileRequirementsVisitor() = default;
-  virtual ~DefaultTileRequirementsVisitor() = default;
-  virtual absl::StatusOr<llvm::SmallVector<int64_t>> RequiredReplicaIdBounds(
-      const HloInstruction& instr) const {
-    return llvm::SmallVector<int64_t>();
-  }
+// Collective signature configuration for `xtile::EntryFuncOp`.
+struct CollectiveEntrySpec {
+  int32_t num_scratch_buffers = 0;
+  bool has_signal_and_rank = false;
+  int64_t world_size = 0;
 };
 
-// Function to get the MLIR types from a HloFusionInstruction.
+// Returns the I/O memref argument types (`[inputs..., outputs...]`) for
+// `fusion`.
 absl::StatusOr<llvm::SmallVector<mlir::Type>> GetFnArgTypes(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
-    absl::Span<mlir::Type> opaque_args_types,
-    const std::optional<stream_executor::GpuComputeCapability>& gpu_cc,
-    const DefaultTileRequirementsVisitor& tile_requirements_visitor =
-        DefaultTileRequirementsVisitor());
+    const std::optional<stream_executor::GpuComputeCapability>& gpu_cc);
 
 // Function to check if the operands of a concatenation are valid for tiling.
 absl::Status CheckConcatenateOperands(
