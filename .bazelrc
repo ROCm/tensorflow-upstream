@@ -186,7 +186,7 @@ common:rocm_base --repo_env TF_NEED_ROCM=1
 common:rocm_base --define=using_rocm_hipcc=true
 common:rocm_base --define=tensorflow_mkldnn_contraction_kernel=0
 common:rocm_base --action_env=HIPCC_COMPILE_FLAGS_APPEND="--offload-compress"
-common:rocm_base --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950,gfx1030,gfx1100,gfx1101,gfx1200,gfx1201"
+common:rocm_base --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950,gfx1030,gfx1100,gfx1101,gfx1102,gfx1103,gfx1200,gfx1201,gfx1250"
 
 common:rocm_clang_local --config=rocm_base
 common:rocm_clang_local --config=clang_local
