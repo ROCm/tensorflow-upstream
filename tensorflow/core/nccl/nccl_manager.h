@@ -36,7 +36,6 @@ limitations under the License.
 #else
 #include "rocm/include/rccl.h"
 #endif
-#include "tensorflow/core/common_runtime/gpu_device_context.h"
 #endif
 #include "tensorflow/core/common_runtime/gpu/gpu_event_mgr.h"
 #include "tensorflow/core/framework/device_base.h"
@@ -74,9 +73,6 @@ class NcclManager {
           tensor_stream(tensor_stream),
           event_mgr(info->event_mgr),
           gpu_device_id(info->gpu_id),
-#if TENSORFLOW_USE_ROCM
-          context(static_cast<GPUDeviceContext*>(info->default_context)),
-#endif
           input(input),
           output(output),
           global_rank(global_rank),
@@ -104,10 +100,6 @@ class NcclManager {
     EventMgr* const event_mgr;
 
     const int gpu_device_id;
-
-#if TENSORFLOW_USE_ROCM
-    GPUDeviceContext* const context;
-#endif
 
     // Owned by the caller, who must keep it live until `done_callback` is
     // called. Is NULL for participants that only receive data.
