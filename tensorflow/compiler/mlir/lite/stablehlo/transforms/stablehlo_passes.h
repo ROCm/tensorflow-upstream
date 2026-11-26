@@ -59,6 +59,9 @@ std::unique_ptr<OperationPass<ModuleOp>> CreateCompositeLoweringPass();
 // Legalizes CHLO to tflite dialect.
 std::unique_ptr<OperationPass<func::FuncOp>> CreateLegalizeChloToTflPass();
 
+// Recomposes CHLO ops serialized as `stablehlo.composite "chlo.<op>"`.
+std::unique_ptr<OperationPass<func::FuncOp>> CreateChloRecomposeOpsPass();
+
 // Rewrites MHLO in preparation for tflite legalization.
 std::unique_ptr<OperationPass<func::FuncOp>> CreatePrepareHloPass();
 
@@ -79,6 +82,13 @@ CreateLegalizeVhloQuantCustomCallsPass();
 // Legalizes stablehlo.einsum ops to stablehlo.dot_general (+ transpose).
 std::unique_ptr<OperationPass<func::FuncOp>>
 CreateLegalizeStablehloEinsumToDotGeneralPass();
+
+// Legalizes stablehlo.torch_index_select ops to stablehlo.gather.
+std::unique_ptr<OperationPass<func::FuncOp>>
+CreateLegalizeStablehloTorchIndexSelectToGatherPass();
+
+// Constant folds stablehlo.broadcast_in_dim ops feeding stablehlo.multiply ops.
+std::unique_ptr<OperationPass<func::FuncOp>> CreateStablehloFoldBroadcastPass();
 
 #define GEN_PASS_DECL
 #include "tensorflow/compiler/mlir/lite/stablehlo/transforms/stablehlo_passes.h.inc"

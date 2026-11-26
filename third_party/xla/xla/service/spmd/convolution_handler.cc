@@ -522,7 +522,7 @@ PartitionConvolutionWithSpatialDimensionHaloExchangeOnRHS(
           new_window));
 
   HloInstruction* result = conv;
-  if (!conv->frontend_attributes().map().contains(sdy::kHasUnreducedAxes)) {
+  if (!conv->has_frontend_attribute(sdy::kHasUnreducedAxes)) {
     result = lhs.state().partitioner->AllReduceAlongShardingDims(
         b, conv, rhs.sharding(), lhs.state().next_channel_id, all_reduce_dims,
         collective_ops_creator,
@@ -575,15 +575,6 @@ PartitionConvolutionWithSpatialDimensionHaloExchangeOnLHS(
       reversed_rhs_dims.push_back(dnums.kernel_spatial_dimensions(i));
     }
   }
-  if (!reversed_rhs_dims.empty()) {
-    // Make the reversed dims left-padded to prepare for window reversal.
-    auto left_padded_rhs = HaloExchangeToPadOnLeft(rhs, reversed_rhs_dims);
-    if (left_padded_rhs == nullptr) {
-      return nullptr;
-    }
-    left_padded_rhs->set_sharding(rhs.sharding());
-    rhs = PartitionedHlo(left_padded_rhs, rhs.base_shape(), rhs.state());
-  }
   // Consider window reversal when resharding RHS or LHS. Note: this will not
   // reverse the data in the shard. We use window reversal to do that.
   auto aligned_rhs_sharding = hlo_sharding_util::ReverseSharding(
@@ -614,14 +605,24 @@ PartitionConvolutionWithSpatialDimensionHaloExchangeOnLHS(
       return nullptr;
     }
     lhs = lhs.Reshard(aligned_lhs_sharding).PadWithZero();
-    rhs = rhs.PadWithZero(reversed_rhs_dims);
   } else {
     if (unsupported_sharding(lhs.sharding(), aligned_rhs_sharding)) {
       return nullptr;
     }
     lhs = lhs.PadWithZero();
-    rhs = rhs.Reshard(aligned_rhs_sharding).PadWithZero(reversed_rhs_dims);
+    rhs = rhs.Reshard(aligned_rhs_sharding);
   }
+  if (!reversed_rhs_dims.empty()) {
+    // Pad the reversed dims on the left to prepare for window reversal.
+    HloInstruction* left_padded_rhs =
+        HaloExchangeToPadOnLeft(rhs, reversed_rhs_dims);
+    if (left_padded_rhs == nullptr) {
+      return nullptr;
+    }
+    left_padded_rhs->set_sharding(rhs.sharding());
+    rhs = PartitionedHlo(left_padded_rhs, rhs.base_shape(), rhs.state());
+  }
+  rhs = rhs.PadWithZero(reversed_rhs_dims);
   // Reshard LHS by exchanging halo such that each shard computes the partial
   // sum of the full shape result, and add AllReduce.
   //
@@ -760,7 +761,7 @@ PartitionConvolutionWithSpatialDimensionHaloExchangeOnLHS(
                                                  lhs.base_shape(), lhs.state()),
                                   rhs, b, new_window));
   HloInstruction* result = conv;
-  if (!conv->frontend_attributes().map().contains(sdy::kHasUnreducedAxes)) {
+  if (!conv->has_frontend_attribute(sdy::kHasUnreducedAxes)) {
     result = lhs.state().partitioner->AllReduceAlongShardingDims(
         b, conv, lhs.sharding(), lhs.state().next_channel_id, all_reduce_dims,
         lhs.state().collective_ops_creator,
@@ -961,6 +962,12 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> CreateShardedConvolution(
         conv_dnums.input_spatial_dimensions(dim.spatial_dim)));
     wd->set_stride(std::max<int64_t>(1, wd->size() - 1));
     wd->set_base_dilation(wd->size());
+    // Clear padding, window dilation, and window reversal from alternative
+    // SpatialIsBatch forms when rewriting to the unpadded stride form.
+    wd->set_padding_low(0);
+    wd->set_padding_high(0);
+    wd->set_window_dilation(1);
+    wd->set_window_reversal(false);
   }
   for (const auto& dim : dot_dnums.contracting_dims) {
     if (dim.spatial_dim < 0) {
@@ -975,6 +982,17 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> CreateShardedConvolution(
       continue;
     }
     auto wd = window.mutable_dimensions(dim.spatial_dim);
+    // Keep dot padding only while the LHS spatial dimension has size 1;
+    // spatial LHS resharding already materialized padding into sharded_lhs_hlo
+    // and conv_window.
+    if (sharded_lhs_hlo->shape().dimensions(
+            conv_dnums.input_spatial_dimensions(dim.spatial_dim)) != 1) {
+      const WindowDimension& new_wd = conv_window.dimensions(dim.spatial_dim);
+      wd->set_size(new_wd.size());
+      wd->set_padding_high(new_wd.padding_high());
+      wd->set_padding_low(new_wd.padding_low());
+      continue;
+    }
     wd->set_size(sharded_rhs_hlo->shape().dimensions(
         conv_dnums.kernel_spatial_dimensions(dim.spatial_dim)));
     wd->set_padding_high(wd->size() - 1);

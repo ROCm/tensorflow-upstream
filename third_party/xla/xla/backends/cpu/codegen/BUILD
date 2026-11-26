@@ -46,6 +46,7 @@ cc_library(
     hdrs = ["builtin_definition_generator.h"],
     copts = tsl_copts(),
     deps = [
+        ":builtin_atan2",
         ":builtin_fp16",
         ":builtin_pow",
         "@com_google_absl//absl/base:no_destructor",
@@ -55,6 +56,24 @@ cc_library(
         "@llvm-project//llvm:OrcShared",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:mlir_c_runner_utils",
+    ],
+)
+
+cc_library(
+    name = "builtin_atan2",
+    srcs = ["builtin_atan2.cc"],
+    hdrs = ["builtin_atan2.h"],
+    deps = ["@com_google_absl//absl/base"],
+)
+
+xla_cc_test(
+    name = "builtin_atan2_test",
+    srcs = ["builtin_atan2_test.cc"],
+    deps = [
+        ":builtin_atan2",
+        "@com_google_absl//absl/base",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:denormal",
     ],
 )
 
@@ -360,6 +379,7 @@ xla_cc_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
@@ -741,6 +761,7 @@ xla_cc_test(
         "//xla/backends/cpu/runtime:function_library",
         "//xla/backends/cpu/runtime:kernel_c_api",
         "//xla/backends/cpu/runtime:kernel_thunk",
+        "//xla/backends/cpu/runtime:rng_state_resource",
         "//xla/backends/cpu/runtime:rng_state_thunk",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:while_thunk",
@@ -752,6 +773,7 @@ xla_cc_test(
         "//xla/service:buffer_assignment",
         "//xla/service:decision",
         "//xla/service:shaped_slice",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -805,6 +827,7 @@ xla_cc_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",

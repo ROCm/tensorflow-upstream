@@ -40,8 +40,8 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
-        "//xla/service:instruction_fusion",
-        "//xla/service:while_loop_unroller",
+        "//xla/hlo/transforms:instruction_fusion",
+        "//xla/hlo/transforms:while_loop_unroller",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
@@ -78,7 +78,12 @@ cc_library(
         "//xla/backends/cpu/codegen/tiled:tiled_fusion_emitter",
         "//xla/codegen/emitters:fusion_wrapper_base",
         "//xla/hlo/ir:hlo",
+        "//xla/service:algorithm_util",
+        "//xla/service:decision",
+        "//xla/service:hlo_module_config",
+        "//xla/service/cpu:dot_op_emitter",
         "//xla/service/cpu:ir_emission_utils",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
     ],
 )

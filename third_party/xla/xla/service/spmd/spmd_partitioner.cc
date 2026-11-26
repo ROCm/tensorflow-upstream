@@ -27,6 +27,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -40,6 +41,7 @@ limitations under the License.
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
@@ -61,7 +63,12 @@ limitations under the License.
 #include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/ir/tile_assignment.h"
+#include "xla/hlo/pass/hlo_pass_context.h"
+#include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/pass/hlo_pass_options.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/pass/hlo_pass_registry.h"
+#include "xla/hlo/transforms/simplifiers/hlo_cse.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/utils/hlo_query.h"
@@ -77,7 +84,6 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/shape_inference.h"
 #include "xla/service/spmd/custom_call_handler.h"
@@ -369,7 +375,7 @@ absl::Status ClearShardingAttributes(
     HloModule* module, int64_t num_devices,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   auto has_unreduced_axes = [](const HloInstruction* hlo) -> bool {
-    return hlo->frontend_attributes().map().contains(sdy::kHasUnreducedAxes);
+    return hlo->has_frontend_attribute(sdy::kHasUnreducedAxes);
   };
   const bool keep_shardings_after_spmd =
       module->config().debug_options().xla_keep_shardings_after_spmd();
@@ -401,6 +407,15 @@ HloSharding GetShardingReplicatedOnWindowedDimension(
   }
   return hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
       sharding, dimensions_to_replicate);
+}
+
+// Bitcasts `x` to `t` when its element type differs, allowing zeroless
+// floating point types such as F8E8M0FNU to use U8 zero masked AllReduce sums.
+HloInstruction* BitcastTo(SpmdBuilder* b, HloInstruction* x, PrimitiveType t) {
+  return x->shape().element_type() == t
+             ? x
+             : b->AddInstruction(HloInstruction::CreateBitcastConvert(
+                   ShapeUtil::ChangeElementType(x->shape(), t), x));
 }
 
 }  // namespace
@@ -1706,8 +1721,11 @@ HloInstruction* PartitionedHlo::ReplicatePartial(
   }
 
   if (!dus_ar_dims.empty()) {
+    const PrimitiveType type = shard_shape.element_type();
+    result = BitcastTo(state_.b, result, type == F8E8M0FNU ? U8 : type);
+    final_result_shape.set_element_type(result->shape().element_type());
     auto zero = state_.b->AddInstruction(HloInstruction::CreateConstant(
-        LiteralUtil::Zero(shard_shape.element_type())));
+        LiteralUtil::Zero(final_result_shape.element_type())));
     std::vector<int64_t> skipped_dims;
     for (int64_t i = 0; i < base_shape().dimensions().size(); ++i) {
       if (!absl::c_linear_search(dus_ar_dims, i)) {
@@ -1734,10 +1752,11 @@ HloInstruction* PartitionedHlo::ReplicatePartial(
     }
     CHECK(reduction_op == ReductionOp::kSum);
     HloComputation* reduction =
-        MakeBinaryAdd(shard_shape.element_type(), state_.module);
+        MakeBinaryAdd(final_result_shape.element_type(), state_.module);
     result = state_.partitioner->AllReduceAlongShardingDims(
         state_.b, dus, sharding(), state_.next_channel_id, dus_ar_dims,
         state_.collective_ops_creator, reduction);
+    result = BitcastTo(state_.b, result, type);
   }
   return result;
 }
@@ -1883,10 +1902,13 @@ PartitionedHlo::ReshardFromPartialReplicateWithDynamicSlice(
 }
 
 PartitionedHlo PartitionedHlo::Broadcast() const {
-  const Shape& shape = hlo_->shape();
+  Shape shape = hlo_->shape();
   const HloSharding& sharding = hlo_->sharding();
   CHECK(sharding.IsSingleDevice());
   CHECK(!shape.IsTuple() && shape.element_type() != TOKEN);
+  const PrimitiveType type = shape.element_type();
+  auto* src = BitcastTo(state_.b, hlo_, type == F8E8M0FNU ? U8 : type);
+  shape.set_element_type(src->shape().element_type());
 
   auto src_core_id = state_.b->AddInstruction(HloInstruction::CreateConstant(
       LiteralUtil::CreateR0<uint32_t>(sharding.GetUniqueDevice())));
@@ -1903,12 +1925,13 @@ PartitionedHlo PartitionedHlo::Broadcast() const {
   auto zero_bcast = state_.b->AddInstruction(
       HloInstruction::CreateBroadcast(shape, zero, {}));
   auto operand = state_.b->AddInstruction(HloInstruction::CreateTernary(
-      shape, HloOpcode::kSelect, is_src_core, hlo(), zero_bcast));
+      shape, HloOpcode::kSelect, is_src_core, src, zero_bcast));
   HloComputation* reduction =
       MakeBinaryAdd(shape.element_type(), state_.module);
 
   auto result = state_.collective_ops_creator.create_all_reduce(
       state_.b, operand, reduction, CollectiveDeviceList(), NewChannel());
+  result = BitcastTo(state_.b, result, type);
   result->set_sharding(HloSharding::Replicate());
   return PartitionedHlo(result, base_shape_, state_);
 }
@@ -6529,7 +6552,7 @@ absl::Status SpmdPartitioningVisitor::HandleReduce(HloInstruction* hlo) {
   }
   auto local_reduce = b_.AddInstruction(HloInstruction::CreateReduce(
       reduce_shape, input_hlos, inits, hlo->dimensions(), hlo->to_apply()));
-  if (hlo->frontend_attributes().map().contains(sdy::kHasUnreducedAxes)) {
+  if (hlo->has_frontend_attribute(sdy::kHasUnreducedAxes)) {
     local_reduce->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
   }
 
@@ -7289,7 +7312,7 @@ absl::Status SpmdPartitioningVisitor::HandleRaggedDot(HloInstruction* hlo) {
     phlo = b_.AddInstruction(hlo->CloneWithNewOperands(
         pshape, {lhs.hlo(), rhs.hlo(), group_sizes.hlo()}));
   }
-  if (hlo->frontend_attributes().map().contains(sdy::kHasUnreducedAxes)) {
+  if (hlo->has_frontend_attribute(sdy::kHasUnreducedAxes)) {
     phlo->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
   }
 
@@ -7720,7 +7743,7 @@ HloInstruction* SpmdPartitioner::AllReduceAlongShardingDimsInternal(
     HloComputation* reduction, bool per_dim_ar) {
   // Skip adding AR if the operand has unreduced axes in its sharding,
   // represented by the frontend attribute.
-  if (operand->frontend_attributes().map().contains(sdy::kHasUnreducedAxes)) {
+  if (operand->has_frontend_attribute(sdy::kHasUnreducedAxes)) {
     return operand;
   }
 
@@ -8733,6 +8756,85 @@ void SpmdPartitioningVisitor::SetPartitionedHlo(const HloInstruction* hlo,
       hlo, PartitionedHlo(new_hlo, hlo->shape(), MakePartitioningState()));
   changed_ = true;
 }
+
+SpmdPartitionerOptions SpmdPartitionerOptionsFromHloPassOptions(
+    const HloPassOptions& options) {
+  SpmdPartitionerOptions spmd_options;
+  auto set = [&](absl::string_view key, auto& field) {
+    if (auto val = options.Get<std::decay_t<decltype(field)>>(key)) {
+      field = *val;
+    }
+  };
+  set("conv_halo_exchange_always_on_lhs",
+      spmd_options.conv_halo_exchange_always_on_lhs);
+  set("report_instruction_count", spmd_options.report_instruction_count);
+  set("threshold_for_windowed_einsum_mib",
+      spmd_options.threshold_for_windowed_einsum_mib);
+  set("unroll_windowed_einsum", spmd_options.unroll_windowed_einsum);
+  set("bidirectional_windowed_einsum",
+      spmd_options.bidirectional_windowed_einsum);
+  set("allow_module_signature_change",
+      spmd_options.allow_module_signature_change);
+  set("allow_module_layout_signature_change",
+      spmd_options.allow_module_layout_signature_change);
+  set("cache_all_gather", spmd_options.cache_all_gather);
+  set("choose_faster_windowed_einsum_over_mem",
+      spmd_options.choose_faster_windowed_einsum_over_mem);
+  set("skip_checking_windowed_einsum_users",
+      spmd_options.skip_checking_windowed_einsum_users);
+  set("enable_windowed_einsum_for_all_gather",
+      spmd_options.enable_windowed_einsum_for_all_gather);
+  set("enable_windowed_einsum_for_reduce_scatter",
+      spmd_options.enable_windowed_einsum_for_reduce_scatter);
+  set("enable_dynamic_slice_collective_broadcast",
+      spmd_options.enable_dynamic_slice_collective_broadcast);
+  set("max_dynamic_slice_collective_broadcast_partitions",
+      spmd_options.max_dynamic_slice_collective_broadcast_partitions);
+  set("disable_ag_rewrite_for_multiple_consumers",
+      spmd_options.disable_ag_rewrite_for_multiple_consumers);
+  set("partial_windowed_einsum", spmd_options.partial_windowed_einsum);
+  if (std::optional<int64_t> val =
+          options.Get<int64_t>("total_bytes_windowed_einsum_threshold");
+      val.has_value() && *val >= 0) {
+    spmd_options.total_bytes_windowed_einsum_threshold = *val;
+  }
+  set("max_windowed_einsum_iteration",
+      spmd_options.max_windowed_einsum_iteration);
+  set("need_resolve_conflicts", spmd_options.need_resolve_conflicts);
+  return spmd_options;
+}
+
+namespace {
+
+absl::StatusOr<int64_t> GetRequiredIntOption(const HloPassOptions& options,
+                                             absl::string_view key) {
+  if (std::optional<int64_t> val = options.Get<int64_t>(key)) {
+    return *val;
+  }
+  return absl::InvalidArgumentError(
+      absl::StrCat("Missing int64 pass option '", key, "'"));
+}
+
+class SpmdPartitionerFactory : public HloPassFactory {
+ public:
+  absl::string_view name() const override { return "spmd-partitioning"; }
+
+  absl::StatusOr<std::unique_ptr<HloPassInterface>> Create(
+      const HloPassContext&, const HloPassOptions& options) const override {
+    ABSL_ASSIGN_OR_RETURN(int64_t num_partitions,
+                     GetRequiredIntOption(options, "num_partitions"));
+    ABSL_ASSIGN_OR_RETURN(int64_t num_replicas,
+                     GetRequiredIntOption(options, "num_replicas"));
+    return std::make_unique<SpmdPartitioner>(
+        num_partitions, num_replicas,
+        SpmdPartitionerOptionsFromHloPassOptions(options));
+  }
+};
+
+const HloPassFactory* const kSpmdPartitionerRegistration =
+    RegisterHloPassFactory<SpmdPartitionerFactory>();
+
+}  // namespace
 
 }  // namespace spmd
 }  // namespace xla

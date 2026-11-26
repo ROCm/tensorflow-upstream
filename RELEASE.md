@@ -6,7 +6,23 @@
 
 ### Breaking Changes
 
-*   <BREAKING CHANGES GO HERE>
+*   **Build System**:
+    *   TensorFlow now requires Bazel **8.8.2** and builds with **Bzlmod**
+        (`MODULE.bazel`) enabled by default (`--enable_bzlmod
+        --noenable_workspace`). Legacy `--config=workspace` builds remain
+        temporarily available on Linux and macOS during the transition while
+        downstream projects migrate; Windows builds require Bzlmod.
+*   **C++ and CUDA Dependency Upgrades**:
+    *   `protobuf` upgraded to **33.6** (`protobuf` Python requirement bumped to
+        `6.33.6`): `Descriptor::name()`, `Descriptor::full_name()`, and related
+        accessors now return `absl::string_view`, and `MessageLite` requires
+        complete types in additional contexts.
+    *   `abseil-cpp` upgraded to **20260526.0**, `grpc` upgraded to **1.81.0**,
+        and `pybind11_bazel` upgraded to **3.0.0** (with `pybind11_abseil`
+        static status caster registration).
+    *   CUDA `CCCL` upgraded to **3.4.0** (`Thrust 3.2+`, which replaces
+        `thrust::detail::iterator_facade_category` with
+        `thrust::detail::iterator_facade_category_t`).
 
 ### Known Caveats
 
@@ -21,7 +37,9 @@
     * `tfl.batch_matmul` now supports RHS inputs quantized with N-D blockwise quantization (`BlockwiseQuantization.block_shape`) alongside INT8 affine LHS and output tensors (BATCH_MATMUL op version 5).
     * `tfl.fully_connected` now supports INT2, INT4, UINT4, INT8, UINT8 and INT16 filters quantized with N-D blockwise quantization (`BlockwiseQuantization.block_shape`), including fractional zero points, alongside INT8 per-tensor input and output tensors and an optional INT32 bias carrying its own scale (FULLY_CONNECTED op version 16).
     * `tfl.fully_connected` now supports dynamic range (hybrid) quantization with N-D blockwise quantized filters: FLOAT32 or FLOAT16 input and output, with each input row quantized to INT8 at runtime (symmetrically by default, or asymmetrically with its own zero point when `asymmetric_quantize_inputs` is set), and an optional bias of the input type or FLOAT32 (FULLY_CONNECTED op version 17).
+    * `tfl.quantize` now supports FLOAT16 inputs on the CPU kernels (quantized as FLOAT32), to per-tensor INT4, UINT4, INT8, UINT8 and INT16 and per-channel INT8, UINT8 and INT16 outputs.
     * `tfl.embedding_lookup` now supports INT2, INT4, UINT4, INT8, UINT8 and INT16 tables quantized with N-D blockwise quantization (`BlockwiseQuantization.block_shape`), including fractional zero points such as a centered INT2 grid, with FLOAT32 or FLOAT16 outputs (EMBEDDING_LOOKUP op version 6). The converter folds constant blockwise dequantized tables into such lookups.
+    * `tfl.logistic` now accepts FLOAT16 inputs and outputs (the LOGISTIC kernel already supports them at version 1), and the converter fuses float16 sigmoids into it, including the overflow-free `select(x >= 0, 1, exp(-|x|)) / (1 + exp(-|x|))` form that JAX lowers `jax.nn.sigmoid` to.
 * `tf.function` / `PolymorphicFunction`:
     * Added `clear_cache()` method to `PolymorphicFunction` to explicitly clear compiled concrete functions and dispatch tables, freeing retained graph memory.
 
@@ -52,6 +70,10 @@
 *   `tf.vectorized_map`, `tf.GradientTape.jacobian` and `batch_jacobian`:
     `tf.roll` with a negative axis no longer rolls along the wrong dimension,
     which could mix values between batch elements or return a wrong Jacobian.
+*   `tf.vectorized_map` / `parallel_for`: `tf.gather` with loop-dependent
+    indices and loop-invariant params now handles negative `batch_dims` and
+    symbolic `axis` tensors instead of raising shape errors or
+    `OperatorNotAllowedInGraphError`.
 
 ## Thanks to our Contributors
 

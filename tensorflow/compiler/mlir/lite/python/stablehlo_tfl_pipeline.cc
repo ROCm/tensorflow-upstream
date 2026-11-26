@@ -32,7 +32,6 @@ limitations under the License.
 #include "mlir/Dialect/Func/Extensions/InlinerExtension.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Dialect/Quant/IR/Quant.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinDialect.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
@@ -49,10 +48,10 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
 #include "stablehlo/dialect/VhloOps.h"  // from @stablehlo
 #include "stablehlo/transforms/Passes.h"  // from @stablehlo
-#include "tensorflow/compiler/mlir/lite/common/tfl_pass_config.h"
-#include "tensorflow/compiler/mlir/lite/converter_flags.pb.h"
+#include "tensorflow/compiler/mlir/lite/converter_v2_options.pb.h"
 #include "tensorflow/compiler/mlir/lite/core/macros.h"
-#include "tensorflow/compiler/mlir/lite/debug/debug.h"
+#include "tensorflow/compiler/mlir/lite/debug/debug_options.pb.h"
+#include "tensorflow/compiler/mlir/lite/debug/pass_manager_debug.h"
 #include "tensorflow/compiler/mlir/lite/export/export.h"
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 #include "tensorflow/compiler/mlir/lite/metrics/error_collector_inst.h"
@@ -67,13 +66,9 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/transforms/optimize_broadcast_like_pass.h"
 #include "tensorflow/compiler/mlir/lite/transforms/optimize_broadcast_like_pass_options.h"
 #include "tensorflow/compiler/mlir/lite/transforms/pass_registry_utils.h"
-#include "tensorflow/compiler/mlir/lite/transforms/passes.h"
-#include "xla/mlir/utils/error_util.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "xla/mlir_hlo/mhlo/transforms/passes.h"
-#include "xla/mlir_hlo/stablehlo_ext/transforms/passes.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
+#include "tensorflow/compiler/mlir/lite/transforms/tfl_passes.h"
+#include "tensorflow/compiler/mlir/lite/utils/diagnostic_status_handler.h"
+#include "tensorflow/compiler/mlir/lite/utils/file_utils.h"
 
 namespace mlir::TFL {
 namespace {
@@ -186,8 +181,15 @@ void AddLoweringPasses(mlir::OpPassManager& pass_manager) {
       mlir::stablehlo::createStablehloCompatibilityExpanderPass(
           {tflite_supported_stablehlo_version}));
 
-  // CHLO -> StableHLO
-  mlir::stablehlo_ext::createChloLegalizeToStablehloPipeline(pass_manager);
+  // CHLO -> StableHLO. CHLO ops that the exporter preserved as
+  // `stablehlo.composite "chlo.<op>"` are recomposed first, so that they lower
+  // like CHLO ops.
+  pass_manager.addNestedPass<mlir::func::FuncOp>(
+      mlir::odml::CreateChloRecomposeOpsPass());
+  pass_manager.addNestedPass<mlir::func::FuncOp>(
+      mlir::stablehlo::createChloLegalizeToStablehloPass());
+  pass_manager.addNestedPass<mlir::func::FuncOp>(
+      mlir::stablehlo::createShapeLegalizeToStablehloPass());
 
   pass_manager.addPass(mlir::odml::CreateTransposeCommuteOpsPass());
 
@@ -205,32 +207,24 @@ void AddLoweringPasses(mlir::OpPassManager& pass_manager) {
   pass_manager.addPass(mlir::createSymbolDCEPass());
   pass_manager.addPass(mlir::createInlinerPass());
 
-  // Import cleanup (Tuple flattening)
-  // Defaulting to "main" for the entry function name for now.
-  pass_manager.addNestedPass<mlir::func::FuncOp>(
-      mlir::stablehlo_ext::createStablehloCanonicalizeFromHloImportPass(
-          {"main"}));
-
   // High-level StableHLO optimizations
   pass_manager.addNestedPass<mlir::func::FuncOp>(
       mlir::odml::createStablehloUnfuseBatchNormPass());
   pass_manager.addNestedPass<mlir::func::FuncOp>(
       mlir::odml::createStablehloFuseConvolutionPass());
 
-  // Build StableHLO composite from PyTorch mark_tensor ops before MHLO bridge
+  // Build StableHLO composite from PyTorch mark_tensor ops.
   pass_manager.addPass(mlir::odml::createBuildStableHLOCompositePass());
   pass_manager.addPass(mlir::createInlinerPass());
 
-  // StableHLO -> MHLO bridge
-  pass_manager.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
-
-  // Composite lowering when IR is in MHLO
+  // Composite lowering.
   pass_manager.addPass(mlir::odml::CreateCompositeLoweringPass());
   pass_manager.addPass(mlir::createSymbolDCEPass());
 
-  // MHLO algebraic optimizations
-  pass_manager.addNestedPass<mlir::func::FuncOp>(
-      mlir::mhlo::createLegalizeEinsumToDotGeneralPass());
+  // StableHLO algebraic optimizations. (No einsum -> dot_general legalization:
+  // JAX and PyTorch lower einsum to dot_general themselves; stablehlo.einsum is
+  // only produced from TF, which goes through
+  // AddCoreStablehloOptimizationPasses.)
   pass_manager.addNestedPass<mlir::func::FuncOp>(
       mlir::odml::createOptimizePass());
 
@@ -244,10 +238,6 @@ void AddLoweringPasses(mlir::OpPassManager& pass_manager) {
   // HLO -> TFLite legalization
   pass_manager.addNestedPass<mlir::func::FuncOp>(
       mlir::odml::CreateUniformQuantizedStableHloToTflPass());
-  // TODO(markoristic): Temporary. PrepareHlo and the HLO->TFL legalization
-  // consume StableHLO while the preceding passes still produce MHLO. Remove
-  // once the whole pipeline runs on StableHLO.
-  pass_manager.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
   // Fold and simplify StableHLO into the canonical form the legalization
   // expects (MHLO did this through its folders and canonicalizations).
   pass_manager.addNestedPass<mlir::func::FuncOp>(
@@ -259,8 +249,6 @@ void AddLoweringPasses(mlir::OpPassManager& pass_manager) {
   pass_manager.addPass(mlir::odml::CreateUnfoldSplatConstantPass());
   pass_manager.addPass(mlir::odml::CreateLegalizeHloToTfLitePass());
 
-  // Legalize remaining MHLO ops to StableHLO
-  pass_manager.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
   pass_manager.addNestedPass<mlir::func::FuncOp>(
       mlir::odml::createLegalizeCompositeToCustomOpPass());
 }
@@ -272,8 +260,7 @@ void AddLoweringPasses(mlir::OpPassManager& pass_manager) {
 // the blobs that other modules in the same context (the preserve-region
 // bodies) still reference, so that they are not released.
 void AddOptimizationPasses(mlir::OpPassManager& pass_manager,
-                           const mlir::TFL::PassConfig& pass_config,
-                           const tflite::ConverterFlags& converter_flags,
+                           const tflite::ConverterV2Options& options,
                            std::shared_ptr<const llvm::StringSet<>>
                                extra_live_resource_keys = nullptr) {
   // =========================================================================
@@ -286,17 +273,14 @@ void AddOptimizationPasses(mlir::OpPassManager& pass_manager,
 
   // Final TFLite optimizations
   pass_manager.addPass(mlir::TFL::CreatePushTransposeThroughEwisePass());
-  {
-    mlir::TFL::OptimizeBroadcastLikePassOptions options;
-    options.unsafe_fuse_dynamic_shaped_broadcast =
-        pass_config.unsafe_fuse_dynamic_shaped_broadcast;
-    pass_manager.addNestedPass<mlir::func::FuncOp>(
-        mlir::TFL::Create<mlir::TFL::OptimizeBroadcastLikePass>(options));
-  }
+  // The default options keep unsafe fusion of dynamic shaped broadcasts off.
+  pass_manager.addNestedPass<mlir::func::FuncOp>(
+      mlir::TFL::Create<mlir::TFL::OptimizeBroadcastLikePass,
+                        mlir::TFL::OptimizeBroadcastLikePassOptions>());
   pass_manager.addNestedPass<mlir::func::FuncOp>(
       mlir::TFL::CreateOptimizePass());
 
-  if (!pass_config.unfold_batch_matmul) {
+  if (!options.unfold_batchmatmul()) {
     pass_manager.addPass(mlir::TFL::CreateLargeConstantFoldPass(
         /*fold_fp16_resource_casts=*/false, /*fold_elementwise_ops=*/true));
     pass_manager.addNestedPass<mlir::func::FuncOp>(
@@ -340,7 +324,7 @@ void AddOptimizationPasses(mlir::OpPassManager& pass_manager,
   // type so that they can be exported.
   pass_manager.addNestedPass<mlir::func::FuncOp>(
       mlir::TFL::CreateLowerBlockwiseDequantizePass());
-  if (pass_config.fold_fp16_casts_into_fully_connected) {
+  if (options.fold_fp16_casts_into_fully_connected()) {
     pass_manager.addNestedPass<mlir::func::FuncOp>(
         mlir::TFL::CreateFoldFp16CastsIntoFullyConnectedPass());
   }
@@ -348,7 +332,7 @@ void AddOptimizationPasses(mlir::OpPassManager& pass_manager,
       mlir::createCanonicalizerPass());
   pass_manager.addPass(mlir::createSymbolDCEPass());
   pass_manager.addPass(mlir::TFL::CreateCleanupOptimizationBarrierPass());
-  if (!converter_flags.enable_x64()) {
+  if (!options.enable_x64()) {
     pass_manager.addNestedPass<mlir::func::FuncOp>(
         mlir::TFL::CreateDowncastX64Pass());
     pass_manager.addNestedPass<mlir::func::FuncOp>(
@@ -376,7 +360,7 @@ void AddOptimizationPasses(mlir::OpPassManager& pass_manager,
 // and `DowncastX64` narrows both function signatures and all op results,
 // composites included, in both pipelines.
 void AddPreserveRegionPasses(mlir::OpPassManager& pass_manager,
-                             const tflite::ConverterFlags& converter_flags) {
+                             const tflite::ConverterV2Options& options) {
   pass_manager.addNestedPass<mlir::func::FuncOp>(
       mlir::TFL::CreateCastBf16OpsToF32Pass());
 
@@ -395,7 +379,7 @@ void AddPreserveRegionPasses(mlir::OpPassManager& pass_manager,
       mlir::TFL::CreateLowerBlockwiseDequantizePass());
 
   pass_manager.addPass(mlir::TFL::CreateCleanupOptimizationBarrierPass());
-  if (!converter_flags.enable_x64()) {
+  if (!options.enable_x64()) {
     // Unlike the main pipeline this is not followed by a canonicalizer, so a
     // 64-bit float constant in a region keeps the `tfl.cast` this inserts.
     pass_manager.addNestedPass<mlir::func::FuncOp>(
@@ -418,8 +402,8 @@ static absl::Status VerifyInputModule(mlir::ModuleOp module,
                                       bool enable_debug,
                                       int64_t elide_elements_larger_than = 8) {
   mlir::MLIRContext* context = module->getContext();
-  mlir::BaseScopedDiagnosticHandler initial_status_handler(context,
-                                                           /*propagate=*/false);
+  mlir::TFL::DiagnosticStatusHandler initial_status_handler(
+      context, /*propagate=*/false);
   bool verification_failed = mlir::failed(module.verify());
   absl::Status initial_status = initial_status_handler.ConsumeStatus();
   if (verification_failed) {
@@ -471,27 +455,26 @@ static void AttachPassTiming(mlir::PassManager& pm,
   pm.enableTiming(std::move(timing_manager));
 }
 
-absl::Status ConvertStableHloToTFLite(
-    mlir::ModuleOp module, const tflite::ConverterFlags& converter_flags,
-    const mlir::TFL::PassConfig& pass_config,
-    llvm::raw_pwrite_stream& export_stream) {
+absl::Status ConvertStableHloToTFLite(mlir::ModuleOp module,
+                                      const tflite::ConverterV2Options& options,
+                                      llvm::raw_pwrite_stream& export_stream) {
   mlir::MLIRContext* context = module->getContext();
   mlir::DialectRegistry registry;
   mlir::func::registerInlinerExtension(registry);
-  registry.insert<mlir::TFL::TensorFlowLiteDialect, mlir::mhlo::MhloDialect,
+  registry.insert<mlir::TFL::TensorFlowLiteDialect,
                   mlir::stablehlo::StablehloDialect, mlir::vhlo::VhloDialect,
                   mlir::quant::QuantDialect,
                   mlir::quantfork::QuantizationForkDialect>();
   context->appendDialectRegistry(registry);
   context->loadAllAvailableDialects();
 
-  bool enable_debug = converter_flags.enable_debug();
-  std::string debug_dir = ConversionFailureReporter::GetOrCreateDebugDir(
-      converter_flags.debug_dir());
+  bool enable_debug = options.enable_debug();
+  std::string debug_dir =
+      ConversionFailureReporter::GetOrCreateDebugDir(options.debug_dir());
 
   int64_t elide_elements_larger_than =
-      converter_flags.debug_options().has_elide_elementsattrs_if_larger()
-          ? converter_flags.debug_options().elide_elementsattrs_if_larger()
+      options.debug_options().has_elide_elementsattrs_if_larger()
+          ? options.debug_options().elide_elementsattrs_if_larger()
           : 8;
 
   if (auto status = VerifyInputModule(module, debug_dir, enable_debug,
@@ -526,16 +509,16 @@ absl::Status ConvertStableHloToTFLite(
               pm.getContext()));
       AttachPassTiming(pm, timing_session);
       pm.addInstrumentation(failure_coordinator.CreateInstrumentation(
-          converter_flags.debug_options().print_ir_before(),
-          converter_flags.debug_options().print_ir_after()));
+          options.debug_options().print_ir_before(),
+          options.debug_options().print_ir_after()));
     } else {
-      tensorflow::InitPassManager(pm, converter_flags.debug_options());
+      mlir::TFL::InitPassManager(pm, options.debug_options());
     }
 
     add_passes(pm);
 
-    mlir::BaseScopedDiagnosticHandler status_handler(context,
-                                                     /*propagate=*/false);
+    mlir::TFL::DiagnosticStatusHandler status_handler(context,
+                                                      /*propagate=*/false);
     if (mlir::succeeded(pm.run(target))) return absl::OkStatus();
     return failure_coordinator.ReportFailure(target,
                                              status_handler.ConsumeStatus());
@@ -545,19 +528,20 @@ absl::Status ConvertStableHloToTFLite(
   // returned status.
   auto run_step =
       [&](absl::FunctionRef<mlir::LogicalResult()> step) -> absl::Status {
-    mlir::BaseScopedDiagnosticHandler status_handler(context,
-                                                     /*propagate=*/false);
+    mlir::TFL::DiagnosticStatusHandler status_handler(context,
+                                                      /*propagate=*/false);
     if (mlir::succeeded(step())) return absl::OkStatus();
     return failure_coordinator.ReportFailure(module,
                                              status_handler.ConsumeStatus());
   };
 
   auto run_pipeline = [&]() -> absl::Status {
-    TF_RETURN_IF_ERROR(run_passes(module, AddLoweringPasses));
+    absl::Status status = run_passes(module, AddLoweringPasses);
+    if (!status.ok()) return status;
 
     if (!HasPreserveRegions(module)) {
       return run_passes(module, [&](mlir::OpPassManager& pm) {
-        AddOptimizationPasses(pm, pass_config, converter_flags);
+        AddOptimizationPasses(pm, options);
         AddFinalizePasses(pm);
       });
     }
@@ -565,25 +549,27 @@ absl::Status ConvertStableHloToTFLite(
     // Preserve regions: optimize the main module and the region bodies with
     // different pipelines, in separate modules, then stitch them back.
     mlir::OwningOpRef<mlir::ModuleOp> regions;
-    TF_RETURN_IF_ERROR(run_step([&]() -> mlir::LogicalResult {
+    status = run_step([&]() -> mlir::LogicalResult {
       auto split = SplitPreserveRegions(module);
       if (mlir::failed(split)) return mlir::failure();
       regions = std::move(*split);
       return mlir::success();
-    }));
-    TF_RETURN_IF_ERROR(run_passes(*regions, [&](mlir::OpPassManager& pm) {
-      AddPreserveRegionPasses(pm, converter_flags);
-    }));
+    });
+    if (!status.ok()) return status;
+    status = run_passes(*regions, [&](mlir::OpPassManager& pm) {
+      AddPreserveRegionPasses(pm, options);
+    });
+    if (!status.ok()) return status;
     // The region bodies are final now. The blobs they reference must survive
     // the main module's pruning until the bodies are stitched back.
     auto region_resource_keys = std::make_shared<llvm::StringSet<>>();
     CollectResourceKeys(*regions, *region_resource_keys);
-    TF_RETURN_IF_ERROR(run_passes(module, [&](mlir::OpPassManager& pm) {
-      AddOptimizationPasses(pm, pass_config, converter_flags,
-                            region_resource_keys);
-    }));
-    TF_RETURN_IF_ERROR(
-        run_step([&] { return StitchPreserveRegions(module, *regions); }));
+    status = run_passes(module, [&](mlir::OpPassManager& pm) {
+      AddOptimizationPasses(pm, options, region_resource_keys);
+    });
+    if (!status.ok()) return status;
+    status = run_step([&] { return StitchPreserveRegions(module, *regions); });
+    if (!status.ok()) return status;
     return run_passes(module, AddFinalizePasses);
   };
   absl::Status pipeline_status = run_pipeline();
@@ -592,11 +578,10 @@ absl::Status ConvertStableHloToTFLite(
     timing_session.timing_stream->flush();
     if (!timing_session.debug_dir.empty() && timing_session.timing_buffer &&
         !timing_session.timing_buffer->empty()) {
-      (void)tsl::Env::Default()->RecursivelyCreateDir(timing_session.debug_dir);
+      (void)CreateDirectories(timing_session.debug_dir);
       std::string timing_file =
           absl::StrCat(timing_session.debug_dir, "/mlir_pass_timing.log");
-      (void)tsl::WriteStringToFile(tsl::Env::Default(), timing_file,
-                                   *timing_session.timing_buffer);
+      (void)WriteStringToFile(timing_file, *timing_session.timing_buffer);
     }
   }
 

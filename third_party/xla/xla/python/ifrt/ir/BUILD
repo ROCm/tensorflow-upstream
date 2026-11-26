@@ -149,7 +149,6 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = internal_visibility([":friends"]),
     deps = [
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -167,6 +166,7 @@ xla_cc_test(
     deps = [
         ":sharding_param",
         "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
@@ -213,6 +213,19 @@ cc_library(
 )
 
 cc_library(
+    name = "ifrt_ir_custom_options",
+    srcs = ["ifrt_ir_custom_options.cc"],
+    hdrs = ["ifrt_ir_custom_options.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([":users"]),
+    deps = [
+        "//xla/python/ifrt:custom_options_util",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
     name = "ifrt_ir_program",
     srcs = ["ifrt_ir_program.cc"],
     hdrs = ["ifrt_ir_program.h"],
@@ -220,6 +233,7 @@ cc_library(
     visibility = internal_visibility([":users"]),
     deps = [
         ":ifrt_ir_compile_options_proto_cc",
+        ":ifrt_ir_custom_options",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/python/ifrt",
@@ -269,7 +283,10 @@ xla_cc_test(
         "//xla/client:executable_build_options",
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:custom_options_util",
         "//xla/python/ifrt:mock",
+        "//xla/python/ifrt:serdes_test_util",
+        "//xla/python/ifrt:serdes_version",
         "//xla/python/ifrt/ir/support:module_parsing",
         "//xla/python/ifrt/mlir:fingerprint_utils",
         "//xla/service:device_assignment",
@@ -304,10 +321,10 @@ cc_library(
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:BytecodeWriter",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
@@ -320,6 +337,7 @@ xla_cc_test(
     srcs = ["ifrt_ir_program_serdes_test.cc"],
     deps = [
         ":ifrt_ir_program",
+        ":ifrt_ir_program_proto_cc",
         ":ifrt_ir_program_serdes",
         ":version",
         "//xla/python/ifrt:serdes",
@@ -328,8 +346,11 @@ xla_cc_test(
         "//xla/python/ifrt:serdes_version",
         "//xla/python/ifrt/ir/support:module_parsing",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
@@ -766,7 +787,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:BytecodeWriter",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
@@ -777,10 +797,16 @@ xla_cc_test(
     name = "utils_test",
     srcs = ["utils_test.cc"],
     deps = [
+        ":ir",
         ":utils",
+        "//xla/mlir/utils:error_util",
         "//xla/python/ifrt/ir/support:module_parsing",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )

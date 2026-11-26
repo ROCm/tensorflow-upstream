@@ -55,6 +55,7 @@ do_external_licenses_check(){
 @com_github_googlecloudplatform_google_cloud_cpp//google
 @grpc//src/compiler
 @com_google_protobuf//upb_generator
+@llvm-project//libc/src/__support/math
 @llvm-project//third-party/siphash
 @platforms//os
 @ml_dtypes_py//ml_dtypes
@@ -79,6 +80,7 @@ EOF
 @com_google_absl//
 @com_google_protobuf//
 @internal_platforms_do_not_use//host
+@fpnge//
 @jpegxl//
 @pybind11_abseil//pybind11_abseil
 //external

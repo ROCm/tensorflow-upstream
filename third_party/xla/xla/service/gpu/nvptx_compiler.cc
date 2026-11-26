@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -45,6 +46,8 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/gpu/target_lowering/nvptx_backend.h"
+#include "xla/backends/gpu/target_lowering/nvptx_utils.h"
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/backends/gpu/transforms/conv_fp8_fallback.h"
@@ -57,6 +60,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/cudnn_norm_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_pad_for_convolutions.h"
 #include "xla/backends/gpu/transforms/cudnn_simplify_padding.h"
+#include "xla/backends/gpu/transforms/ragged_dot_cudnn_support.h"
 #include "xla/backends/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -64,6 +68,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/call_inliner.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/convert_mover.h"
 #include "xla/hlo/transforms/simplifiers/float_normalization.h"
@@ -71,16 +76,15 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
-#include "xla/service/call_inliner.h"
 #include "xla/service/compilation_stats.h"
 #include "xla/service/compiler.h"
+#include "xla/service/decision.h"
 #include "xla/service/dump.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/gpu/gpu_pipeline.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
-#include "xla/service/gpu/llvm_gpu_backend/nvptx_utils.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/nvptx_alias_info.h"
 #include "xla/service/gpu/ptx_compile_options_from_debug_options.h"
@@ -101,8 +105,6 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -111,9 +113,9 @@ limitations under the License.
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 namespace {
+constexpr absl::string_view kAsmFileExtension = "ptx";
 
 class ConvBfloat16Support : public FloatSupport {
  public:
@@ -225,7 +227,7 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
   AlgebraicSimplifierOptions algsimp_options = GetAlgebraicSimplifierOptions(
       AlgebraicSimplifierMode::kGpuConvoluationCanonicalization,
       hlo_module->config().debug_options(),
-      /*is_non_cuda_platform=*/false);
+      /*is_cuda_platform=*/true);
   pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(algsimp_options,
                                                        gpu_version);
 
@@ -271,6 +273,13 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
           .status());
 
   return absl::OkStatus();
+}
+
+Decision NVPTXCompiler::IsRaggedDotSupportedByCuDnn(
+    const HloInstruction* instr, const GpuTargetConfig& gpu_target_config,
+    se::StreamExecutor* absl_nullable stream_exec) const {
+  return gpu::IsRaggedDotSupportedByCuDnn(
+      *instr, gpu_target_config.device_description, stream_exec);
 }
 
 absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
@@ -532,6 +541,10 @@ std::unique_ptr<GpuAliasInfo> NVPTXCompiler::GetAliasInfo(
   return std::make_unique<NVPTXAliasInfo>(device_description);
 }
 
+absl::StatusOr<absl::string_view> NVPTXCompiler::AsmFileExtension() const {
+  return kAsmFileExtension;
+}
+
 absl::StatusOr<GpuCompiler::BackendCompileResult>
 NVPTXCompiler::CompileTargetBinary(
     const HloModuleConfig& module_config, llvm::Module* llvm_module,
@@ -580,23 +593,6 @@ NVPTXCompiler::CompileTargetBinary(
     // This won't record values for calls that error out (because if they error
     // out we have no way of telling how far through the process we got).
     RecordLlvmPassesAndLlvmToPtxDuration(end_usecs - start_usecs);
-
-    if (DumpingEnabledForHloModule(debug_module ? debug_module->name() : "",
-                                   debug_options) &&
-        DumpingEnabledForEmitter("ptx", debug_options)) {
-      if (debug_module) {
-        DumpToFileInDirOrStdout(*debug_module, "",
-                                shard_number.has_value()
-                                    ? (std::to_string(*shard_number) + ".ptx")
-                                    : "ptx",
-                                ptx);
-      } else {
-        LOG(ERROR)
-            << "Dumping is not implemented since the file name cannot be "
-               "inferred. Please implement (potentially MLIR) module -> "
-               "filename heuristic.";
-      }
-    }
   }
 
   if (ptx.empty()) {
@@ -707,5 +703,4 @@ std::vector<std::string> NVPTXCompiler::GetLLVMCommandLineOptions(
     const DebugOptions& debug_options) const {
   return nvptx::GetNVPTXBackendOptions(debug_options);
 }
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

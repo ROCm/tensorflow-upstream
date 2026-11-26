@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/instruction_fusion.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
@@ -48,7 +49,6 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/reduction_utils.h"
-#include "xla/service/instruction_fusion.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/side_effect_util.h"
@@ -1014,12 +1014,18 @@ std::vector<const HloInstruction*> GetFusionRoots(
 bool IsGenericTritonFusion(const HloInstruction& instr) {
   // Note that we don't accept kTritonNestedGemmFusionKind here as they should
   // not be fused with anything else.
-  return instr.opcode() == HloOpcode::kFusion &&
-         instr.fusion_kind() == HloInstruction::FusionKind::kCustom &&
-         instr.backend_config<GpuBackendConfig>().ok() &&
-         instr.backend_config<GpuBackendConfig>()
-                 ->fusion_backend_config()
-                 .kind() == kTritonFusionKind;
+  if (instr.opcode() != HloOpcode::kFusion ||
+      instr.fusion_kind() != HloInstruction::FusionKind::kCustom ||
+      !instr.backend_config<GpuBackendConfig>().ok() ||
+      instr.backend_config<GpuBackendConfig>()
+              ->fusion_backend_config()
+              .kind() != kTritonFusionKind) {
+    return false;
+  }
+  // Ragged-dot XTile fusions are built by GemmRewriter with a fixed shape: the
+  // emitter resolves the ragged-dot operands to buffer arguments of the
+  // fusion, so they must not be fused with anything else either.
+  return !IsRaggedDotTritonFusion(instr);
 }
 
 bool MayCausePerformanceDropIfUnrolled(const HloFusionAdaptor& fusion) {
@@ -1061,7 +1067,7 @@ bool MayCausePerformanceDropIfUnrolled(const HloFusionAdaptor& fusion) {
 
 bool IsStreamAnnotatedComputation(const HloInstruction* instr) {
   return instr->opcode() == HloOpcode::kCall &&
-         instr->frontend_attributes().map().contains(kXlaStreamAnnotationAttr);
+         instr->has_frontend_attribute(kXlaStreamAnnotationAttr);
 }
 
 std::vector<HloComputation*> GetFusibleComputations(

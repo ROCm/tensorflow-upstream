@@ -49,13 +49,13 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/windowed_einsum_handler.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/tools/hlo_opt/opt_lib.h"
+#include "xla/hlo/transforms/copy_insertion.h"
 #include "xla/hlo/transforms/host_offloader.h"
 #include "xla/hlo/transforms/simplifiers/gemv_rewriter.h"
 #include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
 #include "xla/layout.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/compiler.h"
-#include "xla/service/copy_insertion.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
@@ -194,7 +194,7 @@ class GpuOptProvider : public CompiledOptProvider {
     RegisterPass<gpu::ReductionLayoutNormalizer>();
     RegisterPass<gpu::SanitizeConstantNames>();
     RegisterPass<gpu::TopKSplitter>();
-    RegisterPass<gpu::TopkSpecializer>(gpu_compute_capability);
+    RegisterPass<gpu::TopkSpecializer>(device_description_or_default);
     RegisterPass<gpu::WindowedEinsumHandler>();
     // go/keep-sorted end
     if (debug_config.xla_gpu_experimental_collective_cse_distance_threshold() >

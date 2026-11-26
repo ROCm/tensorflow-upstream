@@ -37,6 +37,8 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/Location.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -99,14 +101,16 @@ class EmitterContext {
                  const HloFusionInstruction* fusion, mlir::Value pid,
                  mlir::Value tid, gpu::Schedule schedule,
                  xtile::EntryFuncOp entry_func,
-                 const gpu::TiledHloComputation& tiled_computation)
+                 const gpu::TiledHloComputation& tiled_computation,
+                 bool is_cpu = false)
       : b_(b),
         pid_(pid),
         tid_(tid),
         schedule_(std::move(schedule)),
         fusion_(fusion),
         entry_func_(entry_func),
-        tiled_computation_(tiled_computation) {}
+        tiled_computation_(tiled_computation),
+        is_cpu_(is_cpu) {}
 
   mlir::ImplicitLocOpBuilder& b() { return b_; }
   mlir::Value pid() const { return pid_; }
@@ -116,6 +120,7 @@ class EmitterContext {
   const gpu::TiledHloComputation& tiled_computation() const {
     return tiled_computation_;
   }
+  bool is_cpu() const { return is_cpu_; }
 
   // Returns the single result of `tiled_hlo`. Multi-result instructions (e.g.
   // variadic collectives) must be addressed with an explicit result index.
@@ -212,6 +217,7 @@ class EmitterContext {
   const HloFusionInstruction* fusion_ = nullptr;
   xtile::EntryFuncOp entry_func_;
   const gpu::TiledHloComputation& tiled_computation_;
+  bool is_cpu_ = false;
   SequentialDimValueMap sequential_dim_id_to_value_;
   std::optional<ScopedSequentialDimBinding> open_scan_binding_;
   mlir::scf::ForOp open_scan_loop_;
@@ -257,8 +263,7 @@ class TileInfo {
     return replica_id_bounds_;
   }
 
-  // The storage type of the tensor. This could be different from the element
-  // type. e.g. predicates are stored as i8 instead of i1.
+  // Element type of the tensor in XTile SSA tiles.
   mlir::Type storage_type() const { return storage_type_; }
 
  private:
@@ -305,7 +310,25 @@ absl::StatusOr<mlir::Type> PrimitiveTypeToMlirType(
 // MLIR type -> XLA type conversions.
 absl::StatusOr<PrimitiveType> GetPrimitiveType(mlir::Type t);
 
+// Element type used for `t` in XTile SSA tiles.
 mlir::Type StorageType(mlir::Type t);
+
+// Byte-addressable element type used for `elem_type` in memory.
+mlir::Type MemoryStorageType(mlir::Type elem_type);
+
+bool IsI1MemRef(mlir::Type type);
+bool HasUnlegalizedI1Storage(mlir::Operation* op);
+
+// Converts `storage_value` from its `MemoryStorageType` representation to
+// `logical_elem_type`.
+TensorValue UnpackFromMemoryStorage(mlir::OpBuilder& b, mlir::Location loc,
+                                    TensorValue storage_value,
+                                    mlir::Type logical_elem_type);
+
+// Converts `logical_value` to its `MemoryStorageType` representation.
+TensorValue PackToMemoryStorage(mlir::OpBuilder& b, mlir::Location loc,
+                                TensorValue logical_value);
+
 mlir::Type GetSignlessType(mlir::Type t);
 
 // Returns whether the scan `combiner` computes a running sum: it has two

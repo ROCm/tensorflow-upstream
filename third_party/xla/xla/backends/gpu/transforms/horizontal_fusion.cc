@@ -30,9 +30,11 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/STLExtras.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/backends/gpu/codegen/thread_block_specialized.h"
+#include "xla/backends/gpu/codegen/triton/fusion.h"
 #include "xla/codegen/ir_emission_utils.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -46,6 +48,9 @@ limitations under the License.
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/tuple_util.h"
+#include "xla/shape.h"
+#include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 
@@ -82,13 +87,6 @@ std::optional<LaunchDimensions> GetLaunchDimensions(
     return std::nullopt;
   }
 
-  // Native MLIR fusions only. This is only a first filter. The call to
-  // CreateNativeNestedEmitter below verifies that fusion actually can be
-  // emitted with a native emitter.
-  if (fusion->fusion_kind() == HloInstruction::FusionKind::kCustom) {
-    return std::nullopt;
-  }
-
   // Dead or side-effecting fusions are not supported.
   if (fusion->IsDead() || fusion->HasSideEffect() ||
       !fusion->output_to_operand_aliasing().empty()) {
@@ -105,15 +103,31 @@ std::optional<LaunchDimensions> GetLaunchDimensions(
     return std::nullopt;
   }
 
-  // TODO(b/480040242): Consider unrolling small fusions in grid-bound
-  // horizontal fusions as well.
-  std::unique_ptr<MlirKernelEmitter> emitter =
-      ThreadBlockSpecializedFusion::CreateNativeNestedEmitter(
-          analysis, /*unroll_small_fusions=*/false);
-  if (emitter == nullptr) {
+  LaunchDimensions launch_dims;
+  if (analysis.emitter_fusion_kind() ==
+      HloFusionAnalysis::EmitterFusionKind::kThreadBlockSpecialized) {
+    launch_dims = ThreadBlockSpecializedFusion(analysis).launch_dimensions();
+  } else if (analysis.emitter_fusion_kind() ==
+             HloFusionAnalysis::EmitterFusionKind::kTriton) {
+    std::optional<TritonFusion::LaunchConfig> launch_config =
+        TritonFusion::GetLaunchConfig(&analysis);
+    if (!launch_config.has_value()) {
+      return std::nullopt;
+    }
+    if (launch_config->block_level_parameters.is_tma_allowed ||
+        launch_config->block_level_parameters.is_warp_specialization_allowed) {
+      return std::nullopt;
+    }
+    launch_dims = launch_config->launch_dimensions;
+  } else if (std::unique_ptr<MlirKernelEmitter> emitter =
+                 // TODO(b/480040242): Consider unrolling small fusions in
+                 // grid-bound horizontal fusions as well.
+             ThreadBlockSpecializedFusion::CreateNativeNestedEmitter(
+                 analysis, /*unroll_small_fusions=*/false)) {
+    launch_dims = emitter->launch_dimensions();
+  } else {
     return std::nullopt;
   }
-  LaunchDimensions launch_dims = emitter->launch_dimensions();
 
   // If a nested kernel has less than max_threads and uses a barrier, we need to
   // use `bar.sync 0, T_i` in PTX. The instruction has a requirement that T_i
@@ -177,12 +191,104 @@ bool TryAddToBatch(FusionBatch& batch, HloInstruction* candidate,
   return true;
 }
 
+// Unpacks `inst` inside `builder`, returning a ShapeTree whose leaves are the
+// non-tuple sub-elements of `inst` (extracted via GetTupleElement).
+ShapeTree<HloInstruction*> DisassembleTuple(HloComputation::Builder& builder,
+                                            HloInstruction* inst) {
+  ShapeTree<HloInstruction*> unpacked(&inst->shape());
+  unpacked.ForEachMutableElement(
+      [&](ShapeIndexView index, HloInstruction** elem) {
+        if (index.empty()) {
+          *elem = inst;
+        } else {
+          HloInstruction* parent =
+              unpacked.element(index.subspan(0, index.size() - 1));
+          *elem = builder.AddInstruction(
+              HloInstruction::CreateGetTupleElement(parent, index.back()));
+        }
+      });
+  return unpacked;
+}
+
+// Replaces all uses of `old_inst` with outputs from the flattened
+// `outer_fusion` tuple, using `flat_indices` to map each leaf ShapeIndex of
+// `old_inst` to its flat index in `outer_fusion`.
+//
+// For tuple-shaped instructions, direct (possibly nested) GetTupleElement users
+// are redirected in-place to their corresponding flat leaf index (preserving
+// control dependencies and avoiding unnecessary tuple ops after scheduling).
+// Any remaining whole-tuple uses are replaced with a reconstructed tuple
+// matching `old_inst->shape()`. Control dependencies on `old_inst` itself (for
+// intermediate tuple-shaped GetTupleElements being removed) are propagated to
+// redirected GTE users, any reconstructed tuple, and `outer_fusion` before
+// being dropped.
+absl::Status ReplaceUsesWithOuterFusion(
+    HloComputation* comp, HloInstruction* old_inst,
+    HloInstruction* outer_fusion, const ShapeTree<int64_t>& flat_indices) {
+  if (!old_inst->shape().IsTuple()) {
+    HloInstruction* new_gte =
+        comp->AddInstruction(HloInstruction::CreateGetTupleElement(
+            outer_fusion, flat_indices.element({})));
+    return old_inst->ReplaceAllUsesWith(new_gte);
+  }
+
+  // Redirect GetTupleElement users to the flat outer_fusion outputs.
+  for (HloInstruction* user : std::vector<HloInstruction*>(
+           old_inst->users().begin(), old_inst->users().end())) {
+    if (user->opcode() != HloOpcode::kGetTupleElement) {
+      continue;
+    }
+    for (HloInstruction* pred : old_inst->control_predecessors()) {
+      ABSL_RETURN_IF_ERROR(pred->AddControlDependencyTo(user));
+    }
+    if (user->shape().IsTuple()) {
+      ABSL_ASSIGN_OR_RETURN(ShapeTree<int64_t> child_indices,
+                       flat_indices.SubShapeTree({user->tuple_index()}));
+      ABSL_RETURN_IF_ERROR(
+          ReplaceUsesWithOuterFusion(comp, user, outer_fusion, child_indices));
+      ABSL_RETURN_IF_ERROR(comp->RemoveInstruction(user));
+    } else {
+      user->set_tuple_index(flat_indices.element({user->tuple_index()}));
+      ABSL_RETURN_IF_ERROR(
+          old_inst->ReplaceUseWithDifferentShape(user, outer_fusion));
+    }
+  }
+
+  // If there are still users left, then the tuple output was used as a whole.
+  // Reconstruct a matching tuple from fresh GTEs of the outer fusion (rather
+  // than reusing existing GTEs, which may carry scheduling annotations).
+  if (old_inst->user_count() > 0 || old_inst->IsRoot()) {
+    ShapeTree<HloInstruction*> elements(&old_inst->shape());
+    for (const auto& [index, flat_idx] : flat_indices.leaves()) {
+      *elements.mutable_element(index) = comp->AddInstruction(
+          HloInstruction::CreateGetTupleElement(outer_fusion, flat_idx));
+    }
+    HloInstruction* new_tuple =
+        TupleUtil::AssembleTupleInstruction(comp, std::move(elements));
+    ABSL_RETURN_IF_ERROR(new_tuple->CopyAllControlDepsFrom(old_inst));
+    if (flat_indices.leaf_begin() == flat_indices.leaf_end() &&
+        !old_inst->control_successors().empty()) {
+      ABSL_RETURN_IF_ERROR(outer_fusion->AddControlDependencyTo(new_tuple));
+    }
+    ABSL_RETURN_IF_ERROR(old_inst->DropAllControlDeps());
+    ABSL_RETURN_IF_ERROR(old_inst->ReplaceAllUsesWith(new_tuple));
+  } else {
+    for (HloInstruction* succ : old_inst->control_successors()) {
+      ABSL_RETURN_IF_ERROR(outer_fusion->AddControlDependencyTo(succ));
+    }
+    ABSL_RETURN_IF_ERROR(old_inst->SafelyDropAllControlDependencies());
+  }
+  return absl::OkStatus();
+}
+
 absl::Status FuseCandidates(HloModule* module, HloComputation* comp,
                             absl::Span<HloInstruction* const> candidates) {
   HloComputation::Builder builder("horizontal_fusion_computation");
   std::vector<HloInstruction*> outer_operands;
   absl::flat_hash_map<const HloInstruction*, HloInstruction*> operand_to_param;
   std::vector<HloInstruction*> tuple_elements;
+  std::vector<ShapeTree<int64_t>> candidate_flat_indices;
+  candidate_flat_indices.reserve(candidates.size());
 
   for (HloInstruction* nested_fusion : candidates) {
     std::vector<HloInstruction*> new_operands;
@@ -201,14 +307,14 @@ absl::Status FuseCandidates(HloModule* module, HloComputation* comp,
     HloInstruction* cloned_fusion =
         builder.AddInstruction(nested_fusion->CloneWithNewOperands(
             nested_fusion->shape(), new_operands, /*suffix=*/""));
-    if (nested_fusion->shape().IsTuple()) {
-      for (int64_t i = 0; i < nested_fusion->shape().tuple_shapes_size(); ++i) {
-        tuple_elements.push_back(builder.AddInstruction(
-            HloInstruction::CreateGetTupleElement(cloned_fusion, i)));
-      }
-    } else {
-      tuple_elements.push_back(cloned_fusion);
+    ShapeTree<HloInstruction*> unpacked =
+        DisassembleTuple(builder, cloned_fusion);
+    ShapeTree<int64_t> flat_indices(&cloned_fusion->shape(), -1);
+    for (const auto& [index, leaf] : unpacked.leaves()) {
+      *flat_indices.mutable_element(index) = tuple_elements.size();
+      tuple_elements.push_back(leaf);
     }
+    candidate_flat_indices.push_back(std::move(flat_indices));
   }
 
   HloInstruction* root_tuple =
@@ -226,48 +332,13 @@ absl::Status FuseCandidates(HloModule* module, HloComputation* comp,
       kThreadBlockSpecializedFusionKind);
   ABSL_RETURN_IF_ERROR(outer_fusion->set_backend_config(gpu_backend_config));
 
-  int64_t output_idx = 0;
-  for (HloInstruction* nested_fusion : candidates) {
+  for (const auto& [nested_fusion, flat_indices] :
+       llvm::zip_equal(candidates, candidate_flat_indices)) {
     HloComputation* comp_i = nested_fusion->fused_instructions_computation();
     ABSL_RETURN_IF_ERROR(outer_fusion->CopyAllControlDepsFrom(nested_fusion));
     ABSL_RETURN_IF_ERROR(nested_fusion->DropAllControlDeps());
-    if (nested_fusion->shape().IsTuple()) {
-      // Redirect GetTupleElement users to the new outer fusion.
-      for (HloInstruction* user : std::vector<HloInstruction*>(
-               nested_fusion->users().begin(), nested_fusion->users().end())) {
-        if (user->opcode() != HloOpcode::kGetTupleElement) {
-          continue;
-        }
-        user->set_tuple_index(output_idx + user->tuple_index());
-        ABSL_RETURN_IF_ERROR(
-            nested_fusion->ReplaceUseWithDifferentShape(user, outer_fusion));
-      }
-
-      // If there are still users left, then the tuple output was used as a
-      // whole. Replace it with a new tuple create with gtes of the outer
-      // fusion.
-      if (nested_fusion->user_count() > 0 || nested_fusion->IsRoot()) {
-        int64_t num_outputs = nested_fusion->shape().tuple_shapes().size();
-        std::vector<HloInstruction*> new_gtes;
-        new_gtes.reserve(num_outputs);
-        // It's intentional that we create new gtes here instead of reusing the
-        // one created above. Potentially, gte can have scheduling predecessor
-        // annotation that we don't want to inherit.
-        for (int64_t i = 0; i < num_outputs; ++i) {
-          new_gtes.push_back(
-              comp->AddInstruction(HloInstruction::CreateGetTupleElement(
-                  outer_fusion, output_idx + i)));
-        }
-        HloInstruction* new_tuple =
-            comp->AddInstruction(HloInstruction::CreateTuple(new_gtes));
-        ABSL_RETURN_IF_ERROR(nested_fusion->ReplaceAllUsesWith(new_tuple));
-      }
-    } else {
-      HloInstruction* new_gte = comp->AddInstruction(
-          HloInstruction::CreateGetTupleElement(outer_fusion, output_idx));
-      ABSL_RETURN_IF_ERROR(nested_fusion->ReplaceAllUsesWith(new_gte));
-    }
-    output_idx += ShapeUtil::GetLeafCount(nested_fusion->shape());
+    ABSL_RETURN_IF_ERROR(ReplaceUsesWithOuterFusion(comp, nested_fusion,
+                                               outer_fusion, flat_indices));
 
     ABSL_RETURN_IF_ERROR(comp->RemoveInstruction(nested_fusion));
     ABSL_RETURN_IF_ERROR(module->RemoveEmbeddedComputation(comp_i));

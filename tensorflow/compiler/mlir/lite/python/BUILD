@@ -53,6 +53,7 @@ cc_library(
         "//tensorflow/compiler/mlir/lite:tf_to_tfl_flatbuffer",
         "//tensorflow/compiler/mlir/lite:types_proto_cc",
         "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib:quantization_config",
+        "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib:tf_quantization_config",
         "//tensorflow/compiler/mlir/lite/tools/optimize:reduced_precision_metadata",
         "//tensorflow/compiler/mlir/quantization/tensorflow/python:py_function_lib",
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops",
@@ -66,7 +67,6 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Support",
-        "@xla//xla/mlir_hlo:hlo_dialect_registration",
     ],
 )
 
@@ -81,6 +81,7 @@ cc_library(
         "pass_debug_instrumentation.h",
     ],
     deps = [
+        "//tensorflow/compiler/mlir/lite:file_utils",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -90,8 +91,6 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@xla//xla/mlir/utils:error_util",
-        "@xla//xla/tsl/platform:env",
     ],
 )
 
@@ -100,7 +99,7 @@ cc_library(
     srcs = ["preserve_regions.cc"],
     hdrs = ["preserve_regions.h"],
     deps = [
-        "//tensorflow/compiler/mlir/lite:tensorflow_lite",
+        "//tensorflow/compiler/mlir/lite:tensorflow_lite_ops",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
@@ -141,26 +140,30 @@ cc_library(
         ":conversion_failure_reporter",
         ":preserve_regions",
         "//tensorflow/compiler/mlir/lite:cast_bf16_ops_to_f32",
-        "//tensorflow/compiler/mlir/lite:cleanup_optimization_barrier",  # build_cleaner: keep (pass declared in passes.h)
-        "//tensorflow/compiler/mlir/lite:common",
-        "//tensorflow/compiler/mlir/lite:converter_flags_proto_cc",
+        "//tensorflow/compiler/mlir/lite:cleanup_optimization_barrier",  # build_cleaner: keep (pass declared in tfl_passes.h)
+        "//tensorflow/compiler/mlir/lite:converter_v2_options_proto_cc",
+        "//tensorflow/compiler/mlir/lite:diagnostic_status_handler",
         "//tensorflow/compiler/mlir/lite:downcast_x64",
+        "//tensorflow/compiler/mlir/lite:file_utils",
         "//tensorflow/compiler/mlir/lite:large_constant_fold",
-        "//tensorflow/compiler/mlir/lite:legalize_jax_random",  # build_cleaner: keep (pass declared in passes.h)
+        "//tensorflow/compiler/mlir/lite:legalize_jax_random",  # build_cleaner: keep (pass declared in tfl_passes.h)
         "//tensorflow/compiler/mlir/lite:optimize_broadcast_like_pass",
         "//tensorflow/compiler/mlir/lite:optimize_broadcast_like_pass_options",
         "//tensorflow/compiler/mlir/lite:pass_registry_utils",
-        "//tensorflow/compiler/mlir/lite:strict_qdq_quantize_passes",  # build_cleaner: keep (pass declared in passes.h)
-        "//tensorflow/compiler/mlir/lite:tensorflow_lite",
-        "//tensorflow/compiler/mlir/lite:tensorflow_lite_optimize",  # build_cleaner: keep (pass declared in passes.h)
-        "//tensorflow/compiler/mlir/lite:tensorflow_lite_optimize_batch_matmul",  # build_cleaner: keep (pass declared in passes.h)
-        "//tensorflow/compiler/mlir/lite:tensorflow_lite_push_transpose_through_ewise_pass",  # build_cleaner: keep (pass declared in passes.h)
+        "//tensorflow/compiler/mlir/lite:strict_qdq_quantize_passes",  # build_cleaner: keep (pass declared in tfl_passes.h)
+        "//tensorflow/compiler/mlir/lite:tensorflow_lite_ops",
+        "//tensorflow/compiler/mlir/lite:tensorflow_lite_optimize",  # build_cleaner: keep (pass declared in tfl_passes.h)
+        "//tensorflow/compiler/mlir/lite:tensorflow_lite_optimize_batch_matmul",  # build_cleaner: keep (pass declared in tfl_passes.h)
+        "//tensorflow/compiler/mlir/lite:tensorflow_lite_push_transpose_through_ewise_pass",  # build_cleaner: keep (pass declared in tfl_passes.h)
+        "//tensorflow/compiler/mlir/lite:tfl_passes",
         "//tensorflow/compiler/mlir/lite/core:macros",
-        "//tensorflow/compiler/mlir/lite/debug",
+        "//tensorflow/compiler/mlir/lite/debug:debug_options_proto_cc",
+        "//tensorflow/compiler/mlir/lite/debug:pass_manager_debug",
         "//tensorflow/compiler/mlir/lite/export",
         "//tensorflow/compiler/mlir/lite/metrics:error_collector_inst",
         "//tensorflow/compiler/mlir/lite/quantization/ir:QuantOps",
         "//tensorflow/compiler/mlir/lite/stablehlo:build_stablehlo_composite",
+        "//tensorflow/compiler/mlir/lite/stablehlo:chlo_recompose_ops",
         "//tensorflow/compiler/mlir/lite/stablehlo:compose_uniform_quantized_type_pass",
         "//tensorflow/compiler/mlir/lite/stablehlo:composite_lowering",
         "//tensorflow/compiler/mlir/lite/stablehlo:drop_shape_assertions",
@@ -191,12 +194,6 @@ cc_library(
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_passes",
         "@stablehlo//:vhlo_ops",
-        "@xla//xla/mlir/utils:error_util",
-        "@xla//xla/mlir_hlo",
-        "@xla//xla/mlir_hlo:mhlo_passes",
-        "@xla//xla/mlir_hlo:stablehlo_extension_passes",
-        "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:errors",
     ],
 )
 
@@ -207,10 +204,8 @@ cc_library(
     deps = [
         ":slim_model_importer",
         ":stablehlo_tfl_pipeline",
-        "//tensorflow/compiler/mlir/lite:common",
-        "//tensorflow/compiler/mlir/lite:converter_flags_proto_cc",
-        "//tensorflow/compiler/mlir/lite:tensorflow_lite",
-        "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib:quantization_config",
+        "//tensorflow/compiler/mlir/lite:converter_v2_options_proto_cc",
+        "//tensorflow/compiler/mlir/lite:tensorflow_lite_ops",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
@@ -223,15 +218,36 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "converter_flags_to_v2_options",
+    srcs = ["converter_flags_to_v2_options.cc"],
+    hdrs = ["converter_flags_to_v2_options.h"],
+    deps = [
+        "//tensorflow/compiler/mlir/lite:converter_flags_proto_cc",
+        "//tensorflow/compiler/mlir/lite:converter_v2_options_proto_cc",
+        "//tensorflow/compiler/mlir/lite/debug:debug_options_proto_cc",
+    ],
+)
+
+tf_cc_test(
+    name = "converter_flags_to_v2_options_test",
+    srcs = ["converter_flags_to_v2_options_test.cc"],
+    deps = [
+        ":converter_flags_to_v2_options",
+        "//tensorflow/compiler/mlir/lite:converter_flags_proto_cc",
+        "//tensorflow/compiler/mlir/lite:converter_v2_options_proto_cc",
+        "//tensorflow/compiler/mlir/lite/debug:debug_options_proto_cc",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 tf_cc_test(
     name = "stablehlo_tfl_pipeline_test",
     srcs = ["stablehlo_tfl_pipeline_test.cc"],
     deps = [
         ":stablehlo_tfl_pipeline",
-        "//tensorflow/compiler/mlir/lite:common",
-        "//tensorflow/compiler/mlir/lite:converter_flags_proto_cc",
+        "//tensorflow/compiler/mlir/lite:converter_v2_options_proto_cc",
         "//tensorflow/compiler/mlir/lite:tensorflow_lite",
-        "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib:quantization_config",
         "//tensorflow/compiler/mlir/lite/schema:schema_fbs",
         "//tensorflow/compiler/mlir/lite/schema:schema_utils",
         "@com_google_absl//absl/status",
@@ -370,6 +386,7 @@ cc_library(
         "//tensorflow/compiler/mlir/lite:tensorflow_lite",
         "//tensorflow/compiler/mlir/lite:types_proto_cc",
         "//tensorflow/compiler/mlir/lite/quantization/common/quantization_lib:quantization_config",
+        "//tensorflow/compiler/mlir/tensorflow:error_util",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "@com_google_absl//absl/log",
@@ -378,9 +395,11 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@xla//xla/hlo/parser:hlo_parser",
         "@xla//xla/hlo/translate:stablehlo",
+        "@xla//xla/mlir_hlo:mhlo_passes",
         "@xla//xla/service:hlo_proto_cc",
     ],
 )
@@ -464,6 +483,7 @@ cc_library(
         "//visibility:public",
     ],
     deps = [
+        ":converter_flags_to_v2_options",
         ":flatbuffer_to_mlir",
         ":graphdef_to_tfl_flatbuffer",
         ":jax_to_tfl_flatbuffer",
