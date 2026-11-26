@@ -647,6 +647,7 @@ cc_library(
         ":gpu_init_impl",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:resource_loader",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",

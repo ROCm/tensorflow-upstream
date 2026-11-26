@@ -3311,6 +3311,7 @@ xla_test(
         "//xla/service:hlo_module_util",
         "//xla/service:hlo_runner_interface",
         "//xla/service:hlo_runner_pjrt",
+        "//xla/tsl/platform:resource_loader",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/log",

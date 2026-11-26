@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/resource_loader.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/xla.pb.h"
@@ -289,11 +290,11 @@ absl::StatusOr<std::string> GetHloText(absl::string_view module_name) {
   for (const auto& [name, path] : kHloFileModules) {
     if (name == module_name) {
       std::string hlo;
-      std::string src_root = tsl::testing::XlaSrcRoot();
-      src_root = src_root.erase(src_root.length() - 4);
       ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(
           tsl::Env::Default(),
-          tsl::io::JoinPath(src_root, "external/xla/xla", path), &hlo));
+          tsl::GetDataDependencyFilepath(
+              tsl::io::JoinPath("external", "xla", "xla", path)),
+          &hlo));
       return hlo;
     }
   }

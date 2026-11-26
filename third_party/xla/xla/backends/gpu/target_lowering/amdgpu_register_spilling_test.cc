@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/kernel_stats.h"
+#include "xla/tsl/platform/resource_loader.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/path.h"
@@ -37,6 +38,12 @@ namespace se = ::stream_executor;
 
 static std::string RemoveLLExtension(const std::string& filename) {
   return filename.substr(0, filename.find(".ll"));
+}
+
+static std::string TestIRFile(const std::string& filename) {
+  return tsl::GetDataDependencyFilepath(
+      tsl::io::JoinPath("external", "xla", "xla", "backends", "gpu",
+                        "target_lowering", "tests_data", filename));
 }
 
 // Test parameter structure
@@ -56,12 +63,7 @@ class AMDGPURegisterSpillingTest
   // Helper to load IR module from test data
   std::unique_ptr<llvm::Module> LoadTestModule(llvm::LLVMContext* context,
                                                const std::string& filename) {
-    auto path = tsl::testing::XlaSrcRoot();
-    path = path.erase(path.length() - 4);                                            
-    return LoadIRModule(
-        tsl::io::JoinPath(path, "external/xla/xla", "backends", "gpu",
-                          "target_lowering", "tests_data", filename),
-        context);
+    return LoadIRModule(TestIRFile(filename), context);
   }
 
   // Helper to compile with given debug options
@@ -166,13 +168,7 @@ TEST(AMDGPUCacheHitModuleStatsTest, CacheHitReturnsIdenticalModuleStats) {
   llvm::LLVMContext context;
   const std::string module_id = "cache_hit_stats_test";
   auto load_module = [&context]() {
-    auto path = tsl::testing::XlaSrcRoot();
-    path = path.erase(path.length() - 4);
-    return LoadIRModule(
-        tsl::io::JoinPath(path, "external/xla/xla", "backends", "gpu",
-                          "target_lowering", "tests_data",
-                          "amdgpu_vgpr_spills.ll"),
-        &context);
+    return LoadIRModule(TestIRFile("amdgpu_vgpr_spills.ll"), &context);
   };
   auto compile = [&module_id](llvm::Module* module) {
     DebugOptions debug_options = GetDebugOptionsFromFlags();

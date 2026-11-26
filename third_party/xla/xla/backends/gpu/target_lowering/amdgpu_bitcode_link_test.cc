@@ -22,6 +22,7 @@ limitations under the License.
 #include "xla/backends/gpu/target_lowering/amdgpu_backend.h"
 #include "xla/backends/gpu/target_lowering/load_ir_module.h"
 #include "xla/debug_options_flags.h"
+#include "xla/tsl/platform/resource_loader.h"
 #include "xla/tsl/platform/test.h"
 #include "tsl/platform/path.h"
 
@@ -29,10 +30,9 @@ namespace xla::gpu {
 namespace {
 
 std::string TestIRFile() {
-  auto path = tsl::testing::XlaSrcRoot();
-  path = path.erase(path.length() - 4);
-  return tsl::io::JoinPath(path, "external/xla/xla",
-          "backends", "gpu", "target_lowering", "tests_data", "amdgpu.ll");
+  return tsl::GetDataDependencyFilepath(
+      tsl::io::JoinPath("external", "xla", "xla", "backends", "gpu",
+                        "target_lowering", "tests_data", "amdgpu.ll"));
 }
 
 bool HasUndefinedFunctions(const llvm::Module& M) {

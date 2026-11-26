@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/service/hlo_runner_pjrt.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/hlo_runner_agnostic_reference_mixin.h"
+#include "xla/tsl/platform/resource_loader.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "tsl/platform/path.h"
@@ -55,10 +56,8 @@ class SampleFileTest : public HloRunnerAgnosticReferenceMixin<HloTestBase> {
 };
 
 TEST_F(SampleFileTest, Convolution) {
-  auto path = tsl::testing::XlaSrcRoot();
-  const std::string filename = tsl::io::JoinPath(
-      path, "../external/xla/xla",
-      "tests","isolated_convolution.hlo");
+  const std::string filename = tsl::GetDataDependencyFilepath(tsl::io::JoinPath(
+      "external", "xla", "xla", "tests", "isolated_convolution.hlo"));
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ReadModuleFromHloTextFile(filename));
   module->mutable_config()
