@@ -43,8 +43,21 @@ fi
 
 tfrun bazel $TFCI_BAZEL_BAZELRC_ARGS build  $TFCI_BAZEL_COMMON_ARGS --config=$TFCI_BAZEL_CONFIG  --config=rocm_cache --dynamic_mode=off --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" --repo_env=ROCM_PATH="" //tensorflow/tools/pip_package:wheel $TFCI_BUILD_PIP_PACKAGE_BASE_ARGS $TFCI_BUILD_PIP_PACKAGE_WHEEL_NAME_ARG --verbose_failures
 
-ROCM_DIST="$(bazel info output_base)/external/local_config_rocm/rocm/rocm_dist"
-export LD_LIBRARY_PATH="${ROCM_DIST}/lib:${ROCM_DIST}/lib/rocm_sysdeps/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+# Under Bzlmod the repository directory is canonicalized (e.g.
+# 'xla++rocm_configure_ext+local_config_rocm'); under WORKSPACE it is plain
+# 'local_config_rocm'. Accept either.
+ROCM_EXTERNAL_DIR="$(bazel info output_base)/external"
+for rocm_repo in "${ROCM_EXTERNAL_DIR}/local_config_rocm" "${ROCM_EXTERNAL_DIR}"/*+local_config_rocm; do
+  if [[ -d "${rocm_repo}/rocm/rocm_dist/lib" ]]; then
+    ROCM_DIST="${rocm_repo}/rocm/rocm_dist"
+    export LD_LIBRARY_PATH="${ROCM_DIST}/lib:${ROCM_DIST}/lib/rocm_sysdeps/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    break
+  fi
+done
+if [[ -z "${ROCM_DIST:-}" ]]; then
+  echo "ERROR: no rocm_dist found under ${ROCM_EXTERNAL_DIR}" >&2
+  exit 1
+fi
 
 # Only look inside wheel_house, which is where the :wheel rule writes.
 tfrun "$TFCI_FIND_BIN" ./bazel-bin/tensorflow/tools/pip_package/wheel_house -iname "*.whl" -exec cp {} $TFCI_OUTPUT_DIR \;
