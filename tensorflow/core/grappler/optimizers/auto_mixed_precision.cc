@@ -118,7 +118,7 @@ bool HasFastFP16Support(const DeviceProperties& props) {
       {"gfx906"}, {"gfx908"}, {"gfx90a"}, {"gfx910"}, 
       {"gfx942"}, {"gfx1010"}, {"gfx1012"}, {"gfx1030"},
       {"gfx1100"}, {"gfx1101"}, {"gfx1102"}, {"gfx1103"},
-      {"gfx1200"}, {"gfx1201"}
+      {"gfx1200"}, {"gfx1201"}, {"gfx1250"}
   };
   std::string gcnArchName = props.environment().at("architecture");
   std::vector<std::string> gpu_arch = absl::StrSplit(gcnArchName, ":");
