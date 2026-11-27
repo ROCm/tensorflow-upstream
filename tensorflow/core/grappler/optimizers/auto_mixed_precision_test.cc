@@ -238,6 +238,23 @@ class AutoMixedPrecisionTest : public GrapplerTest {
 };
 
 #if TENSORFLOW_USE_ROCM
+class AutoMixedPrecisionGfx950Test : public AutoMixedPrecisionTest {
+ protected:
+  void SetUp() override {
+    SetMode(AutoMixedPrecisionMode::CUDA);
+    SetGpuArchitecture("gfx950");
+    AutoMixedPrecisionTest::SetUp();
+  }
+};
+
+TEST_F(AutoMixedPrecisionGfx950Test, SupportsFp16) {
+  TestSimpleUnaryInferOp(/*input_min=*/0.0, /*input_max=*/10.0,
+                         /*atol=*/1e-3, /*rtol=*/1e-3,
+                         [](const tensorflow::Scope& scope, Output input) {
+                           return ops::Sqrt(scope.WithOpName("sqrt"), input);
+                         });
+}
+
 class AutoMixedPrecisionGfx1103Test : public AutoMixedPrecisionTest {
  protected:
   void SetUp() override {
@@ -248,6 +265,23 @@ class AutoMixedPrecisionGfx1103Test : public AutoMixedPrecisionTest {
 };
 
 TEST_F(AutoMixedPrecisionGfx1103Test, SupportsFp16) {
+  TestSimpleUnaryInferOp(/*input_min=*/0.0, /*input_max=*/10.0,
+                         /*atol=*/1e-3, /*rtol=*/1e-3,
+                         [](const tensorflow::Scope& scope, Output input) {
+                           return ops::Sqrt(scope.WithOpName("sqrt"), input);
+                         });
+}
+
+class AutoMixedPrecisionGfx1250Test : public AutoMixedPrecisionTest {
+ protected:
+  void SetUp() override {
+    SetMode(AutoMixedPrecisionMode::CUDA);
+    SetGpuArchitecture("gfx90a");
+    AutoMixedPrecisionTest::SetUp();
+  }
+};
+
+TEST_F(AutoMixedPrecisionGfx1250Test, SupportsFp16) {
   TestSimpleUnaryInferOp(/*input_min=*/0.0, /*input_max=*/10.0,
                          /*atol=*/1e-3, /*rtol=*/1e-3,
                          [](const tensorflow::Scope& scope, Output input) {

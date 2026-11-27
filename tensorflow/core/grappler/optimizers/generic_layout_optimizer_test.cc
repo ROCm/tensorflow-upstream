@@ -377,6 +377,38 @@ TEST_F(GenericLayoutOptimizerTest, GPUDevice) {
 }
 
 #if TENSORFLOW_USE_ROCM
+class GenericLayoutOptimizerGfx950Test : public GenericLayoutOptimizerTest {
+ protected:
+  void SetUp() override {
+    SetGpuArchitecture("gfx950");
+    GenericLayoutOptimizerTest::SetUp();
+  }
+};
+
+TEST_F(GenericLayoutOptimizerGfx950Test, UsesNhwcLayout) {
+  if (!se::gpu::UseNhwcLayoutForRocm()) {
+    GTEST_SKIP() << "TF_USE_ROCM_NHWC is not enabled";
+  }
+
+  tensorflow::Scope s = tensorflow::Scope::NewRootScope();
+  auto conv =
+      SimpleConv2D(&s, 4, 2, "VALID", "/job:w/replica:0/task:0/device:GPU:0");
+  Output fetch = ops::Identity(s.WithOpName("Fetch"), {conv});
+  GrapplerItem item;
+  TF_ASSERT_OK(s.ToGraphDef(&item.graph));
+
+  GenericLayoutOptimizer optimizer;
+  GraphDef output;
+  TF_ASSERT_OK(optimizer.Optimize(virtual_cluster_.get(), item, &output));
+
+  absl::Status status;
+  utils::GraphView graph_view(&output, &status);
+  TF_ASSERT_OK(status);
+  auto* conv_node = graph_view.GetNode("Conv2D");
+  ASSERT_NE(conv_node, nullptr);
+  VerifyDataFormatAttributeMatch(conv_node, "NHWC");
+}
+
 class GenericLayoutOptimizerGfx1103Test : public GenericLayoutOptimizerTest {
  protected:
   void SetUp() override {
@@ -386,6 +418,38 @@ class GenericLayoutOptimizerGfx1103Test : public GenericLayoutOptimizerTest {
 };
 
 TEST_F(GenericLayoutOptimizerGfx1103Test, UsesNhwcLayout) {
+  if (!se::gpu::UseNhwcLayoutForRocm()) {
+    GTEST_SKIP() << "TF_USE_ROCM_NHWC is not enabled";
+  }
+
+  tensorflow::Scope s = tensorflow::Scope::NewRootScope();
+  auto conv =
+      SimpleConv2D(&s, 4, 2, "VALID", "/job:w/replica:0/task:0/device:GPU:0");
+  Output fetch = ops::Identity(s.WithOpName("Fetch"), {conv});
+  GrapplerItem item;
+  TF_ASSERT_OK(s.ToGraphDef(&item.graph));
+
+  GenericLayoutOptimizer optimizer;
+  GraphDef output;
+  TF_ASSERT_OK(optimizer.Optimize(virtual_cluster_.get(), item, &output));
+
+  absl::Status status;
+  utils::GraphView graph_view(&output, &status);
+  TF_ASSERT_OK(status);
+  auto* conv_node = graph_view.GetNode("Conv2D");
+  ASSERT_NE(conv_node, nullptr);
+  VerifyDataFormatAttributeMatch(conv_node, "NHWC");
+}
+
+class GenericLayoutOptimizerGfx1250Test : public GenericLayoutOptimizerTest {
+ protected:
+  void SetUp() override {
+    SetGpuArchitecture("gfx1250");
+    GenericLayoutOptimizerTest::SetUp();
+  }
+};
+
+TEST_F(GenericLayoutOptimizerGfx1250Test, UsesNhwcLayout) {
   if (!se::gpu::UseNhwcLayoutForRocm()) {
     GTEST_SKIP() << "TF_USE_ROCM_NHWC is not enabled";
   }

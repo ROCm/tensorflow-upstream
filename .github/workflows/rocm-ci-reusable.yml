@@ -1,0 +1,182 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+#
+# Shared TF-on-ROCm build/test pipeline.
+#
+# This is the single definition of "run the TF ROCm CI against one theRock
+# distribution". Callers only supply the distribution to test:
+#
+#   .github/workflows/rocm-ci.yml         - per-PR, pinned stable theRock
+#   .github/workflows/rocm-ci-weekly.yml  - weekly, matrix of theRock channels
+#
+name: Reusable ROCm CI
+
+on:
+  workflow_call:
+    inputs:
+      mode_name:
+        description: 'Label for the theRock distribution under test (used in job/step names)'
+        required: false
+        default: 'therock'
+        type: string
+      runner_label:
+        description: 'Runner label for the GPU jobs'
+        required: false
+        default: 'linux-tensorflow-mi250-4'
+        type: string
+      docker_image:
+        description: 'Build/test container image (must be ROCm-less; ROCm comes from the tarball)'
+        required: false
+        default: 'ghcr.io/rocm/jax-build-ubu24.rocmless@sha256:68854ed30b800d3e8c390f6e651721e2bead58830da1c59e1b828354eb8f077f'
+        type: string
+      rocm_tarball:
+        description: 'theRock distribution tarball URL (ROCM_DISTRO_URL)'
+        required: true
+        type: string
+      rocm_tarball_hash:
+        description: 'sha256 of the tarball, or "no_hash" to skip verification (ROCM_DISTRO_HASH)'
+        required: false
+        default: 'no_hash'
+        type: string
+      tfci:
+        description: 'TFCI environment variable'
+        required: false
+        default: 'py312,linux_x86_rocm,no_docker'
+        type: string
+      continue_on_error:
+        description: >-
+          Run every test stage even if an earlier one fails, instead of
+          stopping at the first failure. The job still reports failure at the
+          end - this only controls how much gets run before giving up.
+        required: false
+        default: false
+        type: boolean
+      timeout_minutes:
+        description: 'Timeout for the build-and-test job'
+        required: false
+        default: 960
+        type: number
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  rocm_config:
+    name: Probe GPUs [${{ inputs.mode_name }}]
+    outputs:
+      num_gpus: ${{ steps.gpu_info.outputs.gpu_count }}
+      gpu_arch: ${{ steps.gpu_info.outputs.target_archs }}
+    runs-on: ${{ inputs.runner_label }}
+    defaults:
+      run:
+        shell: bash
+    container:
+      # rocm/ufb-private:rocm10.0-py3.12-tf2.22-ubuntu22.04-dev
+      #
+      # Only used to run amd-smi: the build container is deliberately ROCm-less,
+      # so the GPU probe needs an image that ships the ROCm tooling.
+      image: rocm/ufb-private@sha256:7ab50c72e4d3703661c64f6e3cf72c627713d5bc779aa20381a638c6a1e35b03
+      # amd-smi below needs the GPU devices forwarded into the job container.
+      options: --device /dev/kfd --device /dev/dri --group-add video
+    steps:
+      - id: gpu_info
+        run: |
+          echo "gpu_count=$(amd-smi list 2>/dev/null | grep -c '^GPU:')" >> "$GITHUB_OUTPUT"
+          echo "target_archs=$(amd-smi static --gpu 0 | grep TARGET_GRAPHICS_VERSION | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+
+  build-and-test:
+    needs: rocm_config
+    name: TF ROCm build and test [${{ inputs.mode_name }}]
+    runs-on: ${{ inputs.runner_label }}
+    env:
+      PIP_NO_CACHE_DIR: 1
+      ROCM_DISTRO_URL: ${{ inputs.rocm_tarball }}
+      ROCM_DISTRO_HASH: ${{ inputs.rocm_tarball_hash }}
+      TF_GPU_COUNT: ${{ needs.rocm_config.outputs.num_gpus || 1 }}
+      TARGET_ARCHS: ${{ needs.rocm_config.outputs.gpu_arch }}
+      TFCI: ${{ inputs.tfci }}
+      TFCI_GITHUB_ACTIONS: true
+    defaults:
+      run:
+        shell: bash
+    container:
+      image: ${{ inputs.docker_image }}  # zizmor: ignore[unpinned-images]
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # TFCI is set to no_docker, so tfrun executes directly in this container;
+      # it must therefore expose the ROCm devices itself.
+      options: >-
+        --device /dev/kfd --device /dev/dri --group-add video
+        --cap-add SYS_PTRACE --security-opt seccomp=unconfined
+        --ipc host --network host --shm-size 64G
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        env:
+          GIT_CONFIG_PARAMETERS: "'checkout.workers=12' 'core.featureManyFiles=true'"
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: ROCm distribution under test
+        run: |
+          {
+            echo "### TF ROCm CI — \`${{ inputs.mode_name }}\`"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Tarball | \`${ROCM_DISTRO_URL}\` |"
+            echo "| Hash | \`${ROCM_DISTRO_HASH}\` |"
+            echo "| Runner | \`${{ inputs.runner_label }}\` |"
+            echo "| GPUs | \`${TF_GPU_COUNT}\` x \`${TARGET_ARCHS}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Each stage below is gated on the same condition:
+      #   continue_on_error off -> !cancelled() && success(), i.e. the normal
+      #     "stop at the first failure" behaviour wanted on a PR.
+      #   continue_on_error on  -> !cancelled(), i.e. run every stage so one
+      #     broken ROCm stack still yields a full picture. Failed stages are
+      #     still recorded, so the job goes red either way.
+      - name: Test CPU
+        if: ${{ !cancelled() && (inputs.continue_on_error || success()) }}
+        env:
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_cpu.sh'
+        run: ./ci/official/any.sh
+
+      - name: Test Single GPU
+        if: ${{ !cancelled() && (inputs.continue_on_error || success()) }}
+        env:
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_single.sh'
+        run: ./ci/official/any.sh
+
+      - name: Test Multi GPU
+        if: ${{ !cancelled() && (inputs.continue_on_error || success()) }}
+        env:
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_gpu_multi.sh'
+        run: ./ci/official/any.sh
+
+      - name: Test XLA
+        if: ${{ !cancelled() && (inputs.continue_on_error || success()) }}
+        env:
+          TF_ANY_SCRIPT: 'tensorflow/tools/ci_build/linux/rocm/run_xla.sh'
+        run: ./ci/official/any.sh
+
+      - name: Test TF Wheel
+        if: ${{ !cancelled() && (inputs.continue_on_error || success()) }}
+        run: ./ci/official/wheel.sh

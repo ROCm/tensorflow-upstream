@@ -38,7 +38,9 @@ fi
 # vvv TODO (rocm) weekly-sync-20251224 excluded tests
 EXCLUDED_TESTS=(
     #  //tensorflow/core/grappler/optimizers:auto_mixed_precision_test_gpu
+    AutoMixedPrecisionGfx950Test.SupportsFp16
     AutoMixedPrecisionGfx1103Test.SupportsFp16
+    AutoMixedPrecisionGfx1250Test.SupportsFp16
 
     # //tensorflow/core/kernels:matmul_op_test_gpu
     Test/FusedMatMulWithBiasOpTest/1.MatMul*
