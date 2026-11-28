@@ -46,8 +46,8 @@ jobs:
       run:
         shell: bash
     container:
-      # rocm/ufb-private:rocm10.0-py3.12-tf2.22-ubuntu22.04-dev
-      image: rocm/ufb-private@sha256:7ab50c72e4d3703661c64f6e3cf72c627713d5bc779aa20381a638c6a1e35b03
+      # rocm/tensorflow:rocm10.2-ubuntu24.04-py3.12-tf2.21
+      image: rocm/ufb-private@sha256:67c59b25436bd3c93319d59adc30317ad889f7be38bbdd9182233f800f40873b
     timeout-minutes: 960
     steps:
 

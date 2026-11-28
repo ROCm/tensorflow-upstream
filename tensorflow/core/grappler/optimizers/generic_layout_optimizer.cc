@@ -71,10 +71,13 @@ inline GpuStats GetNumGPUs(const Cluster& cluster) {
     if ((compute_capability_it->second == "gfx908" ||
          compute_capability_it->second == "gfx90a" ||
          compute_capability_it->second == "gfx942" ||
+         compute_capability_it->second == "gfx950" ||
          compute_capability_it->second == "gfx1101" ||
          compute_capability_it->second == "gfx1102" ||
+         compute_capability_it->second == "gfx1103" ||
          compute_capability_it->second == "gfx1200" ||
-         compute_capability_it->second == "gfx1201") &&
+         compute_capability_it->second == "gfx1201" ||
+         compute_capability_it->second == "gfx1250") &&
         is_enabled) {
       gpu_stats.num_voltas++;
     }
